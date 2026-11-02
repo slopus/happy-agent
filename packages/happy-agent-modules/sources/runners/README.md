@@ -103,6 +103,28 @@ runner's own facility does the same job.
 | Workspace services                    | Retired product-wide (the routes answer `501`), so not built for runners.                                                                                                                                                                 |
 | Runner loss                           | `503 runner_unavailable` on every route, including a request cut off mid-way and a Git snapshot served from cache.                                                                                                                        |
 
+## Attached secrets on a runner
+
+Steve confirmed that runners receive attached secrets, forwarded per request. A command on a runner
+machine, or on a workload user's runner, that selects secrets is resolved by the daemon when it
+starts (`compute/impl/forwardAttachedSecrets.ts`), and only that command's `shell.run` or
+`shell.startSession` request carries the values, as its `environment`. The guarantees, each covered
+by `tests/compute/impl/forwardAttachedSecrets.test.ts`:
+
+- The runner writes the values nowhere: not to disk, its log, or its private state. Its handler
+  empties the request's environment once the process has it, the host shell scrubs its merged
+  copy after the spawn, and the runner logs no request's parameters.
+- Nothing is cached between commands. Each command gets exactly its own selection; a concurrent or
+  later command that selected other secrets, or none, never sees these. Every other attached
+  secret's variable is sent as a removal, so the runner's own environment cannot stand in for one.
+- Nothing is resent. A request in flight when its connection drops fails as an unknown outcome and
+  is never replayed — not after a reconnect, and never to another runner, since a machine belongs
+  to one runner's link. The agent decides whether to run the command again, which resolves the
+  selection afresh.
+
+While a command runs, its values live in its process, readable by the runner's user and root
+there, as on any machine.
+
 ## Work as separate Linux users
 
 `[execution]` in machine `happy.toml` names the Linux user agent work runs as on this machine, and
