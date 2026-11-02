@@ -15,9 +15,9 @@ afterEach(async () => {
 
 /**
  * A child agent's escalated push is authorized by what the person told its parent, not by what the
- * parent told the child. The scripted reviewer does what the policy asks: it follows the delegation
- * message's Agent ID with `read_agent_history`, reads only the person's own messages, and allows
- * the push only when the person asked for it.
+ * parent told the child. The review names the parent in `<delegator_agent_ids>`, and the scripted
+ * reviewer does what the policy asks: it reads only the person's own messages in that agent's
+ * history with `read_agent_history`, and allows the push only when the person asked for it.
  */
 describe("Auto review reads the delegator's history for user authorization", () => {
     it.each([
@@ -95,13 +95,12 @@ describe("Auto review reads the delegator's history for user authorization", () 
                 "the child's push to be reviewed",
                 30_000,
             );
-            // The reviewer first found the delegator in the child's own history, then read the
-            // person's messages in the parent's.
-            expect(historyReads).toHaveLength(2);
-            expect(historyReads[0]?.history).toContain(`AGENT (${parentAgentId})`);
-            expect(historyReads[1]?.target).toBe(parentAgentId);
+            // The review named the parent as the delegator, so one read of the person's messages
+            // in the parent's history was enough.
+            expect(historyReads).toHaveLength(1);
+            expect(historyReads[0]?.target).toBe(parentAgentId);
             // The parent's own instruction to the child never appears among the person's messages.
-            expect(historyReads[1]?.history).toBe(`1. USER\nText: ${parentUserText}`);
+            expect(historyReads[0]?.history).toBe(`1. USER\nText: ${parentUserText}`);
             if (expected === "allow") {
                 expect(pushed.text).toContain("pushed-to-main");
             } else {
@@ -120,8 +119,7 @@ interface HistoryRead {
 
 /**
  * The policy, scripted. The transcript carries none of the parent's delegation, so the reviewer
- * reads the reviewed agent's own history to find its delegator, then reads only the person's
- * messages in the delegator's history.
+ * reads only the person's messages in the history of the agent `<delegator_agent_ids>` names.
  */
 function review(request: GymInferenceRequest, historyReads: HistoryRead[]): GymTurn {
     const transcript = JSON.stringify(request.messages);
@@ -129,20 +127,15 @@ function review(request: GymInferenceRequest, historyReads: HistoryRead[]): GymT
     if (!proposed.includes("exec_command")) return verdict("allow");
     const last = request.messages.at(-1);
     if (last?.role !== "tool") {
-        const reviewed = /<reviewed_agent_id>([a-z0-9]+)<\/reviewed_agent_id>/u.exec(
+        const delegator = /<delegator_agent_ids>([a-z0-9]+)<\/delegator_agent_ids>/u.exec(
             transcript,
         )?.[1];
-        if (reviewed === undefined) return verdict("deny");
-        return readHistory("reviewedhistory", { target: reviewed });
+        if (delegator === undefined) return verdict("deny");
+        return readHistory("delegatorhistory", { target: delegator, roles: ["user"] });
     }
     const text = last.content.map((block) => (block.type === "text" ? block.text : "")).join("");
     const read = JSON.parse(text) as HistoryRead;
     historyReads.push(read);
-    if (last.callId === "reviewedhistory") {
-        const delegator = /^\d+\. AGENT \(([a-z0-9]+)\)$/mu.exec(read.history)?.[1];
-        if (delegator === undefined) return verdict("deny");
-        return readHistory("delegatorhistory", { target: delegator, roles: ["user"] });
-    }
     return verdict(
         /^\d+\. USER\nText: .*push HEAD to main/mu.test(read.history) ? "allow" : "deny",
     );

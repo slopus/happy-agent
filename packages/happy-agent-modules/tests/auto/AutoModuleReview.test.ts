@@ -433,6 +433,18 @@ describe("AutoModule reviewer", () => {
                         role: "agent",
                         senderAgentId: "grandparentagent",
                     });
+                    // The reviewed agent's own deliveries name who delegated to it; a goal
+                    // continuation names the agent itself and is left out.
+                    await history.record(ctx, MAIN_AGENT_ID, {
+                        blocks: [{ type: "text", text: "Message from agent parentagent: push." }],
+                        role: "agent",
+                        senderAgentId: "parentagent",
+                    });
+                    await history.record(ctx, MAIN_AGENT_ID, {
+                        blocks: [{ type: "text", text: "Continue the goal." }],
+                        role: "agent",
+                        senderAgentId: MAIN_AGENT_ID,
+                    });
                 },
             },
         );
@@ -442,9 +454,12 @@ describe("AutoModule reviewer", () => {
 
         const requests = world.provider.sessions.flatMap((session) => session.requests);
         expect(requests).toHaveLength(2);
-        expect(JSON.stringify(requests[0]?.context)).toContain(
-            `<reviewed_agent_id>${MAIN_AGENT_ID}</reviewed_agent_id>`,
+        const prompt = JSON.stringify(requests[0]?.context);
+        expect(prompt).toContain(
+            `<reviewed_agent_id>${MAIN_AGENT_ID}</reviewed_agent_id>\\n<delegator_agent_ids>parentagent</delegator_agent_ids>`,
         );
+        // Only the sender's ID reaches the prompt, never the delivery's text.
+        expect(prompt).not.toContain("Message from agent parentagent");
         // The tool read the parent's main-system history, and the role filter kept only the
         // person's own message.
         const result = requests[1]?.context.messages.at(-1);

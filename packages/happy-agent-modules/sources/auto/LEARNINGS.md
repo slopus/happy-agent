@@ -113,9 +113,16 @@
   database, is offered only while that review runs, and is non-transactional so it never opens
   main storage inside a private transaction. Only History's `role: "user"` messages count, and
   the policy requires the person's request to cover the exact action; a delegator's paraphrase
-  that widens it does not. The gym proves the delegation evidence is not in the child's
-  transcript, so the reviewer must start from the reviewed agent's own history. Those reads add
-  reviewer turns, so the user raised the review budget from v1's 90 seconds to 120.
+  that widens it does not. Those reads add reviewer turns, so the user raised the review budget
+  from v1's 90 seconds to 120.
+- Pointing the reviewer at `<reviewed_agent_id>` alone was not enough: it had to read the child's
+  whole history to find the delegator's ID, did not, and denied a `git push` the person had asked
+  the parent for. Each review now also names `<delegator_agent_ids>`: the distinct `senderAgentId`s
+  History recorded on the reviewed agent's agent-role messages, read from both ends of its history,
+  IDs only and never the text, the agent itself excluded. Collaboration and task deliveries always
+  stamp the sender, so no parent lookup is needed. The policy requires reading those agents'
+  histories before denying a medium- or higher-risk action for missing user authorization; the
+  IDs are still where to look, never authorization themselves.
 - The module now takes only modules, plus the one structural argument `SPEC.md` §13.3 kept:
   `constructor(config: ConfigModule, compute: ComputeModule, systemPrompt: SystemPromptModule,
 history: HistoryModule, storage: AgentStorage)`. The accounts, the catalog and the working folder come from

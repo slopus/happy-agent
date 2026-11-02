@@ -16,6 +16,7 @@ describe("createPermissionReviewPrompt", () => {
                 first: true,
                 conversation: "[1] User:\nhi",
                 agentId,
+                delegatorAgentIds: [],
                 action,
             }),
         ).toBe(
@@ -38,6 +39,7 @@ describe("createPermissionReviewPrompt", () => {
             first: false,
             conversation: "[7] User:\nmore",
             agentId,
+            delegatorAgentIds: [],
             action,
         });
 
@@ -58,11 +60,31 @@ describe("createPermissionReviewPrompt", () => {
         );
     });
 
+    it("names the agents that sent the reviewed agent messages after its own ID", () => {
+        const prompt = createPermissionReviewPrompt({
+            first: true,
+            conversation: "[1] User:\nhi",
+            agentId,
+            delegatorAgentIds: ["parentagent", "otheragent"],
+            action,
+        });
+
+        expect(prompt).toContain(
+            [
+                "<reviewed_agent_id>reviewedagent</reviewed_agent_id>",
+                "<delegator_agent_ids>parentagent, otheragent</delegator_agent_ids>",
+                "",
+                "<proposed_action>",
+            ].join("\n"),
+        );
+    });
+
     it("substitutes the fixed sentence when the delta is empty", () => {
         const prompt = createPermissionReviewPrompt({
             first: false,
             conversation: "",
             agentId,
+            delegatorAgentIds: [],
             action,
         });
 
@@ -75,6 +97,7 @@ describe("createPermissionReviewPrompt", () => {
             first: true,
             conversation: "",
             agentId,
+            delegatorAgentIds: [],
             action,
         });
 
@@ -91,6 +114,7 @@ describe("createPermissionReviewPrompt", () => {
                 first: true,
                 conversation: "conversation",
                 agentId,
+                delegatorAgentIds: [],
                 action: unusualAction,
             }),
         ).toContain(unusualAction);

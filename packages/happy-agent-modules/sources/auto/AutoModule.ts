@@ -57,6 +57,7 @@ import { AutoReviewEvidenceStore } from "./impl/AutoReviewEvidenceStore.js";
 import { AutoReviewRuntimeModule } from "./impl/AutoReviewRuntimeModule.js";
 import { AutoReviewComputeModule } from "./impl/AutoReviewComputeModule.js";
 import { AutoReviewHistoryModule } from "./impl/AutoReviewHistoryModule.js";
+import { readDelegatorAgentIds } from "./impl/readDelegatorAgentIds.js";
 import {
     assistantTextEvidence,
     assistantToolCallEvidence,
@@ -124,6 +125,7 @@ export class AutoModule implements AgentModule {
     readonly #storage: AgentStorage;
     readonly #evidence = new AutoReviewEvidenceStore();
     readonly #runtime = new AutoReviewRuntimeModule();
+    readonly #history: HistoryModule;
     readonly #reviewHistory: AutoReviewHistoryModule;
 
     /**
@@ -177,6 +179,7 @@ export class AutoModule implements AgentModule {
         this.#config = config;
         this.#compute = compute;
         this.#systemPrompt = systemPrompt;
+        this.#history = history;
         this.#reviewHistory = new AutoReviewHistoryModule(history);
         this.#storage = storage;
     }
@@ -506,6 +509,7 @@ export class AutoModule implements AgentModule {
             first,
             conversation: delta.text,
             agentId: mainAgentId,
+            delegatorAgentIds: await readDelegatorAgentIds(this.#history, ctx, mainAgentId),
             action: proposedAction(request),
         });
         const message: SessionUserMessage = {
