@@ -148,32 +148,35 @@ describe("JWT team authentication configuration", () => {
 
     it("accepts a loopback http sign-in page and rejects the none algorithm", async () => {
         const loopback = await load(
-            `${team}\n${jwt(['algorithms = ["HS512"]', 'secret_env = "SECRET"'])}\n`.replace(
-                "https://sso.acme.example/oauth/authorize",
-                "http://127.0.0.1:8080/authorize",
+            `${team}\n${jwt(['algorithms = ["HS512"]', 'secret_env = "SECRET"'])}\n`.replaceAll(
+                "https://sso.acme.example/oauth/",
+                "http://127.0.0.1:8080/",
             ),
         );
         expect(loopback.values.feature.team).toMatchObject({
-            jwt: { authorizationUrl: "http://127.0.0.1:8080/authorize" },
+            jwt: {
+                authorizationUrl: "http://127.0.0.1:8080/authorize",
+                tokenUrl: "http://127.0.0.1:8080/token",
+            },
         });
         await expect(
             load(`${team}\n${jwt(['algorithms = ["none"]', 'secret_env = "SECRET"'])}\n`),
         ).rejects.toThrow();
     });
 
-    it("resolves an optional refresh endpoint on another origin, a scope, and a resource", async () => {
+    it("resolves an optional refresh endpoint, a scope, and a resource", async () => {
         const configuration = await load(
             `${team}\n${jwt([
                 'algorithms = ["ES256"]',
                 'jwks_url = "https://sso.acme.example/jwks"',
-                'refresh_url = "https://refresh.other.example/oauth/refresh"',
+                'refresh_url = "https://sso.acme.example/oauth/refresh"',
                 'scope = "happy offline_access"',
                 'resource = "https://happy.acme.example"',
             ])}\n`,
         );
         expect(configuration.values.feature.team).toMatchObject({
             jwt: {
-                refreshUrl: "https://refresh.other.example/oauth/refresh",
+                refreshUrl: "https://sso.acme.example/oauth/refresh",
                 resource: "https://happy.acme.example",
                 scope: "happy offline_access",
             },
@@ -206,6 +209,20 @@ describe("JWT team authentication configuration", () => {
         );
         await expect(load(`${team}\n${base}\n${line}\n`)).rejects.toThrow(
             `feature.team.jwt.${name}`,
+        );
+    });
+
+    it.each([
+        ["token_url", "https://attacker.example/oauth/token"],
+        ["token_url", "https://sso.acme.example:8443/oauth/token"],
+        ["refresh_url", "https://refresh.acme.example/oauth/refresh"],
+    ])("rejects a %s on another origin than authorization_url: %s", async (name, url) => {
+        const base = jwt(['algorithms = ["HS256"]', 'secret_env = "SECRET"']).replace(
+            new RegExp(`^${name} = .*$`, "mu"),
+            "",
+        );
+        await expect(load(`${team}\n${base}\n${name} = "${url}"\n`)).rejects.toThrow(
+            `feature.team.jwt.${name} must be on the same origin as authorization_url.`,
         );
     });
 

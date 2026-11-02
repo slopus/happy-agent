@@ -115,10 +115,21 @@ export type TeamJwtConfig = Static<typeof teamJwtConfigSchema>;
 
 /** Validate one JWT table's cross-field rules and resolve it, with human-readable failures. */
 export function resolveTeamJwtConfig(value: TeamJwtToml): TeamJwtConfig {
-    assertBrowserUrl(value.authorization_url, "feature.team.jwt.authorization_url");
-    assertBrowserUrl(value.token_url, "feature.team.jwt.token_url");
-    if (value.refresh_url !== undefined) {
-        assertBrowserUrl(value.refresh_url, "feature.team.jwt.refresh_url");
+    const authorization = assertBrowserUrl(
+        value.authorization_url,
+        "feature.team.jwt.authorization_url",
+    );
+    // A code, its verifier, and a refresh token go only to the server that issued them.
+    for (const [url, name] of [
+        [value.token_url, "token_url"],
+        [value.refresh_url, "refresh_url"],
+    ] as const) {
+        if (url === undefined) continue;
+        if (assertBrowserUrl(url, `feature.team.jwt.${name}`).origin !== authorization.origin) {
+            throw new Error(
+                `feature.team.jwt.${name} must be on the same origin as authorization_url.`,
+            );
+        }
     }
     if (value.resource !== undefined) assertResourceIndicator(value.resource);
     const sources = [value.jwks_url, value.public_key, value.secret_env].filter(
@@ -204,7 +215,7 @@ function assertResourceIndicator(value: string): void {
         throw new Error("feature.team.jwt.resource must be an absolute URI without a fragment.");
 }
 
-function assertBrowserUrl(value: string, name: string): void {
+function assertBrowserUrl(value: string, name: string): URL {
     let url: URL;
     try {
         url = new URL(value);
@@ -225,4 +236,5 @@ function assertBrowserUrl(value: string, name: string): void {
             `${name} must use https, or http only for a loopback host, without credentials or a fragment.`,
         );
     }
+    return url;
 }

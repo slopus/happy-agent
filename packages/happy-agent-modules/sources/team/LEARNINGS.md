@@ -59,15 +59,25 @@ Clients discover sign-in through the unauthenticated `GET /v0/authentication` an
 itself back in a URL fragment, like the old OAuth implicit flow. That exposes the token to any app
 that claims the redirect scheme and cannot be refreshed, so it was replaced before any daemon
 shipped it: the advertised `oauth` method is the standard authorization code flow with PKCE, plus
-an optional refresh endpoint that may live on another origin.
+an optional refresh endpoint.
 
 The daemon is treated as untrusted with sign-in credentials. It only advertises endpoints from
 machine configuration and verifies access tokens; the app talks to the authorization server
 directly, so codes, PKCE verifiers, and refresh tokens never reach the daemon. The client refreshes
 only at the refresh URL recorded at sign-in, never one a daemon advertises later. Discovery ignores
-query strings, so it cannot be used to reflect attacker-chosen redirects. A per-deployment audience
-stops a daemon from replaying a member's token elsewhere; a shared secret lets the daemon mint
-tokens, so asymmetric keys are the recommendation.
+query strings, so it cannot be used to reflect attacker-chosen redirects. A shared secret lets the
+daemon mint tokens, so asymmetric keys are the recommendation.
+
+A security review showed that an untrusted daemon, such as a server reached by scanning its QR
+code, could still steal sign-ins. Pairing the real identity provider's authorization URL with its
+own token URL collected the code and PKCE verifier. Copying a real deployment's method unchanged
+made the app sign in for real and hand that deployment's genuine token to the impostor, since a
+per-deployment audience proves nothing when the impostor copies it. Now the token and refresh URLs
+must share the authorization URL's origin, which configuration loading and clients both enforce,
+and `audience` is the deployment's public base URL: clients send a token only to the server its
+`aud` names. Issuer metadata discovery was considered and rejected: its trust still ends at the
+authorization endpoint's origin, it only helps providers whose token endpoint is elsewhere (Google,
+which cannot issue the daemon's JWTs anyway), and it costs a fetch on every sign-in.
 
 ## The daemon owns its JWKS download
 

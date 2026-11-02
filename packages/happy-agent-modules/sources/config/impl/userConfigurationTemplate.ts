@@ -82,7 +82,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 #
 # Enterprise deployments may instead verify JWT access tokens from their own OAuth authorization
 # server. Apps sign in with the authorization code flow and PKCE, talking to these endpoints
-# directly; the daemon never sees codes or refresh tokens. Use a unique audience per deployment.
+# directly; the daemon never sees codes or refresh tokens. The token and refresh URLs share the
+# authorization URL's origin, and audience is the deployment's public base URL.
 # [feature.team]
 # enabled = true
 # authentication = "jwt"

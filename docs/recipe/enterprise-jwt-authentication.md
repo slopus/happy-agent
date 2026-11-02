@@ -93,9 +93,20 @@ with PKCE** for a public client and issues **JWT access tokens**. There are two 
 ## 2. Agree the token contract
 
 - **Issuer** (`iss`): the authorization server's issuer, for example `https://sso.acme.example`.
-- **Audience** (`aud`): a value unique to **this** deployment, for example
-  `https://happy.acme.example`. The daemon sees every token sent to it; a unique audience stops it
-  from replaying a member's token to another service or another Happy deployment.
+- **Audience** (`aud`): **this** deployment's public base URL, the `https` URL members connect to,
+  for example `https://happy.acme.example`. The apps send a token only to the server its `aud`
+  names, so a server that copies this deployment's sign-in settings never receives its members'
+  tokens. A token with any other audience cannot be used to sign in.
+    - Okta: set the custom authorization server's audience to the URL.
+    - Entra ID: set the API's Application ID URI to the URL (a verified domain), request the scope
+      `https://happy.acme.example/.default`, and keep v1 access tokens, the default; their `aud` is
+      the URL and their `iss` is `https://sts.windows.net/<tenant-id>/`. Entra's v2 access tokens
+      always carry the API's client ID as `aud`, so they cannot be used.
+    - Keycloak: add an "Included Custom Audience" mapper with the URL.
+- **Endpoints**: the token and refresh endpoints must be on the same origin as the authorization
+  endpoint, so a sign-in code only ever goes back to the server that issued it. Okta, Entra ID,
+  Keycloak, Auth0, Cognito, Ping, and ADFS all work this way. Google does not, and it issues
+  opaque access tokens anyway, so put a small authorization server in front of it.
 - **User ID claim**: a stable, never-reused user ID. `sub` is the default. Prefer an immutable
   object ID over an email address. Values are 1–256 printable characters.
 - **Owner**: the user ID of the person who should become the deployment owner.
@@ -266,6 +277,11 @@ Run these checks from a machine that can reach the daemon, replacing `DAEMON` wi
 - **Every access token is rejected right after startup.** The daemon could not download the JWKS:
   check that the daemon can reach `jwks_url` over `https` without a redirect, and read the service
   log for the key set warning.
+- **The app says the sign-in is for a different server.** The access token's `aud` is not this
+  deployment's public base URL. Set the authorization server's audience to the URL members connect
+  to, and `audience` to the same value.
+- **The app refuses the sign-in settings.** `token_url` or `refresh_url` is on a different origin
+  from `authorization_url`.
 - **Every access token is rejected.** Compare `iss`, `aud`, `alg`, and `kid` with the configuration
   exactly, and check the server clock. Some identity providers issue opaque access tokens unless an
   API or resource audience is requested; the daemon needs a JWT.

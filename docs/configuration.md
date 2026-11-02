@@ -392,12 +392,12 @@ jwks_refresh_interval_sec = 3600
 | `name`                      | required       | Sign-in button label, 1–64 printable characters.                                               |
 | `authorization_url`         | required       | Authorization endpoint the apps open in the system browser.                                    |
 | `token_url`                 | required       | Token endpoint where the apps exchange the authorization code.                                 |
-| `refresh_url`               | none           | Endpoint for refresh tokens, on any origin. Without it, apps sign in again when tokens expire. |
+| `refresh_url`               | none           | Endpoint for refresh tokens. Without it, apps sign in again when tokens expire.                |
 | `client_id`                 | required       | Public OAuth client ID registered for the Happy apps.                                          |
 | `scope`                     | none           | Space-separated scope requested at sign-in.                                                    |
 | `resource`                  | none           | RFC 8707 resource indicator the apps send at sign-in and refresh, usually equal to `audience`. |
 | `issuer`                    | required       | Exact `iss` claim required in every access token.                                              |
-| `audience`                  | required       | Value the `aud` claim must equal or contain; use a unique value per deployment.                |
+| `audience`                  | required       | Value the `aud` claim must equal or contain: the deployment's public base URL.                 |
 | `user_id_claim`             | `"sub"`        | Claim holding a stable, never-reused user ID.                                                  |
 | `algorithms`                | required       | Accepted signing algorithms; `none` is never accepted.                                         |
 | `jwks_url`                  | one key source | JWKS the daemon downloads at startup and refreshes; recommended.                               |
@@ -407,7 +407,9 @@ jwks_refresh_interval_sec = 3600
 
 Configure exactly one of `jwks_url`, `public_key`, and `secret_env`. Asymmetric sources accept the
 RS, PS, ES, and EdDSA algorithms; `secret_env` accepts only HS256, HS384, and HS512. A shared
-secret lets the daemon mint tokens itself, so prefer asymmetric keys. Every endpoint URL must use
+secret lets the daemon mint tokens itself, so prefer asymmetric keys. `token_url` and `refresh_url`
+must be on the same origin as `authorization_url`, and `audience` must be the public base URL
+members connect to: the apps send a token only to the server its `aud` names. Every endpoint URL must use
 `https`, or plain `http` only on a loopback host; `resource` is any absolute URI without a fragment.
 Clients discover the method without a token through `GET /v0/authentication` and from the
 `authentication` field of any `401`. Register the redirect URI `happy://oauth/callback` with the

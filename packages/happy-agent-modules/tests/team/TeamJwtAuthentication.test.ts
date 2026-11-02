@@ -228,7 +228,7 @@ describe("TeamModule with JWT authentication", () => {
                 clientId: "happy",
                 id: "jwt",
                 name: "Acme SSO",
-                refreshUrl: "https://refresh.acme.example/oauth/refresh",
+                refreshUrl: "https://sso.acme.example/oauth/refresh",
                 resource: "https://happy.acme.example",
                 scope: "happy",
                 tokenUrl: "https://sso.acme.example/oauth/token",
@@ -311,7 +311,7 @@ function createJwtTeam(
         readonly resource?: string;
         readonly scope?: string;
     } = {
-        refreshUrl: "https://refresh.acme.example/oauth/refresh",
+        refreshUrl: "https://sso.acme.example/oauth/refresh",
         resource: "https://happy.acme.example",
         scope: "happy",
     },

@@ -44,7 +44,10 @@ Register the Happy apps as one public (native) client:
 
 - Redirect URI: exactly `happy://oauth/callback`. The desktop, iOS, and Android apps all use it.
 - Grant: authorization code with PKCE (`S256`); refresh tokens if members should stay signed in.
-- Access tokens: JWTs whose audience the load balancer and the daemon both accept.
+- Access tokens: JWTs whose audience is this deployment's public base URL, such as
+  `https://happy.acme.example`, accepted by both the load balancer and the daemon. The apps send a
+  token only to the server its audience names. Set `[feature.team.jwt] audience` to the same URL.
+- Endpoints: the token and refresh endpoints on the same origin as the authorization endpoint.
 
 When the OAuth server picks the API a token is for from an RFC 8707 `resource` parameter, set
 `resource` under `[feature.team.jwt]`, usually to the same value as `audience`. The apps then send

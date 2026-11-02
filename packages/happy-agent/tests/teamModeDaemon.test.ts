@@ -441,6 +441,8 @@ describe("team mode daemon with JWT authentication", () => {
             ].join("\n"),
         );
         daemon = await startHappyAgentDaemon({ happyHome, inference: await inference() });
+        // Tokens name the server they are for; the client refuses one that names another.
+        authorizationServer.audiences.push(daemon.httpUrl);
         // The daemon downloads the key set itself once the agent system has started.
         await vi.waitFor(() => expect(authorizationServer.requests).toContain("GET /jwks"));
         const daemonRequests: string[] = [];
@@ -477,6 +479,7 @@ describe("team mode daemon with JWT authentication", () => {
         // The system browser: follow the authorization URL to the app's redirect.
         const signIn = await beginOAuthSignIn(discovery.methods[0]!, {
             redirectUri: "http://127.0.0.1:53682/callback",
+            serverUrl: daemon.httpUrl,
         });
         const redirect = await fetch(signIn.url, { redirect: "manual" });
         expect(redirect.status).toBe(302);
@@ -532,6 +535,7 @@ describe("team mode daemon with JWT authentication", () => {
 /** A minimal OAuth authorization server that checks PKCE and issues ES256 access tokens. */
 async function startAuthorizationServer(): Promise<{
     readonly close: () => Promise<void>;
+    readonly audiences: string[];
     readonly origin: string;
     readonly requests: string[];
     readonly rotate: () => Promise<void>;
@@ -549,6 +553,7 @@ async function startAuthorizationServer(): Promise<{
     const codes = new Map<string, string>();
     let issued = 0;
     let origin = "";
+    const audiences = ["happy-agent-test"];
     const token = async (refreshToken: string) => {
         issued += 1;
         const now = Math.floor(Date.now() / 1_000);
@@ -556,7 +561,7 @@ async function startAuthorizationServer(): Promise<{
             access_token: await new SignJWT({ n: issued })
                 .setProtectedHeader({ alg: "ES256", kid: signing.kid })
                 .setIssuer(origin)
-                .setAudience("happy-agent-test")
+                .setAudience(audiences)
                 .setSubject("owner-1")
                 .setIssuedAt(now)
                 .setExpirationTime(now + 300)
@@ -621,6 +626,7 @@ async function startAuthorizationServer(): Promise<{
     if (address === null || typeof address === "string") throw new Error("No address.");
     origin = `http://127.0.0.1:${String(address.port)}`;
     return {
+        audiences,
         close: async () => {
             await new Promise<void>((resolve) => server.close(() => resolve()));
         },
