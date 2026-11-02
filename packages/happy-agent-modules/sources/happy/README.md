@@ -330,7 +330,7 @@ machine, in the wording Happy CLI uses:
 
 ```text
 The user attached 2 images. They were saved on this machine and not loaded into your context; open them with your file-reading or image-viewing tool only if you need to see them:
-- /work/project/.happy-uploads/<message>/1-screenshot.png
+- /work/project/.happy-uploads/<message>/0-screenshot.png
 - /work/project/.happy-uploads/<message>/2-diagram.jpg
 ```
 

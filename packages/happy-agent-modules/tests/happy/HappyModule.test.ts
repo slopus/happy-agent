@@ -651,16 +651,16 @@ describe("Happy mobile messages", () => {
         expect([...test.writtenFiles]).toEqual([
             // The uploads folder ignores itself, so attachments never show as Git changes.
             ["/projects/rig/rpc/.happy-uploads/.gitignore", Buffer.from("*\n")],
-            [`${folder}/1-Screen Shot.png`, Buffer.from(picture)],
-            [`${folder}/2-report.pdf`, Buffer.from(report)],
+            [`${folder}/0-Screen Shot.png`, Buffer.from(picture)],
+            [`${folder}/1-report.pdf`, Buffer.from(report)],
         ]);
         const content = [
             { text: "Look at these", type: "text" },
             {
                 text: [
                     "The user attached 2 files. They were saved on this machine and not loaded into your context; open them with your file-reading or image-viewing tool only if you need to see them:",
-                    `- ${folder}/1-Screen Shot.png`,
-                    `- ${folder}/2-report.pdf`,
+                    `- ${folder}/0-Screen Shot.png`,
+                    `- ${folder}/1-report.pdf`,
                 ].join("\n"),
                 type: "text",
             },
@@ -684,7 +684,7 @@ describe("Happy mobile messages", () => {
             role: "user",
             content: [
                 {
-                    text: `The user attached 1 image. It was saved on this machine and not loaded into your context; open it with your file-reading or image-viewing tool only if you need to see it:\n- /projects/rig/.happy-uploads/${id}/1-a.jpg`,
+                    text: `The user attached 1 image. It was saved on this machine and not loaded into your context; open it with your file-reading or image-viewing tool only if you need to see it:\n- /projects/rig/.happy-uploads/${id}/0-a.jpg`,
                     type: "text",
                 },
             ],
@@ -717,7 +717,7 @@ describe("Happy mobile messages", () => {
         // A folder that refuses one write: what was saved is named, the picture is shown.
         test.configs.set("agent-refused", { metadata: { happy: SELECTION } });
         test.projectAgents.set("agent-refused", "project-1");
-        test.refusedWrites.add("/1-shot.png");
+        test.refusedWrites.add("/0-shot.png");
         await test.module.submit(ctx, "agent-refused", {
             attachments,
             remoteMessageId: "happy:refused-1",
@@ -730,7 +730,7 @@ describe("Happy mobile messages", () => {
             content: [
                 { text: "Here", type: "text" },
                 {
-                    text: `The user attached 1 file. It was saved on this machine and not loaded into your context; open it with your file-reading or image-viewing tool only if you need to see it:\n- /projects/rig/.happy-uploads/${id}/2-report.pdf`,
+                    text: `The user attached 1 file. It was saved on this machine and not loaded into your context; open it with your file-reading or image-viewing tool only if you need to see it:\n- /projects/rig/.happy-uploads/${id}/1-report.pdf`,
                     type: "text",
                 },
                 { ...inline, type: "image" },

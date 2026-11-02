@@ -14,7 +14,7 @@ const MAX_NAME_BYTES = 120;
 
 /**
  * The workspace-relative path one attachment of a message is saved at:
- * `.happy-uploads/<message>/<n>-<name>`, numbered from 1 in the order the phone sent them.
+ * `.happy-uploads/<message>/<n>-<name>`, numbered from 0 in the order the phone sent them.
  *
  * The phone's name is only a hint. It can be a path, a signed URL, or nothing useful, so only a
  * bounded, portable last segment survives, the same rule the phones apply to their own uploads.
@@ -35,7 +35,7 @@ export function happyUploadPath(
         own === null ? leaf : leaf.slice(0, own.index),
         MAX_NAME_BYTES - suffix.length,
     );
-    return `${HAPPY_UPLOADS_DIRECTORY}/${messageId}/${String(index + 1)}-${stem || "attachment"}${suffix}`;
+    return `${HAPPY_UPLOADS_DIRECTORY}/${messageId}/${String(index)}-${stem || "attachment"}${suffix}`;
 }
 
 function portableLeaf(name: string): string {

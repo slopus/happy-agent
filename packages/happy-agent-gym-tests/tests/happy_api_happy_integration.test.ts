@@ -610,7 +610,7 @@ describe("Happy integration API", () => {
         const path = lines[1]!.slice("- ".length);
         const uploads = join(await realpath(gym.workspacePath), ".happy-uploads");
         expect(dirname(dirname(path))).toBe(uploads);
-        expect(path.endsWith("/1-Screenshot.png")).toBe(true);
+        expect(path.endsWith("/0-Screenshot.png")).toBe(true);
         expect(await readFile(path)).toEqual(picture);
         expect(gym.inference.unscripted).toEqual([]);
     }, 60_000);
