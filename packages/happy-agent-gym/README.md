@@ -288,6 +288,29 @@ decorations from the previous daemon. Configured routes share that start's provi
 left it, then starts the current build on it to test an upgrade. `recordGymMigration` does the same
 for a newer release's migration ledger.
 
+## Runners
+
+`gym.startRunner({ home, token })` starts the real `happy-agent runner` process from the built
+`@slopus/happy-agent` and points it at the daemon's socket. Configure the runner first, and place
+its home inside the gym's directory:
+
+```ts
+const gym = await createAgentGym({
+    config: `[runners]\ndefault = "local"\n\n[runners.box]\nname = "Box"\ntoken = "${TOKEN}"\n`,
+});
+const runner = await gym.startRunner({
+    home: join(dirname(gym.workspacePath), "runner-home"),
+    token: TOKEN,
+});
+await gym.client.registerProject({ path: join(runner.home, "repository"), runnerId: "box" });
+```
+
+Unlike the agent's emulated machine, a runner is a real process on this computer serving real
+files, Git, and processes from its home, because that is what a runner is. `runner.stop()` stops it
+with `SIGTERM`, which says goodbye; `runner.kill()` ends it without one; `runner.output` holds the
+tail of its log. The gym kills every runner it started when it is disposed. Runner scenarios need
+`git` on the machine running the tests.
+
 ## Waiting
 
 Wait for state, never for time. `gym.waitUntil(check, description, timeoutMs)` polls until `check`

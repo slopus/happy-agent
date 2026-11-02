@@ -118,6 +118,24 @@ changes. Missing roots keep the original path and the ordinary subscription retr
 With `[execution]` configured, a folder on this machine belongs to the workload user, and the
 daemon's own Git would run as the daemon's user against it. Every native branch now asks
 `RunnersModule.native(runnerId)`, so worktrees, clones, and probes on such a folder run through the
-default workload user's runner, exactly as on a runner. The embedded live Git tracking is not
-ported there, like on runners, so the API answers its Git state with `404` and a message saying
-why.
+default workload user's runner, exactly as on a runner. Live tracking runs there too, below.
+
+## Live tracking on a runner swaps the machine, not the tracker
+
+Runner folders used to have no live Git at all (`404`, left out of `git/watch`). Porting it as a
+second tracker would have duplicated the debounce, the path-scoped classification, and the
+fingerprint stale checks, and they would drift. The tracker now asks `#machine(entity)` for a
+`GitRepositoryMachine` — scan runner, working files, tree watch, metadata watch — and everything
+else is shared. `GitWorkingFiles` is the seam for the reads the scanner used to make with `node:fs`
+(index fingerprint, worktree fingerprint, untracked counts, display bytes); the local one keeps the
+`O_NOFOLLOW` open-once behavior, the runner one uses `lstatMany` and `readFileBuffer` with
+`noFollow`. A runner's fingerprint is size, mtime, and mode, since it reports no inode or ctime.
+
+A scan reports a failed Git command as its result, so a runner that went away mid-scan would have
+published "not a repository". Both the tracker and `snapshot` ask the machine whether it is still
+reachable after a failed scan and throw `RunnerUnavailableError` instead; `snapshot` also refuses
+its cache for a runner that is not connected. On a Windows runner the scan's hooks path and global
+configuration point at `NUL`, not `/dev/null`, or every scan fails.
+
+The `.git/` filter on tree events is case-insensitive everywhere, because a runner on macOS or
+Windows can report `.GIT/` paths whatever the daemon's own platform is.

@@ -35,6 +35,11 @@
             "import": "./dist/tailcat/remote.js",
             "default": "./dist/tailcat/remote.js"
         },
+        "./runners/liveness": {
+            "types": "./dist/runners/liveness.d.ts",
+            "import": "./dist/runners/liveness.js",
+            "default": "./dist/runners/liveness.js"
+        },
         "./runners/stdio": {
             "types": "./dist/runners/stdio.d.ts",
             "import": "./dist/runners/stdio.js",

@@ -1,5 +1,6 @@
 import type { Context, RootContext } from "@steve.kite/stdlib";
 
+import { localGitWorkingFiles, type GitWorkingFiles } from "../gitWorkingFiles.js";
 import type { ScanGitRunner } from "../runScanGit.js";
 import {
     readGitWorktreeFingerprint,
@@ -10,8 +11,13 @@ import type { GitChangeSnapshot, GitChangeState, GitTrackedEntity } from "../typ
 import {
     GitRepositoryWatchRegistry,
     type GitRepositoryChange,
+    type GitRepositoryWatchOptions,
 } from "../watchGitRepositoryChanges.js";
-import { WorkingTreeWatcher, type WorkingTreeChange } from "./WorkingTreeWatcher.js";
+import {
+    WorkingTreeWatcher,
+    type WorkingTreeChange,
+    type WorkingTreeObserver,
+} from "./WorkingTreeWatcher.js";
 
 const WATCH_TTL_MS = 5 * 60 * 1000;
 const TRACKED_LIMIT = 256;
@@ -34,6 +40,25 @@ const IDLE_RECONCILE_FACTOR = 10;
 export const GIT_RECONCILE_STALE_AFTER_MS = POLLING_STALE_MS;
 /** The stale deadline of a repository whose working tree is watched. */
 export const GIT_WATCHED_RECONCILE_STALE_AFTER_MS = RECURSIVE_WATCH_STALE_MS;
+
+/**
+ * Where one repository is scanned and watched: this machine, or the runner that holds it.
+ *
+ * Every machine offers the same four things — read-only Git, its working files, a shared watch of
+ * the working tree, and a shared watch of the Git directory — so tracking a repository on a runner
+ * is the same state machine as tracking one here.
+ */
+export interface GitRepositoryMachine {
+    readonly scan: ScanGitRunner;
+    readonly files: GitWorkingFiles;
+    watchTree(root: string, observer: WorkingTreeObserver): () => void;
+    watchMetadata(options: GitRepositoryWatchOptions): () => void;
+    /**
+     * Throw when the machine is out of reach. A scan reports a failed Git command as its result,
+     * so a failed scan asks this before publishing a failure that was really a lost runner.
+     */
+    assertAvailable(): void;
+}
 
 /**
  * What a finished scan is handed back to.
@@ -97,7 +122,10 @@ export class GitStateTracker {
     readonly #ctx: Context;
     readonly #owner: GitStateTrackerOwner;
     readonly #pendingScans: string[] = [];
-    readonly #scan: ScanGitRunner;
+    readonly #local: GitRepositoryMachine;
+    readonly #remote:
+        | ((runnerId: string | undefined) => GitRepositoryMachine | undefined)
+        | undefined;
     readonly #trackers = new Map<string, RepositoryTracker>();
     readonly #tree: WorkingTreeWatcher;
     readonly #ownsTree: boolean;
@@ -106,18 +134,34 @@ export class GitStateTracker {
     #disposed = false;
     #maintenanceTimer: NodeJS.Timeout | undefined;
 
+    /**
+     * @param scan Read-only Git on this machine.
+     * @param tree The working-tree watch shared with the rest of the Git module.
+     * @param remote The machine of a repository that is not in this process — on a runner, or a
+     * workload user's — or undefined for one that is.
+     */
     constructor(
         rootContext: RootContext,
         scan: ScanGitRunner,
         owner: GitStateTrackerOwner,
         tree?: WorkingTreeWatcher,
+        remote?: (runnerId: string | undefined) => GitRepositoryMachine | undefined,
     ) {
         this.#ctx = rootContext.named("git-state-tracker");
         this.#owner = owner;
-        this.#scan = scan;
         this.#ownsTree = tree === undefined;
         this.#tree = tree ?? new WorkingTreeWatcher(rootContext, scan);
         this.#watchRegistry = new GitRepositoryWatchRegistry(rootContext);
+        this.#remote = remote;
+        const localTree = this.#tree;
+        const registry = this.#watchRegistry;
+        this.#local = {
+            scan,
+            files: localGitWorkingFiles,
+            watchTree: (root, observer) => localTree.watch(root, observer),
+            watchMetadata: (options) => registry.watch(options),
+            assertAvailable: () => undefined,
+        };
         this.#ctx.lifetime?.addEventListener("abort", () => this.dispose(), { once: true });
     }
 
@@ -273,8 +317,7 @@ export class GitStateTracker {
         // The dedicated index/config/ref watchers already cover Git metadata. A recursive
         // Windows worktree watch also sees pack files, locks and reflogs; classifying those
         // with another sandboxed Git process creates work for changes outside the worktree.
-        const metadataPath = process.platform === "win32" ? normalized.toLowerCase() : normalized;
-        if (metadataPath.startsWith(".git/")) return;
+        if (normalized.toLowerCase().startsWith(".git/")) return;
         if (!tracker.unclassifiedDirty) {
             if (
                 tracker.pendingWorktreePaths.size >= WORKTREE_PATH_LIMIT &&
@@ -326,7 +369,7 @@ export class GitStateTracker {
         tracker.classificationInFlight = true;
         let relevant = true;
         try {
-            relevant = await this.#hasRelevantWorktreeChanges(tracker.entity.path, paths);
+            relevant = await this.#hasRelevantWorktreeChanges(tracker.entity, paths);
         } catch {
             // Classification is only an optimization. A failure must conservatively rescan.
         } finally {
@@ -351,9 +394,14 @@ export class GitStateTracker {
         }
     }
 
-    async #hasRelevantWorktreeChanges(path: string, paths: readonly string[]): Promise<boolean> {
+    async #hasRelevantWorktreeChanges(
+        entity: GitTrackedEntity,
+        paths: readonly string[],
+    ): Promise<boolean> {
+        const { path } = entity;
+        const scan = this.#machine(entity).scan;
         for (let offset = 0; offset < paths.length; offset += WORKTREE_PATH_BATCH) {
-            const result = await this.#scan({
+            const result = await scan({
                 args: [
                     "status",
                     "--porcelain=v2",
@@ -405,11 +453,12 @@ export class GitStateTracker {
 
     #arm(tracker: RepositoryTracker): void {
         const generation = tracker.generation;
-        tracker.unwatchTree = this.#tree.watch(tracker.entity.path, {
+        const machine = this.#machine(tracker.entity);
+        tracker.unwatchTree = machine.watchTree(tracker.entity.path, {
             onChanges: (changes) => this.#treeChanged(tracker, changes),
             onWatching: (watching) => this.#treeWatching(tracker, watching),
         });
-        void this.#resolveGitDirectories(tracker.entity.path)
+        void this.#resolveGitDirectories(machine, tracker.entity.path)
             .then((directories) => {
                 if (this.#disposed || tracker.generation !== generation) {
                     return;
@@ -419,7 +468,7 @@ export class GitStateTracker {
                     return;
                 }
                 tracker.gitDirectory = directories.gitDirectory;
-                tracker.unwatch = this.#watchRegistry.watch({
+                tracker.unwatch = machine.watchMetadata({
                     commonDirectory: directories.commonDirectory,
                     gitDirectory: directories.gitDirectory,
                     onDirty: (change) => this.#watchChanged(tracker, change),
@@ -470,10 +519,11 @@ export class GitStateTracker {
     }
 
     async #resolveGitDirectories(
+        machine: GitRepositoryMachine,
         path: string,
     ): Promise<{ commonDirectory: string; gitDirectory: string } | undefined> {
         try {
-            const result = await this.#scan({
+            const result = await machine.scan({
                 args: ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
                 cwd: path,
             });
@@ -607,17 +657,21 @@ export class GitStateTracker {
                 this.#settleReconcile(tracker, true);
                 return;
             }
+            const machine = this.#machine(tracker.entity);
             const scanned = await scanGitRepositoryWithFingerprint({
+                files: machine.files,
                 ...(tracker.gitDirectory === undefined
                     ? {}
                     : { gitDirectory: tracker.gitDirectory }),
                 path: tracker.entity.path,
                 ...(tracker.snapshot === undefined ? {} : { previous: tracker.snapshot }),
-                runGit: this.#scan,
+                runGit: machine.scan,
                 signal: controller.signal,
             });
             if (this.#disposed || tracker.generation !== generation) return;
             const state = scanned.state;
+            // Retried with backoff like any failure, and rescanned anyway once the watch re-arms.
+            if (state.error !== undefined) machine.assertAvailable();
             tracker.fingerprint = scanned.fingerprint;
             tracker.fullScanAt = Date.now();
             const unchanged = tracker.snapshot !== undefined && sameState(tracker.snapshot, state);
@@ -676,10 +730,12 @@ export class GitStateTracker {
         ) {
             return false;
         }
+        const machine = this.#machine(tracker.entity);
         const fingerprint = await readGitWorktreeFingerprint({
+            files: machine.files,
             gitDirectory: tracker.gitDirectory,
             path: tracker.entity.path,
-            runGit: this.#scan,
+            runGit: machine.scan,
             signal,
         });
         return fingerprint !== undefined && fingerprint === tracker.fingerprint;
@@ -701,10 +757,17 @@ export class GitStateTracker {
         tracker.reconcileAfterScan = false;
     }
 
+    /** The machine a repository is scanned and watched on. */
+    #machine(entity: GitTrackedEntity): GitRepositoryMachine {
+        return this.#remote?.(entity.runnerId) ?? this.#local;
+    }
+
     async #runScan(entity: GitTrackedEntity, signal?: AbortSignal): Promise<GitChangeState> {
+        const machine = this.#machine(entity);
         return await scanGitRepository({
+            files: machine.files,
             path: entity.path,
-            runGit: this.#scan,
+            runGit: machine.scan,
             ...(signal === undefined ? {} : { signal }),
         });
     }
@@ -726,6 +789,7 @@ function sameState(left: GitChangeSnapshot | undefined, right: GitChangeState): 
 function sameEntity(left: GitTrackedEntity, right: GitTrackedEntity): boolean {
     return (
         left.path === right.path &&
+        left.runnerId === right.runnerId &&
         left.projectId === right.projectId &&
         left.workspaceId === right.workspaceId
     );

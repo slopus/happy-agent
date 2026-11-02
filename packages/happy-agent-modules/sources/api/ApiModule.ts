@@ -135,6 +135,7 @@ import { afterCommit, detach, shutdown, type Context } from "@steve.kite/stdlib"
 import {
     createHostNetwork,
     MAX_RUNNER_FRAME_BYTES,
+    RunnerDisconnectedError,
     RunnerUnavailableError,
     type ComputeNetwork,
 } from "@slopus/happy-agent-compute";
@@ -8335,15 +8336,12 @@ export class ApiModule implements AgentModule {
         if (git !== null && request.method === "GET") {
             const workspaceId = git[1] as string;
             const { root, runnerId } = await this.#resolveWorkspaceScope(ctx, workspaceId);
-            // Live Git state is read only for folders this process reads itself.
-            if (this.#runners !== undefined && !this.#runners.native(runnerId)) {
-                throw notFound(
-                    runnerId === undefined
-                        ? "Git state is not tracked while work runs as a separate Linux user."
-                        : "Git state is not tracked on runners.",
-                );
-            }
-            const snapshot = await this.#git.snapshot(root, workspaceId);
+            // A folder on a runner, or a workload user's, is scanned on its own machine.
+            const snapshot = await this.#git.snapshot(
+                root,
+                workspaceId,
+                runnerId === undefined ? {} : { runnerId },
+            );
             sendJson(response, 200, { git: this.#git.resource(snapshot) });
             return true;
         }
@@ -8361,6 +8359,7 @@ export class ApiModule implements AgentModule {
             readonly entity: {
                 readonly path: string;
                 readonly projectId: string;
+                readonly runnerId?: string;
                 readonly workspaceId?: string;
             };
             readonly workspaceId: string;
@@ -8368,12 +8367,11 @@ export class ApiModule implements AgentModule {
         for (const workspaceId of body.workspaceIds) {
             const { projectId, childWorkspaceId, root, runnerId } =
                 await this.#resolveWorkspaceScope(ctx, workspaceId);
-            // A folder on a runner, or a workload user's, has no live Git state; it is simply
-            // absent from the answer.
-            if (this.#runners !== undefined && !this.#runners.native(runnerId)) continue;
+            // A folder on a runner, or a workload user's, is watched and scanned on its machine.
             const entity = {
                 path: root,
                 projectId,
+                ...(runnerId === undefined ? {} : { runnerId }),
                 ...(childWorkspaceId === undefined ? {} : { workspaceId: childWorkspaceId }),
             };
             tracked.push({ entity, workspaceId });
@@ -10234,7 +10232,8 @@ export class ApiModule implements AgentModule {
             });
             return;
         }
-        if (error instanceof RunnerUnavailableError) {
+        // A connection that ended mid-request is the runner going away too: say so, not 500.
+        if (error instanceof RunnerUnavailableError || error instanceof RunnerDisconnectedError) {
             sendJson(response, 503, { code: "runner_unavailable", error: error.message });
             return;
         }
@@ -10409,7 +10408,7 @@ export class ApiModule implements AgentModule {
         if (error instanceof TerminalError && error.code === "not_found") {
             return { code: "not_found", message: notFoundMessage, status: 404 };
         }
-        if (error instanceof RunnerUnavailableError) {
+        if (error instanceof RunnerUnavailableError || error instanceof RunnerDisconnectedError) {
             return { code: "runner_unavailable", message: error.message, status: 503 };
         }
         if (error instanceof LocalExecutionDisabledError) {

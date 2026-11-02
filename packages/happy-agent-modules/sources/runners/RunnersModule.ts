@@ -45,6 +45,11 @@ import { runnerEnvironment } from "./impl/runnerEnvironment.js";
 import { runOnMachine } from "./impl/runOnMachine.js";
 import { sudoRunnerCommand } from "./impl/sudoRunnerCommand.js";
 import { webSocketRunnerChannel } from "./impl/webSocketRunnerChannel.js";
+import {
+    RUNNER_CLOSE_FLUSH_MS,
+    RUNNER_IDLE_TIMEOUT_MS,
+    RUNNER_PING_INTERVAL_MS,
+} from "./liveness.js";
 import type { RunnerRunOptions, RunnerRunResult } from "./RunnerRun.js";
 import {
     queryRunnerSnapshot,
@@ -95,6 +100,8 @@ export class RunnersModule implements AgentModule {
     readonly #instanceId = randomUUID();
     readonly #links = new Map<string, RunnerLink>();
     readonly #products = new Map<string, Promise<Compute>>();
+    /** Every runner WebSocket still open, until its transport has really closed. */
+    readonly #openChannels = new Set<Promise<void>>();
     #local: Compute | undefined;
     /** One runner per Linux user this machine's work runs as, started on first use. */
     readonly #localRunners = new Map<string, LocalUserRunner>();
@@ -218,6 +225,17 @@ export class RunnersModule implements AgentModule {
         return this.#config.runners.entries[runnerId] !== undefined;
     }
 
+    /**
+     * Refuse unless the runner is connected right now. A caller that answers from what it read a
+     * moment ago, or that cannot tell a failed read from a missing runner, asks this first.
+     */
+    assertConnected(runnerId: string): void {
+        if (this.#links.get(runnerId)?.status().state === "connected") return;
+        throw new RunnerUnavailableError(
+            `The runner ${this.displayName(runnerId)} is not connected.`,
+        );
+    }
+
     /** How people know a runner, or its ID when it is no longer configured. */
     displayName(runnerId: string): string {
         return this.#config.runners.entries[runnerId]?.name ?? runnerId;
@@ -275,7 +293,10 @@ export class RunnersModule implements AgentModule {
      */
     acceptWebSocket(runnerId: string, webSocket: BinaryWebSocket): void {
         const ctx = this.#named("runner-connection");
-        void this.accept(runnerId, webSocketRunnerChannel(webSocket)).catch((error: unknown) => {
+        const channel = webSocketRunnerChannel(webSocket);
+        this.#openChannels.add(channel.ended);
+        void channel.ended.then(() => this.#openChannels.delete(channel.ended));
+        void this.accept(runnerId, channel).catch((error: unknown) => {
             webSocket.close();
             ctx.log.warn("A runner connection ended with an error.", { runnerId }, error);
         });
@@ -505,9 +526,19 @@ export class RunnersModule implements AgentModule {
         });
     }
 
-    /** Tell every runner to release what this daemon holds, and stop accepting connections. */
+    /**
+     * Tell every runner to release what this daemon holds, and stop accepting connections.
+     *
+     * The goodbye goes first and is given a moment to leave: the runner then releases everything
+     * at once and reconnects to the next daemon promptly, instead of noticing the silence only
+     * after its idle timeout. Disposing each machine afterwards only tidies this side, since the
+     * runner has already let go of them.
+     */
     async close(): Promise<void> {
         this.#closed = true;
+        for (const link of this.#links.values()) link.close("The daemon is shutting down.");
+        this.#links.clear();
+        await flushed([...this.#openChannels]);
         const products: Promise<Compute>[] = [
             ...this.#products.values(),
             ...this.#localProducts.values(),
@@ -522,8 +553,6 @@ export class RunnersModule implements AgentModule {
                 products.map(async (product) => await (await product).dispose(ctx)),
             );
         }
-        for (const link of this.#links.values()) link.close("The daemon is shutting down.");
-        this.#links.clear();
         const locals = [...this.#localRunners.values()];
         this.#localRunners.clear();
         await Promise.allSettled(
@@ -658,6 +687,8 @@ export class RunnersModule implements AgentModule {
         const link = new RunnerLink(this.#named(`runner-${runnerId}`), {
             name: entry.name,
             instanceId: this.#instanceId,
+            pingIntervalMs: RUNNER_PING_INTERVAL_MS,
+            idleTimeoutMs: RUNNER_IDLE_TIMEOUT_MS,
         });
         link.onStatus((status) => this.#statusChanged(runnerId, status));
         this.#links.set(runnerId, link);
@@ -754,4 +785,18 @@ export class RunnersModule implements AgentModule {
         const ctx = this.#lifetime.named(name);
         return this.#database === undefined ? ctx : withAgentDatabase(ctx, this.#database);
     }
+}
+
+/** Wait for closing transports to finish, but never longer than a goodbye needs to leave. */
+async function flushed(channels: readonly Promise<void>[]): Promise<void> {
+    if (channels.length === 0) return;
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+        Promise.allSettled(channels),
+        new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, RUNNER_CLOSE_FLUSH_MS);
+            timer.unref?.();
+        }),
+    ]);
+    clearTimeout(timer);
 }

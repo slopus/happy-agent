@@ -591,7 +591,12 @@ export async function startHappyAgentRuntime(
         const node = new NodeModule(config, bots, compute.computeModule, durableFunctions);
         const skillFolders = new SkillFoldersModule(config, bots);
         const tailcat = new TailcatModule(config, bots, durableFunctions);
-        registerShutdown("tailcat", async (shutdownCtx) => await tailcat.close(shutdownCtx));
+        registerShutdown("tailcat", async (shutdownCtx) => {
+            // Runners reached through Tailcat must hear the daemon's goodbye before the carrier
+            // goes; otherwise each one waits out its idle timeout before reconnecting.
+            await settleRuntimeShutdownTasks(shutdownCtx, shutdownTasks, ["runners"]);
+            await tailcat.close(shutdownCtx);
+        });
         const mobileConnector = new MobileConnectorModule(
             config,
             team,

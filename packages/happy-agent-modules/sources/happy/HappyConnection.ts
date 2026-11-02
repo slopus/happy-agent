@@ -4,6 +4,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 
 import { createId } from "@paralleldrive/cuid2";
+import { RunnerDisconnectedError, RunnerUnavailableError } from "@slopus/happy-agent-compute";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type {
@@ -1388,21 +1389,25 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     /** The same branch comparison the workspace API and the phone's badge describe. */
     async gitState(ctx: Context, agentId: string): Promise<HappyGitStateResponse> {
         const root = await this.#readRoot(ctx, agentId);
-        // Live Git state is read only for folders on this machine.
-        if (root.runnerId !== undefined) {
-            throw new HappyReadRefused(
-                "unsupported",
-                "Changes are not tracked for runner folders.",
-            );
-        }
-        const topLevel = await this.#git.topLevel(root.root).catch(() => undefined);
+        // A folder on a runner is read on the runner, like one here is read here.
+        const placement = root.runnerId === undefined ? {} : { runnerId: root.runnerId };
+        const topLevel = await this.#git.topLevel(root.root, placement).catch((error: unknown) => {
+            refuseLostRunner(error);
+            return undefined;
+        });
         if (topLevel !== root.root) {
             throw new HappyReadRefused(
                 "unsupported",
                 "Changes require a workspace at the root of an available Git repository.",
             );
         }
-        return { success: true, git: this.#git.resource(await this.#git.snapshot(root.root)) };
+        const snapshot = await this.#git
+            .snapshot(root.root, root.root, placement)
+            .catch((error: unknown) => {
+                refuseLostRunner(error);
+                throw error;
+            });
+        return { success: true, git: this.#git.resource(snapshot) };
     }
 
     async readFile(
@@ -3246,4 +3251,11 @@ function selectionFrom(
         return mode;
     }
     return happyLastModeFromConfig(config) ?? fallback;
+}
+
+/** A runner that is away refuses the read as unavailable, saying which runner. */
+function refuseLostRunner(error: unknown): void {
+    if (error instanceof RunnerUnavailableError || error instanceof RunnerDisconnectedError) {
+        throw new HappyReadRefused("unavailable", error.message);
+    }
 }

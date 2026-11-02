@@ -56,8 +56,52 @@ the environment names the platform (`Windows`, `macOS`, `Linux`) and leaves the 
 platform's guidance.
 
 Work on a runner that is not connected, or no longer configured, fails with
-`RunnerUnavailableError`, which the API reports as `503 runner_unavailable`. Nothing falls back to
-this machine.
+`RunnerUnavailableError`, which the API reports as `503 runner_unavailable`. A request whose
+connection ended before the runner answered fails with `RunnerDisconnectedError`, which the API
+reports the same way. Nothing falls back to this machine. `assertConnected(runnerId)` is for callers
+that would otherwise answer from something read a moment ago, or cannot tell a failed read from a
+missing runner — Git's snapshot cache and its scans.
+
+## Noticing a runner that is gone
+
+Either side that stops on purpose says goodbye. `close()` sends it on every link first, waits up to
+`RUNNER_CLOSE_FLUSH_MS` for each runner WebSocket to finish closing, and only then disposes its
+machines; the runner releases everything at once and starts reconnecting. A runner stopped with
+`SIGTERM` does the same in `happy-agent runner`, and closes its Tailcat carrier only after its own
+WebSocket has closed. The daemon's Tailcat exposure is closed only after this module, so the
+goodbye leaves through it. A goodbye is seen within about a second on either side.
+
+A silent loss — a cable, a sleeping laptop, a relay that stops forwarding — is noticed by the ping
+both sides send every `RUNNER_PING_INTERVAL_MS` (5 s) and the idle timeout `RUNNER_IDLE_TIMEOUT_MS`
+(20 s) after which a silent connection is closed: at most about 25 s, inside the 30 s an HTTP
+request waits. The constants live in `liveness.ts` so the daemon and the runner agree on them.
+
+A call made right after a runner went away still waits up to ten seconds for it to come back, as
+`createRunnerCompute` bridges a brief drop; a runner that is away longer than that fails every call
+at once.
+
+## Parity with this machine
+
+Every API reads and changes a runner folder, or a workload user's folder, the way it does a folder
+here, written once against `machine(runnerId)`. Where this machine has a native fast path, the
+runner's own facility does the same job.
+
+| Feature                                           | On a runner or as a workload user                                                                                                                                                                                                   |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| File read, write, tree, revisions                 | Same calls on the folder's machine.                                                                                                                                                                                                 |
+| File search                                       | The runner lists the folder with Git's ignore-aware `ls-files` and the daemon ranks it (`MachineFileIndex`), in place of the FFF index. A file created through the API refreshes the listing.                                       |
+| `files.updated`                                   | One recursive watch per folder on the runner, shared with live Git (`GitModule.watchWorkingTree`). A directory inside a skipped tree, such as `node_modules/x`, gets a watch of its own while it is shown.                          |
+| Git snapshot, `GET …/git`                         | Scanned on the runner with the hardened scanner, including untracked line counts and binary bytes read through the runner's filesystem. Used to be `404`.                                                                           |
+| `POST /v0/git/watch`, `git.updated`               | Tracked like a local folder, driven by the runner's watch of the working tree and of the Git directory (HEAD, index, refs, packed-refs, the common directory of a worktree). Fingerprint stale checks unchanged. Used to be absent. |
+| Happy integration Git state                       | Scanned on the folder's machine. Used to be refused.                                                                                                                                                                                |
+| Worktrees, clones, branch renames                 | Run on the runner with its own Git authentication.                                                                                                                                                                                  |
+| Terminals, processes, workspace proxy             | Run on the runner. The native Bun proxy fast path is this machine's only.                                                                                                                                                           |
+| MCP stdio servers                                 | Run on the runner through its processes, without the SDK's restricted-environment transport.                                                                                                                                        |
+| Port bridges (`localToWorkspace`)                 | Available.                                                                                                                                                                                                                          |
+| Port bridges (`workspaceToLocal`), USB, Bluetooth | `runner_compute`. Steve approved bridges on the daemon's machine only; the proposal is under "Not yet on runners" in `LEARNINGS.md`.                                                                                                |
+| Secrets attached to commands                      | Refused (`refuseAttachedSecrets`). Proposal in `LEARNINGS.md`; not implemented.                                                                                                                                                     |
+| Strict workspace services                         | Unavailable: a runner machine has no `services`. Proposal in `LEARNINGS.md`; not implemented.                                                                                                                                       |
+| Runner loss                                       | `503 runner_unavailable` on every route, including a request cut off mid-way and a Git snapshot served from cache.                                                                                                                  |
 
 ## Work as separate Linux users
 

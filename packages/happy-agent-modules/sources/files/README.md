@@ -51,10 +51,15 @@ lean on this machine's own disk:
 
 - Search lists the folder on the runner — Git's ignore-aware view of the working tree, or a bounded
   walk outside a repository — and ranks the names here. Each of the eight most recently searched
-  runner folders keeps one listing, listed again after its watch reports a change, or after two
-  seconds when nothing watches it.
-- Watching uses the runner's own recursive watcher for the whole folder, skipping dependency and
-  repository directories, for at most eight recently read runner folders. A runner that disconnects
-  ends its watches; the next read arms them again.
+  runner folders keeps one listing, listed again after its watch reports a change, after a file is
+  created through the API, or after two seconds when nothing watches it.
+- Watching uses the Git module's shared watch of the folder on the runner
+  (`GitModule.watchWorkingTree`), the same one live Git tracking uses, so `files.updated` and
+  `git.updated` cost one runner watch together. It skips dependency and repository directories; a
+  directory shown inside one of them, such as `node_modules/pkg`, gets a watch of its own, for at
+  most eight such directories. A runner that disconnects ends the watches, and they are re-armed
+  when it returns.
 
-Live Git state stays local, so writes to a runner folder do not touch the Git module's caches.
+A write to a runner folder invalidates its Git snapshot and marks it changed, as a local write does.
+A runner that is away answers `RunnerUnavailableError`, and one that disconnects mid-request
+`RunnerDisconnectedError`; the API reports both as `503 runner_unavailable`.

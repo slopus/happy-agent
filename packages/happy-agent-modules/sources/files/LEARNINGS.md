@@ -150,7 +150,8 @@ became `readFileBuffer` with `noFollow`, preceded by a regular-file check and fo
 resolution that must land on the same path. Replaced files keep their permission bits and new files
 get the machine's default mode, instead of both inheriting the temporary file's `0600`. Only search and watching differ, because FFF and
 non-recursive native watches read this machine's disk: runner folders are listed and watched by the
-runner itself.
+runner itself, through the Git module's shared watch so that file and Git events cost one runner
+watch rather than one each.
 
 A runner folder's Git listing stops at 20,000 paths, and ranking that cut-off list silently lost
 every later file. When the listing is truncated, a search with a query now asks Git for only the

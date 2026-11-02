@@ -1,6 +1,10 @@
 import { hostname } from "node:os";
 
 import { createRunnerMachine, RunnerHost, type RunnerIdentity } from "@slopus/happy-agent-compute";
+import {
+    RUNNER_IDLE_TIMEOUT_MS,
+    RUNNER_PING_INTERVAL_MS,
+} from "@slopus/happy-agent-modules/runners/liveness";
 import type { Context } from "@steve.kite/stdlib";
 
 import { getDaemonIdentity } from "../lifecycle/getDaemonIdentity.js";
@@ -24,6 +28,8 @@ export function createRunnerHostFor(
     const host = new RunnerHost({
         ctx,
         identity,
+        pingIntervalMs: RUNNER_PING_INTERVAL_MS,
+        idleTimeoutMs: RUNNER_IDLE_TIMEOUT_MS,
         createCompute: async (computeCtx, request) =>
             createRunnerMachine(computeCtx, request, {
                 home: options.home,
