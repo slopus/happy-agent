@@ -749,6 +749,7 @@ export async function startHappyAgentRuntime(
             bots,
             team,
             userSettings,
+            artifacts,
         );
         const apiModule = new ApiModule(
             abort,

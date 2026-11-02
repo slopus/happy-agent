@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 
 import { Value } from "@sinclair/typebox/value";
 import {
@@ -79,17 +79,39 @@ export class ChatMediaModule implements AgentModule {
         name: string,
         source?: MediaItemSource,
     ): Promise<ChatMediaItem> {
+        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        return await this.#keep(bytes, { sha256, size: bytes.byteLength }, name, source);
+    }
+
+    /**
+     * Snapshot a file the daemon already keeps under its digest, such as a received upload,
+     * without holding a video in memory or writing its bytes again. Only a picture is read, to
+     * be measured.
+     */
+    async snapshotStored(
+        path: string,
+        digest: { readonly sha256: string; readonly size: number },
+        name: string,
+    ): Promise<ChatMediaItem> {
+        return await this.#keep({ path, size: digest.size }, digest, name);
+    }
+
+    async #keep(
+        content: Uint8Array | { readonly path: string; readonly size: number },
+        { sha256, size }: { readonly sha256: string; readonly size: number },
+        name: string,
+        source?: MediaItemSource,
+    ): Promise<ChatMediaItem> {
         const displayName = chatMediaName(name);
         const candidate = chatMediaCandidate(displayName);
-        if (bytes.byteLength > candidate.maxBytes) {
+        if (size > candidate.maxBytes) {
             throw new Error(
                 `${quoteVisibleExact(displayName)} is larger than the ${formatMiB(candidate.maxBytes)} a presented ${candidate.kind} may be.`,
             );
         }
-        const sha256 = createHash("sha256").update(bytes).digest("hex");
         const base = {
             name: displayName,
-            size: bytes.byteLength,
+            size,
             sha256,
             // A path too long to record only means a layout block cannot name the item.
             ...(source === undefined || !Value.Check(mediaItemSourceSchema, source)
@@ -98,6 +120,7 @@ export class ChatMediaModule implements AgentModule {
         };
         let item: ChatMediaItem;
         if (candidate.kind === "image") {
+            const bytes = content instanceof Uint8Array ? content : await readFile(content.path);
             const image = await measureChatImage(bytes, candidate.mimeType);
             item =
                 image === undefined
@@ -106,7 +129,7 @@ export class ChatMediaModule implements AgentModule {
         } else {
             item = { kind: candidate.kind, mimeType: candidate.mimeType, ...base };
         }
-        await writeChatMediaContent(this.#config.chatMediaContentPath(sha256), bytes);
+        await writeChatMediaContent(this.#config.chatMediaContentPath(sha256), content);
         return item;
     }
 

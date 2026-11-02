@@ -402,13 +402,16 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
         return parseSuggestedNames(answer, request.wanted);
     }
 
-    /** Suggest a short, role-like identity for a bot from its first user message. */
+    /**
+     * Suggest a short, role-like identity for a bot from its first user message, and in the
+     * same request a short title within its budget.
+     */
     async suggestBotName(
         ctx: Context,
         firstMessage: string,
         providerId?: string,
         options: { readonly signal?: AbortSignal } = {},
-    ): Promise<string | undefined> {
+    ): Promise<{ readonly title: string; readonly short?: string } | undefined> {
         if (firstMessage.trim().length === 0) return undefined;
         const route = this.#route(providerId);
         if (route === undefined) return undefined;
@@ -421,8 +424,12 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
             timeoutMs: NAMING_TIMEOUT_MS,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
+        // Asked alone, an untagged answer is still the name; the short title must be tagged.
         const title = parseSuggestedNames(answer, { title: true }).title;
-        return title?.split(/\s+/u).slice(0, 3).join(" ").slice(0, 40).trimEnd();
+        const short = parseSuggestedNames(answer, { title: true, short: true }).short;
+        const name = title?.split(/\s+/u).slice(0, 3).join(" ").slice(0, 40).trimEnd();
+        if (name === undefined || name.length === 0) return undefined;
+        return { title: name, ...(short === undefined ? {} : { short }) };
     }
 
     /** A useful bounded first-message name when all provider attempts failed. Never reads history. */

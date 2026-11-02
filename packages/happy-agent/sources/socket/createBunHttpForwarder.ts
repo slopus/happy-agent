@@ -12,9 +12,13 @@ const HOP_HEADERS = new Set([
     "upgrade",
 ]);
 
-/** Stream native Bun HTTP requests through the existing authenticated API handler. */
+/**
+ * Stream native Bun HTTP requests through the existing authenticated API handler. A request fails
+ * once `idleTimeoutMs` passes with neither a response nor a byte of its body.
+ */
 export function createBunHttpForwarder(
     target: string | { readonly hostname: string; readonly port: number },
+    idleTimeoutMs = 30_000,
 ) {
     const agent = new Agent({
         keepAlive: true,
@@ -49,9 +53,11 @@ export function createBunHttpForwarder(
                     request.body === null ? undefined : Readable.fromWeb(request.body as never);
                 const timer = setTimeout(
                     () => upstream.destroy(new Error("The API request timed out.")),
-                    30_000,
+                    idleTimeoutMs,
                 );
                 timer.unref();
+                // A large upload on a slow link is still progressing; only silence times out.
+                upload?.on("data", () => timer.refresh());
                 const abort = () => upstream.destroy(new Error("The HTTP request was cancelled."));
                 let completed = false;
                 const cleanup = () => {

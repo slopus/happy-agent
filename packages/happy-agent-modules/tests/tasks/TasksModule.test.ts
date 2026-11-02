@@ -1800,6 +1800,7 @@ describe("TasksModule", () => {
                 "005-task-explicit-leaves",
                 "006-task-order-keys-renumbered",
                 "007-task-member-unread",
+                "008-task-short-name",
             ]);
         } finally {
             database.close();

@@ -13,6 +13,8 @@ export const titleNamesWantedSchema = Type.Object(
         slug: Type.Optional(Type.Boolean()),
         /** The chat title, written the way a person writes a title. */
         title: Type.Optional(Type.Boolean()),
+        /** A very short label for the same subject, within `MAX_SHORT_TITLE_CHARS`. */
+        short: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: false },
 );
@@ -23,6 +25,7 @@ export type TitleNamesWanted = Static<typeof titleNamesWantedSchema>;
 export interface TitleNames {
     readonly slug?: string;
     readonly title?: string;
+    readonly short?: string;
 }
 
 /** How much of the first message the naming request carries. */
@@ -32,6 +35,11 @@ export const MAX_NAMING_TRANSCRIPT_CHARS = 12_000;
 /** A chat title is a label in a list, not a sentence. */
 export const MAX_CHAT_TITLE_CHARS = 80;
 export const MAX_CHAT_TITLE_WORDS = 6;
+/**
+ * A short label is at most this many UTF-16 code units, emoji included. It is a strict budget:
+ * an answer over it is discarded, never shortened.
+ */
+export const MAX_SHORT_TITLE_CHARS = 13;
 /** A folder key and a branch segment stay short enough to read in a path. */
 export const MAX_SLUG_CHARS = 48;
 

@@ -22,6 +22,8 @@ export const botRecordSchema = Type.Object(
         systemKey: Type.Optional(botSystemKeySchema),
         name: botNameSchema,
         nameConfigured: Type.Boolean(),
+        /** A generated label within a strict length budget; a rename clears it. */
+        shortName: Type.Optional(botNameSchema),
         username: botUsernameSchema,
         workspaceId: cuid2Schema,
         workspaceVersion: botVersionSchema,

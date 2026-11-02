@@ -82,6 +82,7 @@ import {
     taskListScopeSchema,
     unarchiveTaskRequestSchema,
     renameBotRequestSchema,
+    storyCreateRequestSchema,
     storyReplyRequestSchema,
     storyRepostRequestSchema,
     storyMetadataSchema,
@@ -7252,10 +7253,29 @@ export class ApiModule implements AgentModule {
         }
         if (request.method === "POST" && url.pathname === "/v0/stories") {
             if (!(await stories.enabled(ctx))) throw notFound("The story was not found.");
-            const { media, metadata, round } = await readStoryUpload(request, true);
-            const story = await stories.upload(ctx, media!, metadata, round).catch(storyInputError);
+            // Files streamed through artifact uploads are referenced; multipart carries its own.
+            const story = request.headers["content-type"]?.startsWith("application/json")
+                ? await stories
+                      .create(ctx, await bodyAs(request, storyCreateRequestSchema, "story"))
+                      .catch(storyInputError)
+                : await readStoryUpload(request, true).then(
+                      async ({ media, metadata, round }) =>
+                          await stories.upload(ctx, media!, metadata, round).catch(storyInputError),
+                  );
             if (story === undefined) throw notFound("The story was not found.");
             sendJson(response, 200, { story });
+            return true;
+        }
+        const layer = /^\/v0\/stories\/([a-z][a-z0-9]*)\/layers\/([a-z][a-z0-9]*)$/.exec(
+            url.pathname,
+        );
+        if (layer !== null && request.method === "GET") {
+            const file = await stories.file(ctx, layer[1]!, "media", layer[2]!);
+            if (file === undefined) throw notFound("The story was not found.");
+            await sendStoredFile(request, response, {
+                ...file,
+                cacheControl: "private, max-age=31536000, immutable",
+            });
             return true;
         }
         const match =
@@ -7300,7 +7320,7 @@ export class ApiModule implements AgentModule {
             const round =
                 upload?.round ?? (legacy?.round && Buffer.from(legacy.round.data, "base64"));
             const story = await stories
-                .repost(ctx, storyId, body.caption ?? null, round, body.layers)
+                .repost(ctx, storyId, body.caption ?? null, round, body.layers, legacy?.mediaLayers)
                 .catch(storyInputError);
             if (story === undefined) throw notFound("The story was not found.");
             sendJson(response, 200, { story });
@@ -9516,7 +9536,8 @@ export class ApiModule implements AgentModule {
         // Capture first. A mutation concurrent with the reads is replayed after this cursor, which
         // may cause a harmless dirty/refetch but can never disappear between snapshot and stream.
         const cursor = this.#journal.cursor();
-        const [profile, projects, workspaces, bots] = await Promise.all([
+        // The feed is read alongside the catalog, so stories cost the desktop no extra request.
+        const [profile, projects, workspaces, bots, stories] = await Promise.all([
             this.#team.enabled
                 ? this.#team.currentUser(ctx).then(teamProfileResource)
                 : this.#profile.ensure(ctx).then(profileResource),
@@ -9525,6 +9546,7 @@ export class ApiModule implements AgentModule {
                 ? this.#allWorkspaces(ctx, undefined, false)
                 : Promise.resolve([]),
             this.#bots.list(ctx),
+            this.#storiesBootstrap(ctx),
         ]);
         const shallow = workspaces.filter(
             (workspace: Workspace) => workspace.parentId === workspace.projectRef,
@@ -9571,8 +9593,17 @@ export class ApiModule implements AgentModule {
             ...(this.#userSettings === undefined
                 ? {}
                 : { userSettings: await this.#userSettings.list(ctx) }),
+            ...stories,
             cursor,
         };
+    }
+
+    /** Whether Stories is on for the caller, and exactly the feed `GET /v0/stories` lists. */
+    async #storiesBootstrap(ctx: Context): Promise<Record<string, unknown>> {
+        const stories = this.#stories;
+        if (stories === undefined) return {};
+        const storiesEnabled = await stories.enabled(ctx);
+        return { storiesEnabled, stories: storiesEnabled ? await stories.list(ctx) : [] };
     }
 
     /** Every task oldest first, and the caller's own memberships in the caller's order. */

@@ -174,9 +174,10 @@ export class BotsModule implements AgentModule {
                         },
                     );
                     if (name === null) return null;
-                    const title = name ?? this.#titles.fallbackName(message, true);
+                    const title = name?.title ?? this.#titles.fallbackName(message, true);
                     ctx.lifetime?.throwIfAborted();
                     if (title === undefined) return null;
+                    const short = name?.short;
                     await ctx.inTx(async (txCtx) => {
                         const current = await this.#required(txCtx, botId);
                         if (current.nameConfigured || current.status !== "active") return;
@@ -185,6 +186,7 @@ export class BotsModule implements AgentModule {
                             ...bot,
                             name: title,
                             nameConfigured: true,
+                            ...(short === undefined ? {} : { shortName: short }),
                         }));
                     });
                     return null;
@@ -691,7 +693,8 @@ export class BotsModule implements AgentModule {
     async #rename(ctx: Context, current: BotRecord, name: string): Promise<BotRecord> {
         if (current.name === name && current.nameConfigured) return current;
         await this.#setAgentTitle(ctx, current.agentId, name);
-        return await this.#change(ctx, current, (bot) => ({
+        // A generated short name described the old name; the reader falls back to the new one.
+        return await this.#change(ctx, current, ({ shortName: _short, ...bot }) => ({
             ...bot,
             name,
             nameConfigured: true,

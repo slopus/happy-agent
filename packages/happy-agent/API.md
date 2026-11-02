@@ -8909,7 +8909,7 @@ Fields:
 - `stories` — whether this bot has story tools and visible stories, off by default. Current daemons return a boolean; older compatible daemons may omit it. Stored in the bot's settings and included in `bot.updated`.
 - `name` — the human display name. Required, 1–256 nonblank characters, no ASCII control
   characters.
-- `shortName` — optional generated label for compact places, at most 14 UTF-16 code units
+- `shortName` — optional generated label for compact places, at most 13 UTF-16 code units
   (JavaScript string length, emoji included). Absent until automatic naming produces one, after
   any rename, and on older compatible daemons; clients then shorten `name` themselves. A
   generated label over the budget is discarded, never shortened.
@@ -10593,7 +10593,7 @@ Fields:
 - `name` — the human display name, 1–256 nonblank characters without ASCII control characters.
   The task's agent title follows it. A task created without a name is called `New Task` until it
   names itself; see `POST /v0/tasks`.
-- `shortName` — optional generated label for compact places, at most 14 UTF-16 code units
+- `shortName` — optional generated label for compact places, at most 13 UTF-16 code units
   (JavaScript string length, emoji included). Absent until automatic naming produces one, after
   any rename, and on older compatible daemons; clients then shorten `name` themselves. A
   generated label over the budget is discarded, never shortened.
@@ -10710,7 +10710,7 @@ first accepted text-bearing message starts one durable asynchronous naming job: 
 or the message from the agent that created it, which is how a `create_task` call's opening `text`
 arrives. Naming uses that message alone and the same cheap, bounded inference as workspace naming,
 and asks for a short title of the work, two to six words, and in the same request a `shortName` of
-at most 14 UTF-16 code units, preferably one word and an emoji; an answer over that budget leaves
+at most 13 UTF-16 code units, preferably one word and an emoji; an answer over that budget leaves
 `shortName` absent. The excerpt fallback supplies no `shortName`. Message acceptance and the task's own
 turn never wait for naming. Failure or timeout does not fail the message. A new naming job makes
 at most three bounded attempts, waiting one second before its second attempt and five seconds

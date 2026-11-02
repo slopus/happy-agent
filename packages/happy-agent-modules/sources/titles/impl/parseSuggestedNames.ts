@@ -1,6 +1,7 @@
 import {
     MAX_CHAT_TITLE_CHARS,
     MAX_CHAT_TITLE_WORDS,
+    MAX_SHORT_TITLE_CHARS,
     MAX_SLUG_CHARS,
     type TitleNames,
     type TitleNamesWanted,
@@ -28,9 +29,11 @@ export function parseSuggestedNames(text: string, wanted: TitleNamesWanted): Tit
     };
     const title = keep(read("title"), shortenTitle);
     const slug = keep(read("slug"), toSlug);
+    const short = keepShort(read("short"));
     return {
         ...(slug === undefined ? {} : { slug }),
         ...(title === undefined ? {} : { title }),
+        ...(short === undefined ? {} : { short }),
     };
 }
 
@@ -39,6 +42,14 @@ function keep(answer: string | undefined, tidy: (value: string) => string): stri
     if (answer === undefined) return undefined;
     const name = tidy(answer);
     return name.length === 0 ? undefined : name;
+}
+
+/** A short title within its budget, or nothing: never shortened, unlike the other names. */
+function keepShort(answer: string | undefined): string | undefined {
+    const short = answer?.replace(/^["'`]+|["'`.!?:;,]+$/gu, "").trim();
+    return short && short.length <= MAX_SHORT_TITLE_CHARS && !/\p{Cc}/u.test(short)
+        ? short
+        : undefined;
 }
 
 function readTag(text: string, tag: string): string | undefined {

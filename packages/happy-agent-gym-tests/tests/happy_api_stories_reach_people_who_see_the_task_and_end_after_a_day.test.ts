@@ -94,6 +94,7 @@ interface Story {
     readonly postedAt: number;
     readonly replyCount: number;
     readonly canDelete: boolean;
+    readonly mediaLayers?: readonly { readonly id: string }[];
 }
 
 /** A team with a task whose agent posts exactly the tool calls a scenario asks for. */
@@ -216,6 +217,131 @@ async function removedEvents(client: HappyAgentClient, after: string) {
 }
 
 describe("stories", () => {
+    it("publishes each frame directly to joined teammates without requiring a repost", async () => {
+        const { gym, alice, bob, task, call, feed } = await harness();
+        await bob.joinTask(task.id);
+        await alice.saveUserSetting("stories", { value: true });
+        await bob.saveUserSetting("stories", { value: true });
+        const before = (await bob.getEvents()).latestCursor;
+
+        await call("post_story", { path: "shot.png", caption: "First part" });
+        await call("post_story", { path: "clip.mp4", caption: "Second part" });
+
+        const originals = await feed("alice");
+        expect(originals).toHaveLength(2);
+        expect((await feed("bob")).map((story) => story.id)).toEqual(
+            originals.map((story) => story.id),
+        );
+        expect((await storyEvents(bob, before)).map((story) => story.id)).toEqual(
+            originals.map((story) => story.id),
+        );
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("bootstraps the reader flag and live stories under the ordinary event cursor", async () => {
+        const { gym, alice, call, feed } = await harness();
+        const disabled = await alice.getDesktopBootstrap();
+        expect(disabled).toMatchObject({ storiesEnabled: false, stories: [] });
+
+        await alice.saveUserSetting("stories", { value: true });
+        await call("post_story", { path: "shot.png", caption: "Ready" });
+        const bootstrap = await alice.getDesktopBootstrap();
+        expect(bootstrap).toMatchObject({ storiesEnabled: true, stories: await feed("alice") });
+        expect(bootstrap.cursor).toBeTruthy();
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("follow people into and out of the task live", async () => {
+        const { gym, alice, task, call, feed, clientFor, onboard } = await harness();
+        const carol = clientFor("carol");
+        await onboard(carol, "Carol");
+        await carol.leaveTask(task.id);
+        for (const person of [alice, carol])
+            await person.saveUserSetting("stories", { value: true });
+        await call("post_story", { path: "shot.png", caption: "Ready" });
+        const [story] = await feed("alice");
+        expect(await feed("carol")).toEqual([]);
+
+        const joined = (await carol.getEvents()).latestCursor;
+        await carol.joinTask(task.id);
+        expect((await storyEvents(carol, joined)).map((item) => item.id)).toEqual([story!.id]);
+        expect((await feed("carol")).map((item) => item.id)).toEqual([story!.id]);
+        const left = (await carol.getEvents()).latestCursor;
+        await carol.leaveTask(task.id);
+        expect(await removedEvents(carol, left)).toEqual([story!.id]);
+        expect(await feed("carol")).toEqual([]);
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("compose stored media layers by reference, streamed through the shared upload", async () => {
+        const { gym, alice, bob, call, api, feed, tokenFor } = await harness();
+        for (const person of [alice, bob]) await person.saveUserSetting("stories", { value: true });
+        const media = join(gym.happyHome, "agent", "media");
+        const kept = async () => (await readdir(media, { recursive: true }).catch(() => [])).length;
+        const upload = async (bytes: Buffer) =>
+            (await alice.uploadStoryMedia(new Blob([bytes]))).upload.id;
+        const [shot, clip, junk] = [
+            await upload(SHOT),
+            await upload(CLIP),
+            await upload(CLIP.subarray(0, 40)),
+        ];
+        const place = { x: 0.5, y: 0.4, width: 0.4, aspect: 9 / 16 };
+        const { story } = await alice.postStory({
+            media: { uploadId: shot },
+            caption: "Two clips",
+            mediaLayers: [
+                { uploadId: clip, ...place },
+                { uploadId: clip, ...place, shape: "round", aspect: 1, scale: 2, rotation: 30 },
+            ],
+        });
+        expect(story.media).toMatchObject({ kind: "image", mimeType: "image/png" });
+        expect(story.mediaLayers).toEqual([
+            expect.objectContaining({
+                kind: "video",
+                mimeType: "video/mp4",
+                size: CLIP.length,
+                ...place,
+            }),
+            expect.objectContaining({ kind: "video", shape: "round", scale: 2, rotation: 30 }),
+        ]);
+        expect((await feed("bob")).map((item) => item.mediaLayers?.length)).toEqual([2]);
+        const layerUrl = new URL(
+            `/v0/stories/${story.id}/layers/${story.mediaLayers![1]!.id}`,
+            gym.daemon.httpUrl,
+        );
+        const ranged = await fetch(layerUrl, {
+            headers: { authorization: `Bearer ${tokenFor("bob")}`, range: "bytes=0-9" },
+        });
+        expect(ranged.status).toBe(206);
+        expect(ranged.headers.get("content-range")).toBe(`bytes 0-9/${String(CLIP.length)}`);
+        expect(ranged.headers.get("cache-control")).toContain("immutable");
+        expect(Buffer.from(await ranged.arrayBuffer()).equals(CLIP.subarray(0, 10))).toBe(true);
+        for (const body of [
+            { media: { uploadId: junk } },
+            { media: { uploadId: "missing" } },
+            { media: { uploadId: shot }, layers: { round: { x: 0.5, y: 0.5 } } },
+        ])
+            expect((await api("alice", "POST", "/v0/stories", body)).status).toBe(400);
+
+        // A repost references the original and adds its own layers; no media is stored again.
+        await call("post_story", { path: "shot.png", caption: "Agent frame" });
+        const original = (await feed("bob")).find((item) => item.caption === "Agent frame")!;
+        const before = await kept();
+        const { story: repost } = await bob.repostStory(original.id, {
+            mediaLayers: [{ uploadId: clip, ...place }],
+            round: { data: CLIP.toString("base64") },
+        });
+        expect(await kept()).toBe(before);
+        expect(repost.media).toEqual(original.media);
+        expect(repost.mediaLayers).toEqual([
+            expect.objectContaining({ kind: "video", ...place }),
+            expect.objectContaining({ id: "round", shape: "round", width: 0.4, aspect: 1 }),
+        ]);
+        const round = await api("alice", "GET", `/v0/stories/${repost.id}/layers/round`);
+        expect(round.body.equals(CLIP)).toBe(true);
+        expect(gym.errors).toEqual([]);
+    });
+
     it("stay off until a person turns them on, and an agent of a person with them off cannot post", async () => {
         const { gym, alice, call, feed } = await harness();
         const health = (await alice.getHealth()) as { capabilities?: Record<string, unknown> };
@@ -235,7 +361,7 @@ describe("stories", () => {
         expect(gym.errors).toEqual([]);
     });
 
-    it("reach only the task owner, then reach teammates when the owner reposts", async () => {
+    it("reach only people who joined the task, then teammates outside it when someone reposts", async () => {
         const { gym, alice, bob, task, call, api, feed, clientFor, onboard } = await harness();
         const carol = clientFor("carol");
         await onboard(carol, "Carol");
@@ -272,12 +398,18 @@ describe("stories", () => {
         expect(await storyEvents(carol, before)).toEqual([]);
 
         await bob.saveUserSetting("stories", { value: true });
-        expect(await feed("bob")).toEqual([]);
-        expect((await api("bob", "POST", `/v0/stories/${image!.id}/repost`, {})).status).toBe(404);
+        expect((await feed("bob")).map((story) => story.id)).toEqual([image!.id, clip!.id]);
+        expect((await api("carol", "POST", `/v0/stories/${image!.id}/repost`, {})).status).toBe(
+            404,
+        );
         const reposted = await api("alice", "POST", `/v0/stories/${image!.id}/repost`, {});
         expect(reposted.status).toBe(200);
         const repost = JSON.parse(reposted.body.toString()).story as Story;
-        expect((await feed("bob")).map((story) => story.id)).toEqual([repost.id]);
+        expect((await feed("bob")).map((story) => story.id)).toEqual([
+            image!.id,
+            clip!.id,
+            repost.id,
+        ]);
         expect((await feed("carol")).map((story) => story.id)).toEqual([repost.id]);
         const media = await api("bob", "GET", `/v0/stories/${repost.id}/media`);
         expect(media.status).toBe(200);
@@ -285,7 +417,7 @@ describe("stories", () => {
         const bobBefore = (await bob.getEvents()).latestCursor;
         const seen = await api("bob", "POST", `/v0/stories/${repost.id}/seen`);
         expect(JSON.parse(seen.body.toString())).toMatchObject({ story: { seen: true } });
-        expect((await feed("bob"))[0]).toMatchObject({ id: repost.id, seen: true });
+        expect((await feed("bob"))[2]).toMatchObject({ id: repost.id, seen: true });
         expect((await feed("alice"))[2]).toMatchObject({ id: repost.id, seen: false });
         expect(await storyEvents(bob, bobBefore)).toEqual([
             expect.objectContaining({ id: repost.id, seen: true }),
@@ -521,7 +653,8 @@ describe("story replies, reposts, and deletes", () => {
     });
 
     it("bounds a repost's entire multipart body to its round limit plus overhead", async () => {
-        const { gym, alice, bob, call, api, feed } = await harness();
+        const { gym, alice, bob, task, call, api, feed } = await harness();
+        await bob.leaveTask(task.id);
         for (const person of [alice, bob]) await person.saveUserSetting("stories", { value: true });
         await call("post_story", { path: "shot.png" });
         const [story] = await feed("alice");
@@ -830,6 +963,7 @@ describe("story replies, reposts, and deletes", () => {
             const carol = clientFor("carol");
             await onboard(carol, "Carol");
             await carol.leaveTask(task.id);
+            await bob.leaveTask(task.id);
             for (const person of [alice, bob, carol])
                 await person.saveUserSetting("stories", { value: true });
             await call("post_story", { path: "shot.png", caption: "Ready to try" });
@@ -872,7 +1006,7 @@ describe("story replies, reposts, and deletes", () => {
             expect(await storyEvents(alice, before)).toEqual([
                 expect.objectContaining({ replyCount: 1 }),
             ]);
-            // Even another task member cannot read or reply to the owner's original.
+            // Teammates who are not in the task cannot read or reply to its original.
             expect(
                 (await api("bob", "POST", `/v0/stories/${story!.id}/replies`, { text: "Hi" }))
                     .status,
@@ -899,6 +1033,7 @@ describe("story replies, reposts, and deletes", () => {
         const carol = clientFor("carol");
         await onboard(carol, "Carol");
         await carol.leaveTask(task.id);
+        await bob.leaveTask(task.id);
         for (const person of [alice, bob, carol])
             await person.saveUserSetting("stories", { value: true });
         await call("post_story", { path: "shot.png", caption: "Ready to try" });
@@ -953,7 +1088,8 @@ describe("story replies, reposts, and deletes", () => {
     });
 
     it("replaces only the agent's own live originals, removing their reposts for everyone", async () => {
-        const { gym, alice, bob, call, api, feed } = await harness();
+        const { gym, alice, bob, task, call, api, feed } = await harness();
+        await bob.leaveTask(task.id);
         for (const person of [alice, bob]) await person.saveUserSetting("stories", { value: true });
         await call("post_story", { path: "shot.png", caption: "Old" });
         await call("post_story", { path: "shot.png", caption: "Ended" });
@@ -1007,7 +1143,8 @@ describe("story replies, reposts, and deletes", () => {
     });
 
     it("are deleted by the agent's tool, the reposter, and the task's owner, and by nobody else", async () => {
-        const { gym, alice, bob, call, api, feed } = await harness();
+        const { gym, alice, bob, task, call, api, feed } = await harness();
+        await bob.leaveTask(task.id);
         await alice.saveUserSetting("stories", { value: true });
         await bob.saveUserSetting("stories", { value: true });
         for (const caption of ["Kept", "By owner", "By tool"])

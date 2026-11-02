@@ -21,6 +21,7 @@ function harness(teamEnabled: boolean, on: readonly string[], botStories = false
         {
             forAgent: async (_ctx: Context, agentId: string) =>
                 agentId === "task" ? { id: "taskid", ownerUserId: "alice" } : undefined,
+            onEventTransactional: () => () => {},
         } as never,
         {
             forAgent: async (_ctx: Context, agentId: string) =>
@@ -44,6 +45,7 @@ function harness(teamEnabled: boolean, on: readonly string[], botStories = false
                 value: on.includes(reader.get(settingsCtx) ?? "standalone"),
             }),
         } as never,
+        {} as never,
     );
     const hooks = stories.beforeStart(ctx, {} as never);
     function agent(agentId: string) {

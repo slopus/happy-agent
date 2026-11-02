@@ -18,12 +18,12 @@ const postStoryInputSchema = Type.Object(
         caption: Type.Optional(
             Type.String({ minLength: 1, maxLength: 200, description: "A few plain words" }),
         ),
-        replaces: Type.Optional(Type.Array(Type.String(), { maxItems: 5 })),
+        replaces: Type.Optional(Type.Array(Type.String(), { maxItems: 20 })),
     },
     { additionalProperties: false },
 );
 
-/** Post one image or video story on this conversation's row for a day. */
+/** Post one image or video story frame on this conversation's row for a day. */
 export function postStoryTool(
     stories: StoriesModule,
     computeModule: ComputeModule,
@@ -36,13 +36,15 @@ export function postStoryTool(
         name: "post_story",
         defer: false,
         capabilities: [
-            "Post a story to this conversation's ring when you shipped something the owner can see or try, replacing your earlier story; never for progress.",
+            "Post story frames to this conversation's ring when you shipped something people can see or try; never for progress.",
         ],
         description: [
-            "Post a story about something you shipped: an image or short H.264 .mp4 video at path, with an optional caption. It shows for 24 hours as a ring around this conversation's icon in the sidebar. For a task, only the owner sees it until they repost it to their team. A bot's story reaches non-guest team members with Stories on. Clicking the ring plays it.",
-            "Post only when something real shipped that the owner can see or try: a release went out, a change was merged or pushed to main, a new build is on their phone, a page is live. Never post progress, plans, test runs, rebases, or that you started or are still working. One story per thing shipped, not per step. Most turns post nothing.",
-            "Keep the ring fresh, and be aggressive about it: an old story left in the ring is noise. Every time you post, pass replaces with your earlier live story ids that the new one makes stale (up to five). They and their reposts leave as the new story is posted. At most one live story per agent. If you do not know what is live, call list_stories first. Use delete_story to remove a story without posting a new one.",
-            "Show, don't tell. Pick the image or video that shows the result best, final over intermediate. When nothing worth showing has been shown yet, make something first: a screenshot or short video of it working. A caption alone is not a story. Stories are watched on a phone, so prefer a sharp, vertical image: a tall crop of the part that matters reads better than a wide screenshot shrunk to fit. To show several states or steps, record one short video instead of a series of screenshots.",
+            "Post a story frame about something you shipped: an image or H.264 .mp4 video at path, with an optional caption. It is published at once to everyone who joined this task, or for a bot to non-guest team members with Stories on, for 24 hours, as a ring around this conversation's icon. Clicking the ring plays your frames in order.",
+            "Post only when something real shipped that people can see or try: a release went out, a change was merged or pushed to main, a new build is on their phone, a page is live. Never post progress, plans, test runs, rebases, or that you started or are still working. Most turns post nothing.",
+            "Each call posts one frame. For an update with several parts, outline it first and post one frame per part, in order, rather than combining the parts into one image or video.",
+            "Keep the ring fresh: an old story left in the ring is noise. When an update makes earlier frames stale, pass their ids as replaces on the first new frame (up to twenty); they and their reposts leave as it is posted. Never replace frames of the update you are posting. If you do not know what is live, call list_stories first. Use delete_story to remove a frame without posting a new one.",
+            "Show, don't tell. Pick the image or video that shows the result best, final over intermediate. When nothing worth showing has been shown yet, make something first: a screenshot or video of it working. A caption alone is not a story.",
+            "The viewer is 9:16 (1080×1920). Its top 384 px are covered by the progress bar and poster, the bottom 576 px by the caption and reply field, and 48 px at each side. Content that must be fully seen should be scaled and placed inside x 48–1032, y 384–1344; prefer a vertical frame.",
             'Write the caption for someone who is not reading the code: what changed for them, in a few plain words, such as "Stories now play on your phone" or "New test build is on your phone". No commit hashes, versions, test counts, file or branch names, or scores like "14/14" unless the person asked for them. Never invent results.',
         ].join("\n\n"),
         parameters: postStoryInputSchema,
@@ -58,7 +60,7 @@ export function postStoryTool(
         shouldRunInFullAccessInAutoMode: ({ path }, ctx) =>
             computeModule.shouldReviewPath(ctx, compute, path, { write: false }),
         describeAutoPermissionAction: ({ path }) =>
-            `posting ${quoteVisibleExact(path)} from this machine as a story for a day: only the task owner until they repost it, or non-guest team members with Stories on for a bot. Access: local file read (outside-workspace or symlink targets require full access)`,
+            `posting ${quoteVisibleExact(path)} from this machine as a story for a day, seen by everyone who joined the task, or by non-guest team members with Stories on for a bot. Access: local file read (outside-workspace or symlink targets require full access)`,
         execute: async (ctx, { path, caption, replaces }, call) => {
             const permissions = computeModule.permissionsForContext(ctx);
             const resolved = computeModule.resolvePath(compute, path);
@@ -72,7 +74,7 @@ export function postStoryTool(
                 throw new Error(`${quoteVisibleExact(path)} is not a file a story can show.`);
             const { maxBytes } = limit;
             const bytes = await compute.fs.readFileBuffer(permissions, resolved, { maxBytes });
-            if (limit.kind === "video" && !isH264Mp4(bytes))
+            if (limit.kind === "video" && !(await isH264Mp4(bytes)))
                 throw new Error(`${quoteVisibleExact(path)} is not an H.264 MP4 video.`);
             const item = await chatMedia.snapshot(bytes, name);
             const { kind, mimeType, size, sha256 } = item;
@@ -92,7 +94,7 @@ export function postStoryTool(
         toLLM: ({ replaced }) => [
             {
                 type: "text",
-                text: `Posted the story. It is live for 24 hours. Replaced stories: ${replaced.join(", ") || "none"}.`,
+                text: `Posted the story frame. It is live for 24 hours. Replaced stories: ${replaced.join(", ") || "none"}.`,
             },
         ],
     });

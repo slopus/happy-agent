@@ -142,4 +142,14 @@ export const botMigrations = [
             );
         },
     ],
+    [
+        "008-bot-short-name",
+        /** A generated label within a strict length budget; existing bots have none. */
+        async (_ctx: Context, database: AgentDatabase): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(BOTS_TABLE)} ADD COLUMN short_name TEXT`,
+            );
+        },
+    ],
 ] as const;

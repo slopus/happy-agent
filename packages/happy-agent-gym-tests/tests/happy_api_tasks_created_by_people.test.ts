@@ -9,23 +9,24 @@ afterEach(async () => {
 
 const TASK_ID = "taskcreatedbyperson00001";
 
+/** A gym whose naming model answers `names`, and whose task agent says it is on it. */
+async function namingGym(names: string) {
+    const gym = await createAgentGym({
+        timeoutMs: 20_000,
+        inference: (request) =>
+            request.sessionId.startsWith("naming:")
+                ? { content: [{ type: "text", text: names }] }
+                : { content: [{ type: "text", text: "On it." }] },
+    });
+    running.add(gym);
+    return gym;
+}
+
 describe("tasks people create", () => {
     it("is ready at once, retries without side effects, runs, names itself, and renames", async () => {
-        const gym = await createAgentGym({
-            timeoutMs: 20_000,
-            inference: (request) =>
-                request.sessionId.startsWith("naming:")
-                    ? {
-                          content: [
-                              {
-                                  type: "text",
-                                  text: "<title>Audit billing exports</title><slug>audit-billing-exports</slug>",
-                              },
-                          ],
-                      }
-                    : { content: [{ type: "text", text: "On it." }] },
-        });
-        running.add(gym);
+        const gym = await namingGym(
+            "<title>Audit billing exports</title><short>Billing 🧾</short><slug>audit-billing-exports</slug>",
+        );
         const before = (await gym.client.getEvents()).latestCursor;
 
         const { task, membership } = await gym.client.createTask({
@@ -84,6 +85,14 @@ describe("tasks people create", () => {
             return current.name === "Audit billing exports" ? current : undefined;
         }, "the task's generated name");
         expect(named.folderName).toBe("task");
+        // The short name comes from the same single naming request.
+        expect(named.shortName).toBe("Billing 🧾");
+        expect((await gym.client.getDesktopBootstrap()).tasks).toEqual([
+            expect.objectContaining({ id: TASK_ID, shortName: "Billing 🧾" }),
+        ]);
+        const naming = gym.inference.requests.filter((r) => r.sessionId.startsWith("naming:"));
+        expect(naming).toHaveLength(1);
+        expect(JSON.stringify(naming[0])).toContain("within 13 characters");
 
         // A rename is a person's decision and is checked against the current version.
         const renamed = await gym.client.renameTask(
@@ -92,10 +101,31 @@ describe("tasks people create", () => {
             { ifMatch: named.version },
         );
         expect(renamed.task).toMatchObject({ name: "Billing audit", folderName: "task" });
+        // The generated short name described the old name, so a rename clears it.
+        expect(renamed.task.shortName).toBeUndefined();
         expect((await gym.client.getAgent(task.agent.id)).agent.title).toBe("Billing audit");
         await expect(
             gym.client.renameTask(TASK_ID, { name: "Stale" }, { ifMatch: named.version }),
         ).rejects.toMatchObject({ status: 409 });
         expect(gym.inference.unscripted).toEqual([]);
+    });
+
+    it("leaves the short name out rather than cutting one over its budget", async () => {
+        const gym = await namingGym(
+            "<title>Audit billing exports</title><short>Billing exports audit 🧾</short>",
+        );
+        const { task } = await gym.client.createTask({ id: TASK_ID });
+        await gym.send("Audit the billing exports for duplicate rows.", {
+            sessionId: task.agent.id,
+        });
+        const named = await gym.waitUntil(async () => {
+            const current = (await gym.client.getTask(TASK_ID)).task;
+            return current.name === "Audit billing exports" ? current : undefined;
+        }, "the task's generated name");
+        expect(named.shortName).toBeUndefined();
+        expect(
+            gym.inference.requests.filter((r) => r.sessionId.startsWith("naming:")),
+        ).toHaveLength(1);
+        expect(gym.errors).toEqual([]);
     });
 });

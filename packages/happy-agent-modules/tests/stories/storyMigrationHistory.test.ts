@@ -24,6 +24,7 @@ it.each(["prototype", "prototype-agents", "minimal-preview", "local-fix", "fresh
             {} as never,
             {} as never,
             {} as never,
+            {} as never,
         );
         try {
             await storage.migrate(ctx, [
