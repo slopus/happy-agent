@@ -233,6 +233,7 @@ for (let round = 0; round < 2; round++) {
                             },
                         },
             prepareLiveSocket: async () => ({ handled: false }),
+            prepareWorkspaceProxyWebSocket: async () => ({ handled: false }),
             prepareBridgeSocket: async () => ({ handled: false }),
             prepareRunnerSocket: () => ({ handled: false }),
             prepareExportedBotSocket: async () => ({ handled: false }),
