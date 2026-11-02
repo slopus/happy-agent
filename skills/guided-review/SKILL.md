@@ -33,16 +33,20 @@ Make the artifact first, then give it two files.
    `files: [{ "fromPath": ".context/changes.diff", "path": "changes.diff" }]`:
 
    ```sh
-   mkdir -p .context && git diff <base> > .context/changes.diff
-   # New files are part of the change too.
-   git ls-files --others --exclude-standard -z \
-     | xargs -0 -I{} git diff --no-index /dev/null {} >> .context/changes.diff
+   # The flags keep a plain unified diff whatever the git config says.
+   mkdir -p .context
+   git diff --no-color --no-ext-diff <base> > .context/changes.diff
+   # New files are part of the change too, but never this scratch folder.
+   git ls-files --others --exclude-standard -z -- . ':!.context' \
+     | xargs -0 -I{} git diff --no-color --no-ext-diff --no-index /dev/null {} \
+     >> .context/changes.diff
    ```
 
-   For a committed range use `git diff <base> <head>` and nothing else. For an
-   explanation of code that did not change, skip the diff and publish the real
-   source files with `update_artifact` and `files: [{ "fromPath": "src/app.ts",
-   "path": "src/app.ts" }]`. Quote their lines with `<happy-code>`.
+   For a committed range use `git diff --no-color --no-ext-diff <base> <head>`
+   and nothing else. For an explanation of code that did not change, skip the
+   diff and publish the real source files with `update_artifact` and
+   `files: [{ "fromPath": "src/app.ts", "path": "src/app.ts" }]`. Quote their
+   lines with `<happy-code>`.
 3. **`index.html`** — the review, written with `write_artifact_file`, in this
    order: the standard styles, your few lines of CSS, the HTML, and the
    components script last.

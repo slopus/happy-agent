@@ -394,4 +394,71 @@ describe("standard files", () => {
                 .children[0]!.children.map((row) => row.children.map((cell) => cell.text)),
         ).toEqual([["a = 1"], ["b = 2"]]);
     });
+
+    it("reads a diff's paths whatever prefixes git was configured to write", async () => {
+        // diff.mnemonicPrefix: c/ and w/ for the work tree, 1/ and 2/ for --no-index.
+        const mnemonic = [
+            "diff --git c/src/app.ts w/src/app.ts",
+            "index 814f4a4..99b356d 100644",
+            "--- c/src/app.ts",
+            "+++ w/src/app.ts",
+            "@@ -1,2 +1,2 @@",
+            " one",
+            "-two",
+            "+2",
+            "diff --git c/src/old name.ts w/src/new name.ts",
+            "similarity index 100%",
+            "rename from src/old name.ts",
+            "rename to src/new name.ts",
+            "diff --git c/gone.ts w/gone.ts",
+            "deleted file mode 100644",
+            "--- c/gone.ts",
+            "+++ /dev/null",
+            "@@ -1 +0,0 @@",
+            "-bye",
+            "diff --git 1/notes.md 2/notes.md",
+            "new file mode 100644",
+            "--- /dev/null",
+            "+++ 2/notes.md",
+            "@@ -0,0 +1 @@",
+            "+hi",
+            "",
+        ].join("\n");
+        // diff.noprefix: a folder named a/ is the path's own, not a prefix.
+        const noPrefix = [
+            "diff --git a/b.ts a/b.ts",
+            "--- a/b.ts",
+            "+++ a/b.ts",
+            "@@ -1 +1 @@",
+            "-x",
+            "+y",
+            "diff --git my notes.md my notes.md",
+            "new file mode 100644",
+            "--- /dev/null",
+            "+++ my notes.md",
+            "@@ -0,0 +1 @@",
+            "+hi",
+            "",
+        ].join("\n");
+        const { draw } = await page();
+        const titles = (diff: Element) =>
+            diff.children.map((section) => [
+                section.getAttribute("data-path"),
+                section.find("happy-file-title")[0]!.text,
+            ]);
+
+        expect(titles(await draw("happy-diff", {}, mnemonic))).toEqual([
+            ["src/app.ts", "src/app.ts"],
+            ["src/new name.ts", "src/old name.ts→src/new name.tsrenamed"],
+            ["gone.ts", "gone.tsdeleted"],
+            ["notes.md", "notes.mdnew"],
+        ]);
+        expect(titles(await draw("happy-diff", {}, noPrefix))).toEqual([
+            ["a/b.ts", "a/b.ts"],
+            ["my notes.md", "my notes.mdnew"],
+        ]);
+        const quoted = await draw("happy-diff", { path: "src/app.ts", lines: "2" }, mnemonic);
+        expect(quoted.find("happy-error")).toEqual([]);
+        expect(quoted.find("happy-code-header")[0]!.text).toBe("src/app.ts+1 −1");
+    });
 });

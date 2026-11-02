@@ -121,3 +121,13 @@ uses an ellipsis only between separate hunks. Its table cells already have no bo
 pages should leave their styling to the standard components. Code excerpts use the same 12px text,
 20px line height, and renderer spacing as the app, rather than larger text and wider code-only
 insets.
+
+## Components read any diff prefix
+
+Diff paths used to lose only `a/` and `b/`, so a diff written with `diff.mnemonicPrefix` (`c/`,
+`w/`, `1/`, `2/`) or `diff.noprefix` named files no `path` attribute matched, and with `noprefix` a
+real top-level folder named `a` was cut off. The parser now reads the prefix from the diff: both
+sides of a `diff --git` line name the same file unless it was renamed, so the prefix is the one
+folder before the path they share; rename and copy lines carry no prefix and are kept as written.
+Only a plain `diff -u` without matching sides falls back to dropping `a/` and `b/`. This is sturdier
+than relying on the skill's git flags alone, because agents also write diffs by other means.
