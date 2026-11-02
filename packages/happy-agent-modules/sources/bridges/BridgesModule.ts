@@ -51,6 +51,8 @@ type BridgeCompute = "host" | "docker" | "runner";
 interface BridgeWorkspace {
     readonly workspaceId: string;
     readonly compute: BridgeCompute;
+    /** The runner holding the folder, when it is on one. */
+    readonly runnerId?: string;
     /** The workspace and the project, bot, or task it belongs to: archiving any ends its bridges. */
     readonly keys: readonly string[];
 }
@@ -61,6 +63,7 @@ interface BridgeEntry {
     readonly kind: "usb" | "port";
     readonly ownerId: string;
     readonly workspaceId: string;
+    readonly runnerId: string | undefined;
     readonly keys: readonly string[];
     readonly name: string | undefined;
     readonly session: UsbBridgeSession | PortBridgeSession;
@@ -128,8 +131,9 @@ export class BridgesModule implements AgentModule {
     /**
      * @param projects The catalog of projects, whose root folders are workspaces too.
      * @param workspaces The catalog of managed workspaces: whether one is ready, and where it runs.
-     * @param runners The owner of the machines folders live on. A bridge reaches the daemon's own
-     * machine only, which runners may have ruled out.
+     * @param runners The owner of the machines folders live on. A USB bridge reaches the daemon's
+     * own kernel only, which runners may have ruled out; a port bridge listens on the folder's
+     * machine, wherever it is.
      */
     constructor(
         projects: ProjectsModule,
@@ -283,6 +287,7 @@ export class BridgesModule implements AgentModule {
                 kind: "usb",
                 ownerId,
                 workspaceId,
+                runnerId: workspace.runnerId,
                 keys: workspace.keys,
                 name: request.name,
                 mutationId: undefined,
@@ -323,7 +328,6 @@ export class BridgesModule implements AgentModule {
         const entry = await this.#admit(ctx, workspaceId, (workspace) => {
             const reach = capabilitiesFor(workspace.compute, machine).workspaceToLocal;
             if (!reach.available) throw unavailable(reach);
-            this.#runners.assertLocalExecution();
             const ports = [...this.#bridges.values()].filter((other) => other.kind === "port");
             if (
                 ports.length >= MAX_PORT_BRIDGES ||
@@ -342,6 +346,7 @@ export class BridgesModule implements AgentModule {
                 kind: "port",
                 ownerId,
                 workspaceId,
+                runnerId: workspace.runnerId,
                 keys: workspace.keys,
                 name: request.name,
                 mutationId: undefined,
@@ -358,7 +363,7 @@ export class BridgesModule implements AgentModule {
         });
         const session = entry.session as PortBridgeSession;
         try {
-            await session.listen(request.port);
+            await session.listen(await this.#runners.machine(entry.runnerId), request.port);
         } catch (error) {
             const ending = session.ending;
             if (ending !== undefined) throw endedBeforeOpening(ending);
@@ -582,7 +587,7 @@ export class BridgesModule implements AgentModule {
             if (bot.status !== "active") throw notAvailable();
             return {
                 workspaceId,
-                compute: bot.runnerId === undefined ? "host" : "runner",
+                ...placed(bot.runnerId),
                 keys: [workspaceId, bot.id],
             };
         }
@@ -591,7 +596,7 @@ export class BridgesModule implements AgentModule {
             if (task.status !== "active") throw notAvailable();
             return {
                 workspaceId,
-                compute: task.runnerId === undefined ? "host" : "runner",
+                ...placed(task.runnerId),
                 keys: [workspaceId, task.id],
             };
         }
@@ -599,15 +604,16 @@ export class BridgesModule implements AgentModule {
         if (chat !== undefined)
             return {
                 workspaceId,
-                compute: chat.runnerId === undefined ? "host" : "runner",
+                ...placed(chat.runnerId),
                 keys: [workspaceId, chat.surfaceId],
             };
         const project = await this.#projects.get(ctx, workspaceId);
         if (project !== undefined) {
             if (project.status !== "active") throw notAvailable();
+            const compute = this.#projects.compute(project);
             return {
                 workspaceId,
-                compute: this.#projects.compute(project).type === "runner" ? "runner" : "host",
+                ...placed(compute.type === "runner" ? compute.runnerId : undefined),
                 keys: [project.id],
             };
         }
@@ -621,15 +627,17 @@ export class BridgesModule implements AgentModule {
         if (workspace.status !== "ready") throw notAvailable();
         return {
             workspaceId,
-            compute:
-                workspace.dockerImage !== undefined
-                    ? "docker"
-                    : workspace.runnerId !== undefined
-                      ? "runner"
-                      : "host",
+            ...(workspace.dockerImage !== undefined
+                ? { compute: "docker" as const }
+                : placed(workspace.runnerId)),
             keys: [workspaceId, workspace.projectRef],
         };
     }
+}
+
+/** Where a folder held by `runnerId`, or by this machine, runs. */
+function placed(runnerId: string | undefined): Pick<BridgeWorkspace, "compute" | "runnerId"> {
+    return runnerId === undefined ? { compute: "host" } : { compute: "runner", runnerId };
 }
 
 /** What a workspace that runs in `compute` can bridge, on a machine that answered `machine`. */
@@ -651,15 +659,16 @@ function capabilitiesFor(
         };
     }
     if (compute === "runner") {
+        // Permanent: a client hides USB and Bluetooth for a workspace that reports this code.
         const runner = unavailableCapability({
             code: "runner_compute",
-            message: "Bridges are not available yet for workspaces on runners.",
+            message: "USB and Bluetooth are not supported on runners.",
         });
         return {
             usb: runner,
             bluetooth: { ...runner, transport: "usb" },
             localToWorkspace: { available: true, reason: null },
-            workspaceToLocal: runner,
+            workspaceToLocal: { available: true, reason: null },
         };
     }
     return {

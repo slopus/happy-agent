@@ -1264,9 +1264,11 @@ While runners are configured and one of them is the default:
   `503 runner_unavailable`, naming the runner. Nothing falls back to this machine.
 - Repository tokens never reach a runner. Git on a runner reaches the remote through a loopback
   address on the runner that leads back over the runner connection to the daemon, which adds the
-  token itself, exactly as it does for Git on this machine. Attached secrets stay on the daemon:
-  an agent command on a runner that selects attached secrets is refused, with a message saying
-  secrets are not available on runners yet.
+  token itself, exactly as it does for Git on this machine. Attached secrets are resolved on the
+  daemon: an agent command on a runner that selects attached secrets receives exactly the selected
+  values with that one command, and the runner forgets them once the process has started. A
+  runner too old to receive them refuses the command, asking for the runner to be updated. A
+  command in a container, on a runner or here, that selects attached secrets is refused.
 - A runner may run another operating system than the daemon. Paths on it follow its own rules, such
   as `C:\Users\happy\happy\workspaces\...` on a Windows runner under a Linux daemon, and folders
   are laid out as that system lays out its own. An agent working in a folder on a runner is told
@@ -5684,9 +5686,12 @@ carried; `"usb"` is the only value today. Codes:
   (`btusb`).
 - `container_compute` — the workspace runs in a Docker container, which has neither the host's
   devices nor its loopback network.
-- `runner_compute` — the workspace is on a runner, where bridges are not available yet.
+- `runner_compute` — the workspace is on a runner. Reported on `usb` and `bluetooth` only, and
+  permanent: runners do not support USB or Bluetooth, so clients hide those options for a
+  workspace that reports this code rather than offering them disabled.
 
-`localToWorkspace` is unavailable only with `container_compute`. `cursor` is captured before the
+`localToWorkspace` is unavailable only with `container_compute`, and `workspaceToLocal` likewise:
+a port bridge on a runner workspace listens on the runner. `cursor` is captured before the
 read; follow events from it. The daemon repeats its machine probe about once a minute and
 publishes `bridges.capabilities.updated` when the answer changes; clients then reread the
 capabilities they show. Bot and task workspaces are addressable here. An unknown workspace is
@@ -5776,11 +5781,14 @@ connection it accepts to the client. Query parameters:
 - `port` — required; 1–65535, or `0` to let the daemon choose.
 - `id`, `name` — as for USB.
 
-The listener binds `127.0.0.1` only, before the upgrade: a port in use or not bindable by the
-daemon's user is `409 port_unavailable`. Other rejections match USB; the limits are 32 open port
-bridges per workspace and 256 per daemon. On Linux the listener accepts only connections from
-processes running as the daemon's own OS user and closes any other at once. On other platforms,
-every local user of that machine can connect.
+The listener binds `127.0.0.1` on the workspace's machine only, before the upgrade: a port in use
+or not bindable there is `409 port_unavailable`. A runner too old for port bridges is
+`409 bridge_unavailable`, asking for the runner to be updated, and a runner that is not connected is `503 runner_unavailable`. Other
+rejections match USB; the limits are 32 open port bridges per workspace and 256 per daemon. On
+Linux the listener accepts only connections from processes running as the OS user that serves the
+workspace's machine — the daemon's own user, the workload user, or the runner's user — and closes
+any other at once. On other platforms, every local user of that machine can connect. A runner that
+comes back without the listener, for example after it restarted, ends the bridge with `failed`.
 
 Every message on this control WebSocket is a JSON text message of at most 16 KiB. The daemon sends:
 

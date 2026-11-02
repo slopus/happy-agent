@@ -9,12 +9,15 @@ and keep correct, and the capability reports `transport: "usb"` so another trans
 later without changing its shape. Bluetooth is available exactly when USB is and the kernel has
 `btusb`.
 
-## Bridges reach the daemon's own machine only
+## USB reaches the daemon's own kernel; ports reach the folder's machine
 
-Steve approved host workspaces only. A Docker workspace has neither the host's devices nor its
-loopback network, so it reports `container_compute`; a runner workspace reports `runner_compute`
-because attaching on a runner's kernel is not built yet. Both are reported as reasons on the
-capability rather than hidden, so a client can explain why the option is missing. USB needs
+Steve first approved host workspaces only. A Docker workspace has neither the host's devices nor
+its loopback network, so it reports `container_compute`. Runners then got port bridges: the
+listener is the folder machine's own compute `network.listen(ctx, { port, ownerOnly: true })`, so a
+host folder, a workload user's folder, and a runner folder all go through one path. USB and
+Bluetooth on runners report `runner_compute` with "USB and Bluetooth are not supported on runners."
+Steve asked for that to be permanent so apps hide the options, and the API says so. Reasons are
+reported on the capability rather than hidden, so a client can explain a missing option. USB needs
 `vhci-hcd` loaded and the daemon's user able to write its attach control; the module never loads a
 kernel module or changes a permission itself.
 
@@ -26,13 +29,19 @@ that WebSocket closes, and also ends on `DELETE`, archival, and shutdown. There 
 replay after restart, and no durable work, which is also why the module does not use Durable
 Functions.
 
-## Port listeners admit only the daemon's own user on Linux
+## Port listeners admit only the machine's own user on Linux
 
 A loopback listener is reachable by every local user of the machine, and a bridge relays to a
-service on the person's own computer. On Linux the listener therefore finds the arriving connection
-in `/proc/self/net/tcp` or `tcp6`, matched by both endpoints, and closes it unless its socket's owner
-is the daemon's user. It fails closed when the entry cannot be found. Other platforms expose no
-equivalent, and the API says that every local user can connect there.
+service on the person's own computer. The listener therefore asks for `ownerOnly`: on Linux the
+compute finds the arriving connection in `/proc/self/net/tcp` or `tcp6`, matched by both
+endpoints, and closes it unless its socket's owner is the user serving that machine. It fails
+closed when the entry cannot be found. The check used to live here and compare against the
+daemon's uid, which was wrong for a workload user, whose programs run as another uid; it now lives
+in compute, which runs as that machine's user. Other platforms expose no equivalent, and the API
+says that every local user can connect there.
+
+A dropped runner connection keeps the listener for the runner's lease, so a network blip does not
+end the bridge; a runner that comes back without it ends the bridge with `failed`.
 
 ## The kernel's USB/IP connection is one end of a socket pair
 

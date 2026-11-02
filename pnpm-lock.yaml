@@ -89,8 +89,8 @@ importers:
         specifier: 0.0.143
         version: 0.0.143
       '@slopus/happy-agent-compute':
-        specifier: 0.1.25
-        version: 0.1.25
+        specifier: 0.1.26
+        version: 0.1.26
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -247,8 +247,8 @@ importers:
         specifier: 0.0.143
         version: 0.0.143
       '@slopus/happy-agent-compute':
-        specifier: npm:@slopus/happy-agent-compute@0.1.25
-        version: 0.1.25
+        specifier: npm:@slopus/happy-agent-compute@0.1.26
+        version: 0.1.26
       '@slopus/happy-agent-modules':
         specifier: workspace:*
         version: link:../happy-agent-modules
@@ -371,8 +371,8 @@ importers:
         specifier: 0.0.143
         version: 0.0.143
       '@slopus/happy-agent-compute':
-        specifier: npm:@slopus/happy-agent-compute@0.1.25
-        version: 0.1.25
+        specifier: npm:@slopus/happy-agent-compute@0.1.26
+        version: 0.1.26
       '@slopus/happy-providers':
         specifier: 0.0.51
         version: 0.0.51(ws@8.21.1)(zod@4.4.3)
@@ -1958,8 +1958,8 @@ packages:
     resolution: {integrity: sha512-O2JW7+8RsKAPeJR62GBQ1SMrBzNcMUCZ5E7qKvFlFk+2puT+jodMW4B9dmPYVQxnRan64I0/PLrk5Uh+nSTyLA==}
     engines: {node: '>=20'}
 
-  '@slopus/happy-agent-compute@0.1.25':
-    resolution: {integrity: sha512-NAusM3DWP5A7WFxYkhNNYH9vNuECGtHS5AOS0ChUqHcihAykIg04A9KFBsck0HqyH8Q34gK2eyauU5J7wtqWww==}
+  '@slopus/happy-agent-compute@0.1.26':
+    resolution: {integrity: sha512-W9Iq+S0EMRBFrS0WwYtZtQZ+jyYjyGrNvIJJ79o6lpSom3jdnEDiVZatYxJlJ8W5DmzadkfHpHjd/QGCTfsiSA==}
     engines: {node: '>=22.19.0'}
 
   '@slopus/happy-agent-supervisor@0.0.16':
@@ -5297,7 +5297,7 @@ snapshots:
       '@sinclair/typebox': 0.34.49
       parse5: 8.0.1
 
-  '@slopus/happy-agent-compute@0.1.25':
+  '@slopus/happy-agent-compute@0.1.26':
     dependencies:
       '@lydell/node-pty': 1.2.0-beta.15
       '@sinclair/typebox': 0.34.49

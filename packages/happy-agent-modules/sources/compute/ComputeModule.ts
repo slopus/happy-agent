@@ -58,6 +58,7 @@ import { computeInstructionsForVendor } from "./impl/computeInstructionsForVendo
 import { computePermissionsForContext } from "./impl/computePermissionsForContext.js";
 import { createAttachedSecretsHostShell } from "./impl/createAttachedSecretsHostShell.js";
 import { describeComputePathAction } from "./impl/describeComputePathAction.js";
+import { forwardAttachedSecrets } from "./impl/forwardAttachedSecrets.js";
 import { refuseAttachedSecrets } from "./impl/refuseAttachedSecrets.js";
 import {
     basenameComputePath,
@@ -1114,7 +1115,18 @@ export class ComputeModule implements AgentModule {
             await compute.dispose(ctx);
             throw new Error("The agent's machine opened in another folder.");
         }
-        const machine = refuseAttachedSecrets(compute);
+        // A runner takes a command's secrets with that command; a container cannot.
+        const machine =
+            config.docker !== undefined || database === undefined
+                ? refuseAttachedSecrets(compute)
+                : forwardAttachedSecrets(compute, {
+                      agentId,
+                      ctx: processContext,
+                      secrets: this.#secrets,
+                      ...(config.secretScope === undefined
+                          ? {}
+                          : { targetScope: config.secretScope }),
+                  });
         if (onRunner) this.#runnerMachines.add(machine);
         return {
             compute: machine,

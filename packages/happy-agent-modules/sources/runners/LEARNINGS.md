@@ -73,32 +73,24 @@ connection ends; and `RunnerDisconnectedError` maps to `503` like `RunnerUnavail
 deliberate stop is seen in about a second, a silent loss in at most about 25 s. A single frame
 large enough to take 20 s on a slow relay would trip the idle timeout; none is close to that today.
 
-## Not yet on runners
+## Secrets and port bridges on runners
 
-Three capabilities stay refused on runners, each because it moves a boundary Steve decides on.
+Steve decided "we trust compute": a runner may receive the attached secrets a command selected.
+The daemon resolves the selection when the command starts and sends the values in that one
+command's `environment` (runner protocol 4), with `null` for every other attached secret's
+variable so the runner's own environment cannot stand in for one that was not selected. The runner
+applies them to the spawn and deletes them afterwards. While the process runs, the runner's user,
+root there, and other commands running as that user can read them, as on any machine; a modified
+runner could keep them. A command that selects nothing is sent unchanged, so runners older than
+protocol 4 keep working for everything else and refuse only a selection, asking to be updated.
+Containers still refuse, because Docker cannot give one command its own environment.
 
-Secrets attached to a command. Proposal: the daemon resolves the selected values when the reviewed
-command starts and sends them in that one `process.start`'s environment, over the same encrypted
-connection; the runner never writes them down. The runner — its user, and root on that machine —
-could then read those values while the process runs, including through `/proc/<pid>/environ`, and a
-modified runner could keep them. Every other command running as the same user on that runner,
-including another agent's, could read them too. The Auto review would have to say which runner
-receives them. It needs no protocol change, and could be enabled per runner with a setting.
+Port bridges listen on the runner through compute `network.listen` with `ownerOnly`, which the
+runner enforces against its own socket table. USB and Bluetooth on runners are permanently
+unsupported, reported as `runner_compute`, so apps hide them.
 
-Strict workspace services. They need the native supervisor's namespaces and a cgroup subtree, which
-only this machine's host compute provides. Proposal: a protocol-4 `services` capability the runner
-advertises in `ready`, served by the runner's own supervisor with its controls in the runner's
-private state directory, never in the workspace, under a cgroup subtree delegated to the runner's
-systemd unit (`Delegate=yes`). The daemon reads the workspace's network policy and sends it with the
-start. The runner would see the policy and the service's controls, which are about folders it
-already runs. The daemon cannot verify that a runner enforces the boundary, so on a runner it is
-only as strict as the runner can be trusted to be. Older runners keep reporting services as
-unavailable.
-
-Bridges from the workspace to the person's computer, USB, and Bluetooth. Steve approved bridges on
-the daemon's machine only. A port listener on a runner would need the runner to admit only its own
-user, as the daemon does from `/proc/net/tcp`, and USB would need `vhci-hcd` and an attach on the
-runner's kernel, each a new protocol request.
+Workspace services were retired product-wide while this was being decided, so strict services on
+runners were not built.
 
 ## Everything that touches a folder runs on the runner
 
