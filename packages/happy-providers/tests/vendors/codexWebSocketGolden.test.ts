@@ -30,6 +30,7 @@ const websocket = vi.hoisted(() => ({
     endMidstreamOnce: false,
     emitTextResponses: false,
     unavailableOnce: false,
+    upgradeRequiredOnce: false,
     usageTotalTokens: 0,
     turnState: undefined as string | undefined,
     sent: [] as Record<string, any>[],
@@ -219,6 +220,14 @@ vi.mock("openai/resources/responses/ws", () => ({
                 this.messages.push({
                     type: "error",
                     error: Object.assign(new Error("not found"), { status: 404 }),
+                });
+                return;
+            }
+            if (websocket.upgradeRequiredOnce && request.generate !== false) {
+                websocket.upgradeRequiredOnce = false;
+                this.messages.push({
+                    type: "error",
+                    error: new Error("Unexpected server response: 426"),
                 });
                 return;
             }
@@ -621,6 +630,7 @@ describe("Codex CLI mode WebSocket goldens", () => {
         websocket.endMidstreamOnce = false;
         websocket.emitTextResponses = false;
         websocket.unavailableOnce = false;
+        websocket.upgradeRequiredOnce = false;
         websocket.usageTotalTokens = 0;
         websocket.turnState = undefined;
         websocket.sent.splice(0);
@@ -2958,6 +2968,46 @@ describe("Codex CLI mode WebSocket goldens", () => {
         expect(events.filter((event) => event.type === "retrying")).toHaveLength(1);
         expect(sse.requests).toHaveLength(1);
         expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+        session.destroy();
+    });
+
+    it("switches to SSE silently on 426 Upgrade Required, even with no retry budget", async () => {
+        const prompt = codexCliPrompt("gpt-5.6-sol", "websocket");
+        websocket.upgradeRequiredOnce = true;
+        const session = await codexProvider("auto", 0).session("<SESSION_ID>", {
+            instructions: prompt.instructions,
+            tools: codexCliTools("gpt-5.6-sol"),
+        });
+        const run = async (text: string) => {
+            const events = [];
+            for await (const event of session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [{ role: "user", content: [{ type: "text" as const, text }] }],
+                },
+                effort: "low",
+            })) {
+                events.push(event);
+            }
+            return events;
+        };
+
+        const first = await run("name this chat");
+        expect(blockLifecycle(first)).toEqual([
+            "block_start",
+            "block_reset",
+            "block_start",
+            "block_stop",
+            "done",
+        ]);
+        expect(first.at(-1)).toMatchObject({ type: "done", state: "normal" });
+        expect(sse.requests).toHaveLength(1);
+
+        const sentBeforeSecondRun = websocket.sent.length;
+        const second = await run("and again");
+        expect(second.at(-1)).toMatchObject({ type: "done", state: "normal" });
+        expect(sse.requests).toHaveLength(2);
+        expect(websocket.sent).toHaveLength(sentBeforeSecondRun);
         session.destroy();
     });
 
