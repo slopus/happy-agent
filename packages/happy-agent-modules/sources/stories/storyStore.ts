@@ -4,6 +4,7 @@ import {
     type AgentModuleMigration,
 } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
+import { storyLayersSchema } from "@slopus/happy-agent-client";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
@@ -15,29 +16,6 @@ const mediaSchema = Type.Object({
     size: Type.Integer(),
     sha256: Type.String(),
 });
-const coordinate = Type.Number({ minimum: 0, maximum: 1 });
-const position = { x: coordinate, y: coordinate };
-export const storyLayersSchema = Type.Object(
-    {
-        text: Type.Optional(
-            Type.Object(
-                { text: Type.String({ minLength: 1, maxLength: 200 }), ...position },
-                { additionalProperties: false },
-            ),
-        ),
-        round: Type.Optional(Type.Object(position, { additionalProperties: false })),
-    },
-    { additionalProperties: false },
-);
-export const storyMetadataSchema = Type.Object(
-    {
-        caption: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
-        layers: Type.Optional(storyLayersSchema),
-    },
-    { additionalProperties: false },
-);
-export type StoryMetadata = Static<typeof storyMetadataSchema>;
-
 /**
  * A story as stored: what is served, plus the snapshots its media is kept under. A repost names
  * the story it reposts and its reposter (`null` standalone), and copies where that was posted.

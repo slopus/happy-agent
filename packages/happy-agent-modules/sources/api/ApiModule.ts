@@ -82,6 +82,9 @@ import {
     taskListScopeSchema,
     unarchiveTaskRequestSchema,
     renameBotRequestSchema,
+    storyReplyRequestSchema,
+    storyRepostRequestSchema,
+    storyMetadataSchema,
     reorderBotRequestSchema,
     reorderConnectionRequestSchema,
     unarchiveBotRequestSchema,
@@ -409,22 +412,6 @@ const updateArtifactRequestSchema = Type.Composite([
     publishedUpdateArtifactRequestSchema,
     Type.Object({ baseVersion: Type.Optional(Type.Integer({ minimum: 1 })) }),
 ]);
-const storyReplyRequestSchema = Type.Object(
-    { text: Type.String({ minLength: 1, maxLength: 2000 }) },
-    { additionalProperties: false },
-);
-// A round is at most 16 MiB, so its base64 is at most 22,369,624 characters.
-const storyRoundSchema = Type.String({ minLength: 1, maxLength: 22_369_624 });
-const storyRepostRequestSchema = Type.Object(
-    {
-        caption: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
-        round: Type.Optional(
-            Type.Object({ data: storyRoundSchema }, { additionalProperties: false }),
-        ),
-        layers: Type.Optional(StoriesModule.layersSchema),
-    },
-    { additionalProperties: false },
-);
 
 /**
  * How many archived agents the desktop bootstrap carries. Recent history is what the desktop
@@ -6370,7 +6357,7 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (request.method === "PATCH") {
-                const body = await bodyAs(request, botUpdateBodySchema, "bot update");
+                const body = await bodyAs(request, renameBotRequestSchema, "bot update");
                 const current = await this.#requireBotMatch(ctx, request, botId);
                 const bot = await this.#botMutation(
                     ctx,
@@ -10518,19 +10505,6 @@ function storyInputError(error: unknown): never {
     throw error instanceof StoryInputError ? invalidRequest(error.message) : error;
 }
 
-const botUpdateFields = {
-    ...renameBotRequestSchema.properties,
-    stories: Type.Optional(Type.Boolean()),
-};
-const botUpdateBodySchema = Type.Union([
-    Type.Object(botUpdateFields),
-    Type.Object({
-        ...botUpdateFields,
-        name: Type.Optional(renameBotRequestSchema.properties.name),
-        stories: Type.Boolean(),
-    }),
-]);
-
 /** Bounded binary multipart upload; metadata is validated separately from the files. */
 async function readStoryUpload(request: IncomingMessage, original: boolean) {
     const type = request.headers["content-type"] ?? "";
@@ -10556,7 +10530,7 @@ async function readStoryUpload(request: IncomingMessage, original: boolean) {
     } catch {
         throw invalidRequest("The story metadata is invalid.");
     }
-    const metadata = queryAs(value, StoriesModule.metadataSchema, "story metadata");
+    const metadata = queryAs(value, storyMetadataSchema, "story metadata");
     const media = form.get("media"),
         round = form.get("round");
     if ((original && !(media instanceof Blob)) || (round !== null && !(round instanceof Blob)))

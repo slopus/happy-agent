@@ -7,6 +7,7 @@ import type {
     AgentModuleScope,
     AgentSystemRef,
 } from "@slopus/happy-agent-base";
+import type { StoryMetadata } from "@slopus/happy-agent-client";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 
 import { BotsModule } from "../bots/index.js";
@@ -42,8 +43,6 @@ export class StoryInputError extends Error {}
  * reposts reach every non-guest team member with their `stories` setting on.
  */
 export class StoriesModule implements AgentModule {
-    static readonly layersSchema = store.storyLayersSchema;
-    static readonly metadataSchema = store.storyMetadataSchema;
     readonly name = "stories";
     readonly migrations = store.storyMigrations;
 
@@ -176,7 +175,7 @@ export class StoriesModule implements AgentModule {
     }
 
     /** A person's original upload has no agent or task and reaches all signed-in members. */
-    async upload(ctx: Context, media: Blob, metadata: store.StoryMetadata, round?: Uint8Array) {
+    async upload(ctx: Context, media: Blob, metadata: StoryMetadata, round?: Uint8Array) {
         if (!(await this.enabled(ctx))) return undefined;
         if (metadata.layers?.round && !round)
             throw new StoryInputError("A round position needs a round video.");

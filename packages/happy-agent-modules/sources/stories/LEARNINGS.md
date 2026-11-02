@@ -1,5 +1,11 @@
 # Stories learnings
 
+## Public request validation comes from the published client
+
+The prototype duplicated Stories request schemas in the daemon. With the client published,
+the daemon imports its upload metadata, layers, reply and repost schemas, and the bot update
+schema, so every caller and the daemon validate the same public contract.
+
 ## Replacing stale stories is part of posting
 
 Deleting an old story before posting its replacement could leave the ring empty if posting
