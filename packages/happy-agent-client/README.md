@@ -129,17 +129,23 @@ to move one after another, or pass `afterId: null` to move it first. The respons
 `connections.updated` event carry the complete ordered roster; neighbours retain their keys.
 Older daemons may omit keys and return `404` for reordering; leave the feature unavailable there.
 
-On a standalone daemon the owner adds a team server by its HTTPS URL with
-`addConnection({ url, name?, mutationId? }, { ifMatch? })` and removes it with
-`removeConnection(id, { ifMatch?, mutationId? })`. The daemon is the OAuth client:
-`startConnectionSignIn(id)` returns `{ authorizationUrl, state, expiresAt }`; open the URL in the
-system browser, match the `happy://oauth/callback` URL that comes back by its `state`, and pass it
-unchanged to `completeConnectionSignIn(id, { callbackUrl })`. `cancelConnectionSignIn(id, {
-state? })` abandons it. `listConnectionStatuses()` and `getConnectionStatus(id)` read each server's
-`ready`, `connecting`, `needs_sign_in`, or `unreachable` status, and the typed
-`connections.status.updated` event follows it. Through `connection(id)`, a remote that needs a
-sign-in answers `403` with code `remote_sign_in_required`: show that server's sign-in instead of
-signing out of the daemon. Older daemons answer these routes with `404`.
+On a standalone daemon a person adds a team server by its HTTPS URL by asking an admin bot, such as
+the Chief of Staff; it then appears in the roster as an `oauth` entry. No route adds or removes
+one. The daemon holds no credential for it. The app
+signs in to the server itself with `beginOAuthSignIn` and `completeOAuthSignIn`, using the server's
+own `GET /v0/authentication`, keeps the tokens, and passes the access token as
+`connection(id, { remoteToken })`. A string or a function called for every request, it is sent in
+`Happy-Remote-Authorization` beside the daemon's own token, never in a URL. A request without it,
+or one the server's edge refuses, answers `403` with code `remote_sign_in_required`: refresh or
+sign in to that server and send the request again, instead of signing out of the daemon. The
+roster learns the server's `instanceId` from the health responses the daemon relays, so read
+`getHealth()` through the connection after signing in. Older daemons answer these routes with
+`404`.
+
+A desktop offers a phone a team server as a QR code: `formatHappyServerLink({ instanceId, url })`
+writes `happy://<instanceId>/server?url=<encoded base URL>` for a server with an `https:` base URL
+and an `instanceId`, and a phone's scanner reads it back with `parseHappyServerLink(link)`. It
+carries no token, and `parseHappyUrl` does not treat it as a Happy link.
 
 Runners are read with `listRunners()`. The typed `runners.updated` event carries the complete
 `{ runners, version }` list, in ascending ID order, after any runner changes, connection status

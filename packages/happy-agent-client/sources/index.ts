@@ -1,5 +1,5 @@
 export { HappyAgentClient } from "./HappyAgentClient.js";
-export type { HappyAgentClientOptions } from "./HappyAgentClient.js";
+export type { ConnectionClientOptions, HappyAgentClientOptions } from "./HappyAgentClient.js";
 export { HappyReducer } from "./HappyReducer.js";
 export type {
     HappyReducerOptions,
@@ -40,6 +40,7 @@ export { applyMessageDelta } from "./applyMessageDelta.js";
 export type { MessageDeltaApplication } from "./applyMessageDelta.js";
 export * from "./requestOptions.js";
 export * from "./happyLinks.js";
+export * from "./happyServerLinks.js";
 export * from "./happyLinksInMarkdown.js";
 export * from "./mediaLayoutBlocks.js";
 export * from "./mediaLayoutHtml.js";

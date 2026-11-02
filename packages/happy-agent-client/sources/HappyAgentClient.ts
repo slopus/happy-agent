@@ -1,17 +1,8 @@
 import type { Cuid2, MessageMode } from "./protocol/common.js";
 import { Value } from "@sinclair/typebox/value";
 import {
-    type AddConnectionRequest,
-    type AddConnectionResponse,
     connectionIdSchema,
     type ConnectionListResponse,
-    type ConnectionSignInCancelRequest,
-    type ConnectionSignInCompleteRequest,
-    type ConnectionSignInCompleteResponse,
-    type ConnectionSignInStartResponse,
-    type ConnectionStatus,
-    type ConnectionStatusListResponse,
-    type RemoveConnectionResponse,
     type ReorderConnectionRequest,
     type ReorderConnectionResponse,
 } from "./protocol/connections.js";
@@ -328,12 +319,24 @@ export interface HappyAgentClientOptions {
      */
     token?: string | (() => string | Promise<string>) | undefined;
     /**
+     * The access token for a server connection by URL, sent as `Happy-Remote-Authorization`
+     * beside `token`. Set it through `connection(id, { remoteToken })`. Like `token`, a function
+     * is called for every request.
+     */
+    remoteToken?: string | (() => string | Promise<string>) | undefined;
+    /**
      * The `fetch` to make requests with. Defaults to the global one.
      *
      * A caller reaching a Unix socket supplies its own runtime's `fetch` here;
      * nothing else in this package knows how the bytes travel.
      */
     fetch?: typeof globalThis.fetch;
+}
+
+/** Options for `HappyAgentClient.connection`. */
+export interface ConnectionClientOptions {
+    /** The person's access token for a server connection by URL, as `HappyAgentClientOptions.remoteToken`. */
+    remoteToken?: HappyAgentClientOptions["remoteToken"];
 }
 
 /** One request, before it becomes a `fetch` call. */
@@ -374,11 +377,13 @@ interface HttpRequest {
 export class HappyAgentClient {
     readonly #endpoint: string;
     readonly #token: HappyAgentClientOptions["token"];
+    readonly #remoteToken: HappyAgentClientOptions["remoteToken"];
     readonly #fetch: typeof globalThis.fetch;
 
     constructor(options: HappyAgentClientOptions) {
         this.#endpoint = options.endpoint.toString();
         this.#token = options.token;
+        this.#remoteToken = options.remoteToken;
         this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     }
 
@@ -415,103 +420,18 @@ export class HappyAgentClient {
         });
     }
 
-    /** `POST /v0/connections` — adds a server connection by URL; standalone owner only. */
-    async addConnection(
-        request: AddConnectionRequest,
-        options: OptionallyVersionedRequestOptions = {},
-    ): Promise<AddConnectionResponse> {
-        return await this.#json({
-            method: "POST",
-            path: "v0/connections",
-            json: request,
-            ifMatch: options.ifMatch,
-            signal: options.signal,
-        });
-    }
-
-    /** `DELETE /v0/connections/:id` — removes a server connection the owner added. */
-    async removeConnection(
-        id: string,
-        options: OptionallyVersionedRequestOptions & { mutationId?: string } = {},
-    ): Promise<RemoveConnectionResponse> {
-        return await this.#json({
-            method: "DELETE",
-            path: `v0/connections/${connectionPathId(id)}`,
-            query: { mutationId: options.mutationId },
-            ifMatch: options.ifMatch,
-            signal: options.signal,
-        });
-    }
-
-    /** `POST /v0/connections/:id/auth/start` — open `authorizationUrl` in the system browser. */
-    async startConnectionSignIn(
-        id: string,
-        options: RequestOptions = {},
-    ): Promise<ConnectionSignInStartResponse> {
-        return await this.#json({
-            method: "POST",
-            path: `v0/connections/${connectionPathId(id)}/auth/start`,
-            json: {},
-            signal: options.signal,
-        });
-    }
-
-    /** `POST /v0/connections/:id/auth/complete` — hands over the `happy://oauth/callback` URL. */
-    async completeConnectionSignIn(
-        id: string,
-        request: ConnectionSignInCompleteRequest,
-        options: RequestOptions = {},
-    ): Promise<ConnectionSignInCompleteResponse> {
-        return await this.#json({
-            method: "POST",
-            path: `v0/connections/${connectionPathId(id)}/auth/complete`,
-            json: request,
-            signal: options.signal,
-        });
-    }
-
-    /** `POST /v0/connections/:id/auth/cancel` — succeeds when nothing is pending. */
-    async cancelConnectionSignIn(
-        id: string,
-        request: ConnectionSignInCancelRequest = {},
-        options: RequestOptions = {},
-    ): Promise<void> {
-        await this.#send({
-            method: "POST",
-            path: `v0/connections/${connectionPathId(id)}/auth/cancel`,
-            json: request,
-            signal: options.signal,
-        });
-    }
-
-    /** `GET /v0/connections/:id/status` — `404` for an entry that is not `oauth`. */
-    async getConnectionStatus(id: string, options: RequestOptions = {}): Promise<ConnectionStatus> {
-        return await this.#json({
-            method: "GET",
-            path: `v0/connections/${connectionPathId(id)}/status`,
-            signal: options.signal,
-        });
-    }
-
-    /** `GET /v0/connection-statuses` — every server connection by URL, in roster order. */
-    async listConnectionStatuses(
-        options: RequestOptions = {},
-    ): Promise<ConnectionStatusListResponse> {
-        return await this.#json({
-            method: "GET",
-            path: "v0/connection-statuses",
-            signal: options.signal,
-        });
-    }
-
-    /** A separate client for a remote daemon, using the main daemon's authenticated proxy. */
-    connection(id: string): HappyAgentClient {
+    /**
+     * A separate client for a remote daemon, using the main daemon's authenticated proxy. For a
+     * server connection by URL, pass the person's access token for that server as `remoteToken`.
+     */
+    connection(id: string, options: ConnectionClientOptions = {}): HappyAgentClient {
         if (!Value.Check(connectionIdSchema, id)) {
             throw new Error("The remote connection ID is invalid.");
         }
         return new HappyAgentClient({
             endpoint: endpointUrl(this.#endpoint, `v0/connections/${id}/api/`),
             token: this.#token,
+            ...(options.remoteToken === undefined ? {} : { remoteToken: options.remoteToken }),
             fetch: this.#fetch,
         });
     }
@@ -3563,6 +3483,11 @@ export class HappyAgentClient {
         };
         const token = typeof this.#token === "function" ? await this.#token() : this.#token;
         if (token !== undefined) headers.authorization = `Bearer ${token}`;
+        const remoteToken =
+            typeof this.#remoteToken === "function" ? await this.#remoteToken() : this.#remoteToken;
+        if (remoteToken !== undefined) {
+            headers["happy-remote-authorization"] = `Bearer ${remoteToken}`;
+        }
         if (request.ifMatch !== undefined) headers["if-match"] = request.ifMatch;
         if (request.ifNoneMatch !== undefined) headers["if-none-match"] = request.ifNoneMatch;
         if (request.lastEventId !== undefined) headers["last-event-id"] = request.lastEventId;
@@ -3653,11 +3578,4 @@ function requestedMode<T extends MessageMode>(mode: T): Omit<T, "account" | "pro
 
 function secretAttachmentPath(secretId: Cuid2, target: SecretAttachmentTarget): string {
     return `v0/secrets/${encodeURIComponent(secretId)}/attachments/${encodeURIComponent(target.type)}/${encodeURIComponent(target.id)}`;
-}
-
-function connectionPathId(id: string): string {
-    if (!Value.Check(connectionIdSchema, id)) {
-        throw new Error("The remote connection ID is invalid.");
-    }
-    return id;
 }
