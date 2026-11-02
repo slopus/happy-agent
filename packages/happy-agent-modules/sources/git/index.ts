@@ -51,6 +51,7 @@ export {
     type WorkingTreeChange,
     type WorkingTreeChangeKind,
     type WorkingTreeObserver,
+    type WorkingTreeWatchOptions,
 } from "./impl/WorkingTreeWatcher.js";
 export { type HostingRepository } from "./parseHostingRepository.js";
 /**

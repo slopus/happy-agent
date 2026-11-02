@@ -70,6 +70,9 @@ such as a task's shared folder, gets a watch of its own entries on this machine 
 watch) and is polled on a runner. Seeing `.git` appear there, or a later scan finding a repository
 (after `git init`, a clone, or a lookup that failed for a moment), upgrades it to the full
 working-tree and Git directory watches.
+`watchWorkingTree(root, observer, { plainFolder: true })` watches a folder on this machine that is
+in no repository only where a file index of it reads: hidden entries and dependency directories
+are left out of the native watch at any depth. It is a separate shared watch from the full one.
 
 A repository on a runner, or a workload user's, is tracked by the same code with the runner behind
 it: the scan runs there through the hardened scanner, and untracked counts and binary bytes are read

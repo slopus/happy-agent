@@ -60,6 +60,12 @@ excludes ignored directories, and is marked stale only when a path is created or
 workspace is never rescanned. The two-second age rule survives only for a tree that cannot be
 watched.
 
+That shared watch excludes what Git ignores, and a folder in no repository ignores nothing, so
+searching a task's shared folder watched every directory below it: one agent's `.context` held a
+Nix store of 80,000 directories. fff never reads hidden or dependency directories in such a folder,
+so its watch now leaves them out too (`plainFolder`), and a search there costs a kernel watch per
+directory fff actually indexes.
+
 ## A rendered file is watched by itself
 
 On macOS, libuv serves every directory `fs.watch` in a process from one FSEvents stream, and

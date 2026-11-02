@@ -58,6 +58,8 @@ interface ListingIndex extends IndexFreshness {
 
 type IndexState = FinderIndex | ListingIndex;
 
+type FinderHealth = ReturnType<typeof import("@ff-labs/fff-node").FileFinder.healthCheckStatic>;
+
 /**
  * Bounded file-name indexes, one per recently searched workspace.
  *
@@ -161,26 +163,36 @@ export class WorkspaceFileIndex {
             return existing;
         }
 
+        const FileFinderConstructor = await this.#loadFileFinder();
+        const health = FileFinderConstructor.healthCheckStatic(basePath);
         const holder: { state?: IndexState } = {};
-        const unwatch = this.#git.watchWorkingTree(basePath, {
-            onChanges: (changes) => {
-                const state = holder.state;
-                if (state === undefined) return;
-                if (changes === null || changes.some((change) => change.kind !== "update")) {
+        // A folder in no repository is watched only where fff reads it: not in hidden or
+        // dependency directories, where an agent's caches and package stores can hold tens of
+        // thousands of directories that would each cost a kernel watch.
+        const inRepository = health.ok && health.value.git.repositoryFound;
+        const unwatch = this.#git.watchWorkingTree(
+            basePath,
+            {
+                onChanges: (changes) => {
+                    const state = holder.state;
+                    if (state === undefined) return;
+                    if (changes === null || changes.some((change) => change.kind !== "update")) {
+                        state.stale = true;
+                    }
+                },
+                onWatching: (watching) => {
+                    const state = holder.state;
+                    if (state === undefined) return;
+                    state.watching = watching;
+                    // Whatever happened before the watch went live, or after it stopped, is unknown.
                     state.stale = true;
-                }
+                },
             },
-            onWatching: (watching) => {
-                const state = holder.state;
-                if (state === undefined) return;
-                state.watching = watching;
-                // Whatever happened before the watch went live, or after it stopped, is unknown.
-                state.stale = true;
-            },
-        });
+            inRepository ? {} : { plainFolder: true },
+        );
         let state: IndexState;
         try {
-            state = await this.#createIndex(basePath, unwatch);
+            state = await this.#createIndex(FileFinderConstructor, health, basePath, unwatch);
         } catch (error) {
             unwatch();
             throw error;
@@ -197,9 +209,13 @@ export class WorkspaceFileIndex {
         return state;
     }
 
-    async #createIndex(basePath: string, unwatch: () => void): Promise<IndexState> {
-        const FileFinderConstructor = await this.#loadFileFinder();
-        const belowRepository = await this.#belowFinderRepository(FileFinderConstructor, basePath);
+    async #createIndex(
+        FileFinderConstructor: typeof import("@ff-labs/fff-node").FileFinder,
+        health: FinderHealth,
+        basePath: string,
+        unwatch: () => void,
+    ): Promise<IndexState> {
+        const belowRepository = await this.#belowFinderRepository(health, basePath);
         if (belowRepository) {
             const listing: ListingIndex = {
                 kind: "listing",
@@ -245,11 +261,7 @@ export class WorkspaceFileIndex {
      * so this asks fff rather than Git: a folder Git is told to treat as in no repository is still
      * below one for fff.
      */
-    async #belowFinderRepository(
-        FileFinderConstructor: typeof import("@ff-labs/fff-node").FileFinder,
-        basePath: string,
-    ): Promise<boolean> {
-        const health = FileFinderConstructor.healthCheckStatic(basePath);
+    async #belowFinderRepository(health: FinderHealth, basePath: string): Promise<boolean> {
         const workdir = health.ok ? health.value.git.workdir : undefined;
         if (!health.ok || !health.value.git.repositoryFound || workdir === undefined) return false;
         const [folder, repository] = await Promise.all([

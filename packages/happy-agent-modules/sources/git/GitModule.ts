@@ -21,7 +21,11 @@ import { GitStateTracker, type GitRepositoryMachine } from "./impl/GitStateTrack
 import { machineGitWorkingFiles } from "./impl/machineGitWorkingFiles.js";
 import { runnerGitCommandRunner, runnerScanGit } from "./impl/runnerGitRunners.js";
 import { RunnerWatches } from "./impl/RunnerWatches.js";
-import { WorkingTreeWatcher, type WorkingTreeObserver } from "./impl/WorkingTreeWatcher.js";
+import {
+    WorkingTreeWatcher,
+    type WorkingTreeObserver,
+    type WorkingTreeWatchOptions,
+} from "./impl/WorkingTreeWatcher.js";
 import { isGitWorktreeAt } from "./isGitWorktreeAt.js";
 import { listGitWorkingTreeFiles, type GitWorkingTreeFiles } from "./listGitWorkingTreeFiles.js";
 import { normalizeFuturePath } from "./normalizeFuturePath.js";
@@ -769,15 +773,22 @@ export class GitModule implements AgentModule {
      * ignores, and it is the same watch the live Git tracking uses: a native one for a folder on
      * this machine, or one on the folder's runner, which reports every changed path as an update.
      * `onWatching(false)` means events are not arriving and the caller must poll;
-     * `onChanges(null)` means some may have been missed.
+     * `onChanges(null)` means some may have been missed. `plainFolder` narrows a folder on this
+     * machine that is in no repository to what a file index of it reads.
      */
     watchWorkingTree(
         root: string,
         observer: WorkingTreeObserver,
-        options: GitPlacement = {},
+        options: GitPlacement & WorkingTreeWatchOptions = {},
     ): () => void {
         if (this.#disposed) return () => undefined;
-        if (this.#native(options.runnerId)) return this.#treeInstance().watch(root, observer);
+        if (this.#native(options.runnerId)) {
+            return this.#treeInstance().watch(
+                root,
+                observer,
+                options.plainFolder === true ? { plainFolder: true } : {},
+            );
+        }
         return this.#runnerWatchesInstance().watchTree(options.runnerId, root, observer);
     }
 

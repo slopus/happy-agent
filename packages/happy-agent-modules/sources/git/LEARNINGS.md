@@ -72,6 +72,23 @@ holding a Nix store (80,000 directories) or cloned references cost one watch per
 tracker now looks the folder up first. Only a repository gets the working-tree and Git directory
 watches; any other folder gets one non-recursive watch of its own entries on this machine, or
 polling on a runner, and is upgraded when `.git` appears or a later scan finds a repository.
+File search watched the same folders through the shared watch; it now asks for a plain-folder
+watch that leaves out hidden and dependency directories, which fff does not index there.
+
+A third source remains open. Parcel's ignore list is fixed when the subscription starts, and a
+second subscription on the same folder goes deaf (below), so an ignored directory created later,
+such as Gradle's `build/` or a `.context`, keeps its watches until the folder is next watched
+afresh. On the host above that was about 2,000 watches; on a fixture repository, 2,050 ignored
+build directories created after the watch started took it from 67 watches to 2,118. Moving Linux
+onto the compute host watcher, which runners already use, would let the recheck drop those
+subtrees, but compute 0.1.26 cannot express it: its `ignore` matches directory names at any depth,
+not paths, and a watch cannot change what it ignores once started, so moving onto it as it is would
+watch every directory Git ignores. The follow-up is an additive compute change —
+`ComputeWatchOptions.ignorePaths` for relative directories, an optional `ComputeWatch.ignore(paths)`
+that removes newly ignored subtrees and watches folders no longer ignored, and a `watch.ignore`
+runner request so runners gain the same, with older runners keeping today's event filtering — and
+then local Linux folders going through `RunnerWatches` with this machine's host compute, while
+macOS FSEvents and Windows keep their native paths. It needs a compute release first.
 
 ## A working-tree watch must never be replaced or outlive its folder
 
