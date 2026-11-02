@@ -66,6 +66,28 @@ only together with the CLI and the phones.
   which tools a model has: a session with no folder or a failed write gets the picture inline.
   Classifying models by tool capability is what master plan 16 rules out.
 
+## Saved attachments expire after 30 days and stay out of Git
+
+`.happy-uploads` had no retention, so it grew without bound in every agent folder, and Git showed
+it as untracked in every repository. The user decided attachments expire after 30 days, as Happy
+CLI's do. The installation-level `HappyModule` sweeps once at start and hourly, in every folder the
+files module serves, and removes message folders nothing was written to for 30 days.
+
+- Age is the newest modification time of the message folder and its files. Compute exposes no
+  access time, and access times are unreliable anyway, so reading an attachment does not extend
+  it; a message folder is written once, so its age is the message's.
+- The sweep belongs to `HappyModule`, not to each `HappyConnection`: personal team connections
+  share folders, and one sweep per installation must also cover what the phones' direct chats
+  wrote through the file API with no relay involved.
+- Removal goes through `ProjectFilesModule.removeOlderThan`, so a runner folder is swept on the
+  runner with the same containment rules; never walk folders with this machine's filesystem.
+- The Git noise is solved by an ignore file inside the uploads folder (`*`), not by editing the
+  project's `.gitignore` or writing `.git/info/exclude`. The folder is ours; `.git` is a protected
+  control path, worktrees share one `info/exclude` through the common directory, and a runner
+  folder would need Git run there. The ignore file works in every repository, worktree, nested
+  folder, and runner through the same file write. It is written only where an uploads folder
+  exists, and an existing one is left alone.
+
 ## Happy links become plain text on the phone
 
 Agents mention artifacts, conversations, workspaces, projects, Surfaces, and people with Happy

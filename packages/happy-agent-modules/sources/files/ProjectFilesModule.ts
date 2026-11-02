@@ -524,6 +524,145 @@ export class ProjectFilesModule implements AgentModule {
             `${root.runnerId ?? ""}\0${target}`,
             async () => await this.#writeCompared(machine, paths, target, input, bytes),
         );
+        this.#changed(root, [input.path], result.created);
+        return { hash: result.hash };
+    }
+
+    /**
+     * Every folder the file API serves right now: each active project, ready workspace, active
+     * bot and task, and Surface chat, resolved the way its own route resolves it. A folder that
+     * cannot be resolved now, such as one on a runner that is away, is left out; one folder named
+     * by two records is listed once.
+     */
+    async roots(ctx: Context): Promise<readonly ProjectFileRoot[]> {
+        const pending: (() => Promise<ProjectFileRoot>)[] = [];
+        let projectCursor: string | undefined;
+        do {
+            const page = await this.#projects.listCatalogPage(
+                ctx,
+                projectCursor === undefined ? {} : { cursor: projectCursor },
+            );
+            for (const project of page.projects) {
+                if (project.status !== "active") continue;
+                pending.push(async () => await this.resolveRoot(ctx, project.id));
+            }
+            projectCursor = page.nextCursor;
+        } while (projectCursor !== undefined);
+        if (this.#workspaces.enabled) {
+            let workspaceCursor: number | undefined;
+            do {
+                const page = await this.#workspaces.listCatalogPage(
+                    ctx,
+                    workspaceCursor === undefined ? {} : { cursor: workspaceCursor },
+                );
+                for (const workspace of page.workspaces) {
+                    if (workspace.status !== "ready") continue;
+                    pending.push(
+                        async () => await this.resolveRoot(ctx, workspace.projectRef, workspace.id),
+                    );
+                }
+                workspaceCursor = page.nextCursor;
+            } while (workspaceCursor !== undefined);
+        }
+        for (const bot of (await this.#bots?.list(ctx)) ?? []) {
+            if (bot.status !== "active") continue;
+            pending.push(async () => await this.resolveBotRoot(ctx, bot.workspaceId));
+        }
+        for (const task of (await this.#tasks?.list(ctx)) ?? []) {
+            if (task.status !== "active") continue;
+            pending.push(async () => await this.resolveTaskRoot(ctx, task.workspaceId));
+        }
+        for (const surface of (await this.#surfaces?.list(ctx)) ?? []) {
+            if (surface.chatAgentId == null) continue;
+            const chat = await this.#surfaces?.chatForAgent(ctx, surface.chatAgentId);
+            if (chat === undefined) continue;
+            pending.push(async () => await this.resolveSurfaceRoot(ctx, chat.workspaceId));
+        }
+        const roots = new Map<string, ProjectFileRoot>();
+        for (const resolve of pending) {
+            const root = await resolve().catch(() => undefined);
+            if (root === undefined) continue;
+            const key = `${root.runnerId ?? ""}\0${root.root}`;
+            if (!roots.has(key)) roots.set(key, root);
+        }
+        return [...roots.values()];
+    }
+
+    /**
+     * Removes each folder directly inside one directory of the root that nothing was written to
+     * before `before`, on the machine holding the root, and answers whether the directory exists
+     * and which relative paths went.
+     *
+     * A folder's age is the newest modification time of the folder and of every entry directly
+     * in it, so a folder anything was recently added to or rewritten in stays. Files, links, and
+     * other entries beside those folders are never removed.
+     */
+    async removeOlderThan(
+        root: ProjectFileRoot,
+        path: string,
+        before: number,
+    ): Promise<{ readonly found: boolean; readonly removed: readonly string[] }> {
+        if (path.length === 0) {
+            throw new ProjectFileError(400, "invalid", "A directory path is required.");
+        }
+        if (!Number.isFinite(before)) {
+            throw new ProjectFileError(400, "invalid", "The removal cutoff is invalid.");
+        }
+        const machine = await this.#machine(root);
+        const paths = this.#paths(root);
+        let directory: string;
+        try {
+            directory = await this.#resolveExisting(machine, paths, root.root, path, true);
+        } catch (error) {
+            if (error instanceof ProjectFileError && error.code === "missing") {
+                return { found: false, removed: [] };
+            }
+            throw error;
+        }
+        const removed: string[] = [];
+        for (const name of await machine.fs.readdir(PRODUCT, directory)) {
+            const folder = paths.join(directory, name);
+            try {
+                const information = await machine.fs.lstat(PRODUCT, folder);
+                if (!information.isDirectory || information.isSymbolicLink) continue;
+                if ((await this.#newestChange(machine, paths, folder, information)) >= before)
+                    continue;
+                await machine.fs.rm(PRODUCT, folder, { force: true, recursive: true });
+                removed.push(`${path}/${name}`);
+            } catch (error) {
+                // One folder that cannot be inspected or removed leaves the rest to be judged.
+                if (isMachineRefusal(error)) throw error;
+            }
+        }
+        if (removed.length > 0) this.#changed(root, removed, true);
+        return { found: true, removed };
+    }
+
+    /** The newest modification time of a folder and of the entries directly in it. */
+    async #newestChange(
+        machine: Compute,
+        paths: PlatformPath,
+        folder: string,
+        information: { readonly mtimeMs: number },
+    ): Promise<number> {
+        let newest = information.mtimeMs;
+        const names = await machine.fs.readdir(PRODUCT, folder);
+        for (let offset = 0; offset < names.length; offset += MAX_TREE_ENTRIES) {
+            const entries = await machine.fs.lstatMany(
+                PRODUCT,
+                names
+                    .slice(offset, offset + MAX_TREE_ENTRIES)
+                    .map((name) => paths.join(folder, name)),
+            );
+            for (const entry of entries) {
+                if (entry !== undefined && entry.mtimeMs > newest) newest = entry.mtimeMs;
+            }
+        }
+        return newest;
+    }
+
+    /** Tells live Git state, the search index, and watchers that these paths changed. */
+    #changed(root: ProjectFileRoot, paths: readonly string[], structural: boolean): void {
         if (this.#runners.native(root.runnerId)) {
             // Live Git state and the native index follow folders this process reads itself.
             this.#git.invalidate(root.root);
@@ -532,12 +671,11 @@ export class ProjectFilesModule implements AgentModule {
                 projectId: root.projectId,
                 ...(root.workspaceId === undefined ? {} : { workspaceId: root.workspaceId }),
             });
-            if (result.created) this.#index.refresh(root.root);
-        } else if (result.created) {
+            if (structural) this.#index.refresh(root.root);
+        } else if (structural) {
             this.#machineIndex.refresh(root.runnerId, root.root);
         }
-        this.#watcherInstance().changed(root, input.path);
-        return { hash: result.hash };
+        for (const path of paths) this.#watcherInstance().changed(root, path);
     }
 
     /**

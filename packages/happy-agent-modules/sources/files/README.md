@@ -62,3 +62,17 @@ Live Git state stays local, so writes to a runner folder do not touch the Git mo
 `absolutePath` names a relative path absolutely with the folder machine's own path rules, a
 runner's when the folder is on one. A caller that writes a file for an agent uses it to tell the
 agent where that file is on the machine the agent works on.
+
+## Housekeeping across folders
+
+`roots` lists every folder the file API serves right now: each active project, ready workspace,
+active bot and task, and Surface chat, resolved as its own route resolves it. A folder that cannot
+be resolved now, such as one on a runner that is away, is left out, and a folder two records name
+is listed once.
+
+`removeOlderThan(root, path, before)` removes each folder directly inside `path` whose newest
+modification time, of the folder and of every entry directly in it, is before `before`, on the
+folder's machine. Files, links, and other entries beside those folders stay; a missing directory
+answers `found: false`; a directory that leads out of the root is refused like any other path.
+Removals reach live Git state, the search index, and watchers as a write does. The Happy module
+uses both to expire saved attachments.

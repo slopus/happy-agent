@@ -649,6 +649,8 @@ describe("Happy mobile messages", () => {
         const id = test.pendingMessages[0]!.id as string;
         const folder = `/projects/rig/rpc/.happy-uploads/${id}`;
         expect([...test.writtenFiles]).toEqual([
+            // The uploads folder ignores itself, so attachments never show as Git changes.
+            ["/projects/rig/rpc/.happy-uploads/.gitignore", Buffer.from("*\n")],
             [`${folder}/1-Screen Shot.png`, Buffer.from(picture)],
             [`${folder}/2-report.pdf`, Buffer.from(report)],
         ]);

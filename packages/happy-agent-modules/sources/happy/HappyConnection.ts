@@ -83,6 +83,7 @@ import { HappyProjectClient } from "./HappyProjectClient.js";
 import type { HappySessionTransport } from "./HappySessionSockets.js";
 import { formatHappyAttachmentNote } from "./formatHappyAttachmentNote.js";
 import { happyUploadPath } from "./happyUploadPath.js";
+import { ignoreHappyUploads } from "./ignoreHappyUploads.js";
 import {
     HappyMessageRefused,
     type HappyInboundAttachment,
@@ -1635,6 +1636,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         if (attachments.length === 0) return [];
         const root = await this.#readRoot(ctx, agentId).catch(() => undefined);
         if (root === undefined) return attachments.map(() => undefined);
+        await ignoreHappyUploads(this.#files, root);
         return await Promise.all(
             attachments.map(async (attachment, index) => {
                 const path = happyUploadPath(
