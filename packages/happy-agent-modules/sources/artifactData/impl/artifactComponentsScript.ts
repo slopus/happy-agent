@@ -45,6 +45,41 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
         return node("div", "happy-error", message);
     }
 
+    var reported = {};
+    var reportCount = 0;
+
+    /**
+     * Tells the artifact's debug log that an element could not show what it was given, so the
+     * agent that wrote the page reads it with read_artifact_logs instead of only a reader seeing
+     * it. A page with client.js already reports its console, so this posts only for one without,
+     * each message once and at most 20 in all.
+     */
+    function report(element, message) {
+        var described = "<" + element.localName;
+        ["src", "path", "lines"].forEach(function (name) {
+            var value = element.getAttribute(name);
+            if (value) described += " " + name + '="' + value + '"';
+        });
+        described += "> " + message;
+        if (global.console) global.console.warn(described);
+        if ((global.happy && global.happy.debug) || typeof global.fetch !== "function") return;
+        if (reported[described] || reportCount >= 20) return;
+        reported[described] = true;
+        reportCount++;
+        try {
+            global.fetch(BASE + "debug/log", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                cache: "no-store",
+                keepalive: true,
+                body: JSON.stringify({
+                    entries: [{ level: "warn", source: "console", message: described.slice(0, 4096), at: Date.now() }],
+                    url: String(global.location.href).slice(0, 1024),
+                }),
+            }).catch(function () { /* dropped */ });
+        } catch (error) { /* dropped */ }
+    }
+
     function countsNode(added, removed) {
         var span = node("span", "happy-counts");
         if (added) span.appendChild(node("span", "happy-added", "+" + added));
@@ -140,8 +175,9 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
                 });
             }).catch(function (error) {
                 if (token !== self._token) return;
-                self.replaceChildren(failure(error && error.message ? error.message : String(error)));
-                if (global.console) global.console.warn("<" + self.localName + ">", error);
+                var message = error && error.message ? error.message : String(error);
+                self.replaceChildren(failure(message));
+                report(self, message);
             }).then(function () {
                 if (token === self._token) self.removeAttribute("aria-busy");
             });
@@ -374,6 +410,16 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
         return trimmed;
     }
 
+    /** The lines a file's hunks span, numbered as a lines attribute counts, such as "lines 3–9, 41–45". */
+    function changedRanges(file) {
+        var useOld = file.status === "deleted";
+        return "lines " + file.hunks.map(function (hunk) {
+            var start = useOld ? hunk.oldStart : hunk.newStart;
+            var count = useOld ? hunk.oldCount : hunk.newCount;
+            return count <= 1 ? String(start) : start + "–" + (start + count - 1);
+        }).join(", ");
+    }
+
     /** One file's hunks as the git patch the renderer reads. */
     function filePatch(file, hunks) {
         var oldPath = file.oldPath === null ? file.path : file.oldPath;
@@ -510,6 +556,7 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
 
         renderParts(input, draw) {
             var text = input.type === "property" ? String(input.value === undefined || input.value === null ? "" : input.value) : input.text;
+            var self = this;
             var files = parseDiff(text);
             var path = this.getAttribute("path");
             if (path) {
@@ -531,6 +578,9 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
                 if (hunks.length === 0) {
                     section.appendChild(header(fileTitle(file.path, previousPath, file.status), file.added, file.removed));
                     section.appendChild(node("div", "happy-diff-note", file.binary ? "Binary file" : range === null ? "No changed lines" : "No changes in lines " + range.first + "–" + range.last));
+                    // A range with no changes is almost always lines counted in the old file or a
+                    // hunk header; the quote shows nothing, so the agent hears where it changes.
+                    if (!file.binary && range !== null && file.hunks.length > 0) report(self, "No changes in lines " + range.first + "–" + range.last + " of " + file.path + "; it changes " + changedRanges(file) + ".");
                     return section;
                 }
                 var part = { patch: filePatch(file, hunks), path: file.path, previousPath: previousPath, status: file.status, wrap: wrap };

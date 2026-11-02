@@ -11852,7 +11852,7 @@ and `Cache-Control: no-cache`, and a matching `If-None-Match` answers `304`.
 #### `GET /v0/artifacts/:artifactId/api/v1/components.js`
 
 The standard components, loaded last with `<script src="/api/v1/components.js"></script>`. It
-defines five custom elements and nothing else. Each reads what it shows from the page itself, so
+defines five custom elements and no other globals. Each reads what it shows from the page itself, so
 the page's own scripts are never needed:
 
 - `<happy-diff src="changes.diff">` — a unified diff, such as `git diff` or `diff -u` writes, from a
@@ -11905,7 +11905,9 @@ The style sheet colors the renderer's `diffs-container` element through its `--d
 properties, from the page's own `--happy-*` colors and fonts.
 
 An element that cannot show what it was given says why in its own place rather than leaving the page
-blank. The script is served like `style.css`, and so is the diagram renderer it loads on demand, at
+blank, and reports the same as a `warn` entry with source `console` to the page's debug log, through
+the SDK when the page loads it and otherwise by posting it itself, each message once and at most 20
+per page. The script is served like `style.css`, and so is the diagram renderer it loads on demand, at
 `GET /v0/artifacts/:artifactId/api/v1/diagrams.js`, which pages never load themselves. The set of
 elements may grow; an element the script does not define is left as the page wrote it.
 
@@ -12042,7 +12044,8 @@ with `Retry-After`.
 
 Keeps what a page reports about itself in the artifact's debug log, so the agent that built the
 app can see what went wrong for the people using it. The SDK reports on its own: uncaught errors,
-unhandled rejections, `console.error` and `console.warn`, and its own sync trouble. Body:
+unhandled rejections, `console.error` and `console.warn`, and its own sync trouble. The standard
+components report what an element could not show, even on a page without the SDK. Body:
 
 ```json
 {

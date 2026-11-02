@@ -272,9 +272,13 @@ without an artifact.
 - **Screenshots are real.** Capture both sides of the same place at the same
   size: the after from the change as it runs, the before from a worktree at
   the base. Never draw, mock, or generate a picture of a UI.
-- **Look at it.** Open the artifact once you have written it, or read its
-  page's logs with `read_artifact_logs`: a component that cannot show what it
-  was given says why in its own place, such as a path the diff does not change.
+- **Look at it.** A component that cannot show what it was given says why in
+  its place and in the page's log: a path the diff does not change, or lines
+  it does not change, with the paths and lines it does. The chat opens each
+  version as you write it, so read `read_artifact_logs` after the last write
+  and fix every entry from that version before you reply. An empty log can
+  also mean nobody has the page open yet, so it never replaces checking each
+  `path` and `lines` against `changes.diff` yourself.
 
 ## Before you send it
 
