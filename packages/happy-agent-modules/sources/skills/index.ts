@@ -1,5 +1,6 @@
 export { SkillsModule } from "./SkillsModule.js";
 export { GlobalSkillsModule } from "./GlobalSkillsModule.js";
+export { SkillMirrorModule } from "./SkillMirrorModule.js";
 export { SkillFoldersModule } from "./SkillFoldersModule.js";
 export { GlobalSkillsError } from "./GlobalSkillsError.js";
 export {

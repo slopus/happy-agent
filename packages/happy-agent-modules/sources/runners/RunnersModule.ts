@@ -50,6 +50,7 @@ import {
     RUNNER_IDLE_TIMEOUT_MS,
     RUNNER_PING_INTERVAL_MS,
 } from "./liveness.js";
+import { runnerProductFiles, type RunnerProductFiles } from "./productFiles.js";
 import type { RunnerRunOptions, RunnerRunResult } from "./RunnerRun.js";
 import {
     queryRunnerSnapshot,
@@ -391,6 +392,14 @@ export class RunnersModule implements AgentModule {
             if (this.#products.get(runnerId) === created) this.#products.delete(runnerId);
         });
         return await created;
+    }
+
+    /**
+     * Where a machine served by a runner keeps the product files its agents read: this daemon's
+     * documentation and native skills, and the installation's own skills, all copied there.
+     */
+    productFilesOn(home: string, paths: PlatformPath): RunnerProductFiles {
+        return runnerProductFiles(home, paths);
     }
 
     /** A path on a folder's machine as that machine names it, or as written when it is absent. */

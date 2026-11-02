@@ -46,6 +46,32 @@ its content into the run as usual, but it is left out of the model's instruction
 `list_skills`, and `read_skill` refuses it with a message saying only the user may invoke it. Only
 the plain YAML boolean counts; a quoted `"true"` is an ordinary string and does not set the flag.
 
+## Skills on a runner's machine
+
+A machine a runner serves — another computer, or a workload user's runner on this one — cannot
+read the daemon's folders, so discovery scans copies there instead, found through
+`ComputeModule.productFiles` under `<runner home>/.happy-agent/`. `SkillMirrorModule` writes them:
+
+- `docs/` and `skills/` hold this daemon's documentation and native skills. Every runner gets them;
+  the skills are scanned as `builtin`, and the prompt points at the documentation there.
+- `synced-skills/` holds this installation's enabled global skills and configured skill folders,
+  scanned as user skills after the runner's own `~/.agents/skills`, so a skill installed on the
+  runner wins a name collision.
+
+`SkillMirrorModule` takes the config, runners, global skills, and Durable Functions modules. A
+durable loop syncs each connected runner, and the workload user's runner, when it connects, when
+the installed skills change, and every five minutes, which also notices edits to configured
+folders. The documentation and native skills are each copied as a whole folder carrying a hash of
+its content, so an unchanged folder costs one small read. Each of the installation's skills lands
+in a folder named for its content (`<name>-<hash>`), so only a skill the runner lacks is sent.
+New content is assembled under a dot-name discovery skips and moved into place, its files made
+read-only with their executable bits kept, and everything else in `synced-skills/` is removed. A
+name already taken by a higher-ranked source is not copied, disabled skills are left out, and a
+skill with more than 512 files, a file over 8 MiB, or that would take the total past 64 MiB or 256
+skills is skipped with a warning. `[runners.<id>] sync_skills = false` keeps a runner from
+receiving the installation's skills, and removes a copy it had. Bots that run as a Linux user of
+their own get none of these copies: only the default workload user's home receives them.
+
 ## Public operations
 
 - `list(ctx, agentId, input?)` — a bounded, optionally filtered page of the current catalog.

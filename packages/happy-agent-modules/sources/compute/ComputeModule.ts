@@ -37,7 +37,7 @@ import type { Duplex } from "node:stream";
 import type { BotSettingsModule } from "../botSettings/index.js";
 import type { ChatMediaModule } from "../chatMedia/index.js";
 import type { ConfigModule } from "../config/index.js";
-import type { RunnersModule } from "../runners/index.js";
+import type { RunnerProductFiles, RunnersModule } from "../runners/index.js";
 import { FileReadLog } from "../impl/FileReadLog.js";
 import { machinePaths } from "../impl/machinePaths.js";
 import type { SecretsModule } from "../secrets/index.js";
@@ -696,6 +696,18 @@ export class ComputeModule implements AgentModule {
      */
     permissionsForContext(ctx: Context): ComputePermissions {
         return computePermissionsForContext(ctx);
+    }
+
+    /**
+     * Where the agent's machine keeps the product documentation and skills its agents read, when
+     * a runner serves it — on another computer, or as a workload user on this one. Undefined for
+     * a machine this daemon serves itself, whose agents read the daemon's own copies.
+     */
+    productFiles(ctx: Context, compute: Compute): RunnerProductFiles | undefined {
+        const home = compute.fs.home;
+        if (this.#runners === undefined || home === undefined) return undefined;
+        if (!this.#runnerMachines.has(compute)) return undefined;
+        return this.#runners.productFilesOn(home, this.paths(ctx));
     }
 
     /**

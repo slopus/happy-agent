@@ -82,7 +82,12 @@ import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
 import { SlashCommandsModule } from "../slashCommands/index.js";
-import { SkillsModule, GlobalSkillsModule, SkillFoldersModule } from "../skills/index.js";
+import {
+    SkillsModule,
+    GlobalSkillsModule,
+    SkillFoldersModule,
+    SkillMirrorModule,
+} from "../skills/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
 import { TailcatModule } from "../tailcat/index.js";
 import { MobileConnectorModule } from "../mobileConnector/index.js";
@@ -470,6 +475,8 @@ export async function startHappyAgentRuntime(
         const globalSkills = new GlobalSkillsModule(config, durableFunctions);
         const compute = createComputeModules(computeModule, globalSkills, config);
         registerShutdown("global-skills", async () => await globalSkills.close());
+        const skillMirror = new SkillMirrorModule(config, runners, globalSkills, durableFunctions);
+        registerShutdown("skill-mirror", async () => await skillMirror.close());
         registerShutdown("compute", async (shutdownCtx) => {
             await Promise.allSettled([
                 system?.close(shutdownCtx) ?? Promise.resolve(),
@@ -911,6 +918,7 @@ export async function startHappyAgentRuntime(
             surfaceAutoJoin,
             botSettings,
             globalSkills,
+            skillMirror,
             live,
             bots,
             tasks,

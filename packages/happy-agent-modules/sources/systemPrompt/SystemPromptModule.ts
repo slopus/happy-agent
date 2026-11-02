@@ -82,9 +82,12 @@ export class SystemPromptModule implements AgentModule {
     readonly #config: ConfigModule;
     /** Live AGENTS.md discovery and durable change-notice behavior. */
     readonly #agentsMd: AgentsMdInstructions;
+    /** The agent's machine, which says where it can read the product documentation. */
+    readonly #compute: ComputeModule;
 
     constructor(config: ConfigModule, compute: ComputeModule) {
         this.#config = config;
+        this.#compute = compute;
         this.#agentsMd = new AgentsMdInstructions(config, compute);
     }
 
@@ -145,6 +148,7 @@ export class SystemPromptModule implements AgentModule {
         const environment = agentEnvironment(ctx);
         const sections = [prompt];
         if (environment !== undefined) {
+            const docs = await this.#docsHome(ctx, scope.agent.id);
             if (!Value.Check(agentEnvironmentSchema, environment)) {
                 throw new Error("The agent environment is invalid.");
             }
@@ -154,8 +158,8 @@ export class SystemPromptModule implements AgentModule {
                     availableModels: this.#models,
                     currentModel: scope.agent.model,
                     currentProvider: scope.agent.provider,
-                    designSystemPath: join(this.#config.configuration.paths.docsHome, "DESIGN.md"),
-                    documentationPath: join(this.#config.configuration.paths.docsHome, "README.md"),
+                    designSystemPath: docs.join(docs.home, "DESIGN.md"),
+                    documentationPath: docs.join(docs.home, "README.md"),
                 }),
             );
         }
@@ -172,6 +176,20 @@ export class SystemPromptModule implements AgentModule {
             throw new Error("The system prompt exceeds the configured output bound.");
         }
         return fullPrompt;
+    }
+
+    /**
+     * Where the agent can read the product documentation: the copy the runner serving its machine
+     * installed, or the daemon's own. A machine that cannot be built yet is told the daemon's.
+     */
+    async #docsHome(
+        ctx: Context,
+        agentId: string,
+    ): Promise<{ readonly home: string; readonly join: (...parts: string[]) => string }> {
+        const compute = await this.#compute.resolve(ctx, agentId).catch(() => undefined);
+        const files = compute === undefined ? undefined : this.#compute.productFiles(ctx, compute);
+        if (files === undefined) return { home: this.#config.configuration.paths.docsHome, join };
+        return { home: files.docs, join: this.#compute.paths(ctx).join };
     }
 
     readonly #hooks: AgentModuleHooks = {

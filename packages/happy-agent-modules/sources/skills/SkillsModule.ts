@@ -339,14 +339,21 @@ export class SkillsModule implements AgentModule {
         const identity = this.#compute.fileSystemIdentity(compute);
         const config = this.#config;
         // Machine-wide folders, native skills included, name paths on the daemon's own filesystem,
-        // so only a native compute scans them; a container or remote machine has no such folders.
+        // so only a native compute scans them. A machine a runner serves has its own copies: the
+        // native skills its release installed, and this daemon's skills copied to it. A container
+        // has neither.
         const native = typeof identity === "string";
+        const runnerFiles = native ? undefined : this.#compute.productFiles(ctx, compute);
         const configured: ConfiguredSkillRoots | undefined =
             config === undefined
                 ? undefined
                 : {
-                      builtin: native ? config.configuration.paths.skillsHome : undefined,
-                      global: native ? config.globalSkillDirectories : [],
+                      builtin: native ? config.configuration.paths.skillsHome : runnerFiles?.skills,
+                      global: native
+                          ? config.globalSkillDirectories
+                          : runnerFiles === undefined
+                            ? []
+                            : [runnerFiles.syncedSkills],
                       project: (source) => config.projectSkillDirectories(source),
                   };
         const key = JSON.stringify([
