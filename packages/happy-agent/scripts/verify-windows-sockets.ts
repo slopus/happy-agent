@@ -214,6 +214,8 @@ for (let round = 0; round < 2; round++) {
             handleConnect: async () => false,
             // The private socket is never the public transport, so nothing is refused here.
             publicSocketRejection: async () => undefined,
+            // No tunnel WebSocket twin is exercised here; every other upgrade falls through.
+            prepareWorkspaceProxyWebSocket: async () => ({ handled: false }),
             listenWorkspaceProxyHttp: async (path: string) => await workspaceProxy.listen(path),
             prepareWorkspaceProxySocket: async (
                 _ctx: unknown,
