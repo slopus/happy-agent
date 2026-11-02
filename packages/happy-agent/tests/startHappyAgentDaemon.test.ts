@@ -28,19 +28,21 @@ vi.mock("../sources/socket/AgentSocket.js", () => ({
 }));
 import { startHappyAgentDaemon } from "../sources/main.js";
 
-const closeMobile = vi.fn();
+const closeExternal = vi.fn();
 
 beforeEach(() => {
     vi.clearAllMocks();
 });
 
-/** Bind the main HTTP listener to `closeHttp`, and the mobile connector's loopback listener apart from it. */
+/** Keep the primary and external listener lifetimes distinct. */
 function arrangeHttp(closeHttp: ReturnType<typeof vi.fn>): void {
     mocks.bindAgentHttpServer.mockImplementation(
-        async (_prepared: unknown, host: string, port: number) =>
-            port === 0
-                ? { close: closeMobile, host, port: 45_678, url: "http://127.0.0.1:45678" }
-                : { close: closeHttp, host, port, url: `http://${host}:${port}` },
+        async (_prepared: unknown, host: string, port: number) => ({
+            close: port === 3_000 ? closeHttp : closeExternal,
+            host,
+            port: port || 45_678,
+            url: `http://${host}:${String(port || 45_678)}`,
+        }),
     );
 }
 
@@ -151,8 +153,8 @@ describe("startHappyAgentDaemon", () => {
         expect(runtime.close).toHaveBeenCalledOnce();
     });
 
-    it("serves phones on their own loopback listener and closes it before the main transport", async () => {
-        const runtime = arrangeRuntime(true);
+    it("shares the public listener with phones and closes it before the primary transport", async () => {
+        const runtime = arrangeRuntime(true, false, true);
         const closeHttp = vi.fn();
         arrangeHttp(closeHttp);
 
@@ -162,29 +164,31 @@ describe("startHappyAgentDaemon", () => {
         expect(mocks.bindAgentHttpServer).toHaveBeenLastCalledWith(
             expect.anything(),
             "127.0.0.1",
-            0,
+            24_782,
         );
-        expect(runtime.attachMobileTransport).toHaveBeenCalledWith(expect.anything(), {
-            host: "127.0.0.1",
-            port: 45_678,
-        });
+        expect(runtime.attachMobileTransport).not.toHaveBeenCalled();
+        expect(runtime.replaceMobileTransport).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                host: "127.0.0.1",
+                port: 24_782,
+            }),
+        );
         expect(daemon.httpUrl).toBe("http://127.0.0.1:3000");
 
         await daemon.close();
-        expect(closeMobile).toHaveBeenCalledOnce();
-        expect(runtime.shutdown.mock.invocationCallOrder[0]).toBeLessThan(
-            closeMobile.mock.invocationCallOrder[0]!,
+        expect(closeExternal).toHaveBeenCalledOnce();
+        expect(closeExternal.mock.invocationCallOrder[0]).toBeLessThan(
+            runtime.shutdown.mock.invocationCallOrder[0]!,
         );
-        expect(closeMobile.mock.invocationCallOrder[0]).toBeLessThan(
+        expect(runtime.shutdown.mock.invocationCallOrder[0]).toBeLessThan(
             closeHttp.mock.invocationCallOrder[0]!,
         );
     });
 
-    it("keeps serving everything else when the mobile transport cannot attach", async () => {
-        const runtime = arrangeRuntime(false);
-        runtime.attachMobileTransport.mockImplementation(() => {
-            throw new Error("already attached");
-        });
+    it("keeps the primary and public listeners available when phones cannot attach", async () => {
+        const runtime = arrangeRuntime(false, false, true);
+        runtime.replaceMobileTransport.mockRejectedValueOnce(new Error("already attached"));
         const closeSocket = vi.fn();
         mocks.bindAgentSocket.mockResolvedValue({
             close: closeSocket,
@@ -194,10 +198,15 @@ describe("startHappyAgentDaemon", () => {
 
         const daemon = await startHappyAgentDaemon();
 
-        expect(closeMobile).toHaveBeenCalledOnce();
+        expect(closeExternal).not.toHaveBeenCalled();
+        expect(runtime.replaceMobileTransport).toHaveBeenLastCalledWith(
+            expect.anything(),
+            undefined,
+            expect.stringContaining("public API listener"),
+        );
         expect(daemon.socketPath).toBe("/tmp/happy-team/server.sock");
         await daemon.close();
-        expect(closeMobile).toHaveBeenCalledOnce();
+        expect(closeExternal).toHaveBeenCalledOnce();
         expect(closeSocket).toHaveBeenCalledOnce();
     });
 
@@ -223,8 +232,10 @@ describe("startHappyAgentDaemon", () => {
 function arrangeRuntime(
     teamModeEnabled: boolean,
     tailcatEnabled = false,
+    publicApiEnabled = false,
 ): {
     readonly attachMobileTransport: ReturnType<typeof vi.fn>;
+    readonly replaceMobileTransport: ReturnType<typeof vi.fn>;
     readonly attachTransport: ReturnType<typeof vi.fn>;
     readonly beginDrain: ReturnType<typeof vi.fn>;
     readonly recordShutdown: ReturnType<typeof vi.fn>;
@@ -264,15 +275,24 @@ function arrangeRuntime(
         : { enabled: false, state: "disabled" };
     const attachTransport = vi.fn(async () => status);
     const attachMobileTransport = vi.fn();
+    const replaceMobileTransport = vi.fn();
     const runtime = {
         api: {
             onShutdown: vi.fn(() => vi.fn()),
+            onPublicEndpointChanged: vi.fn(() => vi.fn()),
             beginDrain: vi.fn(),
             recordShutdown: vi.fn(),
             drainProgress: vi.fn(() => [{ name: "agent-system", count: 1 }]),
         },
         modules: {
-            mobileConnector: { attachTransport: attachMobileTransport },
+            config: {
+                publicApiUrl: publicApiEnabled ? "https://agent.test" : null,
+                publicApiPort: 24_782,
+            },
+            mobileConnector: {
+                attachTransport: attachMobileTransport,
+                replaceTransport: replaceMobileTransport,
+            },
             tailcat: {
                 attachTransport,
                 currentStatus: vi.fn(() => status),
@@ -301,6 +321,7 @@ function arrangeRuntime(
     );
     return {
         attachMobileTransport,
+        replaceMobileTransport,
         attachTransport,
         beginDrain: runtime.api.beginDrain,
         recordShutdown: runtime.api.recordShutdown,
