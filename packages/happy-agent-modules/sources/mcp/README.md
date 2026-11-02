@@ -52,8 +52,12 @@ online reload is visible on the next inference without restarting the daemon.
 A stdio server is a process, and while runners are configured nothing runs on the daemon's
 machine. A workspace on a runner has its `mcp.toml` read from the runner, and its stdio servers
 start there as the runner's product programs, speaking MCP over their standard input and output.
-The user-wide catalog's stdio servers start on the default runner. HTTP servers are always reached
-from the daemon. The same configuration on two machines is two servers, so pooling never shares a
+The user-wide catalog's stdio servers start on the machine of the agent's folder: on this machine
+for agents here, and once on each runner that has an agent, shared by every agent on it and stopped
+when the last one leaves. While a runner is the default nothing runs here, so the user-wide stdio
+servers start only on runners. HTTP servers are always reached from the daemon, so a `localhost`
+or `127.0.0.1` URL names a server on the daemon's machine, never one on the agent's runner; a
+service on a runner is reached by a stdio server there or by an address the daemon can route to. The same configuration on two machines is two servers, so pooling never shares a
 process across machines. A server whose runner goes away fails at once, naming the runner, and
 a server that stopped or could not start because its runner was away starts again once that runner
 connects. The module takes `RunnersModule` for the machines and `ComputeModule`
