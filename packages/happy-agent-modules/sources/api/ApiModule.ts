@@ -1087,6 +1087,10 @@ export class ApiModule implements AgentModule {
                     await this.#handleMobileHandshake(ctx, admitted, request, response);
                     return;
                 }
+                if (admitted.kind === "device" && isOwnMobileDeviceRoute(request)) {
+                    await this.#removeOwnMobileDevice(admitted.ctx, request, response);
+                    return;
+                }
                 ctx = admitted.ctx;
                 const pathname = requestUrl(request).pathname;
                 if (
@@ -1113,6 +1117,10 @@ export class ApiModule implements AgentModule {
                 );
                 if (admitted.kind !== "device") {
                     await this.#handleMobileHandshake(ctx, admitted, request, response);
+                    return;
+                }
+                if (isOwnMobileDeviceRoute(request)) {
+                    await this.#removeOwnMobileDevice(admitted.ctx, request, response);
                     return;
                 }
                 if (isDeviceForbiddenPath(requestUrl(request).pathname)) {
@@ -8961,13 +8969,16 @@ export class ApiModule implements AgentModule {
         return { kind: "device", ctx: deviceCtx };
     }
 
-    /** Enforce the public boundary before a native socket adapter selects an upgrade or tunnel. */
+    /**
+     * Enforce the public and phone boundaries before a native socket adapter selects an upgrade
+     * or tunnel.
+     */
     async publicSocketRejection(
         ctx: Context,
         pathname: string,
         authorization: string | string[] | undefined,
     ): Promise<ApiSocketRejection | undefined> {
-        if (!isPublicTransport(ctx)) return undefined;
+        if (!isPublicTransport(ctx) && !isMobileTransport(ctx)) return undefined;
         try {
             ctx = await this.#authenticate(ctx, authorization);
             if (
@@ -8977,7 +8988,9 @@ export class ApiModule implements AgentModule {
                 throw new ApiError(
                     403,
                     "forbidden",
-                    "This endpoint is unavailable on the public listener.",
+                    isPublicTransport(ctx)
+                        ? "This endpoint is unavailable on the public listener."
+                        : "Phones cannot use this endpoint.",
                 );
             return undefined;
         } catch (error: unknown) {
@@ -8992,8 +9005,13 @@ export class ApiModule implements AgentModule {
         pathname: string,
         connection: MobileConnection,
     ): Promise<Context> {
-        if (!isPublicTransport(ctx))
-            return await this.#admitMobileDevice(ctx, authorization, connection);
+        if (!isPublicTransport(ctx)) {
+            const deviceCtx = await this.#admitMobileDevice(ctx, authorization, connection);
+            if (isDeviceForbiddenPath(pathname)) {
+                throw new ApiError(403, "forbidden", "Phones cannot use this endpoint.");
+            }
+            return deviceCtx;
+        }
         const admitted = await this.#admitPublic(ctx, authorization, connection);
         if (admitted.kind !== "main" && admitted.kind !== "device") throw mobileUnauthorized();
         if (
@@ -9080,6 +9098,27 @@ export class ApiModule implements AgentModule {
         if (signals.has(revoked)) return;
         signals.add(revoked);
         revoked.addEventListener("abort", destroy, { once: true });
+    }
+
+    /**
+     * A phone removes itself. Its other connections close at once, but the one asking is spared
+     * so the answer arrives, and closes after it.
+     */
+    async #removeOwnMobileDevice(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+    ): Promise<void> {
+        const mobileConnector = this.#mobileConnector;
+        const device = mobileDevice(ctx);
+        if (mobileConnector === undefined || device === undefined) throw mobileUnauthorized();
+        const connection = request.socket;
+        const destroy = this.#mobileClosers.get(connection);
+        if (destroy !== undefined) device.revoked.removeEventListener("abort", destroy);
+        this.#mobileConnections.get(connection)?.delete(device.revoked);
+        response.setHeader("connection", "close");
+        await mobileConnector.removeOwnDevice(ctx, device.deviceId);
+        sendJson(response, 200, {});
     }
 
     /**
@@ -10539,6 +10578,14 @@ const MOBILE_UNAUTHORIZED: ApiSocketRejection = {
 
 function mobileUnauthorized(): ApiError {
     return new ApiError(401, "unauthorized", "Unauthorized");
+}
+
+/** The one mobile connector route a phone may use: removing itself. */
+function isOwnMobileDeviceRoute(request: IncomingMessage): boolean {
+    return (
+        request.method === "DELETE" &&
+        requestUrl(request).pathname === "/v0/mobile-connector/device"
+    );
 }
 
 /** Daemon lifecycle, debugging, and mobile connector management stay with the desktop. */

@@ -680,6 +680,10 @@ accepts the optional `POST /v0/drain` body and includes `drain` in the drain res
 compatible daemons ignore the request body and omit every `drain` field; clients then cannot tell a
 restart from a shutdown and treat the drain as they did before.
 
+A phone removing itself with `DELETE /v0/mobile-connector/device` is additive and does not
+increment the protocol version. Older daemons answer it `403` with code `forbidden`; a phone then
+forgets its own credentials and the person removes it from the desktop.
+
 ### Requests and responses
 
 - Request and response bodies are JSON, `content-type: application/json; charset=utf-8`.
@@ -3844,7 +3848,8 @@ Authorization: Bearer <credential>
     - daemon lifecycle and debugging: `/v0/drain`, `/v0/shutdown`, and `/v0/debug` and everything
       under it;
     - mobile connector management: `/v0/mobile-connector` and everything under it, so one phone
-      can neither pair nor remove others.
+      can neither pair nor remove others. The one exception is `DELETE /v0/mobile-connector/device`,
+      with which a phone removes itself.
 
     Those return `403` with code `forbidden`, whatever the method.
 
@@ -3997,6 +4002,28 @@ also works while the feature is disabled.
 
 Response — `200`: `{ "mobileConnector": { ... } }`. A phone that is not one of the caller's returns
 `404` with code `not_found`.
+
+### `DELETE /v0/mobile-connector/device`
+
+Authenticated by a paired phone's device token, on the dedicated mobile Tailcat socket or the
+daemon-owned public listener. The phone removes itself, for example when the person disconnects
+it on the phone. It has no request body.
+
+The effect is the same as removing that phone from the desktop: its token stops working at once,
+and every other request, event stream, WebSocket, and tunnel it has open is closed. This response
+is delivered first, then its connection closes. No other phone, of this owner or another, is
+affected. The owner receives `mobile_connector.updated`. Without a public endpoint, the mobile
+socket stays open for three seconds afterwards, as after a pairing ends, and then closes if
+nothing else needs it.
+
+Response — `200`: `{}`.
+
+Repeating the request is harmless. Once the phone is removed its token is unknown, so a retry
+whose first attempt succeeded receives `401` with code `unauthorized`. A phone treats `401` from
+this route as already removed and forgets its credentials, exactly as after `200`. Only a device
+token reaches this route: on a primary transport or with an ordinary API credential it returns
+`404` with code `not_found`, and WebSocket upgrades and `CONNECT` to it return `403` with code
+`forbidden` like the rest of `/v0/mobile-connector`.
 
 ### Events
 
