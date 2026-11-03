@@ -665,6 +665,15 @@ includes `feedUnread` in desktop bootstrap. Older daemons omit both, answer the 
 `POST /v0/agents/:agentId/read` keep their requests and responses; on a daemon with the Feed they
 also mark the subject seen.
 
+Feed entries carry references only. This change departs from the additive rule above, as Steve
+directly instructed: the first Feed daemons sent a `snapshot` on every feed item and peek entry,
+and a `name` on every cluster, copied from the subject when the change happened, so a rename or a
+task naming itself left the Feed showing a stale title. Current daemons send neither field, and
+send `latest` on every entry instead. Clients render every entry from the entities they sync (see
+"Showing an entry" in the Feed chapter) and never read `snapshot` or a cluster's `name`. A client
+that reads them breaks against a current daemon. One that does not works with both: the first
+daemons send no `latest`, and their extra fields are ignored like any other unknown field.
+
 Provider routes are additive and do not increment the protocol version. A daemon that serves
 `GET /v0/provider-routes` and `POST /v0/provider-routes/:routeId/use` reports
 `capabilities.providerRoutes: true` from health. Older daemons omit it and answer the routes with
@@ -12119,8 +12128,8 @@ a new entry. A daemon that serves the Feed reports `capabilities.feed: true` fro
   edits are changes to their Surface, so they fold into the Surface's entry.
 - `artifact` — an artifact, by its artifact ID.
 
-The set of types grows with the product; a client shows an entry with a type it does not
-recognize by its snapshot title and offers no navigation for it.
+The set of types grows with the product; a client leaves out an entry whose type it does not
+recognize.
 
 **What makes an entry.** These changes reach the Feed:
 
@@ -12139,9 +12148,42 @@ form one **edit session**, which ends after 10 minutes without an edit by that s
 session is one change, recorded when its first edit is accepted; later edits in the same session
 add nothing to the Feed.
 
-Nothing else reaches the Feed today: renaming, archiving, completing or editing todos, deleting
-artifacts, calendar events, and chat Surface messages do not. Older entries are unaffected by
-renames until the next change brings a fresh snapshot.
+Nothing else reaches the Feed today: renaming, archiving, changing a picture, completing or
+editing todos, deleting artifacts, calendar events, and chat Surface messages do not. None of them
+needs to: entries hold no names or pictures to bring up to date, as described next.
+
+**Showing an entry.** An entry holds references and counts, never the subject's data. It names
+the subject, the actors, its clusters, and the newest change (`latest`), and counts the changes;
+it never carries a title, name, text, picture, avatar, Surface type, or the agent that opens a
+chat. Clients render every entry from the entities they already sync, so a rename, a task naming
+itself, a new picture, or an edited todo shows in every entry at once, with no Feed event. A
+client resolves:
+
+- a `task` subject or `task:` cluster from the tasks it syncs: desktop bootstrap `tasks` and
+  `GET /v0/tasks`, both archived tasks included, `GET /v0/tasks/:taskId`, and the `task.*` events.
+  The task's agent, which opens its chat, is its embedded `agent`.
+- a `bot` subject or `bot:` cluster from bootstrap `bots` and `GET /v0/bots`, archived bots
+  included, `GET /v0/bots/:botId`, and the `bot.*` events; its picture from
+  `GET /v0/bots/:botId/avatar`.
+- a `surface` subject or `surface:` cluster from bootstrap `surfaces` and `GET /v0/surfaces`, and
+  the `surface.*` events; its picture from `GET /v0/surfaces/:surfaceId/image`. Surfaces are never
+  deleted.
+- the newest todo (`latest.todoId`) from `GET /v0/surfaces/todo/:surfaceId/:todoId`, deleted
+  todos included, and the `todo.*` events; the document edit that began a session
+  (`latest.seq`) from `GET /v0/surfaces/document/:surfaceId?seq=N` and `GET .../updates`.
+- an `artifact` subject from `GET /v0/artifacts/:artifactId`, which also answers a deleted
+  artifact's tombstone, `GET /v0/artifacts?includeDeleted=true`, and the `artifact.*` events; the
+  version an entry names (`latest.artifactVersion`) from
+  `GET /v0/artifacts/:artifactId/versions/:number` while the artifact is not deleted.
+- a `project:` or `workspace:` cluster from `GET /v0/projects` (archived included),
+  `GET /v0/projects/:projectId`, `GET /v0/workspaces/:workspaceId`, and their events.
+- an actor's `userId` through `GET /v0/users`, members and guests alike, kept current by
+  `profile.updated`, and the standalone person through the profile; an actor's `agentId` through
+  `GET /v0/agents/:agentId` and `agent.updated`.
+
+A client shows an entry once it holds the entities the entry names, rather than placeholder text
+in their place. An entry whose subject no longer exists — a task or bot that was permanently
+deleted — is removed from every feed with `feed.item.removed`.
 
 **Clusters.** Every change belongs to one or more clusters, which are what a person subscribes
 to, mutes, and peeks at. A cluster is named by a string:
@@ -12177,9 +12219,9 @@ entries through the events below rather than by reading the feed right after a m
 
 **Folding.** Each person has at most one **open** (unseen) entry per subject. A change to a
 subject folds into the person's open entry for it: `updates` grows by one (or `created` becomes
-`true`), `cursor` and `lastAt` advance, the actor is added, and `snapshot` is replaced by the
-change's. Without an open entry, the change opens a new one. Seeing the subject closes the open
-entry, so the next change opens another. A person who opens an artifact after each of fifty
+`true`), `cursor` and `lastAt` advance, the actor is added, and `latest` names the change.
+Without an open entry, the change opens a new one. Seeing the subject closes the open entry, so
+the next change opens another. A person who opens an artifact after each of fifty
 changes has fifty-one entries, each with one change; a person who never opens it has one entry
 with its creation and fifty updates.
 
@@ -12228,12 +12270,7 @@ team mode one member never reads or receives another member's.
         { "userId": "u1x2y3z4a5b6c7d8e9f0g1h2", "agentId": null }
     ],
     "actorCount": 2,
-    "snapshot": {
-        "title": "Q3 revenue report",
-        "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
-        "artifactType": "markdown",
-        "artifactVersion": 50
-    },
+    "latest": { "type": "artifact.updated", "artifactVersion": 50 },
     "firstAt": 1755300000000,
     "lastAt": 1755400000000,
     "seenAt": null
@@ -12259,20 +12296,22 @@ team mode one member never reads or receives another member's.
   attributed with. In standalone mode `userId` is always `null`. Resolve people through
   `GET /v0/users`, and the standalone person through the profile.
 - `actorCount` — how many distinct actors are folded in, which may exceed the five listed.
-- `snapshot` — how to show and open the subject, as of the newest change folded in:
-    - `title` — the subject's display name at that change: the task's, bot's, or Surface's name,
-      or the artifact's title. Always present, 1–256 characters.
-    - `agentId` — for a `task` or `bot`, its agent, which opens its chat. For an `artifact`, the
-      conversation the newest change came from, or `null` when a person made it outside one.
-      Absent for a `surface`.
-    - `surfaceType` — for a `surface`, its type, such as `"todo"` or `"document"`. Absent
-      otherwise.
-    - `artifactType`, `artifactVersion` — for an `artifact`, its type and the number of the newest
-      version folded in. Absent otherwise.
-    - `detail` — optional plain text about the newest change, at most 500 characters: the new
-      todo's text for a todo list. Absent when there is none.
+- `latest` — the newest change folded in, by reference:
+    - `type` — what the change was: `task.created`, `bot.created`, `surface.created`,
+      `todo.created`, `document.edited`, `artifact.created`, or `artifact.updated`. The set grows
+      with the product; a client treats a type it does not recognize as a change to the subject
+      without further detail.
+    - `todoId` — for `todo.created`, the new todo's ID, in the Surface the entry is about.
+    - `seq` — for `document.edited`, the `seq` of the document change that began the edit
+      session.
+    - `artifactVersion` — for `artifact.created` and `artifact.updated`, the number of the version
+      the change made.
 
-    Fields may be added; clients ignore ones they do not know.
+    Each is absent for every other type. `todoId` and `seq` are also absent from changes the
+    first Feed daemons recorded, before entries named their newest change; a client then shows
+    the change without that detail. These fields name the change: the todo's text, the
+    document's content, and the version's title are read from the entities they name. Fields may
+    be added; clients ignore ones they do not know.
 
 - `firstAt`, `lastAt` — when the oldest and newest folded changes happened, epoch milliseconds.
 - `seenAt` — when the person saw the entry, or `null` while it is open. Seeded entries and entries
@@ -12280,7 +12319,7 @@ team mode one member never reads or receives another member's.
 
 **Peek entries.** Peeking and the history it reads have no person attached, so a peek entry is
 the feed item without `id`, `version`, and `seenAt`: `cursor`, `subject`, `cluster`, `created`,
-`updates`, `actors`, `actorCount`, `snapshot`, `firstAt`, and `lastAt`, folding every change to
+`updates`, `actors`, `actorCount`, `latest`, `firstAt`, and `lastAt`, folding every change to
 the subject that the window covers.
 
 ### The cluster object
@@ -12289,17 +12328,19 @@ the subject that the window covers.
 {
     "cluster": "task:t4k8m2q9w1e5r7y3u6i0o2p4",
     "kind": "task",
-    "name": "Fix login redirect",
     "state": null,
     "lastAt": 1755400000000
 }
 ```
 
+A cluster, like an entry, carries references only. Clients label `*` and `team` themselves and
+show any other cluster by resolving the task, bot, Surface, project, or workspace its name points
+at, as described under "Showing an entry".
+
 - `cluster` — the cluster's name, as above, or `*` for everything.
 - `kind` — `"everything"` for `*`, `"team"`, `"task"`, `"bot"`, `"surface"`, `"project"`, or
-  `"workspace"`. The set grows with the product.
-- `name` — human display text: `Everything`, `Team`, or the current name of the task, bot,
-  Surface, project, or workspace.
+  `"workspace"`. The set grows with the product. For the kinds that name one thing, the ID follows
+  `<kind>:` in `cluster`.
 - `state` — the caller's own choice: `"subscribed"`, `"muted"`, or `null` when they made none and
   the cluster follows `*`. For `*` it is `"subscribed"` or `"muted"`, never `null`.
 - `lastAt` — the newest retained change in the cluster that the caller's audience allows, or
@@ -13489,6 +13530,9 @@ Feed events belong to one person: in team mode only that person receives them, i
 pulls, replay, and live delivery, and the payloads never name them. Guests receive none. A
 mutation's `mutationId` is echoed; fan-out, seeding on enrollment, and the read routes of tasks
 and agents carry none.
+
+Like the routes, these events carry references only; a change to a subject's name, picture, or
+text reaches clients through that subject's own events, never through the Feed.
 
 - `feed.item.created` — an entry was opened in the person's feed: a change opened it, or seeding
   wrote it.

@@ -46,25 +46,36 @@ export const feedActorSchema = Type.Object({
 });
 export type FeedActor = Static<typeof feedActorSchema>;
 
-/** How to show and open a subject, as of the newest change folded in. Fields may be added. */
-export const feedSnapshotSchema = Type.Object({
-    /** The task's, bot's, or Surface's name, or the artifact's title, at that change. */
-    title: Type.String({ minLength: 1, maxLength: 256 }),
-    /**
-     * A task's or bot's agent, which opens its chat; for an artifact, the conversation the
-     * change came from, or `null`. Absent for a Surface.
-     */
-    agentId: Type.Optional(Nullable(cuid2Schema)),
-    /** A Surface's type, such as `todo` or `document`. */
-    surfaceType: Type.Optional(Type.String()),
-    /** An artifact's type. */
-    artifactType: Type.Optional(Type.String()),
-    /** The number of the newest artifact version folded in. */
+/** What a change was. The set grows; treat an unknown type as a change without detail. */
+export const feedChangeTypeSchema = Type.String({ minLength: 1, maxLength: 64 });
+export type FeedChangeType = Static<typeof feedChangeTypeSchema>;
+
+/** The change types this client build knows. */
+export const FEED_CHANGE_TYPES = [
+    "task.created",
+    "bot.created",
+    "surface.created",
+    "todo.created",
+    "document.edited",
+    "artifact.created",
+    "artifact.updated",
+] as const;
+
+/**
+ * The newest change folded into an entry, by reference only. An entry never carries its subject's
+ * title, text, or picture: clients read those from the entities they sync, so they stay current.
+ * `todoId` and `seq` are absent from changes the first Feed daemons recorded. Fields may be added.
+ */
+export const feedLatestSchema = Type.Object({
+    type: feedChangeTypeSchema,
+    /** For `todo.created`: the new todo, in the entry's Surface. */
+    todoId: Type.Optional(cuid2Schema),
+    /** For `document.edited`: the document change that began the edit session. */
+    seq: Type.Optional(Type.Integer({ minimum: 1 })),
+    /** For `artifact.created` and `artifact.updated`: the version the change made. */
     artifactVersion: Type.Optional(Type.Integer({ minimum: 1 })),
-    /** Plain text about the newest change, such as a new todo's text. */
-    detail: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
 });
-export type FeedSnapshot = Static<typeof feedSnapshotSchema>;
+export type FeedLatest = Static<typeof feedLatestSchema>;
 
 /** One subject's folded changes, without anyone's seen state: what peeking returns. */
 export const feedEntrySchema = Type.Object({
@@ -81,7 +92,8 @@ export const feedEntrySchema = Type.Object({
     actors: Type.Array(feedActorSchema, { maxItems: 5 }),
     /** How many distinct actors are folded in. */
     actorCount: Type.Integer({ minimum: 0 }),
-    snapshot: feedSnapshotSchema,
+    /** The newest change folded in. Current daemons always send it; the first ones did not. */
+    latest: Type.Optional(feedLatestSchema),
     firstAt: timestampSchema,
     lastAt: timestampSchema,
 });
@@ -113,12 +125,14 @@ export type FeedClusterState = Static<typeof feedClusterStateSchema>;
 /** The cluster that means everything. */
 export const FEED_EVERYTHING_CLUSTER = "*";
 
+/**
+ * A cluster by reference only: clients label `*` and `team` themselves and resolve the thing a
+ * `<kind>:<id>` cluster names from what they sync.
+ */
 export const feedClusterSchema = Type.Object({
     /** `*`, `team`, or `<kind>:<id>`, such as `task:t4k8...`. */
     cluster: Type.String({ minLength: 1 }),
     kind: feedClusterKindSchema,
-    /** Human display text. */
-    name: Type.String(),
     /** Never `null` for `*`. */
     state: Nullable(feedClusterStateSchema),
     /** The newest retained change the caller may see, or `null`. */

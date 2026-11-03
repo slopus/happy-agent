@@ -34,12 +34,7 @@ const item: FeedItem = {
         { userId: "u1x2y3z4a5b6c7d8e9f0g1h2", agentId: null },
     ],
     actorCount: 2,
-    snapshot: {
-        title: "Q3 revenue report",
-        agentId: "a9b8c7d6e5f4g3h2i1j0k9l8",
-        artifactType: "markdown",
-        artifactVersion: 50,
-    },
+    latest: { type: "artifact.updated", artifactVersion: 50 },
     firstAt: 1_755_300_000_000,
     lastAt: 1_755_400_000_000,
     seenAt: null,
@@ -69,18 +64,29 @@ describe("feed protocol", () => {
             Value.Check(feedItemSchema, {
                 ...item,
                 subject: { type: "surface", id: "s4k8m2q9w1e5r7y3u6i0o2p4" },
-                snapshot: { title: "Shopping", surfaceType: "todo", detail: "Buy milk" },
+                latest: { type: "todo.created", todoId: "t9k8m2q9w1e5r7y3u6i0o2p4" },
                 seenAt: 1_755_400_000_001,
             }),
         ).toBe(true);
-        // Shapes grow: unknown subject types and snapshot fields stay readable.
+        expect(
+            Value.Check(feedItemSchema, {
+                ...item,
+                subject: { type: "surface", id: "s4k8m2q9w1e5r7y3u6i0o2p4" },
+                latest: { type: "document.edited", seq: 42 },
+            }),
+        ).toBe(true);
+        // Shapes grow: unknown subject and change types and new reference fields stay readable.
         expect(
             Value.Check(feedItemSchema, {
                 ...item,
                 subject: { type: "calendar_event", id: "x" },
-                snapshot: { title: "Later", somethingNew: true },
+                latest: { type: "calendar_event.created", somethingNew: true },
             }),
         ).toBe(true);
+        // The first Feed daemons named no newest change.
+        const { latest: _latest, ...withoutLatest } = item;
+        expect(Value.Check(feedItemSchema, withoutLatest)).toBe(true);
+        expect(Value.Check(feedItemSchema, { ...item, latest: { type: "" } })).toBe(false);
         expect(
             Value.Check(feedItemSchema, { ...item, actors: Array(6).fill(item.actors[0]) }),
         ).toBe(false);
@@ -106,13 +112,12 @@ describe("feed protocol", () => {
         const cluster = {
             cluster: "*",
             kind: "everything",
-            name: "Everything",
             state: "subscribed",
             lastAt: null,
         };
         expect(Value.Check(feedPeekResponseSchema, { cluster, entries: [entry] })).toBe(true);
-        const team = { cluster: "team", kind: "team", name: "Team", state: null, lastAt: 1 };
-        const task = { ...team, cluster: "task:t1", kind: "task", name: "Fix it", state: "muted" };
+        const team = { cluster: "team", kind: "team", state: null, lastAt: 1 };
+        const task = { ...team, cluster: "task:t1", kind: "task", state: "muted" };
         expect(Value.Check(feedClustersResponseSchema, { clusters: [cluster, team, task] })).toBe(
             true,
         );

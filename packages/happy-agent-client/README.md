@@ -62,7 +62,11 @@ not one past the newest held, read forward with `afterSeq`.
 The Feed is each person's list of what happened, served when health reports
 `capabilities.feed`. `getFeed({ before, limit })` reads entries newest `cursor` first; pass the
 last entry's `cursor` as `before` for the next page. Key rows by item `id` and keep the greater
-`version`: an entry that takes in a change moves up under the same `id`. `markFeedSeen()` closes
+`version`: an entry that takes in a change moves up under the same `id`. Entries and clusters
+carry references only: the `subject`, actor IDs, cluster names, counts, and `latest`, which names
+the newest change (a todo ID, a document `seq`, or an artifact version). Draw each row from the
+tasks, bots, Surfaces, todos, artifacts, users, and agents the app syncs, so a rename or a new
+picture shows at once; never from the Feed itself. `markFeedSeen()` closes
 open entries when the person opens their subjects, with `through` set to the shown `cursor`, and
 `markFeedReadAll()` closes them all. `listFeedClusters()`, `subscribeFeedCluster()`,
 `muteFeedCluster()`, and `peekFeedCluster()` take cluster names such as `team`, `task:<id>`, or
