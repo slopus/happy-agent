@@ -6356,9 +6356,14 @@ One command has this shape:
   client renders immediately; the image bytes are fetched separately from the focused command's
   `image` endpoint, exactly like a project avatar. A command without artwork omits `image`.
 
-The catalog is bounded and ordered: at most 256 commands and 256 KiB of encoded JSON in total. A
-name is at most 128 characters, a description 1,024, a kind 128, arguments 1,000,000, and one
-command image 8 MiB. The daemon loads the catalog when an agent is created or restored and again
+The catalog is complete and ordered: every available command is returned, including one command
+for every currently discoverable skill. There is no command-count or aggregate encoded-JSON size
+limit on the catalog. In particular, catalogs with thousands of skills must not be truncated,
+rejected merely for exceeding 256 commands or 256 KiB, or replaced with the model's prompt
+shortlist. Per-command validation remains bounded: a name is at most 128 characters, a description
+1,024, a kind 128, arguments 1,000,000, and one command image 8 MiB. Resource or transport failures
+must be reported as errors rather than successful partial catalogs. The daemon loads the catalog
+when an agent is created or restored and again
 immediately before every turn, alongside the turn's instructions and tools. It compares the
 complete ordered descriptors and the content identity of their separately served images. When
 either differs, the daemon replaces its cached copy and emits `agent.slash_commands.updated` with

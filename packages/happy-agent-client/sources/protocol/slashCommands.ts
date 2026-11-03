@@ -5,13 +5,15 @@ import { type Static, Type } from "@sinclair/typebox";
 import { messageModeSchema, mutationIdSchema, type EventCursor } from "./common.js";
 import type { Agent, AgentProfileCatalog } from "./agents.js";
 
-export const MAX_SLASH_COMMANDS = 256;
+/** The complete catalog has no count cap. Retained for consumers importing this constant. */
+export const MAX_SLASH_COMMANDS = Infinity;
 export const MAX_SLASH_COMMAND_NAME_LENGTH = 128;
 export const MAX_SLASH_COMMAND_DESCRIPTION_LENGTH = 1_024;
 export const MAX_SLASH_COMMAND_KIND_LENGTH = 128;
 export const MAX_SLASH_COMMAND_IMAGE_THUMBHASH_LENGTH = 512;
 export const MAX_SLASH_COMMAND_ARGUMENTS_LENGTH = 1_000_000;
-export const MAX_SLASH_COMMAND_CATALOG_BYTES = 256 * 1_024;
+/** The complete catalog has no aggregate byte cap; per-command limits still apply. */
+export const MAX_SLASH_COMMAND_CATALOG_BYTES = Infinity;
 
 /** Artwork metadata; bytes come from the focused command's `image` endpoint. */
 export const slashCommandImageSchema = Type.Object({
@@ -40,9 +42,7 @@ export const slashCommandSchema = Type.Object({
 });
 
 /** The complete ordered catalog returned for one focused agent. */
-export const slashCommandCatalogSchema = Type.Array(slashCommandSchema, {
-    maxItems: MAX_SLASH_COMMANDS,
-});
+export const slashCommandCatalogSchema = Type.Array(slashCommandSchema);
 
 /** `POST /v0/agents/:agentId/slash-commands/:name` */
 export const invokeSlashCommandRequestSchema = Type.Object({

@@ -709,6 +709,35 @@ describe("HappyAgentClient", () => {
         expect(requests[0]?.body).toBe(JSON.stringify({ mutationId: "compact1" }));
     });
 
+    it("returns all 10,000 skills from agent and invocation responses", async () => {
+        const slashCommands = Array.from({ length: 10_000 }, (_, index) => ({
+            name: `skill-${index}`,
+            description: "A specialized skill workflow.",
+            kind: "skill",
+            hasArguments: true,
+        }));
+        const command = slashCommands.at(-1)!;
+        const { fetch, requests } = stubFetch(() =>
+            json({ agent: {}, command, cursor: "c1", slashCommands }),
+        );
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+        expect((await client.getAgent("agent1")).slashCommands).toEqual(slashCommands);
+        const invoked = await client.invokeSlashCommand("agent1", command.name, {
+            mode: {
+                effort: "medium",
+                modelId: "model1",
+                permissionMode: "auto",
+                providerId: "provider1",
+                serviceTier: null,
+            },
+        });
+        expect(invoked.slashCommands).toEqual(slashCommands);
+        expect(invoked.command).toEqual(command);
+        expect(requests[1]?.url).toBe(
+            "http://agent.local/v0/agents/agent1/slash-commands/skill-9999",
+        );
+    });
+
     it("invokes a slash command directly through its focused agent route", async () => {
         const { fetch, requests } = stubFetch(() =>
             json({ agent: {}, command: {}, cursor: "c1", slashCommands: [] }, 202),
