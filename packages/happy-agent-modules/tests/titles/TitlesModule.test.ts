@@ -158,11 +158,33 @@ describe("TitlesModule naming", () => {
         });
         expect(test.provider.sessions).toHaveLength(2);
         const request = JSON.stringify(test.provider.sessions[0]!.requests[0]);
-        expect(request).toContain("within 13 characters");
-        expect(request).toContain("one or two words");
+        expect(request).toContain("one word in Title Case, or two only if they fit within");
+        expect(request).toContain("10 characters including the space");
         expect(request).toContain("no emoji");
+        expect(request).toContain("<short>Name</short>");
         expect(request.toLowerCase()).not.toContain("stor");
     });
+
+    it.each([
+        ["dark mode", "Dark Mode"],
+        ["iPhone app", "iPhone App"],
+        ["API keys", "API Keys"],
+        ["release notes", undefined],
+    ])(
+        "capitalizes lowercase short-title words, keeps other casing, discards over 10: %s",
+        async (short, expected) => {
+            const test = await titles([textTurn(`<title>A title</title><short>${short}</short>`)]);
+            await expect(
+                test.module.suggestNames(ctx, {
+                    firstMessage: "Name this.",
+                    wanted: { title: true, short: true },
+                }),
+            ).resolves.toEqual({
+                title: "A title",
+                ...(expected === undefined ? {} : { short: expected }),
+            });
+        },
+    );
 
     it("names a task's title and short title in one request", async () => {
         const test = await titles([
@@ -175,6 +197,8 @@ describe("TitlesModule naming", () => {
             }),
         ).resolves.toEqual({ title: "Onboarding flow changes", short: "Onboarding" });
         expect(test.provider.sessions).toHaveLength(1);
+        const request = JSON.stringify(test.provider.sessions[0]!.requests[0]);
+        expect(request).toContain("one word in Title Case, or two only if they fit within");
     });
 
     it("names a chat on the cheapest model of its own account, outside the chat's own session", async () => {

@@ -60,7 +60,7 @@ export const botSchema = Type.Object({
     isAdmin: Type.Optional(Type.Boolean()),
     name: botNameSchema,
     /**
-     * A generated label of at most 13 UTF-16 code units, absent until generated, after a rename,
+     * A generated label of at most 10 UTF-16 code units, absent until generated, after a rename,
      * and on older compatible daemons. Clients fall back to `name`.
      */
     shortName: Type.Optional(botNameSchema),

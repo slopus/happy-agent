@@ -46,7 +46,8 @@ function keep(answer: string | undefined, tidy: (value: string) => string): stri
 
 /**
  * A short title within its budget, or nothing: never shortened, unlike the other names. It is words
- * only, so emoji the model added anyway are removed before the budget is applied.
+ * only, so emoji the model added anyway are removed before the budget is applied. An all-lowercase
+ * word is capitalized; any other casing, such as "iPhone" or "API", is the model's and stays.
  */
 function keepShort(answer: string | undefined): string | undefined {
     const short = answer
@@ -54,7 +55,8 @@ function keepShort(answer: string | undefined): string | undefined {
         .replace(/\s+/gu, " ")
         .trim()
         .replace(/^["'`]+|["'`.!?:;,]+$/gu, "")
-        .trim();
+        .trim()
+        .replace(/(?<!\S)\p{Ll}(?=\p{Ll}*(?!\S))/gu, (letter) => letter.toUpperCase());
     return short && short.length <= MAX_SHORT_TITLE_CHARS && !/\p{Cc}/u.test(short)
         ? short
         : undefined;
