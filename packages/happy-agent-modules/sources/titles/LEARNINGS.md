@@ -49,8 +49,9 @@ naming still wins.
 Kirill asked for a very short label for tasks and bots, for compact places, then that it be words
 only (an earlier "one word plus an emoji" shape such as "Onboarding 🚀" was dropped), then that it
 be shorter still. It is asked in the same request as the title, so it costs no extra model call,
-and the prompt says only: one word in Title Case, or two only if they fit within 10 characters
-including the space; words only, no emoji. Its purpose is deliberately not described. Emoji the
+and the prompt says only: one or two capitalized words, at most 10 characters. Kirill asked for one
+super short instruction, so emoji and casing are left to the parser rather than spelled out in the
+prompt, and API.md states only the budget. Its purpose is deliberately not described. Emoji the
 model adds anyway are removed (with their variation selectors, skin-tone modifiers, and joiners),
 and an all-lowercase word is capitalized, before the budget is checked; other casing such as
 "iPhone" or "API" is kept. The budget is 10 UTF-16 code units, the length of "Your Story", as

@@ -8926,10 +8926,7 @@ Fields:
 - `stories` — whether this bot has story tools and visible stories, off by default. Current daemons return a boolean; older compatible daemons may omit it. Stored in the bot's settings and included in `bot.updated`.
 - `name` — the human display name. Required, 1–256 nonblank characters, no ASCII control
   characters.
-- `shortName` — optional generated label for compact places, at most 13 UTF-16 code units
-  (JavaScript string length, emoji included). Absent until automatic naming produces one, after
-  any rename, and on older compatible daemons; clients then shorten `name` themselves. A
-  generated label over the budget is discarded, never shortened.
+- `shortName` — optional generated label of at most 10 characters; clients fall back to `name`.
 - `username` — the local snake_case name and on-disk folder name, under the rules above.
 - `isAdmin` — whether the bot may create other bots through `create_bot`. The tool remains visible
   to non-admin bots, but calling it returns a tool error that explains the restriction and lists
@@ -9022,9 +9019,8 @@ For an unnamed bot, the first accepted text-bearing user-role message starts one
 naming job, using that message alone and the same cheap, bounded inference mechanism as
 workspace naming. The bot-specific prompt asks for a short entity, person, or role-like identity
 based on its likely ongoing function, not a task title. Generated names are bounded to three words
-and 40 characters. The same request also asks for `shortName`, a very short label of at most 14
-UTF-16 code units, preferably one word and an emoji; an answer over that budget leaves
-`shortName` absent. Message acceptance and the bot's real turn never wait for naming. Failure or
+and 40 characters. The same request also asks for `shortName`, a label of at most 10
+characters; an answer over that budget leaves `shortName` absent. Message acceptance and the bot's real turn never wait for naming. Failure or
 timeout does not fail the message. A new naming job makes at most three bounded attempts, waiting
 one second before its second attempt and five seconds before its third. Pending jobs and their
 attempt budget survive daemon restarts; later messages do not start another job. If every attempt
@@ -10610,10 +10606,7 @@ Fields:
 - `name` — the human display name, 1–256 nonblank characters without ASCII control characters.
   The task's agent title follows it. A task created without a name is called `New Task` until it
   names itself; see `POST /v0/tasks`.
-- `shortName` — optional generated label for compact places, at most 13 UTF-16 code units
-  (JavaScript string length, emoji included). Absent until automatic naming produces one, after
-  any rename, and on older compatible daemons; clients then shorten `name` themselves. A
-  generated label over the budget is discarded, never shortened.
+- `shortName` — optional generated label of at most 10 characters; clients fall back to `name`.
 - `folderName` — the immutable snake_case folder name, unique across all tasks, archived ones
   included: lowercase ASCII letters, digits, and underscores, starting with a letter, 1–64
   characters.
@@ -10727,8 +10720,7 @@ first accepted text-bearing message starts one durable asynchronous naming job: 
 or the message from the agent that created it, which is how a `create_task` call's opening `text`
 arrives. Naming uses that message alone and the same cheap, bounded inference as workspace naming,
 and asks for a short title of the work, two to six words, and in the same request a `shortName` of
-at most 13 UTF-16 code units, preferably one word and an emoji; an answer over that budget leaves
-`shortName` absent. The excerpt fallback supplies no `shortName`. Message acceptance and the task's own
+at most 10 characters; an answer over that budget leaves `shortName` absent. The excerpt fallback supplies no `shortName`. Message acceptance and the task's own
 turn never wait for naming. Failure or timeout does not fail the message. A new naming job makes
 at most three bounded attempts, waiting one second before its second attempt and five seconds
 before its third. Pending jobs and their attempt budget survive daemon restarts; later messages

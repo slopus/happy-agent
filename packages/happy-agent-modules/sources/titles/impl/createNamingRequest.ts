@@ -12,10 +12,7 @@ export interface NamingRequestText {
 
 const CLOSING = "Use only what you were given; do not guess at work you cannot see.";
 
-const SHORT_RULE = [
-    "<short>: one word in Title Case, or two only if they fit within",
-    `${String(MAX_SHORT_TITLE_CHARS)} characters including the space; words only, no emoji.`,
-].join(" ");
+const SHORT_RULE = `<short>: one or two capitalized words, at most ${String(MAX_SHORT_TITLE_CHARS)} characters.`;
 
 /** What each name is for, and what shape the answer takes. */
 const WHAT_IT_IS: Readonly<Record<keyof TitleNamesWanted, string>> = {

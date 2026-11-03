@@ -158,9 +158,7 @@ describe("TitlesModule naming", () => {
         });
         expect(test.provider.sessions).toHaveLength(2);
         const request = JSON.stringify(test.provider.sessions[0]!.requests[0]);
-        expect(request).toContain("one word in Title Case, or two only if they fit within");
-        expect(request).toContain("10 characters including the space");
-        expect(request).toContain("no emoji");
+        expect(request).toContain("<short>: one or two capitalized words, at most 10 characters.");
         expect(request).toContain("<short>Name</short>");
         expect(request.toLowerCase()).not.toContain("stor");
     });
@@ -198,7 +196,7 @@ describe("TitlesModule naming", () => {
         ).resolves.toEqual({ title: "Onboarding flow changes", short: "Onboarding" });
         expect(test.provider.sessions).toHaveLength(1);
         const request = JSON.stringify(test.provider.sessions[0]!.requests[0]);
-        expect(request).toContain("one word in Title Case, or two only if they fit within");
+        expect(request).toContain("<short>: one or two capitalized words, at most 10 characters.");
     });
 
     it("names a chat on the cheapest model of its own account, outside the chat's own session", async () => {
