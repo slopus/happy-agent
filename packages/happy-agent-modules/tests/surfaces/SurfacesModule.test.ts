@@ -241,8 +241,8 @@ describe("installation-owned Surface state", () => {
         } as AgentModuleScope);
         expect(ordinary.map((tool) => tool.name)).toEqual([
             "read_system_monitor",
-            "list_surfaces",
-            "update_surface",
+            "list_tabs",
+            "update_tab",
             "list_todos",
             "create_todo",
             "update_todo",
@@ -258,7 +258,7 @@ describe("installation-owned Surface state", () => {
             "delete_calendar_event",
             "list_calendar_event_versions",
         ]);
-        for (const tool of ordinary.filter((tool) => tool.name !== "update_surface")) {
+        for (const tool of ordinary.filter((tool) => tool.name !== "update_tab")) {
             const read =
                 tool.name.startsWith("list_") ||
                 tool.name === "read_document" ||
@@ -271,7 +271,7 @@ describe("installation-owned Surface state", () => {
             expect(tool.shouldRunInFullAccessInAutoMode).toBeUndefined();
         }
         // Reading an image cannot hold the transaction, so the edit settles its own result.
-        const update = ordinary.find((tool) => tool.name === "update_surface")!;
+        const update = ordinary.find((tool) => tool.name === "update_tab")!;
         expect(update.shouldReviewInAutoMode!({}, ctx)).toBe(true);
         expect(update.requiresAutoOrFullAccess).toBe(true);
         expect(update.durable).toBe(true);
@@ -280,11 +280,11 @@ describe("installation-owned Surface state", () => {
             expect(await update.shouldRunInFullAccessInAutoMode!(input, ctx)).toBe(false);
         expect(
             update.describeAutoPermissionAction!(
-                { surfaceId: "s12345678901234567890123", name: "Plans", imagePath: null },
+                { tabId: "s12345678901234567890123", name: "Plans", imagePath: null },
                 ctx,
             ),
         ).toBe(
-            'editing shared Surface "s12345678901234567890123": renaming it to "Plans" and removing its picture. Access: shared data write and, when supplied, filesystem image read; outside-workspace and symlink targets require Full access',
+            'editing shared Tab "s12345678901234567890123": renaming it to "Plans" and removing its picture. Access: shared data write and, when supplied, filesystem image read; outside-workspace and symlink targets require Full access',
         );
         const tools = await f.hooks.tools!(ctx, { agent: { id: "admin" } } as AgentModuleScope);
         for (const tool of tools) {
@@ -296,11 +296,11 @@ describe("installation-owned Surface state", () => {
                 ).toBeGreaterThan(0);
             }
         }
-        const create = tools.find((tool) => tool.name === "create_todo_surface")!;
-        const createMonitor = tools.find((tool) => tool.name === "create_system_monitor_surface")!;
+        const create = tools.find((tool) => tool.name === "create_todo_tab")!;
+        const createMonitor = tools.find((tool) => tool.name === "create_system_monitor_tab")!;
         expect(createMonitor.shouldReviewInAutoMode!({}, ctx)).toBe(true);
         expect(await createMonitor.shouldRunInFullAccessInAutoMode!({}, ctx)).toBe(false);
-        const add = tools.find((tool) => tool.name === "add_surface_user")!;
+        const add = tools.find((tool) => tool.name === "add_tab_user")!;
         expect(create.shouldReviewInAutoMode!({}, ctx)).toBe(true);
         expect(await create.shouldRunInFullAccessInAutoMode!({}, ctx)).toBe(false);
         expect(
@@ -333,11 +333,7 @@ describe("installation-owned Surface state", () => {
         ).toContain('setting its picture from image "/outside/a.png"');
         f.revoke();
         await expect(
-            add.execute(
-                ctx,
-                { surfaceId: "s12345678901234567890123", userId: "alice" },
-                {} as never,
-            ),
+            add.execute(ctx, { tabId: "s12345678901234567890123", userId: "alice" }, {} as never),
         ).rejects.toMatchObject({ code: "forbidden" });
         await expect(create.execute(ctx, { name: "Denied" }, {} as never)).rejects.toMatchObject({
             code: "forbidden",
@@ -356,12 +352,12 @@ describe("installation-owned Surface state", () => {
             agent: { id: "admin" },
             kv: agentKv,
         } as AgentModuleScope);
-        const createSurface = tools.find((tool) => tool.name === "create_todo_surface")!;
+        const createSurface = tools.find((tool) => tool.name === "create_todo_tab")!;
         const createTodo = tools.find((tool) => tool.name === "create_todo")!;
         expect(Value.Check(createSurface.parameters, { name: "Missing" })).toBe(false);
         expect(
             Value.Check(createTodo.parameters, {
-                surfaceId: "s12345678901234567890123",
+                tabId: "s12345678901234567890123",
                 text: "Missing",
             }),
         ).toBe(false);
@@ -370,7 +366,7 @@ describe("installation-owned Surface state", () => {
         );
         expect(
             Value.Check(createTodo.parameters, {
-                surfaceId: "s12345678901234567890123",
+                tabId: "s12345678901234567890123",
                 text: "Valid",
                 authorUserId: null,
             }),
@@ -383,14 +379,14 @@ describe("installation-owned Surface state", () => {
         expect(surface).toMatchObject({ creatorUserId: "bob", members: [{ userId: "bob" }] });
         await createTodo.execute(
             ctx,
-            { surfaceId: surface!.id, text: "Bob's todo", authorUserId: "bob" },
+            { tabId: surface!.id, text: "Bob's todo", authorUserId: "bob" },
             {
                 kv: f.kv.scoped("todo-call"),
             } as never,
         );
         await createTodo.execute(
             ctx,
-            { surfaceId: surface!.id, text: "Unattributed", authorUserId: null },
+            { tabId: surface!.id, text: "Unattributed", authorUserId: null },
             {
                 kv: f.kv.scoped("null-todo-call"),
             } as never,
@@ -686,8 +682,8 @@ describe("installation-owned Surface state", () => {
             agent: { id: "ordinary" },
             kv: f.kv.scoped("ordinary-agent"),
         } as AgentModuleScope);
-        const update = tools.find((tool) => tool.name === "update_surface")!;
-        expect(Value.Check(update.parameters, { surfaceId: surface.id, imagePath: "a.png" })).toBe(
+        const update = tools.find((tool) => tool.name === "update_tab")!;
+        expect(Value.Check(update.parameters, { tabId: surface.id, imagePath: "a.png" })).toBe(
             false,
         );
         const call = (key: string) => ({
@@ -696,14 +692,14 @@ describe("installation-owned Surface state", () => {
         });
 
         await expect(
-            update.execute(ctx, { surfaceId: surface.id }, call("empty") as never),
+            update.execute(ctx, { tabId: surface.id }, call("empty") as never),
         ).rejects.toMatchObject({ code: "invalid_request" });
 
         f.fs.readFileBuffer.mockResolvedValue(await png("#00ff00"));
         const first = call("picture");
         const pictured = await update.execute(
             ctx,
-            { surfaceId: surface.id, name: "Weekend errands", imagePath: "/work/icon.png" },
+            { tabId: surface.id, name: "Weekend errands", imagePath: "/work/icon.png" },
             first as never,
         );
         expect(pictured).toMatchObject({
@@ -716,7 +712,7 @@ describe("installation-owned Surface state", () => {
         expect(
             await update.execute(
                 ctx,
-                { surfaceId: surface.id, name: "Weekend errands", imagePath: "/work/icon.png" },
+                { tabId: surface.id, name: "Weekend errands", imagePath: "/work/icon.png" },
                 first as never,
             ),
         ).toEqual(pictured);
@@ -724,7 +720,7 @@ describe("installation-owned Surface state", () => {
 
         const cleared = await update.execute(
             ctx,
-            { surfaceId: surface.id, imagePath: null },
+            { tabId: surface.id, imagePath: null },
             call("clear") as never,
         );
         expect(cleared).toMatchObject({ name: "Weekend errands", image: null });

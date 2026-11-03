@@ -21,7 +21,7 @@ it("preserves heading prefixes as plain todo text through ordinary edits, orderi
                         type: "tool_call",
                         name: "create_todo",
                         arguments: {
-                            surfaceId,
+                            tabId: surfaceId,
                             text: "#  Section with retained spacing  ",
                             authorUserId: null,
                         },

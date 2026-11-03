@@ -1,5 +1,14 @@
 # Surfaces learnings
 
+## Tabs are the model vocabulary; stored identities and API records stay compatible
+
+Steve renamed Surfaces to tabs while requiring API compatibility but no tool aliases.
+The model tools now use tab names, `tabId` arguments, and tab-only structured results,
+including nested content and revision identities. Instructions emit `happy://tabs` links.
+The existing module, storage keys, IDs, memberships, audit records, and permission policies
+remain unchanged. An individual tab is not a global singleton feature; each person's
+membership and order still belong to that person.
+
 ## Default membership must respect deliberate departures
 
 Team members now join new and existing catalog Surfaces by default through the independent

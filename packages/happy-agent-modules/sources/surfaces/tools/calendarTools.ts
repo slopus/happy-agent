@@ -19,6 +19,7 @@ import {
     type UpdateCalendarEventRequest,
 } from "@slopus/happy-agent-client";
 import type { SurfacesModule } from "../SurfacesModule.js";
+import { tabContent } from "./tabContent.js";
 import {
     LOCAL_DATE_TIME_PATTERN,
     apiTimingToTool,
@@ -49,10 +50,12 @@ const {
     timing: _timing,
     status: _status,
     deletedAt: _deletedAt,
+    surfaceId: _surfaceId,
     ...eventFields
 } = calendarEventSchema.anyOf[0].properties;
 const toolEvent = Type.Object({
     ...eventFields,
+    tabId: surfaceIdSchema,
     recurrence: Type.Union([calendarRecurrenceSchema, Type.Null()]),
     timing: toolTiming,
     status: calendarEventStatusSchema,
@@ -66,7 +69,7 @@ const toolRevision = Type.Object({
     }),
     source: Type.Union([Type.Literal("api"), Type.Literal("tool")]),
 });
-const identity = { surfaceId: surfaceIdSchema, eventId: cuid2Schema };
+const identity = { tabId: surfaceIdSchema, eventId: cuid2Schema };
 const guard = { ...identity, version: resourceVersionSchema };
 const editable = {
     title: calendarEventTitleSchema,
@@ -83,7 +86,10 @@ const TIMING_RULES =
 const RECURRENCE_RULES =
     "Recurrence is null or {frequency: daily|weekly|monthly|yearly, interval (default 1), weekdays (weekly only: monday…sunday, or null for the start's weekday), until (inclusive YYYY-MM-DD) or count (total occurrences)}; at most one of until and count. The event's own timing is occurrence 0. Monthly and yearly skip months or years without the start's day (31st, 29 February). Times stay at the same wall-clock time across daylight-saving changes. There are no per-occurrence exceptions: every edit changes the whole series.";
 
-const forModel = (event: CalendarEvent) => ({ ...event, timing: apiTimingToTool(event.timing) });
+const forModel = (event: CalendarEvent) => ({
+    ...tabContent(event),
+    timing: apiTimingToTool(event.timing),
+});
 const revisionForModel = (revision: CalendarEventRevision) => ({
     ...revision,
     event: forModel(revision.event),
@@ -105,10 +111,10 @@ export function calendarTools(
                 "upcoming meetings",
                 "what is on the calendar",
             ],
-            description: `List the event occurrences of one calendar Surface that overlap a range of at most 100 days, with the events they belong to. Give from and to as local dates (YYYY-MM-DD, meaning midnight) or local date-times in timeZone, the IANA zone the person thinks in. Happy expands recurring events for you; never compute repeats yourself. Occurrence times are written in timeZone with offsets, as {kind:'timed', start, end} or all-day dates; each names its eventId and index in the series. Event timing is written in the event's own zone. Keep event versions for guarded edits. At most ${TOOL_MAX_OCCURRENCES} occurrences are returned in time order; when truncated is true, read a narrower range.`,
+            description: `List the event occurrences of one calendar Tab that overlap a range of at most 100 days, with the events they belong to. Give from and to as local dates (YYYY-MM-DD, meaning midnight) or local date-times in timeZone, the IANA zone the person thinks in. Happy expands recurring events for you; never compute repeats yourself. Occurrence times are written in timeZone with offsets, as {kind:'timed', start, end} or all-day dates; each names its eventId and index in the series. Event timing is written in the event's own zone. Keep event versions for guarded edits. At most ${TOOL_MAX_OCCURRENCES} occurrences are returned in time order; when truncated is true, read a narrower range.`,
             parameters: Type.Object(
                 {
-                    surfaceId: surfaceIdSchema,
+                    tabId: surfaceIdSchema,
                     from: Type.String({ minLength: 10, maxLength: 40 }),
                     to: Type.String({ minLength: 10, maxLength: 40 }),
                     timeZone: calendarTimeZoneSchema,
@@ -139,7 +145,7 @@ export function calendarTools(
             execute: async (ctx, input) => {
                 const range = await surfaces.listCalendar(
                     ctx,
-                    input.surfaceId,
+                    input.tabId,
                     {
                         from: parseToolBoundary(input.from, input.timeZone, "from"),
                         to: parseToolBoundary(input.to, input.timeZone, "to"),
@@ -177,10 +183,10 @@ export function calendarTools(
                 "add appointment",
                 "recurring event",
             ],
-            description: `Add an event to one calendar Surface. ${TIMING_RULES} ${RECURRENCE_RULES} The title may be empty. Explicitly supply authorUserId as a local Happy user ID, or null for no attribution; only null is allowed in standalone mode. The author is immutable and separate from the revision's audit actor. This never joins anyone to the Surface.`,
+            description: `Add an event to one calendar Tab. ${TIMING_RULES} ${RECURRENCE_RULES} The title may be empty. Explicitly supply authorUserId as a local Happy user ID, or null for no attribution; only null is allowed in standalone mode. The author is immutable and separate from the revision's audit actor. This never joins anyone to the Tab.`,
             parameters: Type.Object(
                 {
-                    surfaceId: surfaceIdSchema,
+                    tabId: surfaceIdSchema,
                     title: Type.Optional(editable.title),
                     notes: Type.Optional(editable.notes),
                     location: Type.Optional(editable.location),
@@ -195,14 +201,14 @@ export function calendarTools(
             transactional: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => true,
-            describeAutoPermissionAction: ({ surfaceId }) =>
-                `adding an event to shared calendar Surface ${JSON.stringify(surfaceId)}. Access: shared data write`,
+            describeAutoPermissionAction: ({ tabId }) =>
+                `adding an event to shared calendar Tab ${JSON.stringify(tabId)}. Access: shared data write`,
             execute: async (ctx, input, call) => {
-                const { surfaceId, authorUserId, timing, ...fields } = input;
+                const { tabId, authorUserId, timing, ...fields } = input;
                 return forModel(
                     await surfaces.createCalendarEvent(
                         ctx,
-                        surfaceId,
+                        tabId,
                         {
                             ...fields,
                             timing: toolTimingToApi(timing),
@@ -244,13 +250,13 @@ export function calendarTools(
             transactional: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => true,
-            describeAutoPermissionAction: ({ surfaceId, eventId }) =>
-                `editing calendar event ${JSON.stringify(eventId)} in shared Surface ${JSON.stringify(surfaceId)}. Access: shared data write`,
-            execute: async (ctx, { surfaceId, eventId, version, timing, ...edit }) =>
+            describeAutoPermissionAction: ({ tabId, eventId }) =>
+                `editing calendar event ${JSON.stringify(eventId)} in shared Tab ${JSON.stringify(tabId)}. Access: shared data write`,
+            execute: async (ctx, { tabId, eventId, version, timing, ...edit }) =>
                 forModel(
                     await surfaces.mutateCalendarEvent(
                         ctx,
-                        surfaceId,
+                        tabId,
                         eventId,
                         version,
                         // The module validates that at least one field is being edited.
@@ -278,13 +284,13 @@ export function calendarTools(
             transactional: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => true,
-            describeAutoPermissionAction: ({ surfaceId, eventId }) =>
-                `deleting calendar event ${JSON.stringify(eventId)} from shared Surface ${JSON.stringify(surfaceId)} while preserving its history. Access: shared data write`,
+            describeAutoPermissionAction: ({ tabId, eventId }) =>
+                `deleting calendar event ${JSON.stringify(eventId)} from shared Tab ${JSON.stringify(tabId)} while preserving its history. Access: shared data write`,
             execute: async (ctx, input) =>
                 forModel(
                     await surfaces.mutateCalendarEvent(
                         ctx,
-                        input.surfaceId,
+                        input.tabId,
                         input.eventId,
                         input.version,
                         "delete",
@@ -322,7 +328,7 @@ export function calendarTools(
             execute: async (ctx, input) => {
                 const page = await surfaces.calendarEventVersions(
                     ctx,
-                    input.surfaceId,
+                    input.tabId,
                     input.eventId,
                     input.afterVersion,
                     input.limit ?? 10,

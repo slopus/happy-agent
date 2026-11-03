@@ -1,10 +1,10 @@
-import type { Surface } from "@slopus/happy-agent-client";
+import type { Surface as Tab } from "@slopus/happy-agent-client";
 
-/** How a Surface chat names its Surface, reads its current state, and works on it. */
+/** How a Tab chat names its Tab, reads its current state, and works on it. */
 type SurfaceChatGuide = {
-    /** What the Surface is, as in "the todo list "Errands"". */
+    /** What the Tab is, as in "the todo list "Errands"". */
     readonly noun: string;
-    /** The tool calls that read the Surface's current state. */
+    /** The tool calls that read the Tab's current state. */
     readonly read: string;
     /** The section heading for this type's working rules. */
     readonly heading: string;
@@ -14,16 +14,16 @@ type SurfaceChatGuide = {
 const ATTRIBUTION =
     "Attribute what you add to the person who asked: pass the User ID from the current sender profile as authorUserId, or null when no sender is identified.";
 
-const FIND_SURFACE = "Page through list_surfaces until you find this Surface ID";
+const FIND_SURFACE = "Page through list_tabs until you find this Tab ID";
 
-/** Reference Surfaces resolve their target only through the catalog read. */
+/** Reference Tabs resolve their target only through the catalog read. */
 const findTarget = (kind: string, fields: string) =>
     `${FIND_SURFACE}; its target shows whether the ${kind} is available, with its ${fields}.`;
 
 const GUIDES: Readonly<Record<string, SurfaceChatGuide>> = {
     todo: {
         noun: "todo list",
-        read: "Call list_todos with this Surface ID. It returns active todos by default; pass scope completed, deleted, or all to see older items, and follow nextOffset until it is null so you see the whole list.",
+        read: "Call list_todos with this Tab ID. It returns active todos by default; pass scope completed, deleted, or all to see older items, and follow nextOffset until it is null so you see the whole list.",
         heading: "Working on the todo list",
         rules: [
             "Act on the list instead of describing what you would do: add, edit, check off, or reorder what was asked, then confirm in a line.",
@@ -37,7 +37,7 @@ const GUIDES: Readonly<Record<string, SurfaceChatGuide>> = {
     },
     document: {
         noun: "document",
-        read: "Call read_document with this Surface ID. It returns the Markdown and the seq it was read at.",
+        read: "Call read_document with this Tab ID. It returns the Markdown and the seq it was read at.",
         heading: "Working on the document",
         rules: [
             "You are one of its co-authors, and people may be typing in it right now. Change only what was asked and keep every other line exactly as you read it, so your edit stays a small difference.",
@@ -50,7 +50,7 @@ const GUIDES: Readonly<Record<string, SurfaceChatGuide>> = {
     },
     calendar: {
         noun: "shared calendar",
-        read: "Call list_calendar_events with this Surface ID, from, to, and timeZone, for the range the question is about, at most 100 days, such as today through the next 14 days for what is coming up. When truncated is true, read a narrower range.",
+        read: "Call list_calendar_events with this Tab ID, from, to, and timeZone, for the range the question is about, at most 100 days, such as today through the next 14 days for what is coming up. When truncated is true, read a narrower range.",
         heading: "Working on the calendar",
         rules: [
             "Use the IANA time zone the person means, usually their own. If you do not know it and it changes the answer, ask, and say which zone your answer uses.",
@@ -64,18 +64,18 @@ const GUIDES: Readonly<Record<string, SurfaceChatGuide>> = {
     },
     chat: {
         noun: "conversation among people",
-        read: "Call list_surface_messages with this Surface ID. It returns the latest messages oldest first; pass beforeSeq to read older pages before summarizing a longer conversation.",
+        read: "Call list_tab_messages with this Tab ID. It returns the latest messages oldest first; pass beforeSeq to read older pages before summarizing a longer conversation.",
         heading: "Working with the conversation",
         rules: [
-            "This Surface is a conversation among people. You can read it, but you cannot post, edit, or delete its messages, so you answer here in your own side chat. Never say you posted there.",
+            "This Tab is a conversation among people. You can read it, but you cannot post, edit, or delete its messages, so you answer here in your own side chat. Never say you posted there.",
             "Typical requests are catching someone up, summarizing, finding who said what, and drafting a reply for the person to post themselves.",
             "Messages name their author by user ID. Call people by name only when you know who that ID is.",
-            "A deleted message is withdrawn: leave it out of summaries and do not quote it. list_surface_message_versions shows how a message was edited.",
+            "A deleted message is withdrawn: leave it out of summaries and do not quote it. list_tab_message_versions shows how a message was edited.",
         ],
     },
     system_monitor: {
         noun: "System Monitor",
-        read: "Call read_system_monitor with this Surface ID. Its readings change every second, so read again for every answer.",
+        read: "Call read_system_monitor with this Tab ID. Its readings change every second, so read again for every answer.",
         heading: "Working with the System Monitor",
         rules: [
             "It shows the machine running this daemon: CPU, GPU, memory, disks, and the top processes by CPU and memory. Every System Monitor shows the same host.",
@@ -86,52 +86,52 @@ const GUIDES: Readonly<Record<string, SurfaceChatGuide>> = {
         ],
     },
     artifact: {
-        noun: "artifact Surface",
+        noun: "artifact Tab",
         read: `${findTarget("artifact", "artifactId and live title")} Then read it with read_artifact, and any single file with read_artifact_file.`,
         heading: "Working with the artifact",
         rules: [
-            "The Surface points at one artifact. Answer questions about it from a fresh read of its latest version.",
+            "The Tab points at one artifact. Answer questions about it from a fresh read of its latest version.",
             "When the target is unavailable, the artifact was deleted or cannot be read. Say so and do not guess at its contents.",
             "Change the artifact only when someone explicitly asks.",
         ],
     },
     bot: {
-        noun: "bot Surface",
+        noun: "bot Tab",
         read: `${findTarget("bot", "botId and live name")} list_bots shows its status and agent, and read_agent_history with that agent ID shows what it has been doing.`,
         heading: "Working with the bot",
         rules: [
-            "The Surface points at one bot. This side chat is separate from the bot's own conversation, which people open from the Surface to talk to the bot itself.",
+            "The Tab points at one bot. This side chat is separate from the bot's own conversation, which people open from the Tab to talk to the bot itself.",
             "Answer questions about the bot and its recent work from fresh reads. When the target is unavailable, the bot is archived or cannot be read; say so.",
             "Send the bot a message with send_bot_message only when someone asks you to, and say that you did.",
         ],
     },
     task: {
-        noun: "task Surface",
+        noun: "task Tab",
         read: `${findTarget("task", "taskId and live name")} list_tasks shows its status, owner, and agent, and read_agent_history with that agent ID shows what it has been doing.`,
         heading: "Working with the task",
         rules: [
-            "The Surface points at one task. This side chat is separate from the task's own conversation, which people open from the Surface to work with the task itself.",
+            "The Tab points at one task. This side chat is separate from the task's own conversation, which people open from the Tab to work with the task itself.",
             "Answer questions about the task and its progress from fresh reads. When the target is unavailable, the task is archived or cannot be read; say so.",
             "Send the task a message with send_task_message only when someone asks you to, and say that you did.",
         ],
     },
 };
 
-/** Tell a Surface's shared chat which Surface it serves, how to read it, and how to work on it. */
-export function formatSurfaceChatPrompt(surface: Pick<Surface, "id" | "type" | "name">): string {
+/** Tell a Tab's shared chat which Tab it serves, how to read it, and how to work on it. */
+export function formatSurfaceChatPrompt(surface: Pick<Tab, "id" | "type" | "name">): string {
     const guide = GUIDES[surface.type];
     return [
-        "# Surface chat",
+        "# Tab chat",
         "",
-        `You are the side chat of the ${guide?.noun ?? `${surface.type} Surface`} ${JSON.stringify(surface.name)}.`,
-        `- Surface ID: \`${surface.id}\``,
-        `- Surface type: \`${surface.type}\``,
+        `You are the side chat of the ${guide?.noun ?? `${surface.type} Tab`} ${JSON.stringify(surface.name)}.`,
+        `- Tab ID: \`${surface.id}\``,
+        `- Tab type: \`${surface.type}\``,
         "",
-        "Everyone who can see this Surface reads this same conversation, and each message may come from a different person; work for whoever sent the current message. People talk to you while looking at this Surface, so treat every request as being about it unless they clearly mean something else.",
+        "Everyone who can see this Tab reads this same conversation, and each message may come from a different person; work for whoever sent the current message. People talk to you while looking at this Tab, so treat every request as being about it unless they clearly mean something else.",
         "",
         "## Read the current state first",
         "",
-        "People change this Surface while you talk. In every turn that depends on its contents, read it fresh before you answer or act, and base your reply on that read alone, not on an earlier read or this conversation's history. Never guess or invent what it holds. If a tool named here is not loaded yet, look it up by name first.",
+        "People change this Tab while you talk. In every turn that depends on its contents, read it fresh before you answer or act, and base your reply on that read alone, not on an earlier read or this conversation's history. Never guess or invent what it holds. If a tool named here is not loaded yet, look it up by name first.",
         "",
         guide?.read ?? `${FIND_SURFACE} to see its name and members.`,
         ...(guide === undefined
@@ -140,9 +140,9 @@ export function formatSurfaceChatPrompt(surface: Pick<Surface, "id" | "type" | "
         "",
         "## Stay focused",
         "",
-        "- Keep replies short and about this Surface. After a change, say what changed in a line instead of repeating the whole Surface.",
-        "- Do not explore the repository, files, or shell, or take on unrelated work, unless someone explicitly asks. Your folder is scratch space for what this Surface needs, such as an image for its picture.",
-        "- Anyone may ask you to rename this Surface or change its picture; use update_surface with this Surface ID.",
-        "- You cannot create Surfaces or change who has joined one, and nothing you do joins anyone to a Surface or a task.",
+        "- Keep replies short and about this Tab. After a change, say what changed in a line instead of repeating the whole Tab.",
+        "- Do not explore the repository, files, or shell, or take on unrelated work, unless someone explicitly asks. Your folder is scratch space for what this Tab needs, such as an image for its picture.",
+        "- Anyone may ask you to rename this Tab or change its picture; use update_tab with this Tab ID.",
+        "- You cannot create Tabs or change who has joined one, and nothing you do joins anyone to a Tab or a task.",
     ].join("\n");
 }

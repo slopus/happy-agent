@@ -141,14 +141,14 @@ describe("important documents", () => {
                 "  <document>",
                 "    <name>Style guide</name>",
                 "    <description>Writing style for user-facing text.</description>",
-                `    <surface_id>${style.id}</surface_id>`,
-                `    <link>happy://surfaces/${style.id}</link>`,
+                `    <tab_id>${style.id}</tab_id>`,
+                `    <link>happy://tabs/${style.id}</link>`,
                 "  </document>",
                 "  <document>",
                 "    <name>Release process</name>",
                 "    <description>How to cut and announce a release. Read before releasing anything.</description>",
-                `    <surface_id>${release.id}</surface_id>`,
-                `    <link>happy://surfaces/${release.id}</link>`,
+                `    <tab_id>${release.id}</tab_id>`,
+                `    <link>happy://tabs/${release.id}</link>`,
                 "  </document>",
                 "</important_documents>",
             ].join("\n"),
@@ -387,7 +387,7 @@ describe("important documents", () => {
         const list = await t.tool("list_prompt_documents");
         expect(list.shouldReviewInAutoMode?.({} as never, {} as never)).toBe(false);
         expect(list.requiresAutoOrFullAccess).toBeFalsy();
-        const input = { surfaceId: "a".repeat(24), description: "Guidance." };
+        const input = { tabId: "a".repeat(24), description: "Guidance." };
         for (const name of ["mark_prompt_document", "unmark_prompt_document"]) {
             const tool = await t.tool(name);
             expect(tool.durable).toBe(true);
@@ -407,7 +407,7 @@ describe("important documents", () => {
         const mark = await t.tool("mark_prompt_document");
         const marked = await mark.execute(
             t.ctx,
-            { surfaceId: notes.id, description: "Notes." },
+            { tabId: notes.id, description: "Notes." },
             {} as never,
         );
         expect(mark.toLLM?.(marked as never)).toEqual([
@@ -415,10 +415,10 @@ describe("important documents", () => {
                 text: expect.stringContaining(`Marked ${notes.id} as an important document.`),
             }),
         ]);
-        await expect(t.instructions()).resolves.toContain(`<surface_id>${notes.id}</surface_id>`);
+        await expect(t.instructions()).resolves.toContain(`<tab_id>${notes.id}</tab_id>`);
 
         const unmark = await t.tool("unmark_prompt_document");
-        const unmarked = await unmark.execute(t.ctx, { surfaceId: notes.id }, {} as never);
+        const unmarked = await unmark.execute(t.ctx, { tabId: notes.id }, {} as never);
         expect(unmark.toLLM?.(unmarked as never)).toEqual([
             expect.objectContaining({
                 text: `Unmarked ${notes.id}.\n\nThis installation has no important documents.`,
@@ -474,21 +474,21 @@ describe("important documents", () => {
         const notes = await t.document("Notes");
         const read = await t.tool("read_document");
         await expect(
-            read.execute(t.ctx, { surfaceId: notes.id }, {} as never),
+            read.execute(t.ctx, { tabId: notes.id }, {} as never),
         ).resolves.not.toHaveProperty("promptDocument");
 
         await t.surfaces.markPromptDocument(t.ctx, "admin-agent", {
             surfaceId: notes.id,
             description: "Team conventions.",
         });
-        await expect(
-            read.execute(t.ctx, { surfaceId: notes.id }, {} as never),
-        ).resolves.toMatchObject({ promptDocument: { description: "Team conventions." } });
-        const list = await t.tool("list_surfaces");
+        await expect(read.execute(t.ctx, { tabId: notes.id }, {} as never)).resolves.toMatchObject({
+            promptDocument: { description: "Team conventions." },
+        });
+        const list = await t.tool("list_tabs");
         const listed = (await list.execute(t.ctx, {}, {} as never)) as {
-            surfaces: { id: string; promptDocument?: unknown }[];
+            tabs: { id: string; promptDocument?: unknown }[];
         };
-        expect(listed.surfaces.find((surface) => surface.id === notes.id)?.promptDocument).toEqual({
+        expect(listed.tabs.find((surface) => surface.id === notes.id)?.promptDocument).toEqual({
             description: "Team conventions.",
         });
     });

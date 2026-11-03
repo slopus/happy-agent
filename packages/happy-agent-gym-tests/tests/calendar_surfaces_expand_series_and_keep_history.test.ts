@@ -294,7 +294,7 @@ describe("calendar Surfaces through the real daemon", () => {
                     content: [
                         {
                             type: "tool_call",
-                            name: "create_calendar_surface",
+                            name: "create_calendar_tab",
                             arguments: { name: "Holidays", creatorUserId: null },
                         },
                     ],
@@ -313,7 +313,7 @@ describe("calendar Surfaces through the real daemon", () => {
         expect(ordinaryTools).toEqual(
             expect.arrayContaining(["list_calendar_events", "create_calendar_event"]),
         );
-        expect(ordinaryTools).not.toContain("create_calendar_surface");
+        expect(ordinaryTools).not.toContain("create_calendar_tab");
 
         adminId = (await client.createBot({ name: "Administrator", isAdmin: true })).bot.agent.id;
         await gym.send("Create a shared calendar named Holidays.", {
@@ -368,7 +368,7 @@ describe("calendar Surfaces through the real daemon", () => {
                             type: "tool_call",
                             name: "create_calendar_event",
                             arguments: {
-                                surfaceId,
+                                tabId: surfaceId,
                                 title: "Dentist",
                                 timing: {
                                     kind: "timed",

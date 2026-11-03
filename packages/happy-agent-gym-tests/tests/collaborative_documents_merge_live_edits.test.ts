@@ -358,7 +358,7 @@ describe("collaborative documents merge live edits", () => {
                     text: "# Plan\n\nFirst step\n",
                 })
             ).surface;
-            calls.push({ name: "read_document", arguments: { surfaceId: surface.id } });
+            calls.push({ name: "read_document", arguments: { tabId: surface.id } });
             await gym.send("Read the plan.", { permissionMode: "auto" });
             expect(reviews).toEqual([]);
             const reading = gym.inference.toolResults().at(-1)!.text;
@@ -377,7 +377,7 @@ describe("collaborative documents merge live edits", () => {
             calls.push({
                 name: "update_document",
                 arguments: {
-                    surfaceId: surface.id,
+                    tabId: surface.id,
                     seq: 1,
                     text: "# Plan\n\nFirst step\n\nSecond step\n",
                 },
@@ -443,7 +443,7 @@ describe("collaborative documents merge live edits", () => {
 
         calls.push({
             name: "update_document",
-            arguments: { surfaceId: surface.id, seq: 2, text: "Replaced\n" },
+            arguments: { tabId: surface.id, seq: 2, text: "Replaced\n" },
         });
         await gym.send("Replace the document.", { permissionMode: "full_access" });
         expect(gym.inference.toolResults().at(-1)!.text).toContain(

@@ -31,14 +31,14 @@ it("keeps standalone attribution null and requires explicit creation-tool attrib
     for (const attribution of [{}, { authorUserId: "unknownuser" }]) {
         nextTool = {
             name: "create_todo",
-            arguments: { surfaceId: surface.id, text: "Rejected", ...attribution },
+            arguments: { tabId: surface.id, text: "Rejected", ...attribution },
         };
         await gym.send("Try the todo creation arguments.", { permissionMode: "full_access" });
         expect((await gym.client.listTodos(surface.id)).todos).toEqual([original]);
     }
     nextTool = {
         name: "create_todo",
-        arguments: { surfaceId: surface.id, text: "From a tool", authorUserId: null },
+        arguments: { tabId: surface.id, text: "From a tool", authorUserId: null },
     };
     await gym.send("Create a todo with no attributed user.", { permissionMode: "full_access" });
     const todos = (await gym.client.listTodos(surface.id)).todos;
@@ -52,7 +52,7 @@ it("keeps standalone attribution null and requires explicit creation-tool attrib
     const admin = (await gym.client.createBot({ name: "Administrator", isAdmin: true })).bot;
     for (const attribution of [{}, { creatorUserId: "unknownuser" }]) {
         nextTool = {
-            name: "create_todo_surface",
+            name: "create_todo_tab",
             arguments: { name: "Rejected", ...attribution },
         };
         await gym.send("Try the Surface creation arguments.", {
@@ -62,7 +62,7 @@ it("keeps standalone attribution null and requires explicit creation-tool attrib
         expect((await gym.client.listSurfaces()).surfaces).toEqual([surface]);
     }
     nextTool = {
-        name: "create_todo_surface",
+        name: "create_todo_tab",
         arguments: { name: "Tool list", creatorUserId: null },
     };
     await gym.send("Create a Surface with no attributed user.", {

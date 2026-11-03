@@ -181,7 +181,11 @@ describe("Surface chats are shared lazy conversations", () => {
                         {
                             type: "tool_call",
                             name: "create_todo",
-                            arguments: { surfaceId, text: "From the chat", authorUserId: null },
+                            arguments: {
+                                tabId: surfaceId,
+                                text: "From the chat",
+                                authorUserId: null,
+                            },
                         },
                     ],
                 };
@@ -197,14 +201,14 @@ describe("Surface chats are shared lazy conversations", () => {
             permissionMode: "full_access",
         });
         const chatRequest = gym.inference.requests.find((request) => request.sessionId === chatId)!;
-        expect(chatRequest.instructions).toContain("# Surface chat");
+        expect(chatRequest.instructions).toContain("# Tab chat");
         expect(chatRequest.instructions).toContain(surface.id);
         expect(chatRequest.instructions).toContain('side chat of the todo list "Errands"');
-        expect(chatRequest.instructions).toContain("Call list_todos with this Surface ID");
+        expect(chatRequest.instructions).toContain("Call list_todos with this Tab ID");
         const tools = gym.inference.lastTools();
         expect(tools).toEqual(expect.arrayContaining(["create_todo", "list_todos"]));
-        expect(tools).not.toContain("create_todo_surface");
-        expect(tools).not.toContain("add_surface_user");
+        expect(tools).not.toContain("create_todo_tab");
+        expect(tools).not.toContain("add_tab_user");
         const todos = (await gym.client.listTodos(surface.id)).todos;
         expect(todos).toMatchObject([{ text: "From the chat", authorUserId: null }]);
         const revision = (await gym.client.listTodoVersions(surface.id, todos[0]!.id)).versions[0]!;

@@ -43,7 +43,7 @@ describe("Surface edits receive Auto review", () => {
                 .surface;
             const todo = (await gym.client.createTodo(surface.id, { text: "Original" })).todo;
             edit = {
-                surfaceId: surface.id,
+                tabId: surface.id,
                 todoId: todo.id,
                 version: todo.version,
                 text: "Reviewed edit",

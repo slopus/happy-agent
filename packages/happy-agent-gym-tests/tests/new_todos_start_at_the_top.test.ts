@@ -21,7 +21,7 @@ it("prepends API and tool-created todos but appends reactivated todos", async ()
                         type: "tool_call",
                         name: "create_todo",
                         arguments: {
-                            surfaceId,
+                            tabId: surfaceId,
                             text: "From the agent",
                             authorUserId: null,
                         },

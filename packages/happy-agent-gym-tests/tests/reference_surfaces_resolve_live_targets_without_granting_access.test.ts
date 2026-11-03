@@ -245,7 +245,7 @@ describe("reference Surfaces resolve live targets without granting access", () =
                     content: [
                         {
                             type: "tool_call",
-                            name: "create_task_surface",
+                            name: "create_task_tab",
                             arguments: { name: "Gone", creatorUserId: null, taskId },
                         },
                     ],
@@ -269,12 +269,12 @@ describe("reference Surfaces resolve live targets without granting access", () =
     });
 
     it.each([
-        ["create_artifact_surface", "artifactId", "auto-allow"],
-        ["create_artifact_surface", "artifactId", "auto-deny"],
-        ["create_bot_surface", "botId", "auto-allow"],
-        ["create_bot_surface", "botId", "auto-deny"],
-        ["create_task_surface", "taskId", "auto-allow"],
-        ["create_task_surface", "taskId", "auto-deny"],
+        ["create_artifact_tab", "artifactId", "auto-allow"],
+        ["create_artifact_tab", "artifactId", "auto-deny"],
+        ["create_bot_tab", "botId", "auto-allow"],
+        ["create_bot_tab", "botId", "auto-deny"],
+        ["create_task_tab", "taskId", "auto-allow"],
+        ["create_task_tab", "taskId", "auto-deny"],
     ] as const)("reviews %s (%s) as %s before a shared write", async (tool, field, mode) => {
         let adminId = "";
         let targetId = "";

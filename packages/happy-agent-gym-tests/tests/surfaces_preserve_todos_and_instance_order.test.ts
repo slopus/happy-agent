@@ -70,7 +70,7 @@ describe("Surface instances through the real daemon", () => {
                         content: [
                             {
                                 type: "tool_call",
-                                name: "create_todo_surface",
+                                name: "create_todo_tab",
                                 arguments: { name: "Reviewed list", creatorUserId: null },
                             },
                         ],
@@ -305,7 +305,7 @@ describe("Surface instances through the real daemon", () => {
     it("runs actual Surface tools and rejects admin operations from an ordinary agent", async () => {
         let adminId = "";
         let nextAdminTool: { name: string; arguments: unknown } | undefined = {
-            name: "create_todo_surface",
+            name: "create_todo_tab",
             arguments: { name: "Admin list", creatorUserId: null },
         };
         const calls = new Set<string>();
@@ -329,7 +329,7 @@ describe("Surface instances through the real daemon", () => {
                     content: [
                         {
                             type: "tool_call",
-                            name: "create_todo_surface",
+                            name: "create_todo_tab",
                             arguments: {
                                 name: request.sessionId === adminId ? "Admin list" : "Denied",
                                 creatorUserId: null,
@@ -352,19 +352,24 @@ describe("Surface instances through the real daemon", () => {
             JSON.stringify(gym.inference.toolResults()),
         ).toEqual(["Admin list"]);
         const surfaceId = surfaces[0]!.id;
-        nextAdminTool = { name: "remove_surface_user", arguments: { surfaceId, userId: null } };
+        nextAdminTool = { name: "remove_tab_user", arguments: { tabId: surfaceId, userId: null } };
         await gym.send("Remove me from the Surface sidebar.", sendOptions);
         expect((await gym.client.listSurfaces()).surfaces[0]!.members).toEqual([]);
         nextAdminTool = {
             name: "create_todo",
-            arguments: { surfaceId, text: "From a tool", authorUserId: null },
+            arguments: { tabId: surfaceId, text: "From a tool", authorUserId: null },
         };
         await gym.send("Create a todo on that Surface without joining.", sendOptions);
         const todo = (await gym.client.listTodos(surfaceId)).todos[0]!;
         expect(todo.text).toBe("From a tool");
         nextAdminTool = {
             name: "update_todo",
-            arguments: { surfaceId, todoId: todo.id, version: todo.version, status: "completed" },
+            arguments: {
+                tabId: surfaceId,
+                todoId: todo.id,
+                version: todo.version,
+                status: "completed",
+            },
         };
         await gym.send("Complete the todo.", sendOptions);
         const history = await gym.client.listTodoVersions(surfaceId, todo.id);
@@ -381,7 +386,7 @@ describe("Surface instances through the real daemon", () => {
             ),
         ).toBe(true);
         expect((await gym.client.listSurfaces()).surfaces[0]!.members).toEqual([]);
-        nextAdminTool = { name: "add_surface_user", arguments: { surfaceId, userId: null } };
+        nextAdminTool = { name: "add_tab_user", arguments: { tabId: surfaceId, userId: null } };
         await gym.send("Add me to the Surface again.", sendOptions);
         expect((await gym.client.listSurfaces()).surfaces[0]!.members).toHaveLength(1);
         expect(gym.inference.unscripted).toEqual([]);

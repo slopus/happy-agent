@@ -50,7 +50,7 @@ describe("the standalone feed", () => {
                     {
                         type: "tool_call",
                         name: "create_todo",
-                        arguments: { surfaceId: surface.id, text: "Tomatoes", authorUserId: null },
+                        arguments: { tabId: surface.id, text: "Tomatoes", authorUserId: null },
                         callId: "standalone_todo",
                     },
                 ],

@@ -5,7 +5,7 @@ import { surfaceTools } from "../../sources/surfaces/tools/surfaceTools.js";
 
 const id = "s4k8m2q9w1e5r7y3u6i0o2p4";
 const prompt = (type: string, name = "Errands") => formatSurfaceChatPrompt({ id, type, name });
-/** Tools other modules own; the chat prompt points at them for reference Surfaces. */
+/** Tools other modules own; the chat prompt points at them for reference Tabs. */
 const OTHER_MODULE_TOOLS = new Set([
     "read_artifact",
     "read_artifact_file",
@@ -14,9 +14,9 @@ const OTHER_MODULE_TOOLS = new Set([
     "list_tasks",
     "send_task_message",
     "read_agent_history",
-    // Specified for chat Surfaces in API.md.
-    "list_surface_messages",
-    "list_surface_message_versions",
+    // Specified for chat Tabs in API.md.
+    "list_tab_messages",
+    "list_tab_message_versions",
 ]);
 const TYPES = [
     "todo",
@@ -29,26 +29,26 @@ const TYPES = [
     "task",
 ] as const;
 
-describe("Surface chat prompt", () => {
-    it.each(TYPES)("places a %s chat on its Surface and keeps it focused there", (type) => {
+describe("Tab chat prompt", () => {
+    it.each(TYPES)("places a %s chat on its Tab and keeps it focused there", (type) => {
         const text = prompt(type);
-        expect(text).toMatch(/^# Surface chat\n/);
+        expect(text).toMatch(/^# Tab chat\n/);
         expect(text).toContain("side chat of the ");
         expect(text).toContain('"Errands"');
-        expect(text).toContain(`- Surface ID: \`${id}\``);
-        expect(text).toContain(`- Surface type: \`${type}\``);
+        expect(text).toContain(`- Tab ID: \`${id}\``);
+        expect(text).toContain(`- Tab type: \`${type}\``);
         expect(text).toContain("work for whoever sent the current message");
         expect(text).toContain("## Read the current state first");
         expect(text).toContain("## Stay focused");
-        expect(text).toContain("You cannot create Surfaces or change who has joined one");
+        expect(text).toContain("You cannot create Tabs or change who has joined one");
     });
 
     it.each([
-        ["todo", "Call list_todos with this Surface ID", "status completed"],
-        ["document", "Call read_document with this Surface ID", "the seq from that read"],
-        ["calendar", "Call list_calendar_events with this Surface ID", "changes the whole series"],
-        ["chat", "Call list_surface_messages with this Surface ID", "cannot post, edit, or delete"],
-        ["system_monitor", "Call read_system_monitor with this Surface ID", "It is read-only."],
+        ["todo", "Call list_todos with this Tab ID", "status completed"],
+        ["document", "Call read_document with this Tab ID", "the seq from that read"],
+        ["calendar", "Call list_calendar_events with this Tab ID", "changes the whole series"],
+        ["chat", "Call list_tab_messages with this Tab ID", "cannot post, edit, or delete"],
+        ["system_monitor", "Call read_system_monitor with this Tab ID", "It is read-only."],
         ["artifact", "read it with read_artifact", "artifact was deleted"],
         ["bot", "read_agent_history with that agent ID", "send_bot_message only when"],
         ["task", "read_agent_history with that agent ID", "send_task_message only when"],
@@ -78,23 +78,21 @@ describe("Surface chat prompt", () => {
 
     it("calls calendars and conversations what the specification names them", () => {
         expect(prompt("calendar")).toContain('side chat of the shared calendar "Errands"');
-        expect(prompt("chat")).toContain("This Surface is a conversation among people.");
+        expect(prompt("chat")).toContain("This Tab is a conversation among people.");
     });
 
-    it("reads an unknown type's Surface through the catalog", () => {
+    it("reads an unknown type's Tab through the catalog", () => {
         const text = prompt("whiteboard", "Ideas");
-        expect(text).toContain('side chat of the whiteboard Surface "Ideas"');
-        expect(text).toContain("Page through list_surfaces until you find this Surface ID");
+        expect(text).toContain('side chat of the whiteboard Tab "Ideas"');
+        expect(text).toContain("Page through list_tabs until you find this Tab ID");
         expect(text).not.toContain("## Working");
     });
 });
 
-describe("Surface reference instructions", () => {
-    it("tell agents to mention a Surface by link, with the ID its tools take", () => {
-        expect(SURFACE_REFERENCE_INSTRUCTIONS).toContain(
-            "[its name](happy://surfaces/<surfaceId>)",
-        );
-        expect(SURFACE_REFERENCE_INSTRUCTIONS).toContain("surfaceId");
+describe("Tab reference instructions", () => {
+    it("tell agents to mention a Tab by link, with the ID its tools take", () => {
+        expect(SURFACE_REFERENCE_INSTRUCTIONS).toContain("[its name](happy://tabs/<tabId>)");
+        expect(SURFACE_REFERENCE_INSTRUCTIONS).toContain("tabId");
         const names = new Set(
             surfaceTools({} as never, { agent: { id: "any" } } as never, false).map(
                 (tool) => tool.name,
@@ -103,12 +101,7 @@ describe("Surface reference instructions", () => {
         const named = [...SURFACE_REFERENCE_INSTRUCTIONS.matchAll(/\b[a-z]+(?:_[a-z]+)+\b/g)].map(
             ([token]) => token,
         );
-        expect(named).toEqual([
-            "list_surfaces",
-            "list_todos",
-            "read_document",
-            "list_calendar_events",
-        ]);
+        expect(named).toEqual(["list_tabs", "list_todos", "read_document", "list_calendar_events"]);
         for (const token of named) expect(names.has(token), token).toBe(true);
     });
 });

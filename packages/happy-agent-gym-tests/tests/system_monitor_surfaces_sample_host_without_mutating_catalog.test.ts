@@ -166,7 +166,7 @@ describe("System Monitor Surfaces through the real daemon", () => {
                                 {
                                     type: "tool_call",
                                     name: "read_system_monitor",
-                                    arguments: { surfaceId },
+                                    arguments: { tabId: surfaceId },
                                 },
                             ],
                         };
@@ -174,7 +174,7 @@ describe("System Monitor Surfaces through the real daemon", () => {
                         content: [
                             {
                                 type: "tool_call",
-                                name: "create_system_monitor_surface",
+                                name: "create_system_monitor_tab",
                                 arguments: {
                                     name:
                                         request.sessionId === adminId ? "Admin Monitor" : "Denied",
@@ -207,9 +207,7 @@ describe("System Monitor Surfaces through the real daemon", () => {
         expect(requests[0]!.instructions).toContain("System Monitor");
         expect(requests[0]!.instructions).toContain(surfaceId);
         expect(requests[0]!.tools.map((t) => t.name)).toContain("read_system_monitor");
-        expect(requests[0]!.tools.map((t) => t.name)).not.toContain(
-            "create_system_monitor_surface",
-        );
+        expect(requests[0]!.tools.map((t) => t.name)).not.toContain("create_system_monitor_tab");
         expect(JSON.stringify(requests.at(-1)!.messages)).toContain("Memory:");
         expect((await gym.client.listSurfaces()).surfaces[0]?.members).toEqual([]);
         await gym.send("Try creating a monitor.", { permissionMode: "full_access" });

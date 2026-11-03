@@ -302,10 +302,10 @@ describe("calendar Surfaces", () => {
             kv: agentKv,
         } as AgentModuleScope);
         const tool = (name: string) => tools.find((item) => item.name === name)!;
-        expect(tools.some((item) => item.name === "create_calendar_surface")).toBe(false);
+        expect(tools.some((item) => item.name === "create_calendar_tab")).toBe(false);
         const call = { kv: f.kv.scoped("create-call") } as never;
         const input = {
-            surfaceId: f.calendar.id,
+            tabId: f.calendar.id,
             title: "Planning",
             timing: {
                 kind: "timed",
@@ -335,7 +335,7 @@ describe("calendar Surfaces", () => {
         const listed = (await tool("list_calendar_events").execute(
             f.ctx,
             {
-                surfaceId: f.calendar.id,
+                tabId: f.calendar.id,
                 from: "2026-10-24",
                 to: "2026-10-27",
                 timeZone: "America/New_York",
@@ -351,7 +351,7 @@ describe("calendar Surfaces", () => {
         const moved = (await tool("update_calendar_event").execute(
             f.ctx,
             {
-                surfaceId: f.calendar.id,
+                tabId: f.calendar.id,
                 eventId: created.id,
                 version: created.version,
                 timing: {
@@ -371,7 +371,7 @@ describe("calendar Surfaces", () => {
             kv: agentKv,
         } as AgentModuleScope);
         const surface = await admin
-            .find((item) => item.name === "create_calendar_surface")!
+            .find((item) => item.name === "create_calendar_tab")!
             .execute(f.ctx, { name: "Admin calendar", creatorUserId: "bob" }, {
                 kv: f.kv.scoped("surface-call"),
             } as never);

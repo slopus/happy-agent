@@ -110,7 +110,7 @@ describe("admin bots mark important documents for every agent", () => {
         );
 
         const marked = await call(admin.agent.id, "mark_prompt_document", {
-            surfaceId: document.id,
+            tabId: document.id,
             description: "How to cut a release. Read it before releasing anything.",
         });
         expect(marked.text).toContain(`Marked ${document.id} as an important document.`);
@@ -134,8 +134,8 @@ describe("admin bots mark important documents for every agent", () => {
                 "  <document>",
                 "    <name>Release process</name>",
                 "    <description>How to cut a release. Read it before releasing anything.</description>",
-                `    <surface_id>${document.id}</surface_id>`,
-                `    <link>happy://surfaces/${document.id}</link>`,
+                `    <tab_id>${document.id}</tab_id>`,
+                `    <link>happy://tabs/${document.id}</link>`,
                 "  </document>",
             ].join("\n"),
         );
@@ -149,16 +149,16 @@ describe("admin bots mark important documents for every agent", () => {
         // A refused review leaves the list as it was.
         setReviews("deny");
         const refused = await call(admin.agent.id, "unmark_prompt_document", {
-            surfaceId: document.id,
+            tabId: document.id,
         });
         expect(refused.text).not.toContain("Unmarked");
         expect(await instructionsOfNextTurn(gym.defaultSessionId)).toContain(
-            `<surface_id>${document.id}</surface_id>`,
+            `<tab_id>${document.id}</tab_id>`,
         );
 
         setReviews("allow");
         const unmarked = await call(admin.agent.id, "unmark_prompt_document", {
-            surfaceId: document.id,
+            tabId: document.id,
         });
         expect(unmarked.text).toContain(`Unmarked ${document.id}.`);
         expect((await listed())?.promptDocument).toBeNull();
@@ -173,7 +173,7 @@ describe("admin bots mark important documents for every agent", () => {
         const document = (await gym.client.createSurface({ type: "document", name: "Notes" }))
             .surface;
         const result = await call(gym.defaultSessionId, "mark_prompt_document", {
-            surfaceId: document.id,
+            tabId: document.id,
             description: "Notes.",
         });
         expect(result.text).not.toContain("Marked");

@@ -133,9 +133,9 @@ describe("Surface names and pictures change after creation", () => {
                         content: [
                             {
                                 type: "tool_call",
-                                name: "update_surface",
+                                name: "update_tab",
                                 arguments: {
-                                    surfaceId,
+                                    tabId: surfaceId,
                                     name: "Interesting Libraries",
                                     imagePath: path,
                                 },

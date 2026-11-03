@@ -475,12 +475,12 @@ describe("collaborative document content", () => {
             expect(tool(name).shouldRunInFullAccessInAutoMode, name).toBeUndefined();
         }
         expect(
-            tool("update_document").describeAutoPermissionAction!({ surfaceId: "x" }, t.ctx),
+            tool("update_document").describeAutoPermissionAction!({ tabId: "x" }, t.ctx),
         ).toContain("shared data write");
         const notes = await t.document("# Plan\n\nFirst paragraph.\n\nSecond paragraph.\n");
         const read = (await tool("read_document").execute(
             t.ctx,
-            { surfaceId: notes.id },
+            { tabId: notes.id },
             {} as never,
         )) as {
             document: { seq: number; text: string };
@@ -501,7 +501,7 @@ describe("collaborative document content", () => {
         const written = (await tool("update_document").execute(
             t.ctx,
             {
-                surfaceId: notes.id,
+                tabId: notes.id,
                 seq: read.document.seq,
                 text: read.document.text.replace("Second", "Revised second"),
             },
@@ -515,21 +515,21 @@ describe("collaborative document content", () => {
         expect(
             await tool("update_document").execute(
                 t.ctx,
-                { surfaceId: notes.id, seq: 3, text: written.document.text },
+                { tabId: notes.id, seq: 3, text: written.document.text },
                 {} as never,
             ),
         ).toMatchObject({ changed: false, document: { seq: 3 } });
         await expect(
             tool("update_document").execute(
                 t.ctx,
-                { surfaceId: notes.id, seq: 4, text: "x" },
+                { tabId: notes.id, seq: 4, text: "x" },
                 {} as never,
             ),
         ).rejects.toMatchObject({ code: "invalid_request" });
         expect(
             await tool("list_document_versions").execute(
                 t.ctx,
-                { surfaceId: notes.id, limit: 2 },
+                { tabId: notes.id, limit: 2 },
                 {} as never,
             ),
         ).toMatchObject({
@@ -558,7 +558,7 @@ describe("collaborative document content", () => {
         await expect(
             tool("update_document").execute(
                 t.ctx,
-                { surfaceId: notes.id, seq: 4, text: "Replaced" },
+                { tabId: notes.id, seq: 4, text: "Replaced" },
                 {} as never,
             ),
         ).rejects.toMatchObject({

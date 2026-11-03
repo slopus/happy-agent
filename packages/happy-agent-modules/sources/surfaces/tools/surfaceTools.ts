@@ -23,7 +23,7 @@ import {
     surfaceDocumentChangeListResponseSchema,
     resourceVersionSchema,
     systemMonitorSnapshotSchema,
-    type Surface,
+    type Surface as Tab,
 } from "@slopus/happy-agent-client";
 import type { SurfacesModule } from "../SurfacesModule.js";
 import { SurfaceError } from "../SurfaceError.js";
@@ -32,8 +32,24 @@ import { formatSystemMonitor } from "../systemMonitor/formatSystemMonitor.js";
 import { listPromptDocumentsTool } from "../promptDocuments/tools/list_prompt_documents.js";
 import { markPromptDocumentTool } from "../promptDocuments/tools/mark_prompt_document.js";
 import { unmarkPromptDocumentTool } from "../promptDocuments/tools/unmark_prompt_document.js";
+import { tabContent, tabContentSchema } from "./tabContent.js";
 
-const identity = { surfaceId: surfaceIdSchema, todoId: cuid2Schema };
+const tabTodoSchema = Type.Union([
+    tabContentSchema(todoSchema.anyOf[0]),
+    tabContentSchema(todoSchema.anyOf[1]),
+    tabContentSchema(todoSchema.anyOf[2]),
+]);
+const tabTodoVersionsSchema = Type.Object({
+    ...todoVersionListResponseSchema.properties,
+    versions: Type.Array(
+        Type.Object({
+            ...todoVersionListResponseSchema.properties.versions.items.properties,
+            todo: tabTodoSchema,
+        }),
+    ),
+});
+
+const identity = { tabId: surfaceIdSchema, todoId: cuid2Schema };
 const guard = { ...identity, version: resourceVersionSchema };
 const page = {
     offset: Type.Optional(Type.Integer({ minimum: 0 })),
@@ -42,7 +58,10 @@ const page = {
 const textResult = (result: unknown) => [{ type: "text" as const, text: JSON.stringify(result) }];
 /** A document as an agent reads it: Markdown, the version it is at, and what Markdown leaves out. */
 const documentReadingSchema = Type.Object({
-    document: Type.Object({ ...surfaceDocumentSchema.properties, seq: surfaceDocumentSeqSchema }),
+    document: Type.Object({
+        ...tabContentSchema(surfaceDocumentSchema).properties,
+        seq: surfaceDocumentSeqSchema,
+    }),
     omitted: Type.Optional(Type.String()),
     /** Present only when admins marked it as one of the installation's important documents. */
     promptDocument: Type.Optional(surfacePromptDocumentSchema),
@@ -71,11 +90,11 @@ const imagePath = Type.Optional(absoluteImagePath);
 const fromImage = (path: string | undefined) =>
     path === undefined ? "" : ` from image ${JSON.stringify(path)}`;
 const referenceRules =
-    "The name is the Surface's permanent label, shown when the target is unavailable; while available, people see the target's live name. A missing, deleted, or archived target is rejected as not found. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. A named creator joins at the end of their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum) for the Surface's own picture.";
+    "The name is the Tab's permanent label, shown when the target is unavailable; while available, people see the target's live name. A missing, deleted, or archived target is rejected as not found. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. A named creator joins at the end of their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum) for the Tab's own picture.";
 const imageAccess =
     "Access: shared data write and, when supplied, filesystem image read; outside-workspace and symlink targets require Full access";
 
-/** Fixed common arrays; model providers never affect the Surface tool or permission contract. */
+/** Fixed common arrays; model providers never affect the Tab tool or permission contract. */
 export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, admin: boolean) {
     type ToolContext = Parameters<SurfacesModule["actor"]>[0];
     const actor = (ctx: ToolContext) => surfaces.actor(ctx, scope.agent.id, scope.kv);
@@ -101,27 +120,24 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                 "task manager",
             ],
             description:
-                "Read the machine running this daemon through one System Monitor Surface. Includes CPU, GPU, memory, mounted disks, disk activity, recent history, and top processes by CPU and resident memory. Several System Monitors show the same host. Unavailable measurements are null. Process names exclude command-line arguments and environments. Reading never changes membership.",
-            parameters: Type.Object(
-                { surfaceId: surfaceIdSchema },
-                { additionalProperties: false },
-            ),
+                "Read the machine running this daemon through one System Monitor Tab. Includes CPU, GPU, memory, mounted disks, disk activity, recent history, and top processes by CPU and resident memory. Several System Monitors show the same host. Unavailable measurements are null. Process names exclude command-line arguments and environments. Reading never changes membership.",
+            parameters: Type.Object({ tabId: surfaceIdSchema }, { additionalProperties: false }),
             returnType: systemMonitorSnapshotSchema,
             durable: false,
             shouldReviewInAutoMode: () => false,
-            execute: (ctx, input) => surfaces.systemMonitor(ctx, input.surfaceId),
+            execute: (ctx, input) => surfaces.systemMonitor(ctx, input.tabId),
             toLLM: (snapshot) => [{ type: "text" as const, text: formatSystemMonitor(snapshot) }],
         }),
         defineAgentTool({
-            name: "list_surfaces",
+            name: "list_tabs",
             defer: true,
-            capabilities: ["Find shared Surfaces and their members."],
-            searchKeywords: ["list surfaces", "shared todo lists", "sidebar members"],
+            capabilities: ["Find shared Tabs and their members."],
+            searchKeywords: ["list tabs", "shared todo lists", "sidebar members"],
             description:
-                "List shared Surface instances, their IDs, names, types, and joined people. Artifact, bot, and task Surfaces include their target's live name and ID while it is available, or an unavailable state without them. Document Surfaces include promptDocument: null, or the description admins gave it as one of the installation's important documents. Each todo, document, calendar, or System Monitor tool requires a Surface ID. Results are paged.",
+                "List shared Tab instances, their IDs, names, types, and joined people. Artifact, bot, and task Tabs include their target's live name and ID while it is available, or an unavailable state without them. Document Tabs include promptDocument: null, or the description admins gave it as one of the installation's important documents. Each todo, document, calendar, or System Monitor tool requires a Tab ID. Results are paged.",
             parameters: Type.Object(page, { additionalProperties: false }),
             returnType: Type.Object({
-                surfaces: Type.Array(surfaceSchema),
+                tabs: Type.Array(surfaceSchema),
                 nextOffset: Type.Union([Type.Integer(), Type.Null()]),
             }),
             durable: false,
@@ -131,27 +147,27 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                 const start = input.offset ?? 0;
                 const end = start + (input.limit ?? 20);
                 return {
-                    surfaces: all.slice(start, end),
+                    tabs: all.slice(start, end),
                     nextOffset: end < all.length ? end : null,
                 };
             },
             toLLM: textResult,
         }),
         defineAgentTool({
-            name: "update_surface",
+            name: "update_tab",
             defer: true,
-            capabilities: ["Rename a shared Surface or change or remove its picture."],
+            capabilities: ["Rename a shared Tab or change or remove its picture."],
             searchKeywords: [
-                "rename surface",
-                "surface picture",
+                "rename tab",
+                "tab picture",
                 "change document icon",
-                "remove surface image",
+                "remove tab image",
             ],
             description:
-                "Rename a shared Surface of any type, or change or remove its picture. Supply a new name, an absolute PNG, JPEG, or WebP imagePath (8 MiB maximum) to replace the picture, or imagePath null to remove it; at least one is required. Write or generate the image first, then point this tool at it. For artifact, bot, and task Surfaces the name is the label shown while the target is unavailable. Values equal to the current ones change nothing. This never joins anyone or changes the Surface's content.",
+                "Rename a shared Tab of any type, or change or remove its picture. Supply a new name, an absolute PNG, JPEG, or WebP imagePath (8 MiB maximum) to replace the picture, or imagePath null to remove it; at least one is required. Write or generate the image first, then point this tool at it. For artifact, bot, and task Tabs the name is the label shown while the target is unavailable. Values equal to the current ones change nothing. This never joins anyone or changes the Tab's content.",
             parameters: Type.Object(
                 {
-                    surfaceId: surfaceIdSchema,
+                    tabId: surfaceIdSchema,
                     name: Type.Optional(surfaceNameSchema),
                     imagePath: Type.Optional(Type.Union([absoluteImagePath, Type.Null()])),
                 },
@@ -163,7 +179,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             shouldReviewInAutoMode: () => true,
             shouldRunInFullAccessInAutoMode: (input, ctx) =>
                 surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath ?? undefined),
-            describeAutoPermissionAction: ({ surfaceId, name, imagePath }) => {
+            describeAutoPermissionAction: ({ tabId, name, imagePath }) => {
                 const edits = [
                     ...(name === undefined ? [] : [`renaming it to ${JSON.stringify(name)}`]),
                     ...(imagePath === undefined
@@ -172,18 +188,18 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                           ? ["removing its picture"]
                           : [`setting its picture${fromImage(imagePath)}`]),
                 ];
-                return `editing shared Surface ${JSON.stringify(surfaceId)}${edits.length === 0 ? "" : `: ${edits.join(" and ")}`}. ${imageAccess}`;
+                return `editing shared Tab ${JSON.stringify(tabId)}${edits.length === 0 ? "" : `: ${edits.join(" and ")}`}. ${imageAccess}`;
             },
             // Replays reuse the first image bytes, and the result commits with the edit.
-            execute: async (ctx, { surfaceId, name, imagePath: path }, call) => {
-                const settle = (tx: ToolContext, surface: Surface) => call.commit(tx, surface);
+            execute: async (ctx, { tabId, name, imagePath: path }, call) => {
+                const settle = (tx: ToolContext, tab: Tab) => call.commit(tx, tab);
                 if (path === undefined) {
                     if (name === undefined)
                         throw new SurfaceError(
                             "invalid_request",
                             "Supply a new name, an imagePath, or imagePath null to remove the picture.",
                         );
-                    return surfaces.update(ctx, surfaceId, { name }, settle);
+                    return surfaces.update(ctx, tabId, { name }, settle);
                 }
                 const image =
                     path === null
@@ -195,7 +211,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                           };
                 return surfaces.update(
                     ctx,
-                    surfaceId,
+                    tabId,
                     { image, ...(name === undefined ? {} : { name }) },
                     settle,
                 );
@@ -205,57 +221,65 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
         defineAgentTool({
             name: "list_todos",
             defer: true,
-            capabilities: ["Read active, completed, or deleted todos in a Surface."],
+            capabilities: ["Read active, completed, or deleted todos in a Tab."],
             searchKeywords: ["list todos", "checklist items", "completed todos", "deleted todos"],
             description:
-                "List todos in one Surface, active by default. Active text starting with exact '# ' is a section heading, not an outstanding task; exclude headings from task counts. Do not trim text before checking that prefix. Use completed, deleted, or all to find older items. Keep returned versions for guarded edits. Results are paged.",
+                "List todos in one Tab, active by default. Active text starting with exact '# ' is a section heading, not an outstanding task; exclude headings from task counts. Do not trim text before checking that prefix. Use completed, deleted, or all to find older items. Keep returned versions for guarded edits. Results are paged.",
             parameters: Type.Object(
-                { surfaceId: surfaceIdSchema, scope: Type.Optional(todoListScopeSchema), ...page },
+                { tabId: surfaceIdSchema, scope: Type.Optional(todoListScopeSchema), ...page },
                 { additionalProperties: false },
             ),
             returnType: Type.Object({
-                todos: Type.Array(todoSchema),
+                todos: Type.Array(tabTodoSchema),
                 nextOffset: Type.Union([Type.Integer(), Type.Null()]),
             }),
             durable: false,
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input) => {
-                const all = await surfaces.listTodos(ctx, input.surfaceId, input.scope);
+                const all = await surfaces.listTodos(ctx, input.tabId, input.scope);
                 const start = input.offset ?? 0;
                 const end = start + (input.limit ?? 20);
-                return { todos: all.slice(start, end), nextOffset: end < all.length ? end : null };
+                return {
+                    todos: all.slice(start, end).map(tabContent),
+                    nextOffset: end < all.length ? end : null,
+                };
             },
             toLLM: textResult,
         }),
         defineAgentTool({
             name: "create_todo",
             defer: true,
-            capabilities: ["Add a todo to a shared Surface."],
+            capabilities: ["Add a todo to a shared Tab."],
             searchKeywords: ["create todo", "add checklist item", "new reminder"],
             description:
-                "Add a plain-text todo at the top of one shared Surface. For a section heading, start the text with exact '# ' (hash and space); it remains an ordinary ordered todo without a checkbox. Explicitly supply authorUserId as a local Happy user ID, or null for no attribution; only null is allowed in standalone mode. The author is immutable and separate from the revision's audit actor. This never creates a chat or joins anyone to the Surface.",
+                "Add a plain-text todo at the top of one shared Tab. For a section heading, start the text with exact '# ' (hash and space); it remains an ordinary ordered todo without a checkbox. Explicitly supply authorUserId as a local Happy user ID, or null for no attribution; only null is allowed in standalone mode. The author is immutable and separate from the revision's audit actor. This never creates a chat or joins anyone to the Tab.",
             parameters: Type.Object(
                 {
-                    surfaceId: surfaceIdSchema,
+                    tabId: surfaceIdSchema,
                     text: todoTextSchema,
                     authorUserId: surfaceMemberSchema.properties.userId,
                 },
                 { additionalProperties: false },
             ),
-            returnType: todoSchema,
+            returnType: tabTodoSchema,
             durable: true,
             transactional: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => true,
-            describeAutoPermissionAction: ({ surfaceId }) =>
-                `adding a todo to shared Surface ${JSON.stringify(surfaceId)}. Access: shared data write`,
+            describeAutoPermissionAction: ({ tabId }) =>
+                `adding a todo to shared Tab ${JSON.stringify(tabId)}. Access: shared data write`,
             execute: async (ctx, input, call) =>
-                surfaces.createTodo(
-                    ctx,
-                    input.surfaceId,
-                    { text: input.text, id: await call.kv.getOrCreate(ctx, "todoId", createId) },
-                    await actor(ctx),
-                    input.authorUserId,
+                tabContent(
+                    await surfaces.createTodo(
+                        ctx,
+                        input.tabId,
+                        {
+                            text: input.text,
+                            id: await call.kv.getOrCreate(ctx, "todoId", createId),
+                        },
+                        await actor(ctx),
+                        input.authorUserId,
+                    ),
                 ),
             toLLM: textResult,
         }),
@@ -274,52 +298,56 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                 },
                 { additionalProperties: false },
             ),
-            returnType: todoSchema,
+            returnType: tabTodoSchema,
             durable: true,
             transactional: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => true,
-            describeAutoPermissionAction: ({ surfaceId, todoId }) =>
-                `editing todo ${JSON.stringify(todoId)} in shared Surface ${JSON.stringify(surfaceId)}. Access: shared data write`,
-            execute: async (ctx, { surfaceId, todoId, version, ...edit }) =>
-                surfaces.mutateTodo(
-                    ctx,
-                    surfaceId,
-                    todoId,
-                    version,
-                    "update",
-                    edit,
-                    await actor(ctx),
+            describeAutoPermissionAction: ({ tabId, todoId }) =>
+                `editing todo ${JSON.stringify(todoId)} in shared Tab ${JSON.stringify(tabId)}. Access: shared data write`,
+            execute: async (ctx, { tabId, todoId, version, ...edit }) =>
+                tabContent(
+                    await surfaces.mutateTodo(
+                        ctx,
+                        tabId,
+                        todoId,
+                        version,
+                        "update",
+                        edit,
+                        await actor(ctx),
+                    ),
                 ),
             toLLM: textResult,
         }),
         defineAgentTool({
             name: "reorder_todo",
             defer: true,
-            capabilities: ["Move an active todo within its Surface list."],
+            capabilities: ["Move an active todo within its Tab list."],
             searchKeywords: ["reorder todo", "move checklist item", "todo position"],
             description:
-                "Move an active todo after another active todo in the same Surface, or first with afterId null. Completed and deleted todos cannot be reordered.",
+                "Move an active todo after another active todo in the same Tab, or first with afterId null. Completed and deleted todos cannot be reordered.",
             parameters: Type.Object(
                 { ...guard, afterId: Type.Union([cuid2Schema, Type.Null()]) },
                 { additionalProperties: false },
             ),
-            returnType: todoSchema,
+            returnType: tabTodoSchema,
             durable: true,
             transactional: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => true,
-            describeAutoPermissionAction: ({ surfaceId, todoId }) =>
-                `moving todo ${JSON.stringify(todoId)} in shared Surface ${JSON.stringify(surfaceId)}. Access: shared data write`,
+            describeAutoPermissionAction: ({ tabId, todoId }) =>
+                `moving todo ${JSON.stringify(todoId)} in shared Tab ${JSON.stringify(tabId)}. Access: shared data write`,
             execute: async (ctx, input) =>
-                surfaces.mutateTodo(
-                    ctx,
-                    input.surfaceId,
-                    input.todoId,
-                    input.version,
-                    "reorder",
-                    { afterId: input.afterId },
-                    await actor(ctx),
+                tabContent(
+                    await surfaces.mutateTodo(
+                        ctx,
+                        input.tabId,
+                        input.todoId,
+                        input.version,
+                        "reorder",
+                        { afterId: input.afterId },
+                        await actor(ctx),
+                    ),
                 ),
             toLLM: textResult,
         }),
@@ -329,24 +357,26 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             capabilities: ["Delete a todo while preserving its permanent history."],
             searchKeywords: ["delete todo", "remove checklist item"],
             description:
-                "Delete a todo from one Surface. Its text and every revision remain permanently recoverable.",
+                "Delete a todo from one Tab. Its text and every revision remain permanently recoverable.",
             parameters: Type.Object(guard, { additionalProperties: false }),
-            returnType: todoSchema,
+            returnType: tabTodoSchema,
             durable: true,
             transactional: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => true,
-            describeAutoPermissionAction: ({ surfaceId, todoId }) =>
-                `deleting todo ${JSON.stringify(todoId)} from shared Surface ${JSON.stringify(surfaceId)} while preserving its history. Access: shared data write`,
+            describeAutoPermissionAction: ({ tabId, todoId }) =>
+                `deleting todo ${JSON.stringify(todoId)} from shared Tab ${JSON.stringify(tabId)} while preserving its history. Access: shared data write`,
             execute: async (ctx, input) =>
-                surfaces.mutateTodo(
-                    ctx,
-                    input.surfaceId,
-                    input.todoId,
-                    input.version,
-                    "delete",
-                    {},
-                    await actor(ctx),
+                tabContent(
+                    await surfaces.mutateTodo(
+                        ctx,
+                        input.tabId,
+                        input.todoId,
+                        input.version,
+                        "delete",
+                        {},
+                        await actor(ctx),
+                    ),
                 ),
             toLLM: textResult,
         }),
@@ -365,17 +395,25 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                 },
                 { additionalProperties: false },
             ),
-            returnType: todoVersionListResponseSchema,
+            returnType: tabTodoVersionsSchema,
             durable: false,
             shouldReviewInAutoMode: () => false,
-            execute: async (ctx, input) =>
-                surfaces.versions(
+            execute: async (ctx, input) => {
+                const result = await surfaces.versions(
                     ctx,
-                    input.surfaceId,
+                    input.tabId,
                     input.todoId,
                     input.afterVersion,
                     input.limit ?? 10,
-                ),
+                );
+                return {
+                    ...result,
+                    versions: result.versions.map((revision) => ({
+                        ...revision,
+                        todo: tabContent(revision.todo),
+                    })),
+                };
+            },
             toLLM: textResult,
         }),
     ];
@@ -383,15 +421,13 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
         defineAgentTool({
             name: "read_document",
             defer: true,
-            capabilities: [
-                "Read a shared document Surface as Markdown, now or at an earlier version.",
-            ],
-            searchKeywords: ["read document", "surface markdown", "previous document text"],
+            capabilities: ["Read a shared document Tab as Markdown, now or at an earlier version."],
+            searchKeywords: ["read document", "tab markdown", "previous document text"],
             description:
-                "Read a document Surface as Markdown with the seq it was read at, or as of an optional earlier seq. People may be editing it at the same time. Keep the seq: update_document needs the seq your edit is based on. The result says when the document holds content Markdown cannot show, such as comments or colors. When admins marked it as one of the installation's important documents, the result includes promptDocument with their description.",
+                "Read a document Tab as Markdown with the seq it was read at, or as of an optional earlier seq. People may be editing it at the same time. Keep the seq: update_document needs the seq your edit is based on. The result says when the document holds content Markdown cannot show, such as comments or colors. When admins marked it as one of the installation's important documents, the result includes promptDocument with their description.",
             parameters: Type.Object(
                 {
-                    surfaceId: surfaceIdSchema,
+                    tabId: surfaceIdSchema,
                     seq: Type.Optional(
                         Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
                     ),
@@ -402,10 +438,10 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             durable: false,
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input) => {
-                const reading = await surfaces.document(ctx, input.surfaceId, input.seq);
-                const promptDocument = await surfaces.promptDocumentEntry(ctx, input.surfaceId);
+                const reading = await surfaces.document(ctx, input.tabId, input.seq);
+                const promptDocument = await surfaces.promptDocumentEntry(ctx, input.tabId);
                 return {
-                    document: reading.document,
+                    document: tabContent(reading.document),
                     ...omittedNote(reading.omitted),
                     ...(promptDocument === null ? {} : { promptDocument }),
                 };
@@ -425,10 +461,10 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                 "restore document revision",
             ],
             description:
-                "Edit a document Surface by giving its entire new Markdown and the seq of the version you read. Happy compares your Markdown with that version block by block and applies only what you changed, so edits people made since then are kept. Unchanged Markdown changes nothing. Empty text clears the content; history keeps every version. To restore an earlier version, read it with read_document and write its text with the latest seq. Use seq 0 only for a document you read as empty.",
+                "Edit a document Tab by giving its entire new Markdown and the seq of the version you read. Happy compares your Markdown with that version block by block and applies only what you changed, so edits people made since then are kept. Unchanged Markdown changes nothing. Empty text clears the content; history keeps every version. To restore an earlier version, read it with read_document and write its text with the latest seq. Use seq 0 only for a document you read as empty.",
             parameters: Type.Object(
                 {
-                    surfaceId: surfaceIdSchema,
+                    tabId: surfaceIdSchema,
                     seq: surfaceDocumentSeqSchema,
                     text: surfaceDocumentTextSchema,
                 },
@@ -439,18 +475,18 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             transactional: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => true,
-            describeAutoPermissionAction: ({ surfaceId }) =>
-                `editing the shared document in Surface ${JSON.stringify(surfaceId)} while preserving history. Access: shared data write; no filesystem access`,
+            describeAutoPermissionAction: ({ tabId }) =>
+                `editing the shared document in Tab ${JSON.stringify(tabId)} while preserving history. Access: shared data write; no filesystem access`,
             execute: async (ctx, input) => {
                 const result = await surfaces.changeDocumentFromMarkdown(
                     ctx,
-                    input.surfaceId,
+                    input.tabId,
                     input.seq,
                     input.text,
                     await actor(ctx),
                 );
                 return {
-                    document: result.document,
+                    document: tabContent(result.document),
                     changed: result.changed,
                     ...omittedNote(result.omitted),
                 };
@@ -463,10 +499,10 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             capabilities: ["List a shared document's permanent changes and who made them."],
             searchKeywords: ["document history", "document versions", "markdown revision authors"],
             description:
-                "List a document Surface's permanent changes, oldest first: each seq with who made it, when, and whether a person, an agent, or the one-time conversion of an older document. Returns up to 20 entries, default 10; continue with nextAfterSeq. Read any version's Markdown with read_document and its seq.",
+                "List a document Tab's permanent changes, oldest first: each seq with who made it, when, and whether a person, an agent, or the one-time conversion of an older document. Returns up to 20 entries, default 10; continue with nextAfterSeq. Read any version's Markdown with read_document and its seq.",
             parameters: Type.Object(
                 {
-                    surfaceId: surfaceIdSchema,
+                    tabId: surfaceIdSchema,
                     afterSeq: Type.Optional(surfaceDocumentSeqSchema),
                     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
                 },
@@ -476,27 +512,22 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             durable: false,
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input) =>
-                surfaces.documentChanges(
-                    ctx,
-                    input.surfaceId,
-                    input.afterSeq ?? 0,
-                    input.limit ?? 10,
-                ),
+                surfaces.documentChanges(ctx, input.tabId, input.afterSeq ?? 0, input.limit ?? 10),
             toLLM: textResult,
         }),
     ];
     const administration = [
         defineAgentTool({
-            name: "create_system_monitor_surface",
+            name: "create_system_monitor_tab",
             defer: true,
-            capabilities: ["Create a System Monitor Surface as an admin bot."],
+            capabilities: ["Create a System Monitor Tab as an admin bot."],
             searchKeywords: [
                 "create system monitor",
                 "host resource dashboard",
                 "new task manager",
             ],
             description:
-                "Admin bots only: create a named System Monitor Surface for the machine running this daemon. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The immutable creator joins their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
+                "Admin bots only: create a named System Monitor Tab for the machine running this daemon. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The immutable creator joins their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
             parameters: Type.Object(
                 {
                     name: surfaceNameSchema,
@@ -512,7 +543,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             shouldRunInFullAccessInAutoMode: (input, ctx) =>
                 surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath),
             describeAutoPermissionAction: (input) =>
-                `creating a shared System Monitor Surface${fromImage(input.imagePath)}. ${imageAccess}`,
+                `creating a shared System Monitor Tab${fromImage(input.imagePath)}. ${imageAccess}`,
             execute: async (ctx, input, call) =>
                 surfaces.create(
                     ctx,
@@ -527,12 +558,12 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             toLLM: textResult,
         }),
         defineAgentTool({
-            name: "create_todo_surface",
+            name: "create_todo_tab",
             defer: true,
-            capabilities: ["Create a named shared todo-list Surface as an admin bot."],
-            searchKeywords: ["create todo surface", "new shared todo list", "todo list image"],
+            capabilities: ["Create a named shared todo-list Tab as an admin bot."],
+            searchKeywords: ["create todo tab", "new shared todo list", "todo list image"],
             description:
-                "Admin bots only: create a distinct named shared todo-list Surface. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The creator is immutable. A named creator joins at the end of their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
+                "Admin bots only: create a distinct named shared todo-list Tab. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The creator is immutable. A named creator joins at the end of their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
             parameters: Type.Object(
                 {
                     name: surfaceNameSchema,
@@ -548,7 +579,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             shouldRunInFullAccessInAutoMode: (input, ctx) =>
                 surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath),
             describeAutoPermissionAction: (input) =>
-                `creating a shared todo Surface${fromImage(input.imagePath)}. ${imageAccess}`,
+                `creating a shared todo Tab${fromImage(input.imagePath)}. ${imageAccess}`,
             execute: async (ctx, input, call) =>
                 surfaces.create(
                     ctx,
@@ -563,12 +594,12 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             toLLM: textResult,
         }),
         defineAgentTool({
-            name: "create_document_surface",
+            name: "create_document_tab",
             defer: true,
-            capabilities: ["Create a named shared Markdown document Surface as an admin bot."],
-            searchKeywords: ["create document surface", "new shared markdown", "document image"],
+            capabilities: ["Create a named shared Markdown document Tab as an admin bot."],
+            searchKeywords: ["create document tab", "new shared markdown", "document image"],
             description:
-                "Admin bots only: create a document Surface with optional initial Markdown, empty by default. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The creator is the immutable author and joins their sidebar; null joins nobody in team mode and the local person in standalone mode. Revision audit identity remains the actual caller. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
+                "Admin bots only: create a document Tab with optional initial Markdown, empty by default. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The creator is the immutable author and joins their sidebar; null joins nobody in team mode and the local person in standalone mode. Revision audit identity remains the actual caller. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
             parameters: Type.Object(
                 {
                     name: surfaceNameSchema,
@@ -585,7 +616,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             shouldRunInFullAccessInAutoMode: (input, ctx) =>
                 surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath),
             describeAutoPermissionAction: (input) =>
-                `creating a shared Markdown document Surface${fromImage(input.imagePath)}. ${imageAccess}`,
+                `creating a shared Markdown document Tab${fromImage(input.imagePath)}. ${imageAccess}`,
             execute: async (ctx, input, call) =>
                 surfaces.create(
                     ctx,
@@ -602,12 +633,12 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             toLLM: textResult,
         }),
         defineAgentTool({
-            name: "create_calendar_surface",
+            name: "create_calendar_tab",
             defer: true,
-            capabilities: ["Create a named shared calendar Surface as an admin bot."],
-            searchKeywords: ["create calendar surface", "new shared calendar", "calendar image"],
+            capabilities: ["Create a named shared calendar Tab as an admin bot."],
+            searchKeywords: ["create calendar tab", "new shared calendar", "calendar image"],
             description:
-                "Admin bots only: create a distinct named shared calendar Surface, empty at first. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The creator is immutable. A named creator joins at the end of their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
+                "Admin bots only: create a distinct named shared calendar Tab, empty at first. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The creator is immutable. A named creator joins at the end of their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
             parameters: Type.Object(
                 {
                     name: surfaceNameSchema,
@@ -623,7 +654,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             shouldRunInFullAccessInAutoMode: (input, ctx) =>
                 surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath),
             describeAutoPermissionAction: (input) =>
-                `creating a shared calendar Surface${fromImage(input.imagePath)}. ${imageAccess}`,
+                `creating a shared calendar Tab${fromImage(input.imagePath)}. ${imageAccess}`,
             execute: async (ctx, input, call) =>
                 surfaces.create(
                     ctx,
@@ -638,11 +669,11 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             toLLM: textResult,
         }),
         defineAgentTool({
-            name: "create_artifact_surface",
+            name: "create_artifact_tab",
             defer: true,
-            capabilities: ["Create a Surface that points at an existing artifact as an admin bot."],
-            searchKeywords: ["artifact surface", "pin artifact to sidebar", "artifact reference"],
-            description: `Admin bots only: create a Surface pointing at one existing, undeleted artifact so people can keep it in their sidebar. It neither copies nor changes the artifact. ${referenceRules}`,
+            capabilities: ["Create a Tab that points at an existing artifact as an admin bot."],
+            searchKeywords: ["artifact tab", "pin artifact to sidebar", "artifact reference"],
+            description: `Admin bots only: create a Tab pointing at one existing, undeleted artifact so people can keep it in their sidebar. It neither copies nor changes the artifact. ${referenceRules}`,
             parameters: Type.Object(
                 {
                     name: surfaceNameSchema,
@@ -659,7 +690,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             shouldRunInFullAccessInAutoMode: (input, ctx) =>
                 surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath),
             describeAutoPermissionAction: (input) =>
-                `creating a shared Surface referencing artifact ${JSON.stringify(input.artifactId)}${fromImage(input.imagePath)}. ${imageAccess}`,
+                `creating a shared Tab referencing artifact ${JSON.stringify(input.artifactId)}${fromImage(input.imagePath)}. ${imageAccess}`,
             execute: async (ctx, input, call) =>
                 surfaces.create(
                     ctx,
@@ -675,11 +706,11 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             toLLM: textResult,
         }),
         defineAgentTool({
-            name: "create_bot_surface",
+            name: "create_bot_tab",
             defer: true,
-            capabilities: ["Create a Surface that points at an existing bot as an admin bot."],
-            searchKeywords: ["bot surface", "pin bot to sidebar", "bot reference"],
-            description: `Admin bots only: create a Surface pointing at one existing, active bot so people can keep it in their sidebar. Opening it shows that bot's existing conversation; it grants no access and changes nothing about the bot. ${referenceRules}`,
+            capabilities: ["Create a Tab that points at an existing bot as an admin bot."],
+            searchKeywords: ["bot tab", "pin bot to sidebar", "bot reference"],
+            description: `Admin bots only: create a Tab pointing at one existing, active bot so people can keep it in their sidebar. Opening it shows that bot's existing conversation; it grants no access and changes nothing about the bot. ${referenceRules}`,
             parameters: Type.Object(
                 {
                     name: surfaceNameSchema,
@@ -696,7 +727,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             shouldRunInFullAccessInAutoMode: (input, ctx) =>
                 surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath),
             describeAutoPermissionAction: (input) =>
-                `creating a shared Surface referencing bot ${JSON.stringify(input.botId)}${fromImage(input.imagePath)}. ${imageAccess}`,
+                `creating a shared Tab referencing bot ${JSON.stringify(input.botId)}${fromImage(input.imagePath)}. ${imageAccess}`,
             execute: async (ctx, input, call) =>
                 surfaces.create(
                     ctx,
@@ -712,11 +743,11 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             toLLM: textResult,
         }),
         defineAgentTool({
-            name: "create_task_surface",
+            name: "create_task_tab",
             defer: true,
-            capabilities: ["Create a Surface that points at an existing task as an admin bot."],
-            searchKeywords: ["task surface", "pin task to sidebar", "task reference"],
-            description: `Admin bots only: create a Surface pointing at one existing, active task so people can keep it in their sidebar. Opening it shows that task's existing conversation; it never joins anyone to the task or changes who may archive it. ${referenceRules}`,
+            capabilities: ["Create a Tab that points at an existing task as an admin bot."],
+            searchKeywords: ["task tab", "pin task to sidebar", "task reference"],
+            description: `Admin bots only: create a Tab pointing at one existing, active task so people can keep it in their sidebar. Opening it shows that task's existing conversation; it never joins anyone to the task or changes who may archive it. ${referenceRules}`,
             parameters: Type.Object(
                 {
                     name: surfaceNameSchema,
@@ -733,7 +764,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             shouldRunInFullAccessInAutoMode: (input, ctx) =>
                 surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath),
             describeAutoPermissionAction: (input) =>
-                `creating a shared Surface referencing task ${JSON.stringify(input.taskId)}${fromImage(input.imagePath)}. ${imageAccess}`,
+                `creating a shared Tab referencing task ${JSON.stringify(input.taskId)}${fromImage(input.imagePath)}. ${imageAccess}`,
             execute: async (ctx, input, call) =>
                 surfaces.create(
                     ctx,
@@ -749,14 +780,14 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             toLLM: textResult,
         }),
         defineAgentTool({
-            name: "add_surface_user",
+            name: "add_tab_user",
             defer: true,
-            capabilities: ["Add a person to a Surface as an admin bot."],
-            searchKeywords: ["add surface member", "join shared list", "surface sidebar"],
+            capabilities: ["Add a person to a Tab as an admin bot."],
+            searchKeywords: ["add tab member", "join shared list", "tab sidebar"],
             description:
-                "Admin bots only: add an existing user to a Surface, appending it to their own sidebar. Use null for the standalone person. Existing members keep their order.",
+                "Admin bots only: add an existing user to a Tab, appending it to their own sidebar. Use null for the standalone person. Existing members keep their order.",
             parameters: Type.Object(
-                { surfaceId: surfaceIdSchema, userId: Type.Union([cuid2Schema, Type.Null()]) },
+                { tabId: surfaceIdSchema, userId: Type.Union([cuid2Schema, Type.Null()]) },
                 { additionalProperties: false },
             ),
             returnType: surfaceSchema,
@@ -764,23 +795,23 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             transactional: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => true,
-            describeAutoPermissionAction: ({ surfaceId, userId }) =>
-                `adding ${userId === null ? "the standalone person" : `user ${JSON.stringify(userId)}`} to shared Surface ${JSON.stringify(surfaceId)}. Access: shared membership and sidebar write`,
+            describeAutoPermissionAction: ({ tabId, userId }) =>
+                `adding ${userId === null ? "the standalone person" : `user ${JSON.stringify(userId)}`} to shared Tab ${JSON.stringify(tabId)}. Access: shared membership and sidebar write`,
             execute: async (ctx, input) => {
                 await surfaces.requireAdmin(ctx, scope.agent.id);
-                return surfaces.changeMember(ctx, input.surfaceId, input.userId, "join");
+                return surfaces.changeMember(ctx, input.tabId, input.userId, "join");
             },
             toLLM: textResult,
         }),
         defineAgentTool({
-            name: "remove_surface_user",
+            name: "remove_tab_user",
             defer: true,
-            capabilities: ["Remove a person's Surface membership as an admin bot."],
-            searchKeywords: ["remove surface member", "leave shared list", "remove sidebar list"],
+            capabilities: ["Remove a person's Tab membership as an admin bot."],
+            searchKeywords: ["remove tab member", "leave shared list", "remove sidebar list"],
             description:
-                "Admin bots only: remove a user's Surface from their sidebar. Todos, revisions, and all other users' memberships stay intact.",
+                "Admin bots only: remove a user's Tab from their sidebar. Todos, revisions, and all other users' memberships stay intact.",
             parameters: Type.Object(
-                { surfaceId: surfaceIdSchema, userId: Type.Union([cuid2Schema, Type.Null()]) },
+                { tabId: surfaceIdSchema, userId: Type.Union([cuid2Schema, Type.Null()]) },
                 { additionalProperties: false },
             ),
             returnType: surfaceSchema,
@@ -788,11 +819,11 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             transactional: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => true,
-            describeAutoPermissionAction: ({ surfaceId, userId }) =>
-                `removing ${userId === null ? "the standalone person" : `user ${JSON.stringify(userId)}`} from shared Surface ${JSON.stringify(surfaceId)} without deleting its data. Access: shared membership and sidebar write`,
+            describeAutoPermissionAction: ({ tabId, userId }) =>
+                `removing ${userId === null ? "the standalone person" : `user ${JSON.stringify(userId)}`} from shared Tab ${JSON.stringify(tabId)} without deleting its data. Access: shared membership and sidebar write`,
             execute: async (ctx, input) => {
                 await surfaces.requireAdmin(ctx, scope.agent.id);
-                return surfaces.changeMember(ctx, input.surfaceId, input.userId, "leave");
+                return surfaces.changeMember(ctx, input.tabId, input.userId, "leave");
             },
             toLLM: textResult,
         }),

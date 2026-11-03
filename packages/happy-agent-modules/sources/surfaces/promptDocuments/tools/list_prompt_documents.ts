@@ -1,7 +1,7 @@
 import { defineAgentTool } from "@slopus/happy-agent-base";
 import { Type } from "@sinclair/typebox";
 
-import { promptDocumentListSchema } from "../PromptDocument.js";
+import { tabPromptDocument, tabPromptDocumentListSchema } from "./tabPromptDocument.js";
 import type { SurfacesModule } from "../../SurfacesModule.js";
 import { formatPromptDocuments } from "./promptDocumentToolOutput.js";
 
@@ -18,13 +18,17 @@ export function listPromptDocumentsTool(surfaces: SurfacesModule, actingAgentId:
             "standing guidance",
         ],
         description:
-            "List the document Surfaces marked as important for every agent on this Happy Agent installation, in the order agents see them, with each description, name, and when it was marked. Includes marked Surfaces that can no longer be read, which agents do not see. Only active admin bots may use it.",
+            "List the document Tabs marked as important for every agent on this Happy Agent installation, in the order agents see them, with each description, name, and when it was marked. Includes marked Tabs that can no longer be read, which agents do not see. Only active admin bots may use it.",
         parameters: Type.Object({}, { additionalProperties: false }),
-        returnType: promptDocumentListSchema,
+        returnType: tabPromptDocumentListSchema,
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
-        execute: async (ctx) => await surfaces.listPromptDocuments(ctx, actingAgentId),
+        execute: async (ctx) => ({
+            documents: (await surfaces.listPromptDocuments(ctx, actingAgentId)).documents.map(
+                tabPromptDocument,
+            ),
+        }),
         toLLM: (result) => [{ type: "text", text: formatPromptDocuments(result.documents) }],
     });
 }
