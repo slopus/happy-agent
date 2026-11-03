@@ -72,6 +72,11 @@ const testRunners = {
         workingDirectory,
     }),
 };
+/** The installation this computer is published as. */
+const testNode = {
+    get: async () => ({ name: "Test node", avatar: null }),
+    onUpdated: () => () => undefined,
+};
 const referenceSurfaces = { get: async () => undefined };
 const referenceTasks = {
     forAgent: async () => undefined,
@@ -459,6 +464,7 @@ async function fixture() {
         } as never,
         referenceSurfaces as never,
         testRunners as never,
+        testNode as never,
     );
     modules.push(module);
     module.beforeStart(database.context, agents as never);
@@ -1518,6 +1524,7 @@ describe("archiving a Happy session", () => {
             referenceTasks as never,
             referenceSurfaces as never,
             testRunners as never,
+            testNode as never,
         );
         modules.push(module);
         const hooks = module.beforeStart(database.context, agents as never);
@@ -1764,6 +1771,7 @@ describe("archiving a Happy session", () => {
             referenceTasks as never,
             referenceSurfaces as never,
             testRunners as never,
+            testNode as never,
         );
         modules.push(module);
 

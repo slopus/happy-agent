@@ -18,6 +18,7 @@ import type { EventsModule } from "../events/index.js";
 import type { ProjectFilesModule } from "../files/index.js";
 import type { GitModule } from "../git/index.js";
 import type { HistoryModule } from "../history/index.js";
+import type { NodeModule } from "../node/index.js";
 import type { ProjectsModule } from "../projects/index.js";
 import type { ProviderUsageModule } from "../providerUsage/index.js";
 import type { RunnersModule } from "../runners/index.js";
@@ -76,6 +77,7 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
         tasks: TasksModule,
         surfaces: SurfacesModule,
         runners: RunnersModule,
+        node: NodeModule,
     ) {
         super(
             config,
@@ -94,6 +96,7 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
             tasks,
             surfaces,
             runners,
+            node,
         );
         this.#team = team;
         this.#files = files;
@@ -115,6 +118,7 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
                 tasks,
                 surfaces,
                 runners,
+                node,
                 team,
                 user,
             );

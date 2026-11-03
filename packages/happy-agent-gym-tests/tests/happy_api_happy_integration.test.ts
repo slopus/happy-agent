@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 import { mkdir, readFile, realpath, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 
 import { clientFrameEvent, createAgentGym, type AgentGym } from "@slopus/happy-agent-gym";
@@ -1169,6 +1170,38 @@ describe("Happy integration API", () => {
         });
     }, 30_000);
 
+    it("names the computer after the node and republishes it when the node is renamed", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        await gym.client.patchConfig({ node: { name: "Studio Mac" } });
+
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        await gym.waitUntil(
+            () =>
+                happy.machineMetadata.at(-1)?.displayName === "Studio Mac — Happy Agent"
+                    ? true
+                    : undefined,
+            "the computer to be published under the node's name",
+        );
+        expect(happy.machineMetadata.at(-1)?.host).toBe(hostname());
+
+        await gym.client.patchConfig({ node: { name: "Kitchen Mac" } });
+        await gym.waitUntil(
+            () =>
+                happy.machineMetadata.at(-1)?.displayName === "Kitchen Mac — Happy Agent"
+                    ? true
+                    : undefined,
+            "the renamed node to be republished",
+        );
+        expect(happy.machineRegistrations).toBe(1);
+        expect(happy.machineMetadata.at(-1)?.host).toBe(hostname());
+    }, 30_000);
+
     it("authorizes, connects an existing agent, and preserves ordered state across restart", async () => {
         const happy = await startProtocolHappyServer({ authorizePairing: true });
         const gym = await createAgentGym({
@@ -1310,6 +1343,8 @@ interface ProtocolHappyServer {
     readonly connectedSessions: readonly string[];
     readonly endedSessions: readonly string[];
     readonly metadata: ReadonlyMap<string, Record<string, unknown>>;
+    /** Every machine metadata document the daemon wrote, oldest first. */
+    readonly machineMetadata: readonly Record<string, unknown>[];
     metadataVersion(sessionId: string): number;
     /** Writes merged metadata as a phone would; `shape` may re-serialize it the way another client would. */
     updateMetadata(
@@ -1355,6 +1390,7 @@ async function startProtocolHappyServer(options: {
     }[] = [];
     const sessionIds = new Map<string, string>();
     const metadata = new Map<string, Record<string, unknown>>();
+    const machineMetadata: Record<string, unknown>[] = [];
     const metadataVersions = new Map<string, number>();
     const outgoing = new Map<string, unknown[]>();
     const incoming = new Map<
@@ -1406,7 +1442,11 @@ async function startProtocolHappyServer(options: {
                 }
                 if (request.method === "POST" && url.pathname === "/v1/machines") {
                     machineRegistrations += 1;
-                    machineId = (JSON.parse(body) as { id: string }).id;
+                    const registered = JSON.parse(body) as { id: string; metadata?: string };
+                    machineId = registered.id;
+                    const registeredMetadata =
+                        registered.metadata === undefined ? undefined : decode(registered.metadata);
+                    if (registeredMetadata !== undefined) machineMetadata.push(registeredMetadata);
                     const token = bearerToken(request.headers.authorization);
                     const status = options.registrationStatus?.(token, machineRegistrations) ?? 200;
                     if (status !== 200) {
@@ -1544,6 +1584,10 @@ async function startProtocolHappyServer(options: {
                 if (event === "rpc-register" && payload.method)
                     rpcSockets.set(payload.method, socket);
                 if (event === "session-end" && payload.sid) endedSessions.push(payload.sid);
+                if (event === "machine-update-metadata" && payload.metadata) {
+                    const decoded = decode(payload.metadata);
+                    if (decoded !== undefined) machineMetadata.push(decoded);
+                }
                 let answer: Record<string, unknown> = {
                     result: "success",
                     version: (payload.expectedVersion ?? 0) + 1,
@@ -1623,6 +1667,7 @@ async function startProtocolHappyServer(options: {
             });
         },
         metadata,
+        machineMetadata,
         metadataVersion: (sessionId) => metadataVersions.get(sessionId) ?? 0,
         updateMetadata: (sessionId, patch, shape = (merged) => merged) => {
             const merged = shape({ ...metadata.get(sessionId), ...patch });

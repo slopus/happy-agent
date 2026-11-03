@@ -44,6 +44,7 @@ import {
     type WorkspaceAgentPlacement,
     type WorkspaceEvent,
 } from "../workspaces/index.js";
+import type { NodeModule } from "../node/index.js";
 import type { RunnersModule } from "../runners/index.js";
 import type { SurfacesModule } from "../surfaces/index.js";
 import { TasksModule, type TaskRecord } from "../tasks/index.js";
@@ -252,6 +253,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     readonly #taskCatalog: TasksModule;
     readonly #surfaces: SurfacesModule;
     readonly #runners: RunnersModule;
+    readonly #node: NodeModule;
     readonly #sync: ReturnType<typeof createHappySyncDatabase>;
     readonly #projectSync: ReturnType<typeof createHappyProjectSyncDatabase>;
     readonly #integrationDatabase: ReturnType<typeof createHappyIntegrationDatabase>;
@@ -305,6 +307,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         tasks: TasksModule,
         surfaces: SurfacesModule,
         runners: RunnersModule,
+        node: NodeModule,
         team?: TeamModule,
         owner?: TeamUser,
     ) {
@@ -314,6 +317,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         this.#projectSync = createHappyProjectSyncDatabase(owner?.id);
         this.#integrationDatabase = createHappyIntegrationDatabase(owner?.id);
         this.#config = config;
+        this.#node = node;
         this.#compute = compute;
         this.#events = events;
         this.#files = files;
@@ -522,6 +526,13 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
      * themselves, so a project is only ever described by the sessions that belong to it.
      */
     #watchCatalog(ctx: Context): void {
+        this.#unwatchCatalog.push(
+            this.#node.onUpdated(() => {
+                const machine = this.#machine;
+                if (machine !== undefined)
+                    this.#runTask(async () => await machine.refreshNodeName());
+            }),
+        );
         this.#unwatchCatalog.push(
             this.#taskCatalog.onEvent((_eventCtx, event) => {
                 // Creation publishes task_joined in the same transaction; it is the list edge.
@@ -1033,6 +1044,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             configuration,
             context: ctx,
             models: () => this.models(),
+            nodeName: async () => (await this.#node.get(ctx)).name,
             onConnectionChanged: (event) => {
                 void this.#handleMachineConnection(ctx, machine, event).catch((error: unknown) => {
                     ctx.log.error("Happy connection state could not be recorded.", {}, error);

@@ -184,6 +184,19 @@ layout is left out, as the mapper already leaves out empty text.
     - A session being archived, such as a reaped subtask, is only deleted and forgotten.
       Publishing a replacement just to archive it would put a new session on the phone.
 
+## The computer is named after the node
+
+Machine metadata used to say `<hostname> — Happy Agent`, so the name a person gave the
+installation, which the direct-connection QR code already carries, never reached the relay. The
+contract agreed with the phone apps is `displayName = "<node name> — Happy Agent"`, with `host`
+still the hostname; the hostname stands in only when the node name cannot be read. The machine
+client reads the name from `NodeModule` at every registration and republishes on its
+`onUpdated`, without registering again.
+
+A name given on the phone is still never overwritten. Any published name ending in
+` — Happy Agent` is treated as Happy Agent's own and follows the node; any other is kept. Without
+that rule the old hostname name, already stored on every relay, would have stuck forever.
+
 ## Missing relay sessions
 
 A cached metadata version used to keep a deleted relay session bound forever: message reads and
