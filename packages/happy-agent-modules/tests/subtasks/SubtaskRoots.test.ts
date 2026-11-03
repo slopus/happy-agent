@@ -139,13 +139,31 @@ describe("subtask roots", () => {
         const guidance = await hooks.instructions!(ctx, { agent: { id: "taskagent" } } as never);
         expect(guidance).toContain("Only bots, tasks, and subtasks create them");
         expect(guidance).toContain("at most two levels below a bot or task");
-        // Done subtasks are archived at once rather than kept around.
-        expect(guidance).toContain(
-            "Archive a subtask with archive_subtask in the same turn it reports back",
-        );
-        expect(guidance).toContain("ask it to push that to a branch first, then archive it");
         await expect(
             hooks.instructions!(ctx, { agent: { id: "plainroot" } } as never),
         ).resolves.toBe("");
     });
+
+    it.each(["botagent", "taskagent", "child", "conversation"])(
+        "explains archival without requiring automatic cleanup for %s",
+        async (agentId) => {
+            const { ctx, hooks, configs } = fixture();
+            configs.set("child", { metadata: { subtask: true } } as AgentConfig);
+            configs.set("conversation", {
+                metadata: { subtask: true, subtaskConversation: true },
+            } as AgentConfig);
+
+            const guidance = await hooks.instructions!(ctx, { agent: { id: agentId } } as never);
+            expect(guidance).toContain("archive_subtask");
+            expect(guidance).toContain("Archival stops the task and descendants");
+            expect(guidance).toContain("History is kept, but archival is final.");
+            expect(guidance).not.toContain(
+                "Archive a subtask with archive_subtask in the same turn it reports back",
+            );
+            expect(guidance).not.toContain(
+                "ask it to push that to a branch first, then archive it",
+            );
+            expect(guidance).not.toContain("Do not keep idle subtasks around");
+        },
+    );
 });

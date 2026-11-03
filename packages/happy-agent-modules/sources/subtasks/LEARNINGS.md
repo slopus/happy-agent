@@ -78,13 +78,13 @@ Siblings, parents, grandchildren, ordinary collaborators, and archived subtasks 
 guidance asks coordinators to switch only when a model is failing or wrong for the work, because
 master plan 7 discourages changing an existing agent's model.
 
-## Coordinators archive done subtasks at once
+## Completion does not require archival
 
-Kirill: subtasks "tend to explode and never cleaned out". Every coordinator (bot, task, or
-subtask) is now told to archive a subtask with `archive_subtask` in the turn it reports back once
-its work has landed or there was nothing to land, to have it push an unlanded diff to a branch
-first, and not to keep idle subtasks "in case", since history stays readable and branches stay in
-Git. This is prompt guidance only; nothing archives automatically.
+Coordinator instructions previously required archiving subtasks in the turn they reported back,
+pushing unlanded work first, and never keeping idle subtasks for follow-up. The user asked to remove
+that requirement to preserve continuity. Bot, task, and subtask prompts now explain archival's
+effects without requiring cleanup on completion. Explicitly requested archival and the archive
+tool remain available; archival is still final.
 
 ## People arrange sibling subtasks themselves
 
