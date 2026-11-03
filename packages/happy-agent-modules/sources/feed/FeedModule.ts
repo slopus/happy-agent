@@ -4,7 +4,6 @@ import type {
     FeedEntry,
     FeedItem,
     FeedSeenSubject,
-    FeedSnapshot,
     FeedSubject,
 } from "@slopus/happy-agent-client";
 import { Type } from "@sinclair/typebox";
@@ -31,6 +30,7 @@ import {
     audienceIncludes,
     EVERYTHING,
     parseFeedCluster,
+    type ParsedFeedCluster,
     subscriptionsAdmit,
     TEAM,
 } from "./impl/feedClusters.js";
@@ -184,10 +184,9 @@ export class FeedModule implements AgentModule {
             const { task } = event;
             await this.#record(ctx, {
                 subject: { type: "task", id: task.id },
-                verb: "task.created",
+                latest: { type: "task.created" },
                 clusters: [TEAM, `task:${task.id}`],
                 actor: { userId: task.ownerUserId ?? null, agentId: task.creatorAgentId ?? null },
-                snapshot: { title: task.name, agentId: task.agentId },
                 occurredAt: event.at,
             });
         });
@@ -204,10 +203,9 @@ export class FeedModule implements AgentModule {
                     : null;
             await this.#record(ctx, {
                 subject: { type: "bot", id: bot.id },
-                verb: "bot.created",
+                latest: { type: "bot.created" },
                 clusters: [TEAM, `bot:${bot.id}`],
                 actor: { userId: person, agentId: event.creatorAgentId ?? null },
-                snapshot: { title: bot.name, agentId: bot.agentId },
                 occurredAt: event.at,
             });
         });
@@ -216,26 +214,18 @@ export class FeedModule implements AgentModule {
                 const { surface } = event.payload;
                 await this.#record(ctx, {
                     subject: { type: "surface", id: surface.id },
-                    verb: "surface.created",
+                    latest: { type: "surface.created" },
                     clusters: [TEAM, `surface:${surface.id}`],
                     actor: actor ?? { userId: surface.creatorUserId ?? null, agentId: null },
-                    snapshot: { title: surface.name, surfaceType: surface.type },
                     occurredAt: surface.updatedAt,
                 });
             } else if (event.type === "todo.created") {
                 const { todo } = event.payload;
-                const surface = await surfaces.get(ctx, todo.surfaceId);
-                if (surface === undefined) return;
                 await this.#record(ctx, {
-                    subject: { type: "surface", id: surface.id },
-                    verb: "todo.created",
-                    clusters: [`surface:${surface.id}`],
+                    subject: { type: "surface", id: todo.surfaceId },
+                    latest: { type: "todo.created", todoId: todo.id },
+                    clusters: [`surface:${todo.surfaceId}`],
                     actor: actor ?? { userId: todo.authorUserId ?? null, agentId: null },
-                    snapshot: {
-                        title: surface.name,
-                        surfaceType: surface.type,
-                        ...detail(todo.text),
-                    },
                     occurredAt: todo.createdAt,
                 });
             }
@@ -250,14 +240,11 @@ export class FeedModule implements AgentModule {
                 EDIT_SESSION_IDLE,
             );
             if (!started) return;
-            const surface = await surfaces.get(ctx, change.surfaceId);
-            if (surface === undefined) return;
             await this.#record(ctx, {
-                subject: { type: "surface", id: surface.id },
-                verb: "document.edited",
-                clusters: [`surface:${surface.id}`],
+                subject: { type: "surface", id: change.surfaceId },
+                latest: { type: "document.edited", seq: change.seq },
+                clusters: [`surface:${change.surfaceId}`],
                 actor: change.actor,
-                snapshot: { title: surface.name, surfaceType: surface.type },
                 occurredAt: change.at,
             });
         });
@@ -267,18 +254,16 @@ export class FeedModule implements AgentModule {
             const author = version.createdBy;
             await this.#record(ctx, {
                 subject: { type: "artifact", id: artifact.id },
-                verb: event.type === "artifact_created" ? "artifact.created" : "artifact.updated",
+                latest: {
+                    type:
+                        event.type === "artifact_created" ? "artifact.created" : "artifact.updated",
+                    artifactVersion: version.number,
+                },
                 clusters: artifactClusters(version.source),
                 actor:
                     author.kind === "agent"
                         ? { userId: null, agentId: author.agentId }
                         : { userId: author.userId ?? null, agentId: null },
-                snapshot: {
-                    title: version.title,
-                    agentId: version.source?.agentId ?? null,
-                    artifactType: artifact.type,
-                    artifactVersion: version.number,
-                },
                 occurredAt: version.createdAt,
             });
         });
@@ -633,7 +618,10 @@ export class FeedModule implements AgentModule {
             throw new FeedError("not_found", "The cluster was not found.");
     }
 
-    /** Name a cluster and attach the caller's choice, or undefined when its target is gone. */
+    /**
+     * A cluster by reference with the caller's choice, or undefined when its target is gone.
+     * Clients name it from the task, bot, Surface, project, or workspace they sync.
+     */
     async #cluster(
         ctx: Context,
         cluster: string,
@@ -641,19 +629,33 @@ export class FeedModule implements AgentModule {
         lastAt: number | null,
     ): Promise<FeedCluster | undefined> {
         const parsed = parseFeedCluster(cluster);
-        if (parsed === undefined) return undefined;
-        let name: string | undefined;
-        if (parsed.kind === "everything") name = "Everything";
-        else if (parsed.kind === "team") name = "Team";
-        else if (parsed.kind === "task") name = (await this.#tasks.get(ctx, parsed.id))?.name;
-        else if (parsed.kind === "bot") name = (await this.#bots.get(ctx, parsed.id))?.name;
-        else if (parsed.kind === "surface") name = (await this.#surfaces.get(ctx, parsed.id))?.name;
-        else if (parsed.kind === "project")
-            name = (await this.#projects.get(ctx, parsed.id).catch(() => undefined))?.name;
-        else name = (await this.#workspaces.get(ctx, parsed.id).catch(() => undefined))?.name;
-        if (name === undefined) return undefined;
+        if (parsed === undefined || !(await this.#exists(ctx, parsed))) return undefined;
         const state = parsed.kind === "everything" ? (choice ?? "subscribed") : (choice ?? null);
-        return { cluster, kind: parsed.kind, name, state, lastAt };
+        return { cluster, kind: parsed.kind, state, lastAt };
+    }
+
+    /** Whether the task, bot, Surface, project, or workspace a cluster names still exists. */
+    async #exists(ctx: Context, parsed: ParsedFeedCluster): Promise<boolean> {
+        switch (parsed.kind) {
+            case "everything":
+            case "team":
+                return true;
+            case "task":
+                return (await this.#tasks.get(ctx, parsed.id)) !== undefined;
+            case "bot":
+                return (await this.#bots.get(ctx, parsed.id)) !== undefined;
+            case "surface":
+                return (await this.#surfaces.get(ctx, parsed.id)) !== undefined;
+            case "project":
+                return (
+                    (await this.#projects.get(ctx, parsed.id).catch(() => undefined)) !== undefined
+                );
+            case "workspace":
+                return (
+                    (await this.#workspaces.get(ctx, parsed.id).catch(() => undefined)) !==
+                    undefined
+                );
+        }
     }
 
     /** The caller's feed: a team member's user ID, or the standalone person. */
@@ -689,12 +691,6 @@ export class FeedModule implements AgentModule {
                 for (const listener of this.#listeners) listener(eventCtx, event);
         });
     }
-}
-
-/** A new todo's text as an entry's detail, within its 500 characters. */
-function detail(text: string): Pick<FeedSnapshot, "detail"> {
-    const trimmed = text.trim().slice(0, 500);
-    return trimmed.length === 0 ? {} : { detail: trimmed };
 }
 
 function compare(a: string, b: string): number {

@@ -61,7 +61,11 @@ describe("the standalone feed", () => {
             permissionMode: "full_access",
         });
         const open = await forSubject(surface.id, (item) => item.seenAt === null);
-        expect(open).toMatchObject({ updates: 1, snapshot: { detail: "Tomatoes" } });
+        const [tomatoes] = (await client.listTodos(surface.id)).todos;
+        expect(open).toMatchObject({
+            updates: 1,
+            latest: { type: "todo.created", todoId: tomatoes!.id },
+        });
         expect((await client.getDesktopBootstrap()).feedUnread).toBe(1);
         const types = (await client.getEvents({ after: before, limit: 1000 })).events
             .map((event) => event.type)

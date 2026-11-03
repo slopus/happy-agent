@@ -124,6 +124,8 @@ type TransactionalListener = (
 /** One document change that added content, inside the transaction that stores it. */
 export interface SurfaceDocumentChanged {
     readonly surfaceId: string;
+    /** The entry the change appended to the document's history. */
+    readonly seq: number;
     readonly actor: SurfaceActor;
     readonly at: number;
 }
@@ -1011,7 +1013,7 @@ export class SurfacesModule implements AgentModule {
                 actor,
                 mutationId,
             );
-            if (appended) await this.#documentChangedTransactional(tx, surfaceId, actor);
+            if (appended) await this.#documentChangedTransactional(tx, surfaceId, seq, actor);
             return { seq };
         });
     }
@@ -1026,7 +1028,8 @@ export class SurfacesModule implements AgentModule {
         return ctx.inTx(async (tx) => {
             const surface = await this.#surface(tx, surfaceId, "document");
             const result = await this.#documents.agentChange(tx, surface, seq, text, actor);
-            if (result.appended) await this.#documentChangedTransactional(tx, surfaceId, actor);
+            if (result.appended)
+                await this.#documentChangedTransactional(tx, surfaceId, result.seq, actor);
             return {
                 ...(await this.#documents.projection(tx, surface)),
                 changed: result.appended,
@@ -1363,9 +1366,10 @@ export class SurfacesModule implements AgentModule {
     async #documentChangedTransactional(
         ctx: Context,
         surfaceId: string,
+        seq: number,
         actor: SurfaceActor,
     ): Promise<void> {
-        const change = { surfaceId, actor: { ...actor }, at: Date.now() };
+        const change = { surfaceId, seq, actor: { ...actor }, at: Date.now() };
         for (const listener of this.#documentChanged) await listener(ctx, change);
     }
 }

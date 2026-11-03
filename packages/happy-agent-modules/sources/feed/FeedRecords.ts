@@ -1,6 +1,6 @@
 import {
     feedActorSchema,
-    feedSnapshotSchema,
+    feedLatestSchema,
     feedSubjectSchema,
     type FeedEntry,
     type FeedItem,
@@ -17,7 +17,7 @@ export const feedAudienceSchema = Type.Union([
 ]);
 export type FeedAudience = Static<typeof feedAudienceSchema>;
 
-/** The verbs a change in the shared log may carry. */
+/** What a change in the shared log may be. */
 export const feedVerbSchema = Type.Union([
     Type.Literal("task.created"),
     Type.Literal("bot.created"),
@@ -29,17 +29,31 @@ export const feedVerbSchema = Type.Union([
 ]);
 export type FeedVerb = Static<typeof feedVerbSchema>;
 
+/**
+ * A change by reference: what it was, and the todo, document entry, or artifact version it made.
+ * Never the subject's title, text, or picture; readers resolve those from the live entities.
+ */
+export const feedChangeLatestSchema = Type.Object(
+    {
+        type: feedVerbSchema,
+        todoId: Type.Optional(Type.String()),
+        seq: Type.Optional(Type.Integer({ minimum: 1 })),
+        artifactVersion: Type.Optional(Type.Integer({ minimum: 1 })),
+    },
+    { additionalProperties: false },
+);
+export type FeedChangeLatest = Static<typeof feedChangeLatestSchema>;
+
 /** One change in the shared, append-only log. Its UUIDv7 `id` is the cursor it gives entries. */
 export const feedChangeSchema = Type.Object(
     {
         id: Type.String(),
         subject: feedSubjectSchema,
-        verb: feedVerbSchema,
+        latest: feedChangeLatestSchema,
         /** Every cluster the change belongs to; the last is its home cluster. */
         clusters: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
         audience: feedAudienceSchema,
         actor: feedActorSchema,
-        snapshot: feedSnapshotSchema,
         occurredAt: Type.Integer(),
     },
     { additionalProperties: false },
@@ -57,7 +71,7 @@ export const feedFoldSchema = Type.Object({
     created: Type.Boolean(),
     updates: Type.Integer({ minimum: 0 }),
     actors: Type.Array(feedActorSchema),
-    snapshot: feedSnapshotSchema,
+    latest: feedLatestSchema,
     firstAt: Type.Integer(),
     lastAt: Type.Integer(),
 });
@@ -89,7 +103,7 @@ export interface FeedReader {
 
 /** The entry a reader is served: the first five actors, and how many there are. */
 export function servedFeedEntry(fold: FeedFold): FeedEntry {
-    const { cursor, subject, cluster, created, updates, actors, snapshot, firstAt, lastAt } = fold;
+    const { cursor, subject, cluster, created, updates, actors, latest, firstAt, lastAt } = fold;
     return {
         cursor,
         subject,
@@ -98,7 +112,7 @@ export function servedFeedEntry(fold: FeedFold): FeedEntry {
         updates,
         actors: actors.slice(0, 5),
         actorCount: actors.length,
-        snapshot,
+        latest,
         firstAt,
         lastAt,
     };

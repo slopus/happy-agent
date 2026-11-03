@@ -74,4 +74,48 @@ export const feedMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    [
+        "002-feed-references",
+        async (_ctx, db) => {
+            // Entries name their newest change instead of copying the subject's title, Surface
+            // type, todo text, or agent. A change's `verb` becomes `latest.type`; only an
+            // artifact's version survives from the snapshot, since todo IDs and document entries
+            // were never recorded.
+            await agentDatabaseRun(
+                db,
+                sql`UPDATE happy_agent_feed_changes SET record = json_set(
+                    json_remove(record, '$.snapshot', '$.verb'), '$.latest',
+                    json(CASE WHEN json_type(record, '$.snapshot.artifactVersion') = 'integer'
+                        THEN json_object('type', json_extract(record, '$.verb'),
+                            'artifactVersion', json_extract(record, '$.snapshot.artifactVersion'))
+                        ELSE json_object('type', json_extract(record, '$.verb')) END))
+                    WHERE json_type(record, '$.verb') IS NOT NULL`,
+            );
+            // An entry's newest change is the one at its cursor. Should the log no longer hold
+            // it, the entry's own snapshot says what kind of change it was.
+            await agentDatabaseRun(
+                db,
+                sql`UPDATE happy_agent_feed_items SET record = json_set(
+                    json_remove(record, '$.snapshot'), '$.latest',
+                    json(COALESCE(
+                        (SELECT json_extract(c.record, '$.latest') FROM happy_agent_feed_changes c
+                            WHERE c.id = happy_agent_feed_items.cursor),
+                        CASE
+                            WHEN subject_type = 'artifact' THEN json_object(
+                                'type', CASE WHEN json_extract(record, '$.updates') > 0
+                                    THEN 'artifact.updated' ELSE 'artifact.created' END,
+                                'artifactVersion',
+                                json_extract(record, '$.snapshot.artifactVersion'))
+                            WHEN subject_type = 'surface'
+                                AND json_extract(record, '$.updates') > 0
+                                THEN json_object('type',
+                                    CASE json_extract(record, '$.snapshot.surfaceType')
+                                        WHEN 'document' THEN 'document.edited'
+                                        ELSE 'todo.created' END)
+                            ELSE json_object('type', subject_type || '.created')
+                        END)))
+                    WHERE json_type(record, '$.snapshot') IS NOT NULL`,
+            );
+        },
+    ],
 ];

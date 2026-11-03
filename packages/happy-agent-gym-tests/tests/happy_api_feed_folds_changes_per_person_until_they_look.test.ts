@@ -89,7 +89,7 @@ describe("the feed", () => {
             seenAt: null,
             cluster: `surface:${surface.id}`,
             actors: [{ userId: aliceId, agentId: null }],
-            snapshot: { title: "Shopping", surfaceType: "todo" },
+            latest: { type: "surface.created" },
         });
 
         const bobBefore = (await bob.getEvents()).latestCursor;
@@ -114,14 +114,17 @@ describe("the feed", () => {
             subject,
             (items) => items.length === 1 && items[0]!.updates === 3,
         );
-        // One entry under the same identity, moved up, with the newest todo as its detail.
+        // One entry under the same identity, moved up, naming the newest todo.
+        const bread = (await alice.listTodos(surface.id)).todos.find(
+            (todo) => todo.text === "Bread",
+        )!;
         expect(bobItem).toMatchObject({
             id: bobCreated!.id,
             created: true,
             updates: 3,
             seenAt: null,
             actorCount: 2,
-            snapshot: { title: "Shopping", surfaceType: "todo", detail: "Bread" },
+            latest: { type: "todo.created", todoId: bread.id },
         });
         expect(bobItem!.cursor > bobCreated!.cursor).toBe(true);
         expect(bobItem!.version > bobCreated!.version).toBe(true);
@@ -193,7 +196,7 @@ describe("the feed", () => {
         const mine = await entries(alice, subject, (items) => items[0]?.updates === 1);
         expect(mine).toHaveLength(1);
         expect(mine[0]!.seenAt).not.toBeNull();
-        expect(mine[0]!.snapshot).toMatchObject({ artifactType: "markdown", artifactVersion: 2 });
+        expect(mine[0]!.latest).toEqual({ type: "artifact.updated", artifactVersion: 2 });
         expect(gym.errors).toEqual([]);
     });
 
@@ -217,7 +220,13 @@ describe("the feed", () => {
             text: "# Plan\n\nOne\n\nTwo\n",
         });
         const [item] = await entries(bob, subject, (items) => items[0]?.updates === 1);
-        expect(item).toMatchObject({ created: true, updates: 1, actorCount: 2 });
+        // The session is named by the change that began it; the document came with entry 1.
+        expect(item).toMatchObject({
+            created: true,
+            updates: 1,
+            actorCount: 2,
+            latest: { type: "document.edited", seq: 2 },
+        });
         expect(JSON.stringify(await alice.getSurfaceDocument(surface.id))).toContain("Two");
         // The second edit, within the same session, added nothing more.
         await new Promise((resolve) => setTimeout(resolve, 300));
@@ -227,18 +236,18 @@ describe("the feed", () => {
 
     it("seeds a new member with seen history and marks tasks seen through the read routes", async () => {
         const { gym, alice, task, clientFor, onboard, entries } = await harness();
-        await alice.createSurface({ type: "todo", name: "Before Carol" });
+        const { surface: before } = await alice.createSurface({
+            type: "todo",
+            name: "Before Carol",
+        });
         await entries(alice, { type: "task", id: task.id }, (items) => items.length === 1);
 
         const carol = clientFor("carol");
         await onboard(carol, "Carol");
         const { items, unread } = await carol.getFeed();
         // The installation's built-in Chief of Staff bot is part of the history too.
-        expect(items.map((item) => item.snapshot.title)).toEqual([
-            "Before Carol",
-            "Launch page",
-            "Chief of Staff",
-        ]);
+        expect(items.map((item) => item.subject.type)).toEqual(["surface", "task", "bot"]);
+        expect(items.slice(0, 2).map((item) => item.subject.id)).toEqual([before.id, task.id]);
         expect(items.every((item) => item.seenAt !== null)).toBe(true);
         expect(unread).toBe(0);
         expect((await carol.getDesktopBootstrap()).feedUnread).toBe(0);
@@ -250,7 +259,7 @@ describe("the feed", () => {
             { type: "task", id: next.id },
             (found) => found.length === 1,
         );
-        expect(fresh).toMatchObject({ seenAt: null, snapshot: { agentId: next.agent.id } });
+        expect(fresh).toMatchObject({ seenAt: null, latest: { type: "task.created" } });
         await carol.markAgentRead(next.agent.id);
         await entries(carol, { type: "task", id: next.id }, (found) => found[0]?.seenAt !== null);
         expect((await carol.getFeed()).unread).toBe(0);
@@ -269,7 +278,12 @@ describe("the feed", () => {
         await entries(bob, list, (items) => items.length === 1);
 
         const muted = await bob.muteFeedCluster(`surface:${surface.id}`);
-        expect(muted.cluster).toMatchObject({ kind: "surface", name: "Groceries", state: "muted" });
+        expect(muted.cluster).toEqual({
+            cluster: `surface:${surface.id}`,
+            kind: "surface",
+            state: "muted",
+            lastAt: expect.any(Number),
+        });
         await agentCall("create_todo", {
             surfaceId: surface.id,
             text: "Apples",
@@ -306,7 +320,7 @@ describe("the feed", () => {
         expect(clusters.slice(0, 2).map((cluster) => cluster.cluster)).toEqual(["*", "team"]);
         expect(clusters[0]).toMatchObject({ kind: "everything", state: "muted" });
         expect(clusters.find((cluster) => cluster.cluster === `task:${task.id}`)).toMatchObject({
-            name: "Launch page",
+            kind: "task",
             state: null,
         });
 
@@ -318,9 +332,11 @@ describe("the feed", () => {
     });
 
     it("refuses malformed and unknown clusters and pages the feed", async () => {
-        const { gym, alice, bob, tokenFor, entries } = await harness();
+        const { gym, alice, bob, task, tokenFor, entries } = await harness();
+        const lists: string[] = [];
         for (const name of ["Errands 1", "Errands 2", "Errands 3"]) {
             const { surface } = await alice.createSurface({ type: "todo", name });
+            lists.unshift(surface.id);
             await entries(bob, { type: "surface", id: surface.id }, (items) => items.length === 1);
         }
         const all = (await bob.getFeed({ limit: 200 })).items;
@@ -330,12 +346,7 @@ describe("the feed", () => {
         const second = await bob.getFeed({ before: first.items[1]!.cursor, limit: 200 });
         expect(second.items).toEqual(all.slice(2));
         expect(second.hasMore).toBe(false);
-        expect(all.slice(0, 4).map((item) => item.snapshot.title)).toEqual([
-            "Errands 3",
-            "Errands 2",
-            "Errands 1",
-            "Launch page",
-        ]);
+        expect(all.slice(0, 4).map((item) => item.subject.id)).toEqual([...lists, task.id]);
 
         const call = async (method: string, path: string) =>
             (
@@ -355,16 +366,16 @@ describe("the feed", () => {
     });
 
     it("keeps restricted changes out of seeding and peeking", async () => {
-        const { gym, alice, bob, aliceId, clientFor, onboard } = await harness();
+        const { gym, alice, bob, aliceId, task, clientFor, onboard } = await harness();
         const changeId = "01900000-0000-7000-8000-000000000001";
+        const hidden = "zprivatetask00000000000a";
         const record = {
             id: changeId,
-            subject: { type: "task", id: "zprivatetask00000000000a" },
-            verb: "task.created",
-            clusters: ["team", "task:zprivatetask00000000000a"],
+            subject: { type: "task", id: hidden },
+            latest: { type: "task.created" },
+            clusters: ["team", `task:${hidden}`],
             audience: { kind: "users", userIds: [aliceId] },
             actor: { userId: aliceId, agentId: null },
-            snapshot: { title: "Only for Alice" },
             occurredAt: Date.now(),
         };
         await gym.restart({
@@ -374,16 +385,16 @@ describe("the feed", () => {
                     `INSERT INTO happy_agent_feed_change_clusters (cluster, change_id) VALUES ('team', '${changeId}')`,
                 ]),
         });
-        const titles = async (client: HappyAgentClient) =>
-            (await client.peekFeedCluster("team")).entries.map((entry) => entry.snapshot.title);
-        expect(await titles(alice)).toContain("Only for Alice");
-        expect(await titles(bob)).not.toContain("Only for Alice");
+        const peeked = async (client: HappyAgentClient) =>
+            (await client.peekFeedCluster("team")).entries.map((entry) => entry.subject.id);
+        expect(await peeked(alice)).toContain(hidden);
+        expect(await peeked(bob)).not.toContain(hidden);
 
         const carol = clientFor("carol");
         await onboard(carol, "Carol");
-        const seeded = (await carol.getFeed()).items.map((item) => item.snapshot.title);
-        expect(seeded).toContain("Launch page");
-        expect(seeded).not.toContain("Only for Alice");
+        const seeded = (await carol.getFeed()).items.map((item) => item.subject.id);
+        expect(seeded).toContain(task.id);
+        expect(seeded).not.toContain(hidden);
         expect(gym.errors).toEqual([]);
     });
 });

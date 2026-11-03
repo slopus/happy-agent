@@ -1,6 +1,6 @@
 import type { FeedChange, FeedFold, FeedVerb } from "../FeedRecords.js";
 
-/** The verbs that create their subject; every other verb is one update to it. */
+/** The changes that create their subject; every other change is one update to it. */
 const CREATIONS: ReadonlySet<FeedVerb> = new Set([
     "task.created",
     "bot.created",
@@ -13,10 +13,10 @@ const MAX_ACTORS = 1_000;
 
 /**
  * Fold one change into an entry for its subject, or start one. Changes arrive oldest first, so the
- * newest change's cursor, snapshot, and home cluster describe the entry.
+ * newest change's cursor, reference, and home cluster describe the entry.
  */
 export function foldFeedChange(fold: FeedFold | undefined, change: FeedChange): FeedFold {
-    const created = CREATIONS.has(change.verb);
+    const created = CREATIONS.has(change.latest.type);
     const cluster = change.clusters.at(-1)!;
     if (fold === undefined) {
         return {
@@ -26,7 +26,7 @@ export function foldFeedChange(fold: FeedFold | undefined, change: FeedChange): 
             created,
             updates: created ? 0 : 1,
             actors: [change.actor],
-            snapshot: change.snapshot,
+            latest: change.latest,
             firstAt: change.occurredAt,
             lastAt: change.occurredAt,
         };
@@ -45,7 +45,7 @@ export function foldFeedChange(fold: FeedFold | undefined, change: FeedChange): 
             known || fold.actors.length >= MAX_ACTORS
                 ? fold.actors
                 : [...fold.actors, change.actor],
-        snapshot: newer ? change.snapshot : fold.snapshot,
+        latest: newer ? change.latest : fold.latest,
         firstAt: Math.min(fold.firstAt, change.occurredAt),
         lastAt: Math.max(fold.lastAt, change.occurredAt),
     };

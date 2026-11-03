@@ -1,5 +1,19 @@
 # Feed learnings
 
+## The Feed holds references, never entity data
+
+The first Feed copied a `snapshot` of its subject into every change and entry: the task's, bot's,
+or Surface's name, the artifact's title, the Surface type, the new todo's text, and the agent that
+opens a chat. Clusters carried the target's name. Steve saw a row still titled "New Task" after
+the task had named itself, and ruled that the Feed carries references only and apps sync
+everything. Changes and entries now hold the subject, actors, clusters, counts, times, and
+`latest` — the newest change's type and the todo ID, document `seq`, or artifact version it made.
+Clusters hold their `<kind>:<id>`, kind, choice, and last change. Clients resolve every title,
+picture, and text from the entities they already sync, which keeps them current with no Feed
+event.
+Never add display data to a Feed record or payload; when a client cannot show something, give it
+a way to read the entity.
+
 ## Everything about a Surface is one subject
 
 The design first gave todo lists and documents subjects of their own beside the Surface's

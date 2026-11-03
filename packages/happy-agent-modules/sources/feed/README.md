@@ -5,6 +5,11 @@ todos, document edit sessions, and new and changed artifacts. Changes to one sub
 person has not seen fold into one entry; seeing the subject closes it, so the next change opens
 another. The contract is the Feed chapter of `packages/happy-agent/API.md`.
 
+The Feed holds references only. A change, an entry, and a cluster name their subject, actors,
+clusters, counts, times, and the newest change (`latest`: its type and the todo ID, document
+`seq`, or artifact version it made), never a title, name, text, picture, or Surface type. Clients
+draw every entry from the entities they sync, so renames and pictures are never stale.
+
 ```ts
 const feed = new FeedModule(
     durableFunctions,
@@ -22,12 +27,12 @@ const feed = new FeedModule(
 | ------------------------ | -------------------------------------------------------------------- |
 | `DurableFunctionsModule` | `feed.fanout`, one change at a time, and `feed.enroll` after startup |
 | `TeamModule`             | Who has a feed, enrollment, and the person a request belongs to      |
-| `TasksModule`            | Task creation and permanent deletion, and task cluster names         |
-| `BotsModule`             | Bot creation and permanent deletion, and bot cluster names           |
-| `SurfacesModule`         | Surface and todo creation, document changes, and Surface names       |
+| `TasksModule`            | Task creation and permanent deletion; whether a task cluster exists  |
+| `BotsModule`             | Bot creation and permanent deletion; whether a bot cluster exists    |
+| `SurfacesModule`         | Surface and todo creation, document changes; Surface clusters        |
 | `ArtifactsModule`        | Artifact creation and new versions                                   |
-| `ProjectsModule`         | Project cluster names                                                |
-| `WorkspacesModule`       | Workspace cluster names                                              |
+| `ProjectsModule`         | Whether a project cluster exists                                     |
+| `WorkspacesModule`       | Whether a workspace cluster exists                                   |
 
 ## Delivery
 
@@ -42,8 +47,9 @@ a reader when its audience includes them, none of its clusters is muted, and the
 to `*` (the default) or to one of its clusters. A reader's own direct change (their user ID, no
 agent) folds into their newest entry for the subject and leaves it seen.
 
-Document edits arrive through Surfaces' document-change hook. One edit session per document and
-actor records one change, at its first edit; it ends after 10 minutes without that actor's edits.
+Document edits arrive through Surfaces' document-change hook, with the `seq` the edit appended.
+One edit session per document and actor records one change, at its first edit and naming that
+`seq`; it ends after 10 minutes without that actor's edits.
 
 ## Joining and seeding
 
@@ -55,7 +61,8 @@ writing anything.
 
 ## Storage
 
-Migration `001-feed`:
+Migration `001-feed` creates the tables; `002-feed-references` removes the snapshots the first
+Feed stored and names each change and entry's newest change instead:
 
 - `happy_agent_feed_changes` — the shared log, with the subject, `occurred_at`, and
   `audience_users` (a JSON array, or `NULL` for everyone) as columns for filtering in SQL;

@@ -13,19 +13,21 @@ function change(id: number, overrides: Partial<FeedChange> = {}): FeedChange {
     return {
         id: `01900000-0000-7000-8000-${String(id).padStart(12, "0")}`,
         subject: { type: "surface", id: "s1" },
-        verb: "todo.created",
+        latest: { type: "todo.created", todoId: `todo${String(id)}` },
         clusters: ["surface:s1"],
         audience: { kind: "everyone" },
         actor: { userId: "u1", agentId: null },
-        snapshot: { title: `Version ${String(id)}` },
         occurredAt: 1_000 + id,
         ...overrides,
     };
 }
 
 describe("feed folding", () => {
-    it("folds creation and updates, keeping distinct actors and the newest snapshot", () => {
-        const created = change(1, { verb: "surface.created", clusters: ["team", "surface:s1"] });
+    it("folds creation and updates, keeping distinct actors and the newest change", () => {
+        const created = change(1, {
+            latest: { type: "surface.created" },
+            clusters: ["team", "surface:s1"],
+        });
         const agent = { userId: "u1", agentId: "a1" };
         const folded = [change(2, { actor: agent }), change(3)].reduce(
             foldFeedChange,
@@ -37,7 +39,7 @@ describe("feed folding", () => {
             created: true,
             updates: 2,
             actors: [{ userId: "u1", agentId: null }, agent],
-            snapshot: { title: "Version 3" },
+            latest: { type: "todo.created", todoId: "todo3" },
             firstAt: 1_001,
             lastAt: 1_003,
         });
@@ -56,6 +58,12 @@ describe("feed folding", () => {
             ["s1", 2],
             ["t1", 1],
         ]);
+    });
+
+    it("keeps the newest change's reference when an older one arrives late", () => {
+        const folded = foldFeedChange(foldFeedChange(undefined, change(5)), change(4));
+        expect(folded.latest).toEqual({ type: "todo.created", todoId: "todo5" });
+        expect(folded.cursor).toBe(change(5).id);
     });
 });
 
