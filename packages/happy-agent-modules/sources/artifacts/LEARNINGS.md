@@ -125,10 +125,14 @@ work.
 
 Requiring a title-only artifact before writing its entry cost an extra tool call and exposed an
 unfinished first version. Steve asked to create an artifact with its contents. `create_artifact`
-now accepts optional `content` for Markdown and HTML, publishing that entry and any copied assets
-together in version 1.0. A copied entry and inline content cannot both supply the same file, and
-live URLs cannot take content. Omitting content still supports the title seed or a copied entry;
-later changes continue through the artifact file tools.
+now accepts optional `content` for Markdown and HTML. Steve then asked to supply supporting files
+as `{ path, content }` too, so a whole multi-file artifact can be published in one call without
+writing temporary local files. Creation accepts inline UTF-8 files mixed with `fromPath` copies,
+publishing the entry and assets together in version 1.0. Each file has exactly one source, every
+destination is unique, and only copies need machine access. Top-level content and a file entry
+cannot both supply the same path, and live URLs cannot take either kind of file. Omitting content
+still supports the title seed or an entry in `files`; later text changes continue through the
+artifact file tools, while `update_artifact` keeps its copy-only `files` contract.
 
 ## Every writing call is one version, keyed by the call
 

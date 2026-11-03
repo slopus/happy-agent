@@ -11122,16 +11122,27 @@ under the file object's path rules below, and otherwise follow the file tools ag
 The daemon issues every artifact's ID in `create_artifact`; the model never chooses one. For a
 Markdown or HTML artifact, optional `content` supplies the complete UTF-8 text of `index.md` or
 `index.html` in the initial version. It may accompany auxiliary `files`, but cannot accompany a
-file copied to that entry path or a live `url`, and is refused for other artifact types. The entry
+file supplied at that entry path or a live `url`, and is refused for other artifact types. The entry
 must satisfy the same non-empty and byte-size limits as any other artifact file. Without `content`
-or a copied entry, a Markdown or HTML artifact starts from a short entry holding its title. An
-image, image series, video, or document starts from the files the call copies in. Initial content
-and copied files publish together as one version 1.0; a rejected call publishes no artifact.
+or an entry in `files`, a Markdown or HTML artifact starts from a short entry holding its title. An
+image, image series, video, or document starts from the files the call supplies. Initial content
+and all supplied files publish together as one version 1.0; a rejected call publishes no artifact.
 `files` on `create_artifact` and `update_artifact` copies files from the agent's machine, each
 `{ "fromPath": "...", "path": "..." }`,
 which is how an agent publishes images it generated and files it built with the shell; a `path`
 left out is the file's own name. Reading those files follows the agent's permission mode like any
 other read on its machine.
+
+On `create_artifact` only, each `files` item may instead be `{ "path": "style.css", "content": "…" }`
+to supply that file's UTF-8 text directly. Inline files require an explicit `path`; each item
+supplies exactly one of `content` and `fromPath`. Inline and copied files may be mixed, and an
+inline entry in `files` is allowed when top-level `content` is omitted. All files follow the same
+path, non-empty, byte-size, count, media-type, and bundle rules below. Duplicate destination paths,
+including a top-level `content` entry also supplied in `files`, and file/folder path conflicts are
+refused without publishing an artifact. Inline files require no access to the agent's machine;
+only `fromPath` copies undergo local-file permission checks. `update_artifact` keeps its existing
+copy-only `files` shape; later inline text changes use the artifact file tools. REST creation and
+update shapes are unchanged.
 
 `edit_artifact_file` works as an exact-text edit does: `old_string` must appear exactly once in the
 latest version's text unless `replace_all` is `true`, and must differ from `new_string`; otherwise

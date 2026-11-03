@@ -50,6 +50,121 @@ async function harness() {
 
 describe("artifacts published by agents", () => {
     it.each([
+        {
+            type: "html",
+            path: "index.html",
+            content:
+                '<link rel="stylesheet" href="style.css"><script src="app.js"></script><img src="images/chart.png">',
+            copied: true,
+        },
+        {
+            type: "markdown",
+            path: "index.md",
+            content: "# Report\n\n![Chart](chart.svg)\n[Data](data/report.json)",
+            copied: false,
+        },
+    ])(
+        "publishes $type inline supporting files atomically and preserves them after restart",
+        async (input) => {
+            const { gym, call } = await harness();
+            const before = (await gym.client.getEvents()).latestCursor;
+            const files = [
+                { path: "style.css", content: "body { color: inherit; }" },
+                { path: "app.js", content: 'document.title = "Revenue — 世界";' },
+                {
+                    path: "chart.svg",
+                    content: '<svg xmlns="http://www.w3.org/2000/svg"><text>Revenue</text></svg>',
+                },
+                { path: "data/report.json", content: '{"revenue":42}' },
+            ];
+            const result = await call(gym.defaultSessionId, "create_artifact", {
+                type: input.type,
+                title: "Complete bundle",
+                content: input.content,
+                files: [
+                    ...files,
+                    ...(input.copied
+                        ? [{ path: "images/chart.png", fromPath: "reports/chart.png" }]
+                        : []),
+                ],
+            });
+            expect(result.text).toContain("version 1 (1.0)");
+            const { artifacts } = await gym.client.listArtifacts();
+            expect(artifacts).toHaveLength(1);
+            const artifact = artifacts[0]!;
+            expect(artifact).toMatchObject({ latestVersion: 1, fileCount: input.copied ? 6 : 5 });
+            for (const file of [...files, input]) {
+                const stored = await gym.client.getArtifactFile(artifact.id, 1, file.path);
+                expect(Buffer.from(stored!.data).toString("utf8")).toBe(file.content);
+            }
+            if (input.copied) {
+                const chart = await gym.client.getArtifactFile(artifact.id, 1, "images/chart.png");
+                expect(new Uint8Array(chart!.data)).toEqual(CHART);
+            }
+            const events = (
+                await gym.client.getEvents({ after: before, limit: 1000 })
+            ).events.filter((event) => event.type.startsWith("artifact."));
+            expect(events.map((event) => event.type)).toEqual(["artifact.created"]);
+            expect(events[0]!.payload).toEqual({ artifact });
+            await gym.restart();
+            expect((await gym.client.getArtifact(artifact.id)).artifact.latestVersion).toBe(1);
+            for (const file of [...files, input]) {
+                const stored = await gym.client.getArtifactFile(artifact.id, 1, file.path);
+                expect(Buffer.from(stored!.data).toString("utf8")).toBe(file.content);
+            }
+            expect(gym.errors).toEqual([]);
+            expect(gym.inference.unscripted).toEqual([]);
+        },
+    );
+
+    it("refuses invalid inline supporting files without publishing partial versions", async () => {
+        const { gym, call } = await harness();
+        const before = (await gym.client.getEvents()).latestCursor;
+        for (const files of [
+            [
+                { path: "style.css", content: "p {}" },
+                { path: "style.css", content: "a {}" },
+            ],
+            [{ fromPath: "reports/chart.png" }, { path: "chart.png", content: "duplicate" }],
+            [{ path: "index.html", content: "duplicate entry" }],
+            [
+                { path: "assets", content: "file" },
+                { path: "assets/style.css", content: "p {}" },
+            ],
+            [{ path: "../escape.css", content: "unsafe" }],
+            [{ path: "/absolute.css", content: "unsafe" }],
+            [{ path: "style.css", fromPath: "reports/chart.png", content: "ambiguous" }],
+            [{ content: "missing path" }],
+            [{ path: "style.css" }],
+            [{ path: "style.css", content: "" }],
+        ]) {
+            const result = await call(gym.defaultSessionId, "create_artifact", {
+                type: "html",
+                title: "Invalid bundle",
+                content: "<p>Ready</p>",
+                files,
+            });
+            expect(result.text).not.toContain("Artifact created:");
+            expect((await gym.client.listArtifacts()).artifacts).toEqual([]);
+        }
+        const events = (await gym.client.getEvents({ after: before, limit: 1000 })).events.filter(
+            (event) => event.type.startsWith("artifact."),
+        );
+        expect(events).toEqual([]);
+        const valid = await call(gym.defaultSessionId, "create_artifact", {
+            type: "html",
+            title: "Still works",
+            files: [
+                { path: "index.html", content: "<p>Ready</p>" },
+                { path: "style.css", content: "p {}" },
+            ],
+        });
+        expect(valid.text).toContain("version 1 (1.0)");
+        expect((await gym.client.listArtifacts()).artifacts).toHaveLength(1);
+        expect(gym.inference.unscripted).toEqual([]);
+    });
+
+    it.each([
         { type: "markdown", path: "index.md", content: ENTRY },
         {
             type: "html",

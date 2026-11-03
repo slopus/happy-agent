@@ -94,10 +94,13 @@ and `replace_all`, and `read_artifact_file` reads numbered lines with `offset` a
 files and files an agent built with the shell arrive with the `fromPath` files of
 `create_artifact` and `update_artifact`, read through the agent's own machine.
 
-`create_artifact` can take `content` for the initial `index.md` or `index.html`, alongside copied
-assets, publishing everything together in version 1.0. Content cannot accompany a copied entry or
-a live URL, and other artifact types still require copied files. Without content or a copied
-entry, Markdown and HTML keep their title seed. Later edits use the file tools.
+`create_artifact` can take `content` for the initial `index.md` or `index.html`, alongside
+`files` containing inline UTF-8 `{ path, content }` items, copied `{ fromPath, path? }` items, or
+both. Everything publishes together in version 1.0. Every item has exactly one source, inline
+files require a path, and destination paths must be unique. Top-level content cannot accompany
+an entry in `files` or a live URL. Without content or an entry in `files`, Markdown and HTML keep
+their title seed. Inline files need no machine access; only copies undergo filesystem permission
+checks. Later text edits use the file tools; `update_artifact` still accepts only copies in `files`.
 
 Each writing call makes one minor version through `commitFileChanges`, keyed by the call ID, so a
 call repeated after a restart finds its version and changes nothing; the tools check that with

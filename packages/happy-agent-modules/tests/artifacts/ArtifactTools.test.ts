@@ -8,6 +8,8 @@ import {
     MAX_AGENT_ARTIFACT_VERSIONS_PER_HOUR,
     type ArtifactRecord,
 } from "../../sources/artifacts/index.js";
+import { createArtifactTool } from "../../sources/artifacts/tools/create_artifact.js";
+import { scriptedComputeModule } from "../support/computeModule.js";
 import {
     artifactsWorld,
     imageBytes,
@@ -107,6 +109,201 @@ async function textAt(w: ArtifactsWorld, artifactId: string, path: string): Prom
 }
 
 describe("the artifact tools", () => {
+    it.each([
+        {
+            type: "html",
+            path: "index.html",
+            content: '<link rel="stylesheet" href="style.css"><script src="app.js"></script>',
+        },
+        {
+            type: "markdown",
+            path: "index.md",
+            content: "# Report\n\n![Chart](chart.svg)\n[Data](data/report.json)",
+        },
+    ])(
+        "publishes an inline $type bundle once, with mixed copies and UTF-8 assets",
+        async (input) => {
+            const w = await world("artifact-inline-files");
+            w.machine.writeBuffer("/workspace/photo.png", imageBytes("photo"));
+            const files = [
+                { path: "style.css", content: "body { color: inherit; }" },
+                { path: "app.js", content: 'document.title = "Ready — 世界";' },
+                {
+                    path: "chart.svg",
+                    content: '<svg xmlns="http://www.w3.org/2000/svg"><text>世界</text></svg>',
+                },
+                { path: "data/report.json", content: '{"revenue":42}' },
+            ];
+            const tool = await w.tool(AGENT, "create_artifact");
+            const args = {
+                type: input.type,
+                title: "Bundle",
+                content: input.content,
+                files: [...files, { fromPath: "photo.png" }],
+            };
+            expect(Value.Check(tool.parameters, args)).toBe(true);
+            const remembered = new Map<string, unknown>();
+            const artifact = (await call(w.ctx, tool, args, { remembered })) as ArtifactRecord;
+            expect(artifact).toMatchObject({
+                latestVersion: 1,
+                latestMajor: 1,
+                latestMinor: 0,
+                fileCount: 6,
+            });
+            for (const file of [...files, input]) {
+                expect(await textAt(w, artifact.id, file.path)).toBe(file.content);
+            }
+            const version = await w.artifacts.getVersion(w.ctx, artifact.id, 1);
+            expect(version.files.find((file) => file.path === "style.css")?.mimeType).toBe(
+                "text/css",
+            );
+            expect(version.files.find((file) => file.path === "photo.png")?.sha256).toBe(
+                sha256(imageBytes("photo")),
+            );
+            expect(await call(w.ctx, tool, args, { remembered })).toEqual(artifact);
+            expect(w.events).toHaveLength(1);
+            expect(await w.uploadRows()).toBe(0);
+        },
+    );
+
+    it("creates an all-inline bundle without a machine", async () => {
+        const w = await world("artifact-inline-no-machine");
+        const tool = createArtifactTool(
+            w.artifacts,
+            scriptedComputeModule(async () => undefined),
+            AGENT,
+        );
+        const args = {
+            type: "html" as const,
+            title: "No machine",
+            content: '<link rel="stylesheet" href="style.css">',
+            files: [{ path: "style.css", content: "body { color: inherit; }" }],
+        };
+        expect(await tool.shouldReviewInAutoMode(args, w.ctx)).toBe(false);
+        expect(await tool.shouldRunInFullAccessInAutoMode?.(args, w.ctx)).toBe(false);
+        await expect(call(w.ctx, tool, args)).resolves.toMatchObject({
+            latestVersion: 1,
+            fileCount: 2,
+        });
+    });
+
+    it("accepts an inline entry in files and seeds only a missing entry", async () => {
+        const w = await world("artifact-inline-entry");
+        const content = "# Entry from files\n";
+        const entry = await create(w, {
+            type: "markdown",
+            title: "Entry",
+            files: [{ path: "index.md", content }],
+        });
+        expect(await textAt(w, entry.id, "index.md")).toBe(content);
+        const seeded = await create(w, {
+            type: "html",
+            title: "Seed",
+            files: [{ path: "style.css", content: "p { color: inherit; }" }],
+        });
+        expect(await textAt(w, seeded.id, "index.html")).toContain("<title>Seed</title>");
+        expect(seeded).toMatchObject({ latestVersion: 1, fileCount: 2 });
+    });
+
+    it("validates inline file sources without changing update_artifact's copy-only schema", async () => {
+        const w = await world("artifact-inline-schema");
+        const tool = await w.tool(AGENT, "create_artifact");
+        for (const file of [
+            { content: "missing path" },
+            { path: "style.css" },
+            { path: "style.css", content: "inline", fromPath: "local.css" },
+            { path: "style.css", content: "" },
+            { path: "style.css", content: 12 },
+            ...[
+                "",
+                "../escape.css",
+                "/absolute.css",
+                "a/./b",
+                "a/../b",
+                "a//b",
+                "a\\b",
+                "bad\u0000.css",
+                "a/",
+            ].map((path) => ({ path, content: "invalid path" })),
+        ]) {
+            expect(
+                Value.Check(tool.parameters, { type: "html", title: "Invalid", files: [file] }),
+            ).toBe(false);
+        }
+        const update = await w.tool(AGENT, "update_artifact");
+        expect(
+            Value.Check(update.parameters, {
+                artifactId: "someartifact",
+                files: [{ path: "style.css", content: "p {}" }],
+            }),
+        ).toBe(false);
+    });
+
+    it("rejects duplicate, conflicting, empty, oversized, and invalid inline bundles atomically", async () => {
+        const w = await world("artifact-inline-conflicts");
+        w.machine.writeBuffer("/workspace/style.css", Buffer.from("p {}"));
+        for (const input of [
+            {
+                files: [
+                    { path: "style.css", content: "a" },
+                    { path: "style.css", content: "b" },
+                ],
+            },
+            { files: [{ fromPath: "style.css" }, { path: "style.css", content: "b" }] },
+            {
+                files: [
+                    { fromPath: "style.css", path: "nested/style.css" },
+                    { path: "nested/style.css", content: "b" },
+                ],
+            },
+            { content: "<p>Entry</p>", files: [{ path: "index.html", content: "other entry" }] },
+            {
+                files: [
+                    { path: "assets", content: "file" },
+                    { path: "assets/style.css", content: "p {}" },
+                ],
+            },
+            { files: [{ path: "../escape.css", content: "invalid" }] },
+            { files: [{ path: "style.css", content: "" }] },
+            { files: [{ path: "index.html", content: "é".repeat(8 * 1024 * 1024 + 1) }] },
+            {
+                files: Array.from({ length: 256 }, (_, i) => ({
+                    path: `file${String(i)}.txt`,
+                    content: "file",
+                })),
+            },
+            { url: "https://example.com", files: [{ path: "style.css", content: "p {}" }] },
+        ]) {
+            await expect(create(w, { type: "html", title: "Invalid", ...input })).rejects.toThrow();
+            expect((await w.artifacts.list(w.ctx)).artifacts).toEqual([]);
+            expect(w.events).toEqual([]);
+        }
+    });
+
+    it("reviews only local copies in mixed bundles and refuses read-only inline creation", async () => {
+        const w = await world("artifact-inline-permissions");
+        w.machine.links.set("/workspace/linked.css", "/etc/outside.css");
+        const tool = await w.tool(AGENT, "create_artifact");
+        const inline = { path: "style.css", content: "body { color: inherit; }" };
+        for (const [files, review] of [
+            [[inline], false],
+            [[inline, { fromPath: "inside.css" }], false],
+            [[inline, { fromPath: "/etc/outside.css" }], true],
+            [[inline, { fromPath: "linked.css" }], true],
+        ] as const) {
+            const args = { type: "html", title: "Permissions", files };
+            expect(await tool.shouldReviewInAutoMode(args, w.ctx)).toBe(review);
+            expect(await tool.shouldRunInFullAccessInAutoMode?.(args, w.ctx)).toBe(review);
+        }
+        const args = { type: "html", title: "Permissions", files: [inline] };
+        await expect(call(withAgentPermissionMode(w.ctx, "read_only"), tool, args)).rejects.toThrow(
+            "Read only",
+        );
+        await expect(
+            call(withAgentPermissionMode(w.ctx, "workspace_write"), tool, args),
+        ).resolves.toMatchObject({ latestVersion: 1, fileCount: 2 });
+    });
+
     it.each([
         { type: "markdown", path: "index.md", content: "# Ready\n\nHello, 世界.\n" },
         { type: "html", path: "index.html", content: "<!doctype html><p>Ready — now</p>" },
