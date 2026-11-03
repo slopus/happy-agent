@@ -316,10 +316,11 @@ export class GlobalSkillsModule implements AgentModule {
                 const changed: string[] = [];
                 const found = new Set(scan.skills.map((skill) => skill.path));
                 const initialEnablement = this.#config.runtimeSkillEnablement;
+                const entriesByPath = new Map(
+                    current.entries.map((entry) => [entry.skill.path, entry]),
+                );
                 for (const document of scan.skills) {
-                    let entry = current.entries.find(
-                        (candidate) => candidate.skill.path === document.path,
-                    );
+                    let entry = entriesByPath.get(document.path);
                     if (entry !== undefined && entry.present && entry.stamp === document.stamp)
                         continue;
                     const skill: GlobalSkill = {
@@ -334,7 +335,7 @@ export class GlobalSkillsModule implements AgentModule {
                         updatedAt: Date.now(),
                     };
                     if (entry === undefined) {
-                        if (current.entries.length >= 10000)
+                        if (current.entries.length >= 100_000)
                             throw new GlobalSkillsError(
                                 503,
                                 "internal",
@@ -457,6 +458,9 @@ export class GlobalSkillsModule implements AgentModule {
                             identities.delete(path);
                         }
                         for (const path of directories) {
+                            // Catalog capacity must not imply one native watcher per installation.
+                            // The existing periodic full scan covers directories beyond this bound.
+                            if (this.#watchers.size >= 4_096 && !this.#watchers.has(path)) continue;
                             try {
                                 const info = await lstat(path);
                                 if (stopped) break;

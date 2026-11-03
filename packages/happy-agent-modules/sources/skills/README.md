@@ -1,7 +1,7 @@
 # Skills module
 
 ```ts
-const skills = new SkillsModule(computeModule, globalSkillsModule, configModule);
+const skills = new SkillsModule(computeModule, globalSkillsModule, configModule, teamModule);
 ```
 
 The daemon additionally installs `new GlobalSkillsModule(configModule, durableFunctionsModule)`
@@ -11,6 +11,9 @@ The optional third dependency, the config module, supplies the extra skill folde
 `[skills] directories`: the user `happy.toml` list, already resolved to absolute paths, and the
 parser for the same table in a project's root `happy.toml`. Without it only the standard roots
 are scanned.
+
+The optional team module supplies the authenticated person invoking a slash command. Ordinary
+tool activations use the genuine accepted user message's identity, never the task owner's identity.
 
 `SkillsModule` takes the compute module and asks it for the exact cached compute belonging to the
 current agent, and for the permissions that machine is read under. It recursively discovers user
@@ -35,10 +38,45 @@ permissions. Compute supplies native boundary identity; alternate providers use 
 identity. Sharing retains at most 128 in-flight scans and drops each on completion, so later refreshes
 immediately see edits, additions, removals, and recovered files. Directory metadata is batched through
 the backend, which owns bounded parallelism and permission checks. Completed catalogs are not cached.
+Directory walks run in batches of 32, applying results in deterministic breadth-first order so
+completion timing cannot change duplicate precedence. Safety budgets allow 100,000 inspected
+documents, 1,000,000 directory entries, 256 MiB of document reads, and 60 seconds per scan; reaching
+a budget fails explicitly instead of returning a successful partial catalog. Each document remains
+limited to 256 KiB. These budgets are separate from prompt size and tool pagination.
+
 Discovery skips dot-directories, `node_modules`, and malformed or unreadable skills without hiding
 the rest of the catalog; `list_skills` uses its returned cursor to continue a bounded page.
 Frontmatter metadata is parsed as YAML-compatible mapping data, including flow maps, aliases,
 quoted values, and block scalars.
+
+## Stable prompt shortlists and observed usage
+
+The API and slash-command catalog return every discoverable skill. `list_skills` searches the
+complete model-invocable catalog with BM25, placing an exact name first, and returns bounded pages.
+`read_skill` can read an enabled skill even when it is absent from the prompt.
+
+Only the system prompt has a shortlist, limited to 12,000 characters. Its selection is saved in the
+agent's skills KV after the first genuine user is known: shipped skills first, then that person's
+frequently used skills, with deterministic name ordering for ties and cold starts. An anonymous
+startup does not freeze the selection. The same selected identities survive later runs and daemon
+restarts. Usage and unrelated catalog additions never reorder or refill an existing shortlist;
+current metadata, permissions, enablement, removal, and user-only invocation policy are checked on
+every refresh. Ordinary warm inference rereads only the selected documents; required fresh
+slash-command catalog loads reconcile their name precedence. A bounded map retains only store
+handles and refresh markers for 128 agents, never completed catalogs. Restart or eviction falls
+back to fresh discovery. Runs with explicit slash-invocation content retain the full discovery
+check for those pending instructions. Search, exact reads, and required per-turn catalog loads
+also remain fresh scans, so their cost still grows with installation size. The prompt explains
+that more skills exist and instructs the model to search for a
+named missing skill or a specialized task the shortlist does not cover.
+
+Successful `read_skill` calls and accepted explicit slash invocations are observed activations.
+Each person/skill counts once per run, including re-reads and replay. Per-user frequency aggregates
+live in shared skills KV, updated transactionally with run-scoped deduplication, and retain at most
+1,024 skill names per person. They affect future task snapshots only. Standalone uses the
+installation's person; team mode uses the authenticated sender. Unattributed autonomous work,
+listing, searching, failed reads, and raw filesystem reads do not count. A shared task keeps its
+first person's shortlist while subsequent activations accrue to their actual senders.
 
 A skill whose frontmatter says `disable-model-invocation: true` is reserved for the user, as in
 Claude Code. It is still discovered and still offered as a slash command, and invoking it carries
@@ -67,7 +105,7 @@ in a folder named for its content (`<name>-<hash>`), so only a skill the runner 
 New content is assembled under a dot-name discovery skips and moved into place, its files made
 read-only with their executable bits kept, and everything else in `synced-skills/` is removed. A
 name already taken by a higher-ranked source is not copied, disabled skills are left out, and a
-skill with more than 512 files, a file over 8 MiB, or that would take the total past 64 MiB or 256
+skill with more than 512 files, a file over 8 MiB, or that would take the total past 64 MiB or 100,000
 skills is skipped with a warning. `[runners.<id>] sync_skills = false` keeps a runner from
 receiving the installation's skills, and removes a copy it had. Bots that run as a Linux user of
 their own get none of these copies: only the default workload user's home receives them.
@@ -89,9 +127,10 @@ the matching `/v0/skills` API routes, including disabled or broken installations
 inside the installation's canonical directory and enforce document and binary size limits.
 `onUpdated` publishes bounded committed invalidations into the existing API journal and SSE feed.
 
-A Durable Functions execution owns native directory watches and a bounded periodic reconciliation
-fallback. It watches missing-root ancestors and directory-symlink targets, handles atomic file and
-root replacements, and continues watching disabled skills. Unchanged scans do not produce versions
+A Durable Functions execution owns up to 4,096 native directory watches and a bounded periodic
+reconciliation fallback covering the full catalog. It watches missing-root ancestors and
+directory-symlink targets, handles atomic file and root replacements, and continues watching
+disabled skills. Unchanged scans do not produce versions
 or notifications. Root scan failures remain errors rather than false removals.
 
 Native agent discovery excludes unavailable global locations before resolving name precedence and

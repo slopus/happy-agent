@@ -41,6 +41,31 @@ async function fixture() {
 }
 
 describe("global skill management", () => {
+    it("keeps every installation reachable past 1,024 entries through management pages", async () => {
+        const f = await fixture();
+        for (let start = 0; start < 1_025; start += 32) {
+            await Promise.all(
+                Array.from({ length: Math.min(32, 1_025 - start) }, async (_, offset) => {
+                    const name = `skill-${String(start + offset).padStart(4, "0")}`;
+                    await f.install(name, document(name));
+                }),
+            );
+        }
+        const names: string[] = [];
+        let pageCursor: string | undefined;
+        do {
+            const page = await f.skills.list(f.ctx, {
+                limit: 100,
+                ...(pageCursor === undefined ? {} : { pageCursor }),
+            });
+            names.push(...page.skills.map((skill) => skill.name));
+            pageCursor = page.nextPageCursor ?? undefined;
+        } while (pageCursor !== undefined);
+        expect(names).toHaveLength(1_025);
+        expect(new Set(names).size).toBe(1_025);
+        expect(names.at(-1)).toBe("skill-1024");
+    }, 120_000);
+
     it("keeps aliased installation preferences independent while matching discovery's fallback name", async () => {
         const f = await fixture();
         await f.install("original", "---\ndescription: A linked skill.\n---\nInstructions.");

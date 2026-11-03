@@ -1,5 +1,26 @@
 # Skill discovery learnings
 
+## Catalog size is not prompt size
+
+Discovery used to stop silently at 256 skills and 4,096 directory entries, so a skill omitted from
+the prompt was also unreachable by search or exact read. Steve asked for thousands of installed
+skills, a small stable prompt selected from per-user use, and all available skills in the API.
+Discovery now scans the full catalog within explicit resource budgets, with deterministic bounded
+parallel directory walks. Search uses BM25 and prioritizes exact names. The API returns every
+discoverable skill; only the prompt is a 12,000-character shortlist. Global management assigns
+file ownership by nearest installed ancestor instead of repeatedly scanning every file for every
+skill, and runner copying no longer stops at 256 small skills. Copy byte and per-file limits still
+produce explicit skipped-skill diagnostics.
+
+The shortlist is persisted per agent after its first genuine user is known, with shipped skills,
+that user's frequency history, and deterministic cold-start ordering. Successful skill-tool reads
+and explicit invocations update bounded per-user aggregates once per run. Search, failed reads,
+and raw filesystem reads are not activations. Shared tasks attribute use to the actual accepted
+sender, not their owner. Usage affects future task snapshots, not every inference. Existing
+snapshots retain order without filling vacancies, but refresh selected descriptions and remove
+disabled, missing, unauthorized, or user-only entries promptly. This keeps context stable without
+turning a saved shortlist into authority to read an unavailable skill.
+
 ## Native skills ship with the product and yield to installed ones
 
 Every skill used to have to be installed into `~/.agents/skills` or a repository before any agent

@@ -1,5 +1,14 @@
 # Slash command learnings
 
+## Complete skill catalogs must not inherit prompt limits
+
+The 256-command and 256-KiB catalog caps made agent creation fail once the skill installation
+outgrew them, even if the model prompt was small. Steve directed the API to return all available
+skills. After updating and publishing the client contract, the runtime no longer applies these
+aggregate caps. Every command still undergoes per-entry validation, duplicate names are refused,
+and images remain separately served. The prompt's skill shortlist never substitutes for the
+complete ordered API catalog.
+
 ## Startup optimization preserves required discovery
 
 The API requires catalog loading on creation and restoration, before every turn, and before

@@ -20,7 +20,7 @@ export const globalSkillsStateSchema = Type.Object({
             stamp: Type.String(),
             canonical: Type.String(),
         }),
-        { maxItems: 10000 },
+        { maxItems: 100_000 },
     ),
 });
 export type GlobalSkillsState = Static<typeof globalSkillsStateSchema>;

@@ -29,9 +29,9 @@ export interface GlobalSkillScan {
     rootStamp: string;
     unreadable: string[];
 }
-const MAX_ENTRIES = 16384;
-const MAX_DIRECTORIES = 4096;
-const MAX_SKILLS = 1024;
+const MAX_ENTRIES = 1_000_000;
+const MAX_DIRECTORIES = 200_000;
+const MAX_SKILLS = 100_000;
 
 /** Bounded recursive discovery. Directory aliases are distinct identities; ancestor cycles are skipped. */
 export async function scanGlobalSkills(root: string): Promise<GlobalSkillScan> {
@@ -57,9 +57,10 @@ export async function scanGlobalSkills(root: string): Promise<GlobalSkillScan> {
         throw new GlobalSkillsError(503, "internal", "The global skills directory cannot be read.");
     const files: { path: string; canonical: string; stamp: string; file?: GlobalSkillFile }[] = [];
     const unreadable = result.unreadable;
+    const installedPaths = new Set<string>();
     let entries = 0;
     let documentBytes = 0;
-    const deadline = Date.now() + 10000;
+    const deadline = Date.now() + 60_000;
     for (let index = 0; index < queue.length; index += 1) {
         if (queue.length > MAX_DIRECTORIES || Date.now() > deadline)
             throw new GlobalSkillsError(
@@ -72,7 +73,7 @@ export async function scanGlobalSkills(root: string): Promise<GlobalSkillScan> {
         // still includes their supporting files.
         if (
             !directory.discover &&
-            !result.skills.some((skill) => directory.path.startsWith(`${skill.path}/`))
+            !ancestorsOf(directory.path).some((path) => installedPaths.has(path))
         )
             continue;
         if (directory.ancestors.has(directory.canonical)) continue;
@@ -181,7 +182,7 @@ export async function scanGlobalSkills(root: string): Promise<GlobalSkillScan> {
                 throw new Error("Linked document");
             const bytes = await readGlobalSkillFile(directory.canonical, "SKILL.md", 256 * 1024);
             documentBytes += bytes.length;
-            if (documentBytes > 64 * 1024 * 1024)
+            if (documentBytes > 256 * 1024 * 1024)
                 throw new GlobalSkillsError(
                     503,
                     "internal",
@@ -214,29 +215,49 @@ export async function scanGlobalSkills(root: string): Promise<GlobalSkillScan> {
             /* The current unreadable or invalid state is intentional, never stale metadata. */
         }
         result.skills.push(skill);
+        installedPaths.add(skill.path);
     }
     result.skills.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    // Assign each path to its nearest installed ancestor once. Filtering the entire inventory
+    // separately for every skill made a flat catalog quadratic.
+    const byPath = new Map(result.skills.map((skill) => [skill.path, skill]));
+    const ownerOf = (path: string): ScannedGlobalSkill | undefined => {
+        let current = path;
+        while (current !== "") {
+            const skill = byPath.get(current);
+            if (skill !== undefined) return skill;
+            const slash = current.lastIndexOf("/");
+            current = slash < 0 ? "" : current.slice(0, slash);
+        }
+        return undefined;
+    };
+    const stamps = new Map<string, [string, string][]>();
+    for (const [path, stamp] of result.paths) {
+        const owner = ownerOf(path);
+        if (owner === undefined) continue;
+        const owned = stamps.get(owner.path) ?? [];
+        owned.push([path, stamp]);
+        stamps.set(owner.path, owned);
+    }
+    for (const file of files) {
+        const owner = ownerOf(file.path);
+        if (
+            owner !== undefined &&
+            file.file !== undefined &&
+            withinSkill(owner.canonical, file.canonical)
+        ) {
+            owner.files.push({ ...file.file, path: file.path.slice(owner.path.length + 1) });
+        }
+    }
+    for (const path of unreadable) {
+        for (const parent of [path, ...ancestorsOf(path)]) {
+            const skill = byPath.get(parent);
+            if (skill !== undefined) skill.filesError = true;
+        }
+    }
     for (const skill of result.skills) {
-        const nested = result.skills.filter((other) => other.path.startsWith(`${skill.path}/`));
-        const owned = files.filter(
-            (file) =>
-                file.path.startsWith(`${skill.path}/`) &&
-                !nested.some((other) => file.path.startsWith(`${other.path}/`)) &&
-                withinSkill(skill.canonical, file.canonical),
-        );
-        skill.files = owned
-            .flatMap((file) =>
-                file.file ? [{ ...file.file, path: file.path.slice(skill.path.length + 1) }] : [],
-            )
-            .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-        skill.filesError = unreadable.some(
-            (path) => path === skill.path || path.startsWith(`${skill.path}/`),
-        );
-        const ownedPaths = [...result.paths].filter(
-            ([path]) =>
-                (path === skill.path || path.startsWith(`${skill.path}/`)) &&
-                !nested.some((other) => path === other.path || path.startsWith(`${other.path}/`)),
-        );
+        skill.files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+        const ownedPaths = stamps.get(skill.path) ?? [];
         skill.stamp = hash(
             JSON.stringify([
                 skill.canonical,
@@ -265,4 +286,13 @@ export async function scanGlobalSkills(root: string): Promise<GlobalSkillScan> {
 }
 function hash(value: string): string {
     return createHash("sha256").update(value).digest("hex");
+}
+
+function ancestorsOf(path: string): string[] {
+    const ancestors: string[] = [];
+    for (let slash = path.lastIndexOf("/"); slash >= 0; slash = path.lastIndexOf("/", slash - 1)) {
+        ancestors.push(path.slice(0, slash));
+        if (slash === 0) break;
+    }
+    return ancestors;
 }

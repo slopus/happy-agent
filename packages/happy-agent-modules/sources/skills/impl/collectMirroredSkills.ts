@@ -6,7 +6,7 @@ import { readGlobalSkillFile } from "./readGlobalSkillFile.js";
 import { scanGlobalSkills, type ScannedGlobalSkill } from "./scanGlobalSkills.js";
 
 /** The most skills one machine receives. */
-export const MAX_MIRRORED_SKILLS = 256;
+export const MAX_MIRRORED_SKILLS = 100_000;
 /** The most files one skill may have and still be copied. */
 export const MAX_MIRRORED_SKILL_FILES = 512;
 /** The largest file a copied skill may hold. */

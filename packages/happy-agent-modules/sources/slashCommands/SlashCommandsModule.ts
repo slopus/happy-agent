@@ -12,8 +12,6 @@ import {
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import {
-    MAX_SLASH_COMMAND_CATALOG_BYTES,
-    MAX_SLASH_COMMANDS,
     invokeSlashCommandRequestSchema,
     slashCommandSchema,
     type SlashCommand,
@@ -246,11 +244,6 @@ export class SlashCommandsModule implements AgentModule {
                         `More than one module returned the /${definition.name} command.`,
                     );
                 }
-                if (commands.length >= MAX_SLASH_COMMANDS) {
-                    throw new Error(
-                        `Slash command discovery exceeded ${String(MAX_SLASH_COMMANDS)} commands.`,
-                    );
-                }
                 names.add(definition.name);
                 const descriptor: SlashCommand = {
                     description: definition.description,
@@ -283,9 +276,6 @@ export class SlashCommandsModule implements AgentModule {
         }
         const descriptors = commands.map(({ descriptor }) => descriptor);
         const encoded = JSON.stringify(descriptors);
-        if (Buffer.byteLength(encoded, "utf8") > MAX_SLASH_COMMAND_CATALOG_BYTES) {
-            throw new Error("The slash command catalog exceeds its encoded size limit.");
-        }
         const fingerprint = createHash("sha256")
             .update(encoded)
             .update("\0")

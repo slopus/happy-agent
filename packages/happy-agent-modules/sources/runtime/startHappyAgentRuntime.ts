@@ -475,7 +475,6 @@ export async function startHappyAgentRuntime(
         const providerClis = new ProviderClisModule(config, providerScan, durableFunctions);
         const providerRoutes = new ProviderRoutesModule(config, providerClis, providerScan);
         const globalSkills = new GlobalSkillsModule(config, durableFunctions);
-        const compute = createComputeModules(computeModule, globalSkills, config);
         registerShutdown("global-skills", async () => await globalSkills.close());
         const skillMirror = new SkillMirrorModule(config, runners, globalSkills, durableFunctions);
         registerShutdown("skill-mirror", async () => await skillMirror.close());
@@ -484,14 +483,14 @@ export async function startHappyAgentRuntime(
                 system?.close(shutdownCtx) ?? Promise.resolve(),
                 auto?.close(shutdownCtx) ?? Promise.resolve(),
             ]);
-            await compute.computeModule.dispose(shutdownCtx);
+            await computeModule.dispose(shutdownCtx);
         });
 
         const presence = new PresenceModule(config);
-        const systemPrompt = new SystemPromptModule(config, compute.computeModule);
+        const systemPrompt = new SystemPromptModule(config, computeModule);
         const autoModule = new AutoModule(
             config,
-            compute.computeModule,
+            computeModule,
             systemPrompt,
             history,
             new AgentStorage({
@@ -512,8 +511,8 @@ export async function startHappyAgentRuntime(
         );
         auto = autoModule;
 
-        const permissions = new PermissionsModule(compute.computeModule, autoModule);
-        const abort = new AbortModule(compute.computeModule);
+        const permissions = new PermissionsModule(computeModule, autoModule);
+        const abort = new AbortModule(computeModule);
         const git = new GitModule(config, runners);
         const projects = new ProjectsModule(
             config,
@@ -538,7 +537,7 @@ export async function startHappyAgentRuntime(
             config,
             abort,
             history,
-            compute.computeModule,
+            computeModule,
             botSettings,
             providerUsage,
         );
@@ -549,7 +548,7 @@ export async function startHappyAgentRuntime(
             projects,
             workspaces,
             runners,
-            compute.computeModule,
+            computeModule,
             durableFunctions,
             collaboration,
             botSettings,
@@ -570,7 +569,7 @@ export async function startHappyAgentRuntime(
         const artifacts = new ArtifactsModule(
             config,
             durableFunctions,
-            compute.computeModule,
+            computeModule,
             projects,
             workspaces,
             bots,
@@ -578,6 +577,7 @@ export async function startHappyAgentRuntime(
         );
         const profile = new ProfileModule<LibSQLDatabase>(config, bots);
         const team = new TeamModule<LibSQLDatabase>(config, profile, tasks);
+        const compute = createComputeModules(computeModule, globalSkills, config, team);
         registerShutdown("team", async () => team.close());
         const userSettings = new UserSettingsModule(team);
         const taskAutoJoin = new TaskAutoJoinModule(tasks, team, userSettings, durableFunctions);

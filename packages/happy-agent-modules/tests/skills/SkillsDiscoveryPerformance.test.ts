@@ -24,6 +24,33 @@ function machine(): FakeCompute {
 }
 
 describe("skill discovery work sharing", () => {
+    it("keeps duplicate precedence stable when directory reads finish out of order", async () => {
+        const compute = machine();
+        compute.files.delete(skillPath);
+        compute.write(
+            "/workspace/.agents/skills/a/SKILL.md",
+            document.replace("Review changes.", "First directory."),
+        );
+        compute.write(
+            "/workspace/.agents/skills/b/SKILL.md",
+            document.replace("Review changes.", "Second directory."),
+        );
+        const original = compute.fs.readFileBuffer.bind(compute.fs);
+        let release: () => void = () => undefined;
+        const secondRead = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        vi.spyOn(compute.fs, "readFileBuffer").mockImplementation(
+            async (permissions, path, options) => {
+                if (path.endsWith("/a/SKILL.md")) await secondRead;
+                if (path.endsWith("/b/SKILL.md")) release();
+                return await original(permissions, path, options);
+            },
+        );
+        const skills = new SkillsModule(scriptedComputeModule(async () => compute));
+        expect((await skills.list(ctx, "agent")).skills[0]?.description).toBe("First directory.");
+    });
+
     it("coalesces scans across distinct real native computes in the same workspace", async () => {
         const directory = await mkdtemp(join(tmpdir(), "native-skills-discovery-"));
         const computeModule = new ComputeModule(testConfig, new SecretsModule());

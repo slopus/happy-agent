@@ -1,4 +1,5 @@
 import type { ConfigModule } from "../config/index.js";
+import type { TeamModule } from "../team/index.js";
 import { SkillsModule, type GlobalSkillsModule } from "../skills/index.js";
 import { ComputeModule } from "./ComputeModule.js";
 
@@ -21,8 +22,9 @@ export function createComputeModules(
     computeModule: ComputeModule,
     globalSkills?: GlobalSkillsModule,
     config?: ConfigModule,
+    team?: TeamModule,
 ): CreatedComputeModules {
-    const skillsModule = new SkillsModule(computeModule, globalSkills, config);
+    const skillsModule = new SkillsModule(computeModule, globalSkills, config, team);
     return {
         computeModule,
         skillsModule,
