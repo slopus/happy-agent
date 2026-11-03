@@ -107,6 +107,71 @@ async function textAt(w: ArtifactsWorld, artifactId: string, path: string): Prom
 }
 
 describe("the artifact tools", () => {
+    it.each([
+        { type: "markdown", path: "index.md", content: "# Ready\n\nHello, 世界.\n" },
+        { type: "html", path: "index.html", content: "<!doctype html><p>Ready — now</p>" },
+    ])("creates $type content once without a seeded intermediate version", async (input) => {
+        const w = await world("artifact-initial-content");
+        const tool = await w.tool(AGENT, "create_artifact");
+        const args = { type: input.type, title: "Ready", content: input.content };
+        expect(Value.Check(tool.parameters, args)).toBe(true);
+        const ctx = withAgentPermissionMode(w.ctx, "auto");
+        expect(await tool.shouldReviewInAutoMode(args, ctx)).toBe(false);
+        expect(await tool.shouldRunInFullAccessInAutoMode?.(args, ctx)).toBe(false);
+        const remembered = new Map<string, unknown>();
+        const artifact = (await call(ctx, tool, args, { remembered })) as ArtifactRecord;
+        expect(artifact).toMatchObject({ latestVersion: 1, latestMajor: 1, latestMinor: 0 });
+        expect(await textAt(w, artifact.id, input.path)).toBe(input.content);
+        expect(await call(ctx, tool, args, { remembered })).toEqual(artifact);
+        expect(w.events).toHaveLength(1);
+        expect(await w.uploadRows()).toBe(0);
+        await expect(call(withAgentPermissionMode(w.ctx, "read_only"), tool, args)).rejects.toThrow(
+            "Read only",
+        );
+    });
+
+    it("rejects invalid initial content without publishing an artifact", async () => {
+        const w = await world("artifact-invalid-content");
+        w.machine.writeBuffer("/workspace/index.md", Buffer.from("# Copied"));
+        for (const invalid of [
+            { type: "image", content: "not an image" },
+            { type: "image_series", content: "not images" },
+            { type: "video", content: "not a video" },
+            { type: "document", content: "not a document" },
+            { type: "html", content: "<p>Ready</p>", url: "https://example.com/" },
+            { type: "markdown", content: "" },
+            { type: "markdown", content: "é".repeat(2 * 1024 * 1024 + 1) },
+            { type: "html", content: "a".repeat(16 * 1024 * 1024 + 1) },
+            {
+                type: "markdown",
+                content: "# Inline",
+                files: [{ fromPath: "index.md" }],
+            },
+            {
+                type: "html",
+                content: "<p>Inline</p>",
+                files: [{ fromPath: "index.md", path: "index.html" }],
+            },
+        ]) {
+            await expect(create(w, { title: "Invalid", ...invalid })).rejects.toThrow();
+            expect((await w.artifacts.list(w.ctx)).artifacts).toEqual([]);
+            expect(w.events).toEqual([]);
+        }
+    });
+
+    it("keeps a copied entry when initial content is omitted", async () => {
+        const w = await world("artifact-copied-entry");
+        const content = "# Already written\n";
+        w.machine.writeBuffer("/workspace/notes.md", Buffer.from(content));
+        const artifact = await create(w, {
+            type: "markdown",
+            title: "Copied",
+            files: [{ fromPath: "notes.md", path: "index.md" }],
+        });
+        expect(await textAt(w, artifact.id, "index.md")).toBe(content);
+        expect(artifact).toMatchObject({ latestVersion: 1, fileCount: 1 });
+    });
+
     it("offers every agent the artifact tools", async () => {
         const w = await world("artifact-tools-offer");
         expect((await w.tools(AGENT)).map((tool) => tool.name)).toEqual([

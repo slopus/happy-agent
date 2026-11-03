@@ -94,6 +94,11 @@ and `replace_all`, and `read_artifact_file` reads numbered lines with `offset` a
 files and files an agent built with the shell arrive with the `fromPath` files of
 `create_artifact` and `update_artifact`, read through the agent's own machine.
 
+`create_artifact` can take `content` for the initial `index.md` or `index.html`, alongside copied
+assets, publishing everything together in version 1.0. Content cannot accompany a copied entry or
+a live URL, and other artifact types still require copied files. Without content or a copied
+entry, Markdown and HTML keep their title seed. Later edits use the file tools.
+
 Each writing call makes one minor version through `commitFileChanges`, keyed by the call ID, so a
 call repeated after a restart finds its version and changes nothing; the tools check that with
 `madeByOperation` before reading anything, since an edit replayed against text it already changed
@@ -116,7 +121,7 @@ the place it works in, found by `actorFor`.
 
 | Tool                  | Behavior                                                                                                                                                             | Auto review                                                                                       | Durability                                          |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| `create_artifact`     | Issues the ID and makes version 1.0, with files or a live HTML URL.                                                                                                  | Every live URL, or a `fromPath` crossing the workspace boundary.                                  | Durable; the artifact ID is kept in the call's KV.  |
+| `create_artifact`     | Issues the ID and makes version 1.0, with initial text, copied files, or a live HTML URL.                                                                            | Every live URL, or a `fromPath` crossing the workspace boundary.                                  | Durable; the artifact ID is kept in the call's KV.  |
 | `write_artifact_file` | Writes one whole text file, adding it or replacing the one at that path.                                                                                             | Only for an artifact the agent did not create.                                                    | Durable; the call ID is the version's operation ID. |
 | `edit_artifact_file`  | Replaces exact text in one text file of the latest version.                                                                                                          | Only for an artifact the agent did not create.                                                    | Durable; the call ID is the version's operation ID. |
 | `update_artifact`     | Changes metadata or a live URL, copies or removes files on file artifacts, and marks a major version.                                                                | Every live artifact, an artifact the agent did not create, or a `fromPath` crossing the boundary. | Durable; the call ID is the version's operation ID. |

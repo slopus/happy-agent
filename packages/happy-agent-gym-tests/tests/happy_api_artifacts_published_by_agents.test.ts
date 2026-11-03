@@ -49,6 +49,82 @@ async function harness() {
 }
 
 describe("artifacts published by agents", () => {
+    it.each([
+        { type: "markdown", path: "index.md", content: ENTRY },
+        {
+            type: "html",
+            path: "index.html",
+            content: '<!doctype html><h1>Revenue — Q3</h1><img src="images/chart.png">',
+        },
+    ])("publishes $type content and assets together in its first version", async (input) => {
+        const { gym, call } = await harness();
+        const before = (await gym.client.getEvents()).latestCursor;
+        const result = await call(gym.defaultSessionId, "create_artifact", {
+            type: input.type,
+            title: "Ready on creation",
+            content: input.content,
+            files: [{ path: "images/chart.png", fromPath: "reports/chart.png" }],
+        });
+        expect(result.text).toContain("version 1 (1.0)");
+        const { artifacts } = await gym.client.listArtifacts();
+        expect(artifacts).toHaveLength(1);
+        const artifact = artifacts[0]!;
+        expect(artifact).toMatchObject({ latestVersion: 1, fileCount: 2 });
+        const entry = await gym.client.getArtifactFile(artifact.id, 1, input.path);
+        expect(Buffer.from(entry!.data).toString("utf8")).toBe(input.content);
+        const chart = await gym.client.getArtifactFile(artifact.id, 1, "images/chart.png");
+        expect(new Uint8Array(chart!.data)).toEqual(CHART);
+        const events = (await gym.client.getEvents({ after: before, limit: 1000 })).events.filter(
+            (event) => event.type.startsWith("artifact."),
+        );
+        expect(events.map((event) => event.type)).toEqual(["artifact.created"]);
+        expect(events[0]!.payload).toEqual({ artifact });
+        await gym.restart();
+        expect((await gym.client.getArtifact(artifact.id)).artifact.latestVersion).toBe(1);
+        const persisted = await gym.client.getArtifactFile(artifact.id, 1, input.path);
+        expect(Buffer.from(persisted!.data).toString("utf8")).toBe(input.content);
+        expect(gym.errors).toEqual([]);
+        expect(gym.inference.unscripted).toEqual([]);
+    });
+
+    it("refuses conflicting initial content without publishing partial artifacts", async () => {
+        const { gym, call } = await harness();
+        const before = (await gym.client.getEvents()).latestCursor;
+        for (const input of [
+            { type: "image", content: "not an image" },
+            { type: "markdown", content: "" },
+            {
+                type: "html",
+                content: "<p>Ready</p>",
+                url: "https://example.com/",
+            },
+            {
+                type: "markdown",
+                content: ENTRY,
+                files: [{ fromPath: "reports/chart.png", path: "index.md" }],
+            },
+        ]) {
+            const result = await call(gym.defaultSessionId, "create_artifact", {
+                title: "Invalid creation",
+                ...input,
+            });
+            expect(result.text).not.toContain("Artifact created:");
+            expect((await gym.client.listArtifacts()).artifacts).toEqual([]);
+        }
+        const events = (await gym.client.getEvents({ after: before, limit: 1000 })).events.filter(
+            (event) => event.type.startsWith("artifact."),
+        );
+        expect(events).toEqual([]);
+        const valid = await call(gym.defaultSessionId, "create_artifact", {
+            type: "markdown",
+            title: "Still works",
+            content: ENTRY,
+        });
+        expect(valid.text).toContain("version 1 (1.0)");
+        expect((await gym.client.listArtifacts()).artifacts).toHaveLength(1);
+        expect(gym.inference.unscripted).toEqual([]);
+    });
+
     it("records the agent and its project, and announces the change without a mutation", async () => {
         const { gym, call } = await harness();
         const agentId = gym.defaultSessionId;

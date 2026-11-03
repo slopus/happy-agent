@@ -11113,16 +11113,22 @@ under the file object's path rules below, and otherwise follow the file tools ag
 
 | Tool                  | Arguments                                                                         | Does                                                                                    |
 | --------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `create_artifact`     | `type`, `title`, `display`, `background`, `files`, `url`                          | Issues the artifact's ID and makes version 1.0                                          |
+| `create_artifact`     | `type`, `title`, `display`, `background`, `content`, `files`, `url`               | Issues the artifact's ID and makes version 1.0                                          |
 | `write_artifact_file` | `artifactId`, `path`, `content`                                                   | Writes one whole text file, adding it or replacing the one there                        |
 | `edit_artifact_file`  | `artifactId`, `path`, `old_string`, `new_string`, `replace_all`                   | Replaces exact text in one text file of the latest version                              |
 | `read_artifact_file`  | `artifactId`, `path`, `version`, `offset`, `limit`                                | Reads a text file as numbered lines, or shows an image                                  |
 | `update_artifact`     | `artifactId`, `title`, `display`, `background`, `files`, `remove`, `major`, `url` | Changes metadata or a live URL, copies files in, removes files, bumps the major version |
 
-The daemon issues every artifact's ID in `create_artifact`; the model never chooses one. A Markdown
-or HTML artifact starts from a short entry holding its title, and an image, image series, video, or
-document starts from the files the call copies in. `files` on `create_artifact` and
-`update_artifact` copies files from the agent's machine, each `{ "fromPath": "...", "path": "..." }`,
+The daemon issues every artifact's ID in `create_artifact`; the model never chooses one. For a
+Markdown or HTML artifact, optional `content` supplies the complete UTF-8 text of `index.md` or
+`index.html` in the initial version. It may accompany auxiliary `files`, but cannot accompany a
+file copied to that entry path or a live `url`, and is refused for other artifact types. The entry
+must satisfy the same non-empty and byte-size limits as any other artifact file. Without `content`
+or a copied entry, a Markdown or HTML artifact starts from a short entry holding its title. An
+image, image series, video, or document starts from the files the call copies in. Initial content
+and copied files publish together as one version 1.0; a rejected call publishes no artifact.
+`files` on `create_artifact` and `update_artifact` copies files from the agent's machine, each
+`{ "fromPath": "...", "path": "..." }`,
 which is how an agent publishes images it generated and files it built with the shell; a `path`
 left out is the file's own name. Reading those files follows the agent's permission mode like any
 other read on its machine.
@@ -11176,8 +11182,8 @@ a browser resolves them, so `![](images/chart.png)` in `index.md` and `<img src=
 `index.html` reach their files without any rewriting through the file route below.
 
 **Live URLs.** `create_artifact` with `type: "html"` and `url` creates a live-URL artifact. The URL
-is its content, not a request to download or snapshot a page. `files` cannot accompany `url`, and
-other artifact types cannot take it. The daemon parses and normalizes the URL; only absolute
+is its content, not a request to download or snapshot a page. Neither `files` nor `content` can
+accompany `url`, and other artifact types cannot take it. The daemon parses and normalizes the URL; only absolute
 `http` and `https` URLs without a user name or password are accepted, at most 4,096 characters
 after normalization. Invalid input fails without creating an artifact or version. The daemon
 never fetches the URL body.

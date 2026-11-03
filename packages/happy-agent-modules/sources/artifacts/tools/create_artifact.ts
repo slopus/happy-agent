@@ -42,6 +42,12 @@ const createArtifactToolInputSchema = Type.Object(
         title: artifactTitleSchema,
         display: Type.Optional(artifactToolDisplaySchema),
         background: Type.Optional(artifactToolBackgroundSchema),
+        content: Type.Optional(
+            Type.String({
+                description:
+                    "The complete initial UTF-8 text of index.md (Markdown) or index.html (HTML), published in version 1.0. May accompany auxiliary files, but not a copied entry or a live URL.",
+            }),
+        ),
         files: Type.Optional(artifactToolSourcesSchema),
         url: Type.Optional(
             Type.String({
@@ -85,11 +91,11 @@ export function createArtifactTool(
             "pdf",
         ],
         description: [
-            "Create an artifact: a titled, versioned item in this installation's shared catalog, visible to everyone who uses it, whose files you then write with write_artifact_file and edit_artifact_file. It is recorded as made by you, in the bot, task, project, or workspace you are working in. The call gives you its ID.",
-            'A markdown or html artifact starts with a short entry holding its title, so create it first and then write its files. An image, image series, video, or document needs its file from the start: pass it in files, such as { "fromPath": "out/chart.png" }; files copies any file on your machine in for the other types too. A copy keeps its own name unless you give it a path, so to publish a document you already wrote, copy it in as the entry: { "fromPath": "notes/plan.md", "path": "index.md" }.',
+            "Create an artifact: a titled, versioned item in this installation's shared catalog, visible to everyone who uses it. It is recorded as made by you, in the bot, task, project, or workspace you are working in. The call gives you its ID.",
+            'For markdown or html, pass content to publish the complete entry (index.md or index.html) in this call. Prefer this when you already have the text; auxiliary files can accompany it, so the entry and assets appear together in version 1.0. Do not also copy a file to the entry path. Without content or a copied entry, it starts with a short entry holding its title. Make later changes with write_artifact_file and edit_artifact_file. An image, image series, video, or document needs its file from the start: pass it in files, such as { "fromPath": "out/chart.png" }; files copies any file on your machine in for the other types too. A copy keeps its own name unless you give it a path, so to publish a document you already wrote, copy it in as the entry: { "fromPath": "notes/plan.md", "path": "index.md" }.',
             ARTIFACT_FILES_GUIDANCE,
             "Change its title, background, or display later with update_artifact.",
-            'For a running web page, use { type: "html", title, url, display? } without files. The URL is the content, never downloaded by the daemon. The client opens it through your network in a browser profile isolated to this artifact; cookies and storage are never shared with the workspace browser or other artifacts. Change the URL with update_artifact; its original network stays fixed and its fallback files cannot be edited.',
+            'For a running web page, use { type: "html", title, url, display? } without content or files. The URL is the content, never downloaded by the daemon. The client opens it through your network in a browser profile isolated to this artifact; cookies and storage are never shared with the workspace browser or other artifacts. Change the URL with update_artifact; its original network stays fixed and its fallback files cannot be edited.',
         ].join("\n\n"),
         parameters: createArtifactToolInputSchema,
         returnType: artifactToolResultSchema,
@@ -122,10 +128,16 @@ export function createArtifactTool(
             if (agentPermissionMode(ctx) === "read_only") {
                 throw new ArtifactInputError("Read only mode cannot create artifacts.");
             }
-            if (input.url !== undefined && (input.type !== "html" || input.files !== undefined)) {
+            if (
+                input.url !== undefined &&
+                (input.type !== "html" || input.files !== undefined || input.content !== undefined)
+            ) {
                 throw new ArtifactInputError(
-                    "A live URL requires type html and cannot be combined with files.",
+                    "A live URL requires type html and cannot be combined with content or files.",
                 );
+            }
+            if (input.content !== undefined && input.type !== "markdown" && input.type !== "html") {
+                throw new ArtifactInputError("Initial content requires type markdown or html.");
             }
             const url = input.url === undefined ? undefined : normalizeArtifactUrl(input.url);
             const id = await call.kv.getOrCreate(ctx, "artifactId", () => createId());
@@ -161,8 +173,17 @@ export function createArtifactTool(
                               },
                           ];
                 const entry = ARTIFACT_TYPE_RULES[input.type].entry;
+                if (
+                    input.content !== undefined &&
+                    entry !== undefined &&
+                    files.some((file) => file.path === entry.path)
+                ) {
+                    throw new ArtifactInputError(
+                        `Supply ${JSON.stringify(entry.path)} through content or files, not both.`,
+                    );
+                }
                 if (entry !== undefined && !files.some((file) => file.path === entry.path)) {
-                    const text = seededEntry(input.type, input.title);
+                    const text = input.content ?? seededEntry(input.type, input.title);
                     files.push({
                         path: entry.path,
                         uploadId: (await artifacts.stageText(ctx, text)).id,
@@ -192,7 +213,7 @@ export function createArtifactTool(
                         ? []
                         : [`Made in ${formatArtifactSource(artifact.source)}.`]),
                     artifact.live === undefined
-                        ? `Write and change its files with write_artifact_file and edit_artifact_file, starting with ${JSON.stringify(artifact.entry.path)}; each call makes its next version.`
+                        ? "For later changes, use write_artifact_file and edit_artifact_file; each call makes its next version."
                         : `Live content: ${JSON.stringify(artifact.live.url)}, through network ${JSON.stringify(artifact.live.networkId)}. Change its URL with update_artifact; its network stays fixed and its fallback file cannot be edited.`,
                     ARTIFACT_PRESENTED_NOTICE,
                     `Mention it in chat as ${formatArtifactLink(artifact.id, artifact.title)}.`,
