@@ -9110,7 +9110,60 @@ Removes the bot picture. Requires `If-Match`.
 
 Response — `200`: `{ "bot": { ... } }` with `avatar` `null`.
 
-## Surfaces
+## Tabs and the compatible Surfaces API
+
+Tabs are the product name for the individual feature instances described in this chapter.
+The canonical HTTP namespace is `/v0/tabs`. Every route below under `/v0/surfaces`,
+including catalog, image, membership, contextual chat, todo, document, calendar, System
+Monitor, chat-message, and history routes, has an identical counterpart obtained by replacing
+only that prefix with `/v0/tabs`. Both namespaces address the same records and IDs and have
+identical methods, request bodies, response bodies, headers, status codes, authorization,
+version guards, mutation semantics, errors, and events. Neither namespace redirects.
+Unsupported methods, including the withdrawn document `PUT`, behave identically.
+
+This is a duplicate namespace, not a data migration or a second catalog. Wire keys such as
+`surfaces`, `surface`, and `surfaceId`, the `surface.*` and `surface_message.*` events,
+bootstrap fields, workspace kinds, capabilities, and `surfaces.autoJoin` remain unchanged in
+both namespaces. Existing clients and persisted content remain compatible. Tabs retain each
+person's independent membership and order; the API adds no global singleton registry.
+Older daemons may return `404` or `501` for `/v0/tabs`; clients may use the corresponding
+legacy route on those daemons. The duplicate namespace is additive and does not increment
+the protocol version.
+
+System Monitor creation additionally accepts optional `reuseExisting: boolean`, defaulting
+to `false` for compatibility. It is valid only with `type: "system_monitor"` and is supported
+in both namespaces. When true, creation atomically reuses the caller's existing System
+Monitor: select records with `creatorUserId` equal to the authenticated caller (null in
+standalone mode), ordered by ID, and return the first. Other people's monitors never qualify
+merely because the caller is a member. Rejoin the caller if needed, using the ordinary explicit
+join semantics and clearing its autojoin exclusion; preserve an existing member's order.
+Do not rename or repicture a reused monitor from the creation request. If no owned monitor
+exists, create it normally. Concurrent reuse requests from the same caller must settle on
+one record. Existing duplicates are retained, not deleted or migrated.
+
+The supplied creation ID is still checked first: a retry for that ID returns its existing
+record unchanged. Otherwise a reuse response may carry a different ID from the supplied
+candidate. Return `201 { "surface": ... }` in both cases, with the authoritative existing
+or newly created ID; clients reconcile their optimistic candidate to that returned ID.
+Reusing creates no record or `surface.created` event; a necessary rejoin emits only the
+ordinary membership update. The new client's `createTab` defaults `reuseExisting` to true
+for System Monitors, and updated applications request it when opening a monitor. Explicit
+false and legacy requests that omit the option retain independent-instance creation, so this
+does not claim absolute database uniqueness. Other tab types are unaffected.
+
+Canonical links are `happy://tabs/<id>`. `happy://surfaces/<id>` remains a compatible link to
+the same instance. Link parsing keeps the existing `surface` reference kind for compatibility.
+New links use `tabs`; stored or received legacy links need not be rewritten.
+
+Model tools do not retain compatibility aliases. In the tool descriptions below, the
+canonical names replace `surface` with `tab` (`list_tabs`, `update_tab`,
+`create_todo_tab`, `add_tab_user`, and so on). All tool arguments and structured results
+use `tabId`, `tab`, and `tabs` in place of `surfaceId`, `surface`, and `surfaces`, including
+nested content and revisions. Tools reject the old argument names. Their permissions,
+admin checks, durability, and underlying operations are unchanged. Model instructions and
+tool descriptions use tab terminology exclusively.
+
+### Compatible wire vocabulary
 
 A Surface is an instance of a predefined feature with its own typed API. Every instance has a
 CUID2 ID and a human name. Multiple independent Surfaces of each type may exist, with separate

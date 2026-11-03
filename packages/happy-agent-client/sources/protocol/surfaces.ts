@@ -192,6 +192,8 @@ export const createSystemMonitorSurfaceRequestSchema = Type.Object(
         ...surfaceCreationFields,
         image: Type.Optional(surfaceImageInputSchema),
         type: Type.Literal("system_monitor"),
+        /** Reuse the caller's own monitor atomically; omission keeps legacy creation behavior. */
+        reuseExisting: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: false },
 );

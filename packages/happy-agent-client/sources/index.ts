@@ -58,6 +58,7 @@ export * from "./protocol/bots.js";
 export * from "./protocol/bridges.js";
 export * from "./protocol/tasks.js";
 export * from "./protocol/surfaces.js";
+export * from "./protocol/tabs.js";
 export * from "./protocol/cloud.js";
 export * from "./protocol/common.js";
 export * from "./protocol/connections.js";

@@ -19,6 +19,19 @@ marked it as one of the installation's important documents that every agent is t
 It is resolved when the catalog is read, so events never carry it; refetch to see a change.
 Older daemons omit it, which means not an important document.
 
+Tabs are the product name for these individual instances. New methods use `/v0/tabs`:
+`listTabs`, `createTab`, `updateTab`, `joinTab`, `leaveTab`, `reorderTab`, and
+`ensureTabChat`; content methods use names such as `listTabTodos`, `getTabDocument`,
+`listTabCalendarEvents`, and `listTabMessages`. Every legacy `/v0/surfaces` route and
+client method remains available. Both namespaces use the same wire records, including
+`surface`, `surfaces`, and `surfaceId`, and the same events and bootstrap fields.
+Tab-named schema and type aliases describe those compatible records. Older daemons may
+not implement `/v0/tabs`; callers may use the legacy methods for them.
+`createTab` defaults `reuseExisting` to true for System Monitors. A reused monitor belongs
+to the caller as its creator; membership alone does not confer ownership. Reuse rejoins a
+closed monitor and returns its authoritative ID, which may differ from an optimistic
+creation candidate. Legacy `createSurface` leaves the option unset unless explicitly given.
+
 The first Surface type is Todo, served at `/v0/surfaces/todo/:surfaceId`. Every todo method takes
 the Surface ID first. `listTodos(surfaceId)` loads every active todo
 in fractional key order; use `scope: "completed"`, `"deleted"`, or `"all"` for other states.
@@ -592,7 +605,7 @@ API.md specifies under "Happy links":
 | Project                      | `happy://projects/<id>`                                      |
 | Workspace                    | `happy://workspaces/<id>`                                    |
 | Service                      | `happy://workspaces/<workspaceId>/services/<id>`             |
-| Surface                      | `happy://surfaces/<id>`                                      |
+| Tab                          | `happy://tabs/<id>` (`happy://surfaces/<id>` also parses)    |
 | User                         | `happy://users/<id>`                                         |
 | File in an agent's workspace | `happy://agents/<id>/files/<path>#L42-L50`                   |
 | File in a workspace          | `happy://workspaces/<id>/files/<path>#L42`                   |

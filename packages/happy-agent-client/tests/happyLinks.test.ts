@@ -28,7 +28,7 @@ describe("entity URLs", () => {
         ["agent", `happy://agents/${ID}`],
         ["workspace", `happy://workspaces/${ID}`],
         ["project", `happy://projects/${ID}`],
-        ["surface", `happy://surfaces/${ID}`],
+        ["surface", `happy://tabs/${ID}`],
         ["user", `happy://users/${ID}`],
     ] as const)("parses and formats a %s", (kind, url) => {
         expect(parseHappyUrl(url)).toEqual({ type: "reference", reference: { kind, id: ID } });
@@ -336,9 +336,7 @@ describe("labels", () => {
         expect(happyReferencePlaceholder({ kind: "service", id: "s" })).toBe(
             "an unavailable service",
         );
-        expect(happyReferencePlaceholder({ kind: "surface", id: "s" })).toBe(
-            "an unavailable surface",
-        );
+        expect(happyReferencePlaceholder({ kind: "surface", id: "s" })).toBe("an unavailable tab");
         expect(isKnownHappyReferenceKind("future-thing")).toBe(false);
     });
 });

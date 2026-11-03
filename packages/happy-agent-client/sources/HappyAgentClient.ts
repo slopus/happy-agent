@@ -2498,6 +2498,572 @@ export class HappyAgentClient {
         });
     }
 
+    // Tabs: duplicate namespace, with compatible wire payloads.
+
+    /** `GET /v0/tabs` — shared catalog, with members nested in each Surface. */
+    async listTabs(options: RequestOptions = {}): Promise<SurfaceListResponse> {
+        return await this.#json({ method: "GET", path: "v0/tabs", signal: options.signal });
+    }
+
+    async createTab(
+        request: CreateSurfaceRequest,
+        options: RequestOptions = {},
+    ): Promise<SurfaceResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/tabs",
+            json:
+                request.type === "system_monitor"
+                    ? { ...request, reuseExisting: request.reuseExisting ?? true }
+                    : request,
+            signal: options.signal,
+        });
+    }
+
+    async getTabImage(
+        tabId: SurfaceId,
+        options: ConditionalRequestOptions = {},
+    ): Promise<BinaryContent | null> {
+        return await this.#binary({
+            method: "GET",
+            path: `v0/tabs/${encodeURIComponent(tabId)}/image`,
+            ifNoneMatch: options.ifNoneMatch,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * Renames a tab or replaces its image; `image: null` removes it. Requires
+     * `capabilities.surfaceEditing`. No `If-Match`: the latest edit wins.
+     */
+    async updateTab(
+        tabId: SurfaceId,
+        request: UpdateSurfaceRequest,
+        options: RequestOptions = {},
+    ): Promise<SurfaceResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/tabs/${encodeURIComponent(tabId)}`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Joining appends to the caller's sidebar. It never changes Surface data. */
+    async joinTab(
+        tabId: SurfaceId,
+        options: RequestOptions & SurfaceMemberRequest = {},
+    ): Promise<SurfaceResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/${encodeURIComponent(tabId)}/join`,
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
+    async leaveTab(
+        tabId: SurfaceId,
+        options: RequestOptions & SurfaceMemberRequest = {},
+    ): Promise<SurfaceResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/${encodeURIComponent(tabId)}/leave`,
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
+    /** Moves only the caller's member record; `afterId: null` means first. */
+    async reorderTab(
+        tabId: SurfaceId,
+        request: ReorderSurfaceRequest,
+        options: RequestOptions = {},
+    ): Promise<SurfaceResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/${encodeURIComponent(tabId)}/reorder`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Idempotently opens the tab's shared chat without joining the caller or sending a message. */
+    async ensureTabChat(
+        tabId: SurfaceId,
+        options: RequestOptions & EnsureSurfaceChatRequest = {},
+    ): Promise<SurfaceChatResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/${encodeURIComponent(tabId)}/chat`,
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
+    /** Loads every active todo by default, with a snapshot cursor for following changes. */
+    async listTabTodos(
+        tabId: SurfaceId,
+        options: RequestOptions & { readonly scope?: TodoListScope } = {},
+    ): Promise<TodoListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/todo/${encodeURIComponent(tabId)}`,
+            query: { scope: options.scope },
+            signal: options.signal,
+        });
+    }
+
+    /** Adds at the top; a supplied ID safely resolves an uncertain creation outcome. */
+    async createTabTodo(
+        tabId: SurfaceId,
+        request: CreateTodoRequest,
+        options: RequestOptions = {},
+    ): Promise<TodoResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/todo/${encodeURIComponent(tabId)}`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Deleted tombstones remain readable by ID. */
+    async getTabTodo(
+        tabId: SurfaceId,
+        todoId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<TodoResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/todo/${encodeURIComponent(tabId)}/${encodeURIComponent(todoId)}`,
+            signal: options.signal,
+        });
+    }
+
+    async updateTabTodo(
+        tabId: SurfaceId,
+        todoId: Cuid2,
+        request: UpdateTodoRequest,
+        options: VersionedRequestOptions,
+    ): Promise<TodoResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/tabs/todo/${encodeURIComponent(tabId)}/${encodeURIComponent(todoId)}`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Only active todos can move; completed and deleted targets reject reordering. */
+    async reorderTabTodo(
+        tabId: SurfaceId,
+        todoId: Cuid2,
+        request: ReorderTodoRequest,
+        options: VersionedRequestOptions,
+    ): Promise<TodoResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/todo/${encodeURIComponent(tabId)}/${encodeURIComponent(todoId)}/reorder`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Deletion retains the text and every immutable revision. */
+    async deleteTabTodo(
+        tabId: SurfaceId,
+        todoId: Cuid2,
+        options: VersionedRequestOptions & TodoMutationRequest,
+    ): Promise<TodoResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/tabs/todo/${encodeURIComponent(tabId)}/${encodeURIComponent(todoId)}`,
+            json: bodyOf(options),
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Permanent revisions, oldest first; the cursor belongs to this todo's version history. */
+    async listTabTodoVersions(
+        tabId: SurfaceId,
+        todoId: Cuid2,
+        options: RequestOptions & { readonly afterVersion?: string; readonly limit?: number } = {},
+    ): Promise<TodoVersionListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/todo/${encodeURIComponent(tabId)}/${encodeURIComponent(todoId)}/versions`,
+            query: { afterVersion: options.afterVersion, limit: options.limit },
+            signal: options.signal,
+        });
+    }
+
+    async getTabTodoVersion(
+        tabId: SurfaceId,
+        todoId: Cuid2,
+        version: string,
+        options: RequestOptions = {},
+    ): Promise<TodoVersionResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/todo/${encodeURIComponent(tabId)}/${encodeURIComponent(todoId)}/versions/${encodeURIComponent(version)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** Current daemon-host telemetry, shared by every System Monitor tab. */
+    async getTabSystemMonitor(
+        tabId: SurfaceId,
+        options: RequestOptions = {},
+    ): Promise<SystemMonitorSnapshot> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/system-monitor/${encodeURIComponent(tabId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** Occurrences overlapping `[from, to)`, expanded by the daemon in `timeZone`. */
+    async listTabCalendarEvents(
+        tabId: SurfaceId,
+        range: { readonly from: number; readonly to: number; readonly timeZone: string },
+        options: RequestOptions = {},
+    ): Promise<CalendarRangeResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/calendar/${encodeURIComponent(tabId)}`,
+            query: { from: range.from, to: range.to, timeZone: range.timeZone },
+            signal: options.signal,
+        });
+    }
+
+    /** A supplied ID safely resolves an uncertain creation outcome. */
+    async createTabCalendarEvent(
+        tabId: SurfaceId,
+        request: CreateCalendarEventRequest,
+        options: RequestOptions = {},
+    ): Promise<CalendarEventResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/calendar/${encodeURIComponent(tabId)}`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Deleted tombstones remain readable by ID. */
+    async getTabCalendarEvent(
+        tabId: SurfaceId,
+        eventId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<CalendarEventResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/calendar/${encodeURIComponent(tabId)}/${encodeURIComponent(eventId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** Changes the whole series; applying a revision's fields restores that state. */
+    async updateTabCalendarEvent(
+        tabId: SurfaceId,
+        eventId: Cuid2,
+        request: UpdateCalendarEventRequest,
+        options: VersionedRequestOptions,
+    ): Promise<CalendarEventResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/tabs/calendar/${encodeURIComponent(tabId)}/${encodeURIComponent(eventId)}`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Deletion tombstones the whole series and keeps every immutable revision. */
+    async deleteTabCalendarEvent(
+        tabId: SurfaceId,
+        eventId: Cuid2,
+        options: VersionedRequestOptions & CalendarEventMutationRequest,
+    ): Promise<CalendarEventResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/tabs/calendar/${encodeURIComponent(tabId)}/${encodeURIComponent(eventId)}`,
+            json: bodyOf(options),
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Permanent revisions, oldest first; the cursor belongs to this event's version history. */
+    async listTabCalendarEventVersions(
+        tabId: SurfaceId,
+        eventId: Cuid2,
+        options: RequestOptions & { readonly afterVersion?: string; readonly limit?: number } = {},
+    ): Promise<CalendarEventVersionListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/calendar/${encodeURIComponent(tabId)}/${encodeURIComponent(eventId)}/versions`,
+            query: { afterVersion: options.afterVersion, limit: options.limit },
+            signal: options.signal,
+        });
+    }
+
+    async getTabCalendarEventVersion(
+        tabId: SurfaceId,
+        eventId: Cuid2,
+        version: string,
+        options: RequestOptions = {},
+    ): Promise<CalendarEventVersionResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/calendar/${encodeURIComponent(tabId)}/${encodeURIComponent(eventId)}/versions/${encodeURIComponent(version)}`,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * One page of a chat tab's messages, oldest first. Without `afterSeq` it is the newest
+     * page below `beforeSeq`; with `afterSeq` it reads forward. These are people's messages,
+     * never the tab's shared agent chat.
+     */
+    async listTabMessages(
+        tabId: SurfaceId,
+        options: RequestOptions & {
+            readonly beforeSeq?: number;
+            readonly afterSeq?: number;
+            readonly limit?: number;
+        } = {},
+    ): Promise<SurfaceMessagePageResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/chat/${encodeURIComponent(tabId)}/messages`,
+            query: {
+                beforeSeq: options.beforeSeq,
+                afterSeq: options.afterSeq,
+                limit: options.limit,
+            },
+            signal: options.signal,
+        });
+    }
+
+    /** A client-generated ID safely resolves an uncertain post; a retry never posts twice. */
+    async sendTabMessage(
+        tabId: SurfaceId,
+        request: SendSurfaceMessageRequest,
+        options: RequestOptions = {},
+    ): Promise<SurfaceMessageResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/chat/${encodeURIComponent(tabId)}/messages`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Deleted tombstones remain readable by ID. */
+    async getTabMessage(
+        tabId: SurfaceId,
+        messageId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<SurfaceMessageResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/chat/${encodeURIComponent(tabId)}/messages/${encodeURIComponent(messageId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** Only the message's author may edit it. */
+    async editTabMessage(
+        tabId: SurfaceId,
+        messageId: Cuid2,
+        request: EditSurfaceMessageRequest,
+        options: VersionedRequestOptions,
+    ): Promise<SurfaceMessageResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: `v0/tabs/chat/${encodeURIComponent(tabId)}/messages/${encodeURIComponent(messageId)}`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Only the author may delete; the tombstone keeps every immutable revision. */
+    async deleteTabMessage(
+        tabId: SurfaceId,
+        messageId: Cuid2,
+        options: VersionedRequestOptions & SurfaceMessageMutationRequest,
+    ): Promise<SurfaceMessageResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/tabs/chat/${encodeURIComponent(tabId)}/messages/${encodeURIComponent(messageId)}`,
+            json: bodyOf(options),
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Permanent revisions, oldest first; the cursor belongs to this message's version history. */
+    async listTabMessageVersions(
+        tabId: SurfaceId,
+        messageId: Cuid2,
+        options: RequestOptions & { readonly afterVersion?: string; readonly limit?: number } = {},
+    ): Promise<SurfaceMessageVersionListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/chat/${encodeURIComponent(tabId)}/messages/${encodeURIComponent(messageId)}/versions`,
+            query: { afterVersion: options.afterVersion, limit: options.limit },
+            signal: options.signal,
+        });
+    }
+
+    async getTabMessageVersion(
+        tabId: SurfaceId,
+        messageId: Cuid2,
+        version: string,
+        options: RequestOptions = {},
+    ): Promise<SurfaceMessageVersionResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/chat/${encodeURIComponent(tabId)}/messages/${encodeURIComponent(messageId)}/versions/${encodeURIComponent(version)}`,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * The read-only Markdown projection and the shared cursor captured before it was read;
+     * `seq` reads the document as of that change.
+     */
+    async getTabDocument(
+        tabId: SurfaceId,
+        options: RequestOptions & { readonly seq?: number } = {},
+    ): Promise<SurfaceDocumentSnapshotResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/document/${encodeURIComponent(tabId)}`,
+            query: { seq: options.seq },
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * The collaborative document as one Yjs update: only what `stateVector` lacks, the whole
+     * document, or the whole document as of `seq`.
+     */
+    async getTabDocumentState(
+        tabId: SurfaceId,
+        options: RequestOptions & {
+            readonly stateVector?: string;
+            readonly seq?: number;
+        } = {},
+    ): Promise<SurfaceDocumentStateResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/document/${encodeURIComponent(tabId)}/state`,
+            query: { stateVector: options.stateVector, seq: options.seq },
+            signal: options.signal,
+        });
+    }
+
+    /** Stores one change before answering; repeating its mutation ID returns the original seq. */
+    async sendTabDocumentUpdate(
+        tabId: SurfaceId,
+        request: SendSurfaceDocumentUpdateRequest,
+        options: RequestOptions = {},
+    ): Promise<SurfaceDocumentSeqResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/document/${encodeURIComponent(tabId)}/updates`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** The permanent change log, oldest first, without change bytes. */
+    async listTabDocumentUpdates(
+        tabId: SurfaceId,
+        options: RequestOptions & { readonly afterSeq?: number; readonly limit?: number } = {},
+    ): Promise<SurfaceDocumentChangeListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/document/${encodeURIComponent(tabId)}/updates`,
+            query: { afterSeq: options.afterSeq, limit: options.limit },
+            signal: options.signal,
+        });
+    }
+
+    /** Sends this document's live frames to the event stream named by its hello `streamId`. */
+    async subscribeTabDocument(
+        tabId: SurfaceId,
+        request: SurfaceDocumentSubscriptionRequest,
+        options: RequestOptions = {},
+    ): Promise<SurfaceDocumentSeqResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/document/${encodeURIComponent(tabId)}/subscribe`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Stops this document's live frames on that stream and ends its presence there. */
+    async unsubscribeTabDocument(
+        tabId: SurfaceId,
+        request: SurfaceDocumentSubscriptionRequest,
+        options: RequestOptions = {},
+    ): Promise<Record<string, never>> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/document/${encodeURIComponent(tabId)}/unsubscribe`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Relays an awareness update to the document's other subscribed streams; never stored. */
+    async sendTabDocumentPresence(
+        tabId: SurfaceId,
+        request: SendSurfaceDocumentPresenceRequest,
+        options: RequestOptions = {},
+    ): Promise<Record<string, never>> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/tabs/document/${encodeURIComponent(tabId)}/presence`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Markdown revisions frozen before a document became collaborative, oldest first. */
+    async listTabDocumentVersions(
+        tabId: SurfaceId,
+        options: RequestOptions & { readonly afterVersion?: string; readonly limit?: number } = {},
+    ): Promise<SurfaceDocumentVersionListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/document/${encodeURIComponent(tabId)}/versions`,
+            query: { afterVersion: options.afterVersion, limit: options.limit },
+            signal: options.signal,
+        });
+    }
+
+    async getTabDocumentVersion(
+        tabId: SurfaceId,
+        version: string,
+        options: RequestOptions = {},
+    ): Promise<SurfaceDocumentVersionResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/tabs/document/${encodeURIComponent(tabId)}/versions/${encodeURIComponent(version)}`,
+            signal: options.signal,
+        });
+    }
+
     // Artifacts
 
     /**

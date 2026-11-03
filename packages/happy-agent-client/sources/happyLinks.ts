@@ -119,12 +119,12 @@ const HOSTS: Record<HappyReferenceKind, string> = {
     workspace: "workspaces",
     project: "projects",
     service: "services",
-    surface: "surfaces",
+    surface: "tabs",
     user: "users",
 };
 
 const ENTITY_URL = new RegExp(
-    `^happy://(artifacts|agents|workspaces|projects|surfaces|users)/(${ID_PATTERN})` +
+    `^happy://(artifacts|agents|workspaces|projects|tabs|surfaces|users)/(${ID_PATTERN})` +
         `(?:\\?version=(${VERSION_PATTERN}))?$`,
 );
 const SERVICE_URL = new RegExp(`^happy://workspaces/(${ID_PATTERN})/services/(${ID_PATTERN})$`);
@@ -166,7 +166,10 @@ function parseInstanceFreeUrl(url: string): HappyLink | undefined {
     const entity = ENTITY_URL.exec(url);
     if (entity !== null) {
         const [, host, id = "", version] = entity;
-        const kind = HAPPY_REFERENCE_KINDS.find((candidate) => HOSTS[candidate] === host);
+        const kind =
+            host === "surfaces"
+                ? "surface"
+                : HAPPY_REFERENCE_KINDS.find((candidate) => HOSTS[candidate] === host);
         if (kind === undefined || (version !== undefined && kind !== "artifact")) return undefined;
         return {
             type: "reference",
@@ -277,7 +280,7 @@ export function formatHappyMarkdownLink(link: HappyLink, label = ""): string {
 
 /** Words that stand in for an entity nobody can resolve, such as "an unavailable artifact". */
 export function happyReferencePlaceholder(reference: HappyReference): string {
-    return `an unavailable ${reference.kind}`;
+    return `an unavailable ${reference.kind === "surface" ? "tab" : reference.kind}`;
 }
 
 export function isKnownHappyReferenceKind(kind: string): kind is HappyReferenceKind {
