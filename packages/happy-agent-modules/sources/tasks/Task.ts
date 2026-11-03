@@ -41,6 +41,8 @@ export const taskRecordSchema = Type.Object(
          * once, from the task's first message; a rename settles it for good.
          */
         nameConfigured: Type.Boolean(),
+        /** A generated label within a strict length budget; a rename clears it. */
+        shortName: Type.Optional(taskNameSchema),
         folderName: taskFolderNameSchema,
         /** The team user who owns the task; absent on a standalone installation. */
         ownerUserId: Type.Optional(cuid2Schema),

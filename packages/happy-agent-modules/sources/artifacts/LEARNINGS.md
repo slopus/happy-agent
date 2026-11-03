@@ -121,6 +121,19 @@ files of `create_artifact` and `update_artifact` still publish files built with 
 artifacts as files on a machine may come back later. It is not worth the trouble before the basics
 work.
 
+## Initial text can be published in the creation call
+
+Requiring a title-only artifact before writing its entry cost an extra tool call and exposed an
+unfinished first version. Steve asked to create an artifact with its contents. `create_artifact`
+now accepts optional `content` for Markdown and HTML. Steve then asked to supply supporting files
+as `{ path, content }` too, so a whole multi-file artifact can be published in one call without
+writing temporary local files. Creation accepts inline UTF-8 files mixed with `fromPath` copies,
+publishing the entry and assets together in version 1.0. Each file has exactly one source, every
+destination is unique, and only copies need machine access. Top-level content and a file entry
+cannot both supply the same path, and live URLs cannot take either kind of file. Omitting content
+still supports the title seed or an entry in `files`; later text changes continue through the
+artifact file tools, while `update_artifact` keeps its copy-only `files` contract.
+
 ## Every writing call is one version, keyed by the call
 
 Each call that writes makes exactly one minor version, keyed by the call ID. The tools look for
@@ -151,8 +164,8 @@ work.
 
 ## The chat follows the artifact it shows inline
 
-An artifact shown inline is written after the call that issues it: the versions that matter come
-from the `write_artifact_file` and `edit_artifact_file` calls after `create_artifact`. Its
+An artifact shown inline can change after the call that issues it, through
+`write_artifact_file` and `edit_artifact_file` calls after `create_artifact`. Its
 presentation therefore says `shows: "latest"`, and a client keeps that place in the
 chat on the artifact's newest version, which is where an HTML artifact appears inline at its full
 height. `update_artifact` records one change, so it says `"version"`. A missing `shows` means

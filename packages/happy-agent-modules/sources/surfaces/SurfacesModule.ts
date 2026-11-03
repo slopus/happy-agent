@@ -115,6 +115,19 @@ const eventSchema = Type.Union([
 export type SurfaceEvent = Static<typeof eventSchema>;
 type Listener = (ctx: Context, event: SurfaceEvent) => void | Promise<void>;
 export type SurfaceActor = TodoRevision["actor"];
+/** A transactional listener also learns who made a creation, when the change names one. */
+type TransactionalListener = (
+    ctx: Context,
+    event: SurfaceEvent,
+    actor?: SurfaceActor,
+) => void | Promise<void>;
+/** One document change that added content, inside the transaction that stores it. */
+export interface SurfaceDocumentChanged {
+    readonly surfaceId: string;
+    readonly actor: SurfaceActor;
+    readonly at: number;
+}
+type DocumentChangedListener = (ctx: Context, change: SurfaceDocumentChanged) => Promise<void>;
 /**
  * Types an earlier daemon stored that are no longer part of the catalog. Their rows stay in
  * storage unchanged, but no list, route, or event ever reaches them again.
@@ -146,7 +159,8 @@ export class SurfacesModule implements AgentModule {
     readonly name = "surfaces";
     readonly migrations = surfacesMigrations;
     readonly #listeners = new Set<Listener>();
-    readonly #transactional = new Set<Listener>();
+    readonly #transactional = new Set<TransactionalListener>();
+    readonly #documentChanged = new Set<DocumentChangedListener>();
     readonly #chatWaiters = new Map<string, Set<() => void>>();
     readonly #live = new SurfaceDocumentLive();
     #store!: SurfacesPersistence;
@@ -234,10 +248,17 @@ export class SurfacesModule implements AgentModule {
             this.#listeners.delete(listener);
         };
     }
-    onEventTransactional(listener: Listener): () => void {
+    onEventTransactional(listener: TransactionalListener): () => void {
         this.#transactional.add(listener);
         return () => {
             this.#transactional.delete(listener);
+        };
+    }
+    /** Participate in each document change that adds content, before it commits. */
+    onDocumentChangedTransactional(listener: DocumentChangedListener): () => void {
+        this.#documentChanged.add(listener);
+        return () => {
+            this.#documentChanged.delete(listener);
         };
     }
     /**
@@ -420,10 +441,11 @@ export class SurfacesModule implements AgentModule {
                     actor ?? { userId: await this.owner(tx), agentId: adminAgentId ?? null },
                     input.mutationId ?? null,
                 );
-            await this.#event(tx, {
-                type: "surface.created",
-                payload: { surface, ...echo(input.mutationId) },
-            });
+            await this.#event(
+                tx,
+                { type: "surface.created", payload: { surface, ...echo(input.mutationId) } },
+                actor ?? { userId: creatorUserId, agentId: adminAgentId ?? null },
+            );
             // Transactional participation may have added members after the creation snapshot.
             return this.#present(tx, await this.#surface(tx, id));
         });
@@ -708,10 +730,11 @@ export class SurfacesModule implements AgentModule {
                 version: createUuidV7Factory()(),
             };
             await this.#saveTodo(tx, todo, actor);
-            await this.#event(tx, {
-                type: "todo.created",
-                payload: { todo, ...echo(input.mutationId) },
-            });
+            await this.#event(
+                tx,
+                { type: "todo.created", payload: { todo, ...echo(input.mutationId) } },
+                actor,
+            );
             return todo;
         });
     }
@@ -981,13 +1004,14 @@ export class SurfacesModule implements AgentModule {
     ): Promise<{ seq: number }> {
         return ctx.inTx(async (tx) => {
             const surface = await this.#surface(tx, surfaceId, "document");
-            const { seq } = await this.#documents.change(
+            const { seq, appended } = await this.#documents.change(
                 tx,
                 surface,
                 new Uint8Array(Buffer.from(update, "base64")),
                 actor,
                 mutationId,
             );
+            if (appended) await this.#documentChangedTransactional(tx, surfaceId, actor);
             return { seq };
         });
     }
@@ -1002,6 +1026,7 @@ export class SurfacesModule implements AgentModule {
         return ctx.inTx(async (tx) => {
             const surface = await this.#surface(tx, surfaceId, "document");
             const result = await this.#documents.agentChange(tx, surface, seq, text, actor);
+            if (result.appended) await this.#documentChangedTransactional(tx, surfaceId, actor);
             return {
                 ...(await this.#documents.projection(tx, surface)),
                 changed: result.appended,
@@ -1325,14 +1350,23 @@ export class SurfacesModule implements AgentModule {
             throw new Error("A todo revision cannot be overwritten.");
         await this.#kv.write(ctx, `todo.${todo.surfaceId}.${todo.id}`, todo);
     }
-    async #event(ctx: Context, event: SurfaceEvent): Promise<void> {
+    async #event(ctx: Context, event: SurfaceEvent, actor?: SurfaceActor): Promise<void> {
         // Reserve the initiating event before transactional listeners enqueue derived changes.
         await this.durable.invoke(ctx, {
             function: "surfaces.notify",
             arguments: event,
             lockKeys: ["surfaces.notify"],
         });
-        for (const listener of this.#transactional) await listener(ctx, structuredClone(event));
+        for (const listener of this.#transactional)
+            await listener(ctx, structuredClone(event), actor && { ...actor });
+    }
+    async #documentChangedTransactional(
+        ctx: Context,
+        surfaceId: string,
+        actor: SurfaceActor,
+    ): Promise<void> {
+        const change = { surfaceId, actor: { ...actor }, at: Date.now() };
+        for (const listener of this.#documentChanged) await listener(ctx, change);
     }
 }
 

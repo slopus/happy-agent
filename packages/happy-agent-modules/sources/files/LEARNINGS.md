@@ -60,6 +60,12 @@ excludes ignored directories, and is marked stale only when a path is created or
 workspace is never rescanned. The two-second age rule survives only for a tree that cannot be
 watched.
 
+That shared watch excludes what Git ignores, and a folder in no repository ignores nothing, so
+searching a task's shared folder watched every directory below it: one agent's `.context` held a
+Nix store of 80,000 directories. fff never reads hidden or dependency directories in such a folder,
+so its watch now leaves them out too (`plainFolder`), and a search there costs a kernel watch per
+directory fff actually indexes.
+
 ## A rendered file is watched by itself
 
 On macOS, libuv serves every directory `fs.watch` in a process from one FSEvents stream, and
@@ -150,7 +156,8 @@ became `readFileBuffer` with `noFollow`, preceded by a regular-file check and fo
 resolution that must land on the same path. Replaced files keep their permission bits and new files
 get the machine's default mode, instead of both inheriting the temporary file's `0600`. Only search and watching differ, because FFF and
 non-recursive native watches read this machine's disk: runner folders are listed and watched by the
-runner itself.
+runner itself, through the Git module's shared watch so that file and Git events cost one runner
+watch rather than one each.
 
 A runner folder's Git listing stops at 20,000 paths, and ranking that cut-off list silently lost
 every later file. When the listing is truncated, a search with a query now asks Git for only the

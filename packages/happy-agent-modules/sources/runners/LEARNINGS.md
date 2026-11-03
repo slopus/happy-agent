@@ -23,9 +23,74 @@ user asked for one path: run the commands on a compute that is either this machi
 `machine(runnerId?)` now returns this machine's host compute or the runner's product compute, and
 folder work is written once against it. The only remaining differences are capabilities this
 machine has natively — the FFF index, non-recursive file watches, the SDK's restricted-environment
-stdio transport for MCP, and the native Bun proxy fast path. The daemon's embedded Git tracking
-(live snapshots, working-tree watches, untracked counts) is legacy and deliberately not ported to
-runners; Git commands that create worktrees and clones do run there.
+stdio transport for MCP, and the native Bun proxy fast path — and each has a runner equivalent.
+README's "Parity with this machine" lists every feature and how it behaves on a runner.
+
+## Live Git runs on the runner, not around it
+
+Steve asked for every API to behave the same on runner folders, and Git state was the largest gap:
+`GET …/git` answered `404`, `git/watch` left runner folders out, and the Happy integration refused
+them. Live tracking was first treated as legacy too tied to this machine to port. It is now the same
+`GitStateTracker` with the folder's machine behind it (`GitRepositoryMachine`): scans run on the
+runner through the hardened scanner, untracked counts and binary bytes are read through the
+runner's filesystem (`GitWorkingFiles`), and the runner's own watches drive it. Nothing about the
+debounce, the path-scoped classification, or the fingerprint stale checks changed, so the two
+cannot drift.
+
+## One watch per folder on a runner, shared and bounded
+
+Before, each of the eight most recently read runner folders had a recursive watch for file events
+only. Live Git would have added another for the tree and one for the Git directory per worktree.
+`RunnerWatches` (in the Git module) now owns them: one tree watch per folder, shared by
+`files.updated` and Git; one Git-directory watch per common directory, shared by its worktrees and
+skipping `objects`, `logs`, and `hooks`; at most 32 tree and 16 Git watches per runner, the rest
+polled. A watch that ends — the runner went away, overflow — is re-armed with backoff and reported
+as a change of everything, so the tracker rescans rather than trusting a gap.
+
+The runner skips dependency and repository directories by name. Directories Git ignores are
+derived from `ls-files --ignored --directory` on the runner and dropped on the daemon, because
+compute 0.1.25 can take an ignore list only when a watch starts and a restarted watch can miss
+changes. Those directories therefore still cost kernel watches and traffic on the runner; an
+`ignorePaths` update in the runner protocol is the fix, and needs a compute release.
+
+## Disconnects are seen within seconds, by both sides
+
+Steve saw both sides of a Tailcat runner connection keep believing in it long after one side had
+stopped, and requests to its folders answering `500`. Nothing in the goodbye path was wrong on its
+own; the order around it was. The daemon disposed every runner machine before it said goodbye, and
+its Tailcat exposure closed concurrently with this module, so the goodbye was usually written into
+a carrier that was already gone. The daemon's channel stopped listening once it closed, so nothing
+could wait for the close to be delivered. A stopping runner closed its WebSocket without a goodbye
+and then closed its Tailcat carrier at once, which drops unflushed frames and sends no FIN. With
+both ends silent, only the default idle timeout (45 s) noticed, after the HTTP forwarder's 30 s had
+already turned the request into a `500`. A runner whose daemon restarted then backed off up to
+30 s before it tried again.
+
+Now each side says goodbye first and waits up to two seconds for its WebSocket to close before
+closing anything underneath; the daemon's Tailcat closes after this module; both sides ping every
+5 s and give up after 20 s of silence; a runner retries at most every 5 s for a minute after a
+connection ends; and `RunnerDisconnectedError` maps to `503` like `RunnerUnavailableError`. A
+deliberate stop is seen in about a second, a silent loss in at most about 25 s. A single frame
+large enough to take 20 s on a slow relay would trip the idle timeout; none is close to that today.
+
+## Secrets and port bridges on runners
+
+Steve decided "we trust compute": a runner may receive the attached secrets a command selected.
+The daemon resolves the selection when the command starts and sends the values in that one
+command's `environment` (runner protocol 4), with `null` for every other attached secret's
+variable so the runner's own environment cannot stand in for one that was not selected. The runner
+applies them to the spawn and deletes them afterwards. While the process runs, the runner's user,
+root there, and other commands running as that user can read them, as on any machine; a modified
+runner could keep them. A command that selects nothing is sent unchanged, so runners older than
+protocol 4 keep working for everything else and refuse only a selection, asking to be updated.
+Containers still refuse, because Docker cannot give one command its own environment.
+
+Port bridges listen on the runner through compute `network.listen` with `ownerOnly`, which the
+runner enforces against its own socket table. USB and Bluetooth on runners are permanently
+unsupported, reported as `runner_compute`, so apps hide them.
+
+Workspace services were retired product-wide while this was being decided, so strict services on
+runners were not built.
 
 ## Everything that touches a folder runs on the runner
 

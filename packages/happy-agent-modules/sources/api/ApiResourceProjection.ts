@@ -201,6 +201,7 @@ export function botResource(
         id: bot.id,
         isAdmin: bot.isAdmin,
         name: bot.name,
+        ...(bot.shortName === undefined ? {} : { shortName: bot.shortName }),
         username: bot.username,
         workspaceId: bot.workspaceId,
         compute: botCompute(bot),
@@ -228,6 +229,7 @@ export function taskResource(
     return {
         id: task.id,
         name: task.name,
+        ...(task.shortName === undefined ? {} : { shortName: task.shortName }),
         folderName: task.folderName,
         ownerUserId: task.ownerUserId ?? null,
         creatorAgentId: task.creatorAgentId ?? null,

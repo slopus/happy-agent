@@ -7,9 +7,14 @@ import type {
     AgentModuleScope,
     AgentSystemRef,
 } from "@slopus/happy-agent-base";
-import type { StoryMetadata } from "@slopus/happy-agent-client";
+import type {
+    StoryCreateRequest,
+    StoryMediaLayerInput,
+    StoryMetadata,
+} from "@slopus/happy-agent-client";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 
+import { ArtifactsModule } from "../artifacts/index.js";
 import { BotsModule } from "../bots/index.js";
 import { ChatMediaModule } from "../chatMedia/index.js";
 import { ComputeModule } from "../compute/index.js";
@@ -20,13 +25,15 @@ import { STANDALONE_TASK_MEMBER, TasksModule } from "../tasks/index.js";
 import { TeamAuthenticationError, TeamModule, teamUser } from "../team/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
 import * as store from "./storyStore.js";
-import type { StoryRecord } from "./storyStore.js";
+import type { StoryMediaLayerRecord, StoryRecord } from "./storyStore.js";
 import { deleteStoryTool } from "./tools/delete_story.js";
 import { listStoriesTool } from "./tools/list_stories.js";
 import { postStoryTool } from "./tools/post_story.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 const MAX_ROUND = 16 * 1024 * 1024;
+/** A legacy round's unscaled diameter, as a fraction of the frame width. */
+const LEGACY_ROUND_WIDTH = 0.4;
 
 /** One reader's `story.changed` or `story.removed`; `readerId` is `undefined` standalone. */
 export type StoryEvent = {
@@ -39,8 +46,8 @@ export type StoryEvent = {
 export class StoryInputError extends Error {}
 
 /**
- * Images and videos a task's agent posts for its owner for 24 hours. People's stories and
- * reposts reach every non-guest team member with their `stories` setting on.
+ * Images and videos a task's agent posts for the people who joined the task for 24 hours.
+ * People's stories and reposts reach every non-guest team member with their `stories` setting on.
  */
 export class StoriesModule implements AgentModule {
     // The retired prototype owned "stories" and a different schema; v2 can start and remove it.
@@ -54,8 +61,10 @@ export class StoriesModule implements AgentModule {
     readonly #bots: BotsModule;
     readonly #team: TeamModule;
     readonly #settings: UserSettingsModule;
+    readonly #artifacts: ArtifactsModule;
     readonly #listeners = new Set<(ctx: Context, event: StoryEvent) => void>();
     #agents: AgentSystemRef | undefined;
+    #watchingTasks = false;
 
     constructor(
         config: ConfigModule,
@@ -65,6 +74,7 @@ export class StoriesModule implements AgentModule {
         bots: BotsModule,
         team: TeamModule,
         settings: UserSettingsModule,
+        artifacts: ArtifactsModule,
     ) {
         this.#config = config;
         this.#chatMedia = chatMedia;
@@ -73,10 +83,25 @@ export class StoriesModule implements AgentModule {
         this.#bots = bots;
         this.#team = team;
         this.#settings = settings;
+        this.#artifacts = artifacts;
     }
 
     readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
         this.#agents = agents;
+        // Joining, leaving, archiving, or unarchiving changes who sees a task's originals.
+        if (!this.#watchingTasks) {
+            this.#watchingTasks = true;
+            this.#tasks.onEventTransactional(async (txCtx, event) => {
+                if (event.type === "task_joined" || event.type === "task_left") {
+                    const { taskId, memberId } = event.membership;
+                    await this.#taskAudienceChanged(txCtx, taskId, memberId);
+                } else if (
+                    event.type === "task_updated" &&
+                    event.task.status !== event.previousTask.status
+                )
+                    await this.#taskAudienceChanged(txCtx, event.task.id);
+            });
+        }
         return {
             tools: async (ctx, scope) => {
                 if (!(await this.canPost(ctx, scope))) return [];
@@ -141,19 +166,24 @@ export class StoriesModule implements AgentModule {
         });
     }
 
-    /** The caller's repost of an agent story they see, with their caption and round video. */
+    /**
+     * The caller's repost of an agent story they see, with their caption, round video, and media
+     * layers. The original's media and layers are referenced, never copied.
+     */
     async repost(
         ctx: Context,
         id: string,
         caption: string | null,
         round?: Uint8Array,
         layers?: StoryRecord["layers"],
+        mediaLayers?: readonly StoryMediaLayerInput[],
     ) {
         if (layers?.round && !round)
             throw new StoryInputError("A round position needs a round video.");
-        if (round && (round.byteLength > MAX_ROUND || !store.isH264Mp4(round)))
+        if (round && (round.byteLength > MAX_ROUND || !(await store.isH264Mp4(round))))
             throw new StoryInputError("A round is an H.264 MP4 video of at most 16 MiB.");
         const kept = round && (await this.#chatMedia.snapshot(round, "round.mp4"));
+        const own = await this.#adoptLayers(ctx, mediaLayers);
         return await ctx.inTx(async (txCtx) => {
             const [original] = await this.#read(txCtx, id);
             if (
@@ -167,7 +197,12 @@ export class StoriesModule implements AgentModule {
             const from = { agentId, taskId, botId, media, repostOf: id, userId };
             const life = { postedAt, expiresAt: postedAt + DAY };
             const story: StoryRecord = { id: createId(), caption, ...from, ...life };
-            if (layers) story.layers = layers;
+            // Without text of its own, a repost shows the original's.
+            const text = layers?.text ?? original.layers?.text;
+            const placed = { ...layers, ...(text === undefined ? {} : { text }) };
+            if (Object.keys(placed).length > 0) story.layers = placed;
+            const stacked = [...(original.mediaLayers ?? []), ...own];
+            if (stacked.length > 0) story.mediaLayers = stacked;
             if (kept) story.round = { ...kept, kind: "video" };
             await store.insertStory(txCtx, story);
             await this.#changed(txCtx, story.id);
@@ -180,11 +215,14 @@ export class StoriesModule implements AgentModule {
         if (!(await this.enabled(ctx))) return undefined;
         if (metadata.layers?.round && !round)
             throw new StoryInputError("A round position needs a round video.");
-        if (round && (round.byteLength > MAX_ROUND || !store.isH264Mp4(round)))
+        if (round && (round.byteLength > MAX_ROUND || !(await store.isH264Mp4(round))))
             throw new StoryInputError("A round must be an H.264 MP4 video.");
         const bytes = new Uint8Array(await media.arrayBuffer());
         const video = media.type === "video/mp4";
-        if ((!video && !media.type.startsWith("image/")) || (video && !store.isH264Mp4(bytes)))
+        if (
+            (!video && !media.type.startsWith("image/")) ||
+            (video && !(await store.isH264Mp4(bytes)))
+        )
             throw new StoryInputError("Choose an image or an H.264 MP4 video.");
         const imageName = media.type === "image/avif" ? "story.avif" : "story.png";
         const item = await this.#chatMedia.snapshot(bytes, video ? "story.mp4" : imageName);
@@ -205,11 +243,75 @@ export class StoriesModule implements AgentModule {
         };
         if (metadata.layers) story.layers = metadata.layers;
         if (kept) story.round = { ...kept, kind: "video" };
+        return await this.#insertOwn(ctx, story);
+    }
+
+    /** A person's original story from streamed uploads, each file kept by reference. */
+    async create(ctx: Context, body: StoryCreateRequest) {
+        if (!(await this.enabled(ctx))) return undefined;
+        if (body.layers?.round)
+            throw new StoryInputError("Send a round video as a media layer with a round shape.");
+        const [media, mediaLayers] = await Promise.all([
+            this.#adopt(ctx, body.media.uploadId),
+            this.#adoptLayers(ctx, body.mediaLayers),
+        ]);
+        const postedAt = Date.now();
+        const story: StoryRecord = {
+            id: createId(),
+            agentId: null,
+            taskId: null,
+            botId: null,
+            userId: this.#reader(ctx).readerId ?? null,
+            caption: body.caption ?? null,
+            media,
+            postedAt,
+            expiresAt: postedAt + DAY,
+        };
+        if (body.layers) story.layers = body.layers;
+        if (mediaLayers.length > 0) story.mediaLayers = mediaLayers;
+        return await this.#insertOwn(ctx, story);
+    }
+
+    async #insertOwn(ctx: Context, story: StoryRecord) {
         return await ctx.inTx(async (txCtx) => {
             await store.insertStory(txCtx, story);
             await this.#changed(txCtx, story.id);
             return await this.get(txCtx, story.id);
         });
+    }
+
+    async #adoptLayers(
+        ctx: Context,
+        inputs: readonly StoryMediaLayerInput[] = [],
+    ): Promise<StoryMediaLayerRecord[]> {
+        return await Promise.all(
+            inputs.map(async ({ uploadId, ...placement }) => {
+                return { id: createId(), media: await this.#adopt(ctx, uploadId), ...placement };
+            }),
+        );
+    }
+
+    /**
+     * Keep an upload's bytes as story media: an image that decodes, or an H.264 MP4. Its kind
+     * comes from the bytes, and they are linked into story storage rather than read or copied.
+     */
+    async #adopt(ctx: Context, uploadId: string): Promise<StoryRecord["media"]> {
+        const content = await this.#artifacts.uploadContent(ctx, uploadId);
+        if (content === undefined)
+            throw new StoryInputError("A story file upload is missing or has expired.");
+        const { contentPath, upload } = content;
+        const stored = await store.storedMediaKind(contentPath);
+        const name = { video: "story.mp4", avif: "story.avif", image: "story.png", none: "" }[
+            stored
+        ];
+        if (stored === "none") throw new StoryInputError("Choose an image or an H.264 MP4 video.");
+        if (upload.size > this.#chatMedia.limit(name).maxBytes)
+            throw new StoryInputError("The story file is too large.");
+        const item = await this.#chatMedia.snapshotStored(contentPath, upload, name);
+        if (item.kind !== "image" && item.kind !== "video")
+            throw new StoryInputError("Choose an image or an H.264 MP4 video.");
+        const { kind, mimeType, size, sha256 } = item;
+        return { kind, name: item.name, mimeType, size, sha256 };
     }
 
     /** The caller's reply, sent to the story's agent as their own message quoting it. */
@@ -318,10 +420,16 @@ export class StoriesModule implements AgentModule {
         });
     }
 
-    /** The stored media or round video behind a story the caller may see. */
-    async file(ctx: Context, id: string, which: "media" | "round") {
+    /**
+     * The stored media, round video, or media layer behind a story the caller may see. A legacy
+     * round is also its layer `round`.
+     */
+    async file(ctx: Context, id: string, which: "media" | "round", layerId?: string) {
         const [story] = await this.#read(ctx, id);
-        const file = story?.[which];
+        const round = story?.round && { id: "round", media: story.round };
+        const layers = [...(story?.mediaLayers ?? []), ...(round ? [round] : [])];
+        const file =
+            layerId === undefined ? story?.[which] : layers.find((l) => l.id === layerId)?.media;
         if (file === undefined) return undefined;
         const { sha256, size, mimeType, name } = file;
         const contentPath = this.#config.chatMediaContentPath(sha256);
@@ -338,7 +446,7 @@ export class StoriesModule implements AgentModule {
 
     async #read(ctx: Context, id?: string) {
         if (!(await this.enabled(ctx))) return [];
-        const { member, readerId } = this.#reader(ctx);
+        const { member } = this.#reader(ctx);
         const visible: (StoryRecord & { seen: boolean })[] = [];
         for (const story of await store.readLiveStories(ctx, member, Date.now(), id)) {
             if (story.botId && !(await this.#bots.settings(ctx, story.botId)).stories) continue;
@@ -352,7 +460,8 @@ export class StoriesModule implements AgentModule {
                 continue;
             }
             const task = story.taskId && (await this.#tasks.get(ctx, story.taskId));
-            if (task && task.status === "active" && task.ownerUserId === readerId)
+            if (!task || task.status !== "active") continue;
+            if ((await this.#tasks.membership(ctx, task.id, member)) !== undefined)
                 visible.push(story);
         }
         return visible;
@@ -372,7 +481,9 @@ export class StoriesModule implements AgentModule {
         const canDelete = !this.#team.enabled || (readerId !== undefined && mine);
         const [userId, repostOf] = [story.userId ?? null, story.repostOf ?? null];
         const extra = { poster, round: round ?? null, replyCount: count, replies, canDelete };
-        return { ...story, media, userId, repostOf, ...extra };
+        const layers = servedMediaLayers(story);
+        const mediaLayers = layers.length === 0 ? {} : { mediaLayers: layers };
+        return { ...story, media, userId, repostOf, ...extra, ...mediaLayers };
     }
 
     /** Announce a story's current state to every reader who sees it, after commit. */
@@ -407,6 +518,35 @@ export class StoriesModule implements AgentModule {
         return audience;
     }
 
+    /** Tell a task's readers, or one member, which of its live originals they now see. */
+    async #taskAudienceChanged(ctx: Context, taskId: string, memberId?: string): Promise<void> {
+        const live = await store.readLiveStories(ctx, "", Date.now());
+        const ids = live
+            .filter((story) => story.taskId === taskId && story.repostOf === undefined)
+            .map((story) => story.id);
+        if (ids.length === 0) return;
+        const readers = !this.#team.enabled
+            ? [null]
+            : memberId === undefined
+              ? await this.#team.listMembers(ctx)
+              : [await this.#team.getUser(ctx, memberId)].filter((user) => user !== undefined);
+        const events: StoryEvent[] = [];
+        for (const user of readers) {
+            const readerCtx = user === null ? ctx : this.#team.connectionContext(ctx, user);
+            if (!(await this.enabled(readerCtx))) continue;
+            const readerId = user?.id;
+            for (const storyId of ids) {
+                const story = await this.get(readerCtx, storyId);
+                events.push(
+                    story === undefined
+                        ? { readerId, type: "story.removed", payload: { storyId } }
+                        : { readerId, type: "story.changed", payload: { story } },
+                );
+            }
+        }
+        this.#emitAfter(ctx, events);
+    }
+
     async #poster(ctx: Context, agentId: string) {
         const task = await this.#tasks.forAgent(ctx, agentId);
         const bot = task === undefined ? await this.#bots.forAgent(ctx, agentId) : undefined;
@@ -433,4 +573,17 @@ export class StoriesModule implements AgentModule {
         if (user === undefined) throw new TeamAuthenticationError();
         return { readerId: user.id as string | undefined, member: user.id };
     }
+}
+
+/** A story's media layers as served, with a legacy round as the layer `round` above them. */
+function servedMediaLayers(story: StoryRecord) {
+    const layers = (story.mediaLayers ?? []).map(({ media, ...layer }) => {
+        return { ...layer, kind: media.kind, mimeType: media.mimeType, size: media.size };
+    });
+    if (story.round === undefined) return layers;
+    const { x = 0.2, y = 0.2, ...transform } = story.layers?.round ?? {};
+    const { mimeType, size } = story.round;
+    const shape = "round" as const;
+    const placement = { shape, x, y, width: LEGACY_ROUND_WIDTH, aspect: 1, ...transform };
+    return [...layers, { id: "round", kind: "video" as const, mimeType, size, ...placement }];
 }

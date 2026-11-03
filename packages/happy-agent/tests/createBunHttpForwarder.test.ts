@@ -13,7 +13,7 @@ afterEach(async () => {
     for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-async function fixture(handler: RequestListener) {
+async function fixture(handler: RequestListener, idleTimeoutMs?: number) {
     const scratch = resolve("../../.context");
     await mkdir(scratch, { recursive: true });
     const root = await mkdtemp(`${scratch}/f`);
@@ -26,7 +26,7 @@ async function fixture(handler: RequestListener) {
         sockets.add(socket);
         socket.on("close", () => sockets.delete(socket));
     });
-    const forwarder = createBunHttpForwarder(path);
+    const forwarder = createBunHttpForwarder(path, idleTimeoutMs);
     cleanups.push(async () => {
         forwarder.close();
         for (const socket of sockets) socket.destroy();
@@ -151,6 +151,33 @@ describe("native Bun HTTP forwarding", () => {
         abort.abort();
         await disconnected;
         await reader.cancel().catch(() => undefined);
+    });
+
+    it("lets an upload outlast the timeout while its body progresses, and times out silence", async () => {
+        const f = await fixture((request, response) => {
+            let size = 0;
+            request.on("data", (chunk: Buffer) => (size += chunk.length));
+            request.on("end", () => response.end(String(size)));
+        }, 300);
+        const upload = (gapMs: number) =>
+            f.forward(
+                new Request("http://happy/upload", {
+                    method: "POST",
+                    body: new ReadableStream<Uint8Array>({
+                        async start(controller) {
+                            for (let chunk = 0; chunk < 6; chunk++) {
+                                controller.enqueue(new Uint8Array(1024));
+                                await new Promise((done) => setTimeout(done, gapMs));
+                            }
+                            controller.close();
+                        },
+                    }),
+                    duplex: "half",
+                } as RequestInit),
+            );
+        // Six chunks 150 ms apart take 900 ms in all, three times the idle timeout.
+        expect(await (await upload(150)).text()).toBe(String(6 * 1024));
+        await expect(upload(600)).rejects.toThrow("timed out");
     });
 
     it("does not replay a failed request and rejects work after shutdown", async () => {

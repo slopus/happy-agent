@@ -19,25 +19,25 @@ function track(codec: string, wide = false): Buffer {
 }
 
 describe("H.264 story media", () => {
-    it("accepts avc1 and avc3 sample entries inside moov, including extended box sizes", () => {
+    it("accepts avc1 and avc3 sample entries inside moov, including extended box sizes", async () => {
         for (const codec of ["avc1", "avc3"])
             for (const wide of [false, true])
-                expect(isH264Mp4(Buffer.concat([ftyp, track(codec, wide)]))).toBe(true);
+                expect(await isH264Mp4(Buffer.concat([ftyp, track(codec, wide)]))).toBe(true);
     });
-    it("rejects H.264 markers in frame data, unrelated metadata, or another codec's track", () => {
+    it("rejects H.264 markers in frame data, unrelated metadata, or another codec's track", async () => {
         for (const body of [
             box("mdat", Buffer.from("avc1 avc3")),
             box("moov", box("udta", Buffer.from("stsd avc1"))),
             Buffer.concat([track("hvc1"), box("mdat", Buffer.from("avc1"))]),
         ])
-            expect(isH264Mp4(Buffer.concat([ftyp, body]))).toBe(false);
+            expect(await isH264Mp4(Buffer.concat([ftyp, body]))).toBe(false);
     });
-    it("refuses truncated and impossible boxes without reading outside them", () => {
+    it("refuses truncated and impossible boxes without reading outside them", async () => {
         for (const body of [
             Buffer.from([0, 0, 0, 1, 109, 111, 111, 118]),
             box("moov", Buffer.alloc(1)),
             Buffer.from([0xff, 0xff, 0xff, 0xff, 109, 111, 111, 118]),
         ])
-            expect(isH264Mp4(Buffer.concat([ftyp, body]))).toBe(false);
+            expect(await isH264Mp4(Buffer.concat([ftyp, body]))).toBe(false);
     });
 });

@@ -43,6 +43,7 @@ import {
     providerRouteUseRequestSchema,
 } from "../providerRoutes/index.js";
 import { StoriesModule, StoryInputError } from "../stories/index.js";
+import { FeedError, FeedModule } from "../feed/index.js";
 import {
     closeWorkspaceBridgeRequestSchema,
     createSurfaceRequestSchema,
@@ -82,6 +83,11 @@ import {
     taskListScopeSchema,
     unarchiveTaskRequestSchema,
     renameBotRequestSchema,
+    storyCreateRequestSchema,
+    feedCursorSchema,
+    feedReadAllRequestSchema,
+    feedSeenRequestSchema,
+    feedSubscriptionRequestSchema,
     storyReplyRequestSchema,
     storyRepostRequestSchema,
     storyMetadataSchema,
@@ -134,6 +140,7 @@ import { afterCommit, detach, shutdown, type Context } from "@steve.kite/stdlib"
 import {
     createHostNetwork,
     MAX_RUNNER_FRAME_BYTES,
+    RunnerDisconnectedError,
     RunnerUnavailableError,
     type ComputeNetwork,
 } from "@slopus/happy-agent-compute";
@@ -641,6 +648,7 @@ export class ApiModule implements AgentModule {
     readonly #providerClis: ProviderClisModule | undefined;
     readonly #providerRoutes: ProviderRoutesModule | undefined;
     readonly #stories: StoriesModule | undefined;
+    readonly #feed: FeedModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -813,6 +821,7 @@ export class ApiModule implements AgentModule {
         providerClis?: ProviderClisModule,
         providerRoutes?: ProviderRoutesModule,
         stories?: StoriesModule,
+        feed?: FeedModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -859,6 +868,7 @@ export class ApiModule implements AgentModule {
         this.#providerClis = providerClis;
         this.#providerRoutes = providerRoutes;
         this.#stories = stories;
+        this.#feed = feed;
     }
 
     readonly beforeStart = async (
@@ -2016,6 +2026,7 @@ export class ApiModule implements AgentModule {
             if (await this.#handleBotRoute(ctx, request, response, url)) return;
             if (await this.#handleTaskRoute(ctx, request, response, url)) return;
             if (await this.#handleStoryRoute(ctx, request, response, url)) return;
+            if (await this.#handleFeedRoute(ctx, request, response, url)) return;
             if (await this.#handleSurfaceRoute(ctx, request, response, url)) return;
             if (await this.#handleArtifactRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/projects") {
@@ -3291,6 +3302,15 @@ export class ApiModule implements AgentModule {
                 // Seen state is each reader's own, so every reader gets their own copy.
                 this.#stories.onEvent((_eventCtx, { readerId, type, payload }) => {
                     this.#journal.append(type, payload, Date.now(), readerId);
+                }),
+            );
+        if (this.#feed !== undefined)
+            this.#unsubscribe.push(
+                // Each reader's entries are their own. Fan-out and joining answer no request.
+                this.#feed.onEvent((_eventCtx, { readerId, type, payload, background }) => {
+                    const append = () => this.#journal.append(type, payload, Date.now(), readerId);
+                    if (background) this.#mutationIds.exit(append);
+                    else append();
                 }),
             );
         if (this.#userSettings !== undefined)
@@ -4981,6 +5001,18 @@ export class ApiModule implements AgentModule {
                         await this.#tasks!.markRead(ctx, task.id, this.#taskMember(ctx));
                     }
                 });
+                // Opening a task's or bot's chat is seeing it in the Feed.
+                const task = await this.#tasks?.forAgent(ctx, agentId);
+                const bot =
+                    task === undefined ? await this.#bots.forAgent(ctx, agentId) : undefined;
+                const subject =
+                    task !== undefined
+                        ? { type: "task", id: task.id }
+                        : bot !== undefined
+                          ? { type: "bot", id: bot.id }
+                          : undefined;
+                if (subject !== undefined)
+                    await this.#feed?.markSeen(ctx, [subject], { background: true });
                 sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
                 return true;
             }
@@ -7260,10 +7292,29 @@ export class ApiModule implements AgentModule {
         }
         if (request.method === "POST" && url.pathname === "/v0/stories") {
             if (!(await stories.enabled(ctx))) throw notFound("The story was not found.");
-            const { media, metadata, round } = await readStoryUpload(request, true);
-            const story = await stories.upload(ctx, media!, metadata, round).catch(storyInputError);
+            // Files streamed through artifact uploads are referenced; multipart carries its own.
+            const story = request.headers["content-type"]?.startsWith("application/json")
+                ? await stories
+                      .create(ctx, await bodyAs(request, storyCreateRequestSchema, "story"))
+                      .catch(storyInputError)
+                : await readStoryUpload(request, true).then(
+                      async ({ media, metadata, round }) =>
+                          await stories.upload(ctx, media!, metadata, round).catch(storyInputError),
+                  );
             if (story === undefined) throw notFound("The story was not found.");
             sendJson(response, 200, { story });
+            return true;
+        }
+        const layer = /^\/v0\/stories\/([a-z][a-z0-9]*)\/layers\/([a-z][a-z0-9]*)$/.exec(
+            url.pathname,
+        );
+        if (layer !== null && request.method === "GET") {
+            const file = await stories.file(ctx, layer[1]!, "media", layer[2]!);
+            if (file === undefined) throw notFound("The story was not found.");
+            await sendStoredFile(request, response, {
+                ...file,
+                cacheControl: "private, max-age=31536000, immutable",
+            });
             return true;
         }
         const match =
@@ -7308,7 +7359,7 @@ export class ApiModule implements AgentModule {
             const round =
                 upload?.round ?? (legacy?.round && Buffer.from(legacy.round.data, "base64"));
             const story = await stories
-                .repost(ctx, storyId, body.caption ?? null, round, body.layers)
+                .repost(ctx, storyId, body.caption ?? null, round, body.layers, legacy?.mediaLayers)
                 .catch(storyInputError);
             if (story === undefined) throw notFound("The story was not found.");
             sendJson(response, 200, { story });
@@ -7320,6 +7371,86 @@ export class ApiModule implements AgentModule {
             sendJson(response, 200, {});
         } else return false;
         return true;
+    }
+
+    async #handleFeedRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<boolean> {
+        const feed = this.#feed;
+        if (feed === undefined) return false;
+        if (url.pathname !== "/v0/feed" && !url.pathname.startsWith("/v0/feed/")) return false;
+        const route = `${request.method} ${url.pathname}`;
+        try {
+            if (route === "GET /v0/feed") {
+                const before = url.searchParams.get("before") ?? undefined;
+                if (before !== undefined && !Value.Check(feedCursorSchema, before))
+                    throw invalidRequest("The feed cursor is invalid.");
+                const limit = feedLimit(url);
+                const cursor = this.#journal.cursor();
+                const page = await feed.list(ctx, {
+                    ...(before === undefined ? {} : { before }),
+                    ...(limit === undefined ? {} : { limit }),
+                });
+                sendJson(response, 200, { ...page, cursor });
+                return true;
+            }
+            if (route === "POST /v0/feed/seen") {
+                const body = await bodyAs(request, feedSeenRequestSchema, "feed seen marker");
+                const seen = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await feed.markSeen(ctx, body.subjects),
+                );
+                sendJson(response, 200, seen);
+                return true;
+            }
+            if (route === "POST /v0/feed/read-all") {
+                const body = await bodyAs(request, feedReadAllRequestSchema, "feed read marker");
+                const read = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await feed.markAllSeen(ctx, body.through),
+                );
+                sendJson(response, 200, read);
+                return true;
+            }
+            if (route === "GET /v0/feed/clusters") {
+                sendJson(response, 200, { clusters: await feed.clusters(ctx) });
+                return true;
+            }
+            const match = /^\/v0\/feed\/(subscriptions|clusters)\/([^/]+)$/.exec(url.pathname);
+            if (match === null) return false;
+            let cluster: string;
+            try {
+                cluster = decodeURIComponent(match[2]!);
+            } catch {
+                throw invalidRequest("The cluster name is invalid.");
+            }
+            if (match[1] === "clusters" && request.method === "GET") {
+                const limit = feedLimit(url);
+                sendJson(response, 200, await feed.peek(ctx, cluster, limit));
+                return true;
+            }
+            if (match[1] !== "subscriptions") return false;
+            if (request.method !== "PUT" && request.method !== "DELETE") return false;
+            const body = await readJson(request, MAX_JSON_BODY_BYTES, true);
+            if (!Value.Check(feedSubscriptionRequestSchema, body))
+                throw invalidRequest("The feed subscription is invalid.");
+            const described = await this.#withMutationId(body.mutationId, async () =>
+                request.method === "PUT"
+                    ? await feed.subscribe(ctx, cluster)
+                    : await feed.mute(ctx, cluster),
+            );
+            sendJson(response, 200, { cluster: described });
+            return true;
+        } catch (error: unknown) {
+            if (error instanceof FeedError) {
+                if (error.code === "not_found") throw notFound(error.message);
+                throw invalidRequest(error.message);
+            }
+            throw error;
+        }
     }
 
     async #handleTaskRoute(
@@ -7455,6 +7586,10 @@ export class ApiModule implements AgentModule {
                     body.mutationId,
                     async () => await tasks.markRead(ctx, taskId, member),
                 );
+                if ((await tasks.get(ctx, taskId)) !== undefined)
+                    await this.#feed?.markSeen(ctx, [{ type: "task", id: taskId }], {
+                        background: true,
+                    });
             } else if (operation === "join" || operation === "leave") {
                 const body = await bodyAs(
                     request,
@@ -8323,15 +8458,12 @@ export class ApiModule implements AgentModule {
         if (git !== null && request.method === "GET") {
             const workspaceId = git[1] as string;
             const { root, runnerId } = await this.#resolveWorkspaceScope(ctx, workspaceId);
-            // Live Git state is read only for folders this process reads itself.
-            if (this.#runners !== undefined && !this.#runners.native(runnerId)) {
-                throw notFound(
-                    runnerId === undefined
-                        ? "Git state is not tracked while work runs as a separate Linux user."
-                        : "Git state is not tracked on runners.",
-                );
-            }
-            const snapshot = await this.#git.snapshot(root, workspaceId);
+            // A folder on a runner, or a workload user's, is scanned on its own machine.
+            const snapshot = await this.#git.snapshot(
+                root,
+                workspaceId,
+                runnerId === undefined ? {} : { runnerId },
+            );
             sendJson(response, 200, { git: this.#git.resource(snapshot) });
             return true;
         }
@@ -8349,6 +8481,7 @@ export class ApiModule implements AgentModule {
             readonly entity: {
                 readonly path: string;
                 readonly projectId: string;
+                readonly runnerId?: string;
                 readonly workspaceId?: string;
             };
             readonly workspaceId: string;
@@ -8356,12 +8489,11 @@ export class ApiModule implements AgentModule {
         for (const workspaceId of body.workspaceIds) {
             const { projectId, childWorkspaceId, root, runnerId } =
                 await this.#resolveWorkspaceScope(ctx, workspaceId);
-            // A folder on a runner, or a workload user's, has no live Git state; it is simply
-            // absent from the answer.
-            if (this.#runners !== undefined && !this.#runners.native(runnerId)) continue;
+            // A folder on a runner, or a workload user's, is watched and scanned on its machine.
             const entity = {
                 path: root,
                 projectId,
+                ...(runnerId === undefined ? {} : { runnerId }),
                 ...(childWorkspaceId === undefined ? {} : { workspaceId: childWorkspaceId }),
             };
             tracked.push({ entity, workspaceId });
@@ -9555,7 +9687,8 @@ export class ApiModule implements AgentModule {
         // Capture first. A mutation concurrent with the reads is replayed after this cursor, which
         // may cause a harmless dirty/refetch but can never disappear between snapshot and stream.
         const cursor = this.#journal.cursor();
-        const [profile, projects, workspaces, bots] = await Promise.all([
+        // The feed is read alongside the catalog, so stories cost the desktop no extra request.
+        const [profile, projects, workspaces, bots, stories, feed] = await Promise.all([
             this.#team.enabled
                 ? this.#team.currentUser(ctx).then(teamProfileResource)
                 : this.#profile.ensure(ctx).then(profileResource),
@@ -9564,6 +9697,8 @@ export class ApiModule implements AgentModule {
                 ? this.#allWorkspaces(ctx, undefined, false)
                 : Promise.resolve([]),
             this.#bots.list(ctx),
+            this.#storiesBootstrap(ctx),
+            this.#feedBootstrap(ctx),
         ]);
         const shallow = workspaces.filter(
             (workspace: Workspace) => workspace.parentId === workspace.projectRef,
@@ -9610,8 +9745,24 @@ export class ApiModule implements AgentModule {
             ...(this.#userSettings === undefined
                 ? {}
                 : { userSettings: await this.#userSettings.list(ctx) }),
+            ...stories,
+            ...feed,
             cursor,
         };
+    }
+
+    /** The caller's count of open Feed entries, for the badge. */
+    async #feedBootstrap(ctx: Context): Promise<Record<string, unknown>> {
+        const unread = await this.#feed?.unread(ctx);
+        return unread === undefined ? {} : { feedUnread: unread };
+    }
+
+    /** Whether Stories is on for the caller, and exactly the feed `GET /v0/stories` lists. */
+    async #storiesBootstrap(ctx: Context): Promise<Record<string, unknown>> {
+        const stories = this.#stories;
+        if (stories === undefined) return {};
+        const storiesEnabled = await stories.enabled(ctx);
+        return { storiesEnabled, stories: storiesEnabled ? await stories.list(ctx) : [] };
     }
 
     /** Every task oldest first, and the caller's own memberships in the caller's order. */
@@ -9929,6 +10080,7 @@ export class ApiModule implements AgentModule {
                     : { providerRoutes: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#stories === undefined ? {} : { storyFeed: true }),
+                ...(this.#feed === undefined ? {} : { feed: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),
@@ -10242,7 +10394,8 @@ export class ApiModule implements AgentModule {
             });
             return;
         }
-        if (error instanceof RunnerUnavailableError) {
+        // A connection that ended mid-request is the runner going away too: say so, not 500.
+        if (error instanceof RunnerUnavailableError || error instanceof RunnerDisconnectedError) {
             sendJson(response, 503, { code: "runner_unavailable", error: error.message });
             return;
         }
@@ -10417,7 +10570,7 @@ export class ApiModule implements AgentModule {
         if (error instanceof TerminalError && error.code === "not_found") {
             return { code: "not_found", message: notFoundMessage, status: 404 };
         }
-        if (error instanceof RunnerUnavailableError) {
+        if (error instanceof RunnerUnavailableError || error instanceof RunnerDisconnectedError) {
             return { code: "runner_unavailable", message: error.message, status: 503 };
         }
         if (error instanceof LocalExecutionDisabledError) {
@@ -10538,6 +10691,15 @@ const runtimeConfigPatchSchema = Type.Object(
  * A document route's query: only the named fields, each at most once. Positions are non-negative
  * integers and state vectors are base64.
  */
+/** A Feed page size, 1–200, or undefined for the default. */
+function feedLimit(url: URL): number | undefined {
+    const value = url.searchParams.get("limit");
+    if (value === null) return undefined;
+    if (!/^[1-9][0-9]{0,2}$/.test(value) || Number(value) > 200)
+        throw invalidRequest("The feed limit is invalid.");
+    return Number(value);
+}
+
 function documentQuery<const Key extends "seq" | "afterSeq" | "limit" | "stateVector">(
     url: URL,
     allowed: readonly Key[],

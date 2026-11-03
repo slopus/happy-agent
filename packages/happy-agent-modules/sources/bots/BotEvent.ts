@@ -1,6 +1,8 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { Context } from "@steve.kite/stdlib";
 
+import { cuid2Schema } from "@slopus/happy-agent-base";
+
 import { botRecordSchema, botTimestampSchema } from "./Bot.js";
 
 const envelope = {
@@ -11,7 +13,13 @@ const envelope = {
 
 export const botEventSchema = Type.Union([
     Type.Object(
-        { ...envelope, type: Type.Literal("bot_created"), bot: botRecordSchema },
+        {
+            ...envelope,
+            type: Type.Literal("bot_created"),
+            bot: botRecordSchema,
+            /** The agent whose tool call created the bot; absent when a person or Happy did. */
+            creatorAgentId: Type.Optional(cuid2Schema),
+        },
         { additionalProperties: false },
     ),
     Type.Object(

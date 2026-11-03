@@ -36,6 +36,12 @@ import type { GitState } from "./git.js";
 import type { HappyIntegration } from "./integrations.js";
 import type { Message, Run } from "./messages.js";
 import type { StoryChangedPayload, StoryRemovedPayload } from "./stories.js";
+import type {
+    FeedItemCreatedPayload,
+    FeedItemRemovedPayload,
+    FeedItemUpdatedPayload,
+    FeedUnreadUpdatedPayload,
+} from "./feed.js";
 import type { BackgroundProcess } from "./processes.js";
 import type { Profile } from "./profile.js";
 import type { Project } from "./projects.js";
@@ -700,7 +706,11 @@ export type HappyAgentEvent =
     | EventEnvelope<"user_settings.updated", UserSettingsUpdatedPayload>
     | EventEnvelope<"mobile_connector.updated", MobileConnectorUpdatedPayload>
     | EventEnvelope<"story.changed", StoryChangedPayload>
-    | EventEnvelope<"story.removed", StoryRemovedPayload>;
+    | EventEnvelope<"story.removed", StoryRemovedPayload>
+    | EventEnvelope<"feed.item.created", FeedItemCreatedPayload>
+    | EventEnvelope<"feed.item.updated", FeedItemUpdatedPayload>
+    | EventEnvelope<"feed.item.removed", FeedItemRemovedPayload>
+    | EventEnvelope<"feed.unread.updated", FeedUnreadUpdatedPayload>;
 
 /** The name of an event this client build knows. */
 export type HappyAgentEventType = HappyAgentEvent["type"];

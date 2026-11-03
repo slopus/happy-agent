@@ -9,8 +9,8 @@ There are two kinds, both opened by an authenticated client over a WebSocket:
   USB/IP client: it imports the device over the WebSocket, attaches it to the kernel's virtual host
   controller (`vhci-hcd`), and relays the data phase unchanged. Bluetooth is a USB Bluetooth
   adapter carried this way; once attached it is an ordinary controller for BlueZ.
-- **Port** (`kind: "port"`). The daemon listens on `127.0.0.1` on the workspace's machine and
-  announces each connection over the bridge's control WebSocket. The client accepts one by opening
+- **Port** (`kind: "port"`). The daemon listens on `127.0.0.1` on the workspace's machine, through
+  that machine's compute `network.listen`, and announces each connection over the bridge's control WebSocket. The client accepts one by opening
   a WebSocket for it and relaying it to its own local target, or rejects it.
 
 The other direction, a program on the client reaching a port on the workspace's machine, needs
@@ -49,7 +49,9 @@ capability event carries nothing and goes to everyone, because it describes the 
 - [`ProjectsModule`](../projects/README.md), [`WorkspacesModule`](../workspaces/README.md), and
   optionally [`BotsModule`](../bots/README.md) and [`TasksModule`](../tasks/README.md) — whether a
   workspace exists and is usable, where it runs, and when it is archived.
-- [`RunnersModule`](../runners/README.md) — whether this daemon may act on its own machine.
+- [`RunnersModule`](../runners/README.md) — whether this daemon may act on its own machine, for
+  USB, and the folder's machine, whose listener a port bridge uses: this computer's, the workload
+  user's runner, or the runner holding the folder.
 
 ```ts
 const bridges = new BridgesModule(projects, workspaces, runners, bots, tasks);
@@ -65,13 +67,19 @@ which replaces that boundary so a test can attach a device without `vhci-hcd`.
 
 ## What a workspace can bridge
 
-Bridges act on the daemon's own machine, so only a host workspace can have them:
+USB acts on the daemon's own kernel, so only a host workspace can attach a device. A port bridge
+listens on whichever machine holds the folder:
 
 | Workspace runs | USB and Bluetooth           | Workspace to local  | Local to workspace  |
 | -------------- | --------------------------- | ------------------- | ------------------- |
 | On the host    | When the machine probe says | Yes                 | Yes                 |
 | In Docker      | `container_compute`         | `container_compute` | `container_compute` |
-| On a runner    | `runner_compute`            | `runner_compute`    | Yes                 |
+| On a runner    | `runner_compute`            | Yes                 | Yes                 |
+
+`runner_compute` appears on USB and Bluetooth only, and is permanent: runners do not support them,
+and clients hide those options for such a workspace. A runner older than protocol 4 cannot listen
+on a chosen port, which a port bridge refuses as `bridge_unavailable` asking for the runner to be
+updated.
 
 The machine probe answers `unsupported_platform` off Linux, `vhci_not_loaded` when the kernel has
 the module but it is not loaded, `vhci_missing` when it has none, and `permission_denied` when the
@@ -104,7 +112,8 @@ request; `not_found` for a workspace, bridge, or connection the caller does not 
 `not_initialized` for a workspace still being prepared; `conflict` for an archived workspace or an
 ID already open; `bridge_unavailable`, with the capability's `reason`, for a workspace that cannot
 bridge that kind; `bridge_limit`; `port_unavailable` for a port in use or not bindable; and
-`unavailable` once the daemon is shutting down.
+`unavailable` once the daemon is shutting down. A runner that is not connected surfaces as the
+runners module's `RunnerUnavailableError`, which the API answers `503 runner_unavailable`.
 
 After the upgrade, a failure closes the WebSocket with a code instead: `4400` for a protocol
 violation, `4404` for an exporter that refused or misidentified the device, `4408` for an import
@@ -114,8 +123,9 @@ kernel refusing the attachment.
 ## Security
 
 - A bridge is opened only by an authenticated client, for that client, and ends with its WebSocket.
-- Port listeners bind `127.0.0.1` only. On Linux a listener checks the kernel's socket table and
-  closes any connection that does not come from a process running as the daemon's own user.
+- Port listeners bind `127.0.0.1` only, with `ownerOnly`: on Linux the machine's listener checks
+  its kernel's socket table and closes any connection that does not come from a process running
+  as the user serving that machine — the daemon's, the workload user's, or the runner's.
 - Neither kind is visible to another user: listing, events, accepting, and closing are scoped to
   the owner.
 - An attached USB device belongs to the whole kernel of the workspace's machine, and its device

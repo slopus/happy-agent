@@ -3,6 +3,16 @@ import type { createConnection } from "node:net";
 import type { Duplex } from "node:stream";
 import WebSocket, { type RawData } from "ws";
 
+/** The runner's connection to its daemon. */
+export interface RunnerWebSocketChannel extends RunnerChannel {
+    /**
+     * Resolves once the WebSocket has closed: the daemon answered the close, or the connection
+     * failed. A runner that is stopping waits on it before closing its carrier, so its goodbye
+     * reaches the daemon instead of vanishing with the carrier.
+     */
+    readonly ended: Promise<void>;
+}
+
 /** Why a connection attempt did not produce a channel. */
 export class RunnerConnectError extends Error {
     override readonly name = "RunnerConnectError";
@@ -29,7 +39,7 @@ export async function connectRunnerWebSocket(
     token: string,
     /** Opens the connection the WebSocket runs over, when the address alone cannot. */
     dial?: () => Promise<Duplex>,
-): Promise<RunnerChannel> {
+): Promise<RunnerWebSocketChannel> {
     let socket: Duplex | undefined;
     if (dial !== undefined) {
         try {
@@ -81,8 +91,12 @@ export async function connectRunnerWebSocket(
     return clientRunnerChannel(webSocket);
 }
 
-function clientRunnerChannel(webSocket: WebSocket): RunnerChannel {
+function clientRunnerChannel(webSocket: WebSocket): RunnerWebSocketChannel {
     let closed = false;
+    let resolveEnded!: () => void;
+    const ended = new Promise<void>((resolve) => {
+        resolveEnded = resolve;
+    });
     let receiver: Parameters<RunnerChannel["receive"]>[0] | undefined;
     let pendingReason: string | undefined;
     const finish = (reason: string) => {
@@ -105,6 +119,7 @@ function clientRunnerChannel(webSocket: WebSocket): RunnerChannel {
         receiver?.frame(rawDataBytes(data));
     });
     webSocket.on("close", (code, reason) => {
+        resolveEnded();
         const text = reason.toString("utf8");
         finish(
             text.length > 0
@@ -115,6 +130,7 @@ function clientRunnerChannel(webSocket: WebSocket): RunnerChannel {
     webSocket.on("error", (error) => end(`The connection to the daemon failed: ${error.message}`));
     webSocket.pause();
     return {
+        ended,
         send(frame) {
             if (closed) return;
             webSocket.send(frame, { binary: true, compress: false }, (error) => {

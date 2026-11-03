@@ -9,6 +9,7 @@ import { ComputeModule } from "../../sources/compute/index.js";
 import type { ConfigModule } from "../../sources/config/index.js";
 import { RunnersModule } from "../../sources/runners/index.js";
 import { SecretsModule } from "../../sources/secrets/index.js";
+import { secretsMigrations } from "../../sources/secrets/SecretDatabase.js";
 import { governedTree } from "../botSettings/support.js";
 import { FakeCompute } from "../compute/support/FakeCompute.js";
 import { testConfig } from "../support/computeModule.js";
@@ -61,7 +62,7 @@ function runnerMachine(cwd: string) {
 
 describe("work on this machine as Linux users", () => {
     it("routes a bot with a user of its own to that user's runner, and every other agent to the workload user's", async () => {
-        const tree = await governedTree("execution-users-routing");
+        const tree = await governedTree("execution-users-routing", secretsMigrations);
         cleanups.push(() => tree.close());
         const config = withExecution({ user: "happy-work", bots: { [GUEST_BOT]: "happy-guest" } });
         const runners = new RunnersModule(config, tree.botSettings);
@@ -108,7 +109,8 @@ describe("work on this machine as Linux users", () => {
         ]);
         // Nothing ran inside the daemon process.
         expect(hostMachines).toEqual([]);
-        // Commands there cannot select secrets, which stay with the daemon.
+        // Commands there resolve a selection through the daemon's catalog, which knows no such
+        // secret here.
         const machine = await compute.resolve(
             onThisMachine(tree.ctx, "/home/happy-work/project"),
             "collaboratoragent",
@@ -119,7 +121,7 @@ describe("work on this machine as Linux users", () => {
                 permissions: computePermissions("workspace_write"),
                 secrets: ["deploy"],
             }),
-        ).rejects.toThrow("Secrets are not available");
+        ).rejects.toThrow("Secret 'deploy' is not attached to this agent.");
     });
 
     it("starts no agent work until it knows which bots run as their own user", async () => {

@@ -89,6 +89,18 @@ small stdio transport. Pool keys include the runner for stdio servers. Folders o
 keep the SDK's own stdio transport, because it limits the inherited environment to a safe subset,
 and the daemon's environment can hold provider credentials; a runner's environment holds none.
 
+## User-wide stdio servers start on each agent's runner
+
+User-wide stdio servers used to start on the default runner, so with two runners an agent on the
+other one used a filesystem or build server on the wrong machine, and with `default = "local"` an
+agent on a runner used servers on the daemon's machine. Steve asked for MCP to run on the folder's
+compute. The user-wide catalog now has one copy per machine: `global` for this machine, started
+eagerly while work may run here, and `global:runner:<id>` for each runner that has an agent,
+created when its first agent attaches and removed when its last one leaves. Pool keys already
+include the runner, so each (server, machine) pair is one process, and a workspace's own server
+with the same configuration on that runner shares it. HTTP servers are still reached from the
+daemon; making `localhost` mean the runner would need a tunnel per server, which was not worth it.
+
 ## A runner's servers fail while it is away and return with it
 
 A server's stream on a runner survives a reconnect within the runner's lease, so a request sent

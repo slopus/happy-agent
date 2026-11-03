@@ -95,3 +95,23 @@ agent's slash-command catalog failed and every reply that carried it failed with
 replies to mutations that had already committed. Discovery now logs that the machine is
 unavailable and offers no skills; the catalog is discovered again before the agent's next turn.
 A machine that exists but cannot be read still reports its own failure.
+
+## Agents on runners get the skills too, as copies on their machine
+
+Discovery on a runner used to find only the runner's own `~/.agents/skills` and the repository's
+`.agents/skills`: the builtin skills, the installed global skills, and configured folders are
+paths on the daemon's disk, so they were skipped, and the prompt pointed at documentation the
+agent could not read. A skill is a set of files the agent reads and runs where it works, so
+pointing at the daemon would not help. Steve asked for skills to reach the runner. The daemon now
+copies its documentation, native skills, and the installation's enabled skills into
+`<home>/.happy-agent/` on the runner with ordinary filesystem calls, content-addressed so
+unchanged files are never resent. The private `~/.happy-runner` was not used because agents
+cannot read it. Both sides derive the paths from the home the runner reports, so no protocol
+field was added.
+
+Letting the runner install its own release's docs and native skills at startup was tried first.
+The daemon copying them is better: it works with every runner version, the documentation matches
+the daemon the agent actually talks to, and a stdio runner started by a test no longer writes
+into the real account's home. Copying hands a runner whatever the person put in their skills, so
+it is on by default and `sync_skills = false` turns it off for a runner that should not have them;
+the documentation and native skills are the product's own and always go.

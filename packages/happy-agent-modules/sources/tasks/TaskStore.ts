@@ -15,6 +15,7 @@ interface TaskRow {
     readonly id: string;
     readonly name: string;
     readonly name_configured: number | string | boolean;
+    readonly short_name: string | null;
     readonly folder_name: string;
     readonly owner_user_id: string | null;
     readonly creator_agent_id: string | null;
@@ -69,12 +70,13 @@ export async function insertTask(ctx: Context, task: TaskRecord): Promise<void> 
     await agentDatabaseRun(
         ctx.db,
         sql`INSERT INTO ${sql.raw(TASKS_TABLE)} (
-            id, name, name_configured, folder_name, owner_user_id, creator_agent_id,
+            id, name, name_configured, short_name, folder_name, owner_user_id, creator_agent_id,
             workspace_id, workspace_version, workspace_updated_at,
             agent_id, path, runner_id, status, version,
             created_at, updated_at, archived_at
         ) VALUES (
-            ${task.id}, ${task.name}, ${task.nameConfigured ? 1 : 0}, ${task.folderName},
+            ${task.id}, ${task.name}, ${task.nameConfigured ? 1 : 0}, ${task.shortName ?? null},
+            ${task.folderName},
             ${task.ownerUserId ?? null},
             ${task.creatorAgentId ?? null}, ${task.workspaceId}, ${task.workspaceVersion},
             ${task.workspaceUpdatedAt}, ${task.agentId}, ${task.path}, ${task.runnerId ?? null},
@@ -95,7 +97,7 @@ export async function updateTask(
         ctx.db,
         sql`UPDATE ${sql.raw(TASKS_TABLE)} SET
             name = ${task.name}, name_configured = ${task.nameConfigured ? 1 : 0},
-            status = ${task.status},
+            short_name = ${task.shortName ?? null}, status = ${task.status},
             workspace_version = ${task.workspaceVersion},
             workspace_updated_at = ${task.workspaceUpdatedAt},
             version = ${task.version},
@@ -239,6 +241,7 @@ function taskFromRow(row: TaskRow): TaskRecord {
         id: row.id,
         name: row.name,
         nameConfigured: Number(row.name_configured) === 1 || row.name_configured === true,
+        ...(row.short_name === null ? {} : { shortName: row.short_name }),
         folderName: row.folder_name,
         ...(row.owner_user_id === null ? {} : { ownerUserId: row.owner_user_id }),
         ...(row.creator_agent_id === null ? {} : { creatorAgentId: row.creator_agent_id }),

@@ -109,6 +109,7 @@ export class BotsModule implements AgentModule {
     readonly #projects: ProjectsModule;
     readonly #workspaces: WorkspacesModule;
     readonly #listeners = new Set<BotEventListener>();
+    readonly #transactionalListeners = new Set<BotEventListener>();
     readonly #durableFunctions: DurableFunctionsModule;
     readonly #titles: TitlesModule;
     readonly #runners: RunnersModule;
@@ -174,9 +175,10 @@ export class BotsModule implements AgentModule {
                         },
                     );
                     if (name === null) return null;
-                    const title = name ?? this.#titles.fallbackName(message, true);
+                    const title = name?.title ?? this.#titles.fallbackName(message, true);
                     ctx.lifetime?.throwIfAborted();
                     if (title === undefined) return null;
+                    const short = name?.short;
                     await ctx.inTx(async (txCtx) => {
                         const current = await this.#required(txCtx, botId);
                         if (current.nameConfigured || current.status !== "active") return;
@@ -185,6 +187,7 @@ export class BotsModule implements AgentModule {
                             ...bot,
                             name: title,
                             nameConfigured: true,
+                            ...(short === undefined ? {} : { shortName: short }),
                         }));
                     });
                     return null;
@@ -308,6 +311,12 @@ export class BotsModule implements AgentModule {
         return () => this.#listeners.delete(listener);
     }
 
+    /** Participate in a bot change before its transaction commits. */
+    onEventTransactional(listener: BotEventListener): BotUnsubscribe {
+        this.#transactionalListeners.add(listener);
+        return () => this.#transactionalListeners.delete(listener);
+    }
+
     async list(ctx: Context): Promise<readonly BotRecord[]> {
         return structuredClone(await readBots(ctx));
     }
@@ -337,8 +346,8 @@ export class BotsModule implements AgentModule {
      * the username it settles on cannot go stale before the insert. The folder is made last:
      * a name the database refuses aborts the transaction before anything reaches the disk.
      */
-    async create(ctx: Context, input: CreateBotInput): Promise<BotRecord> {
-        return (await this.#create(ctx, input)).bot;
+    async create(ctx: Context, input: CreateBotInput, creatorAgentId?: string): Promise<BotRecord> {
+        return (await this.#create(ctx, input, undefined, undefined, creatorAgentId)).bot;
     }
 
     /** Reports creation inside its transaction so a retry cannot repeat post-creation work. */
@@ -351,6 +360,7 @@ export class BotsModule implements AgentModule {
         input: CreateBotInput,
         systemKey?: BotSystemKey,
         initialAvatar?: BotInitialAvatar,
+        creatorAgentId?: string,
     ): Promise<BotCreation> {
         if (!Value.Check(createBotInputSchema, input)) {
             throw new BotInputError();
@@ -463,11 +473,12 @@ export class BotsModule implements AgentModule {
                 throw new BotConflictError("The bot folder path is already in use.");
             }
             await machine.fs.mkdir(PRODUCT, path, { recursive: true });
-            this.#publish(txCtx, {
+            await this.#publish(txCtx, {
                 eventId: globalThis.crypto.randomUUID(),
                 at: now,
                 type: "bot_created",
                 bot,
+                ...(creatorAgentId === undefined ? {} : { creatorAgentId }),
             });
             return { bot: structuredClone(bot), created: true };
         });
@@ -691,7 +702,8 @@ export class BotsModule implements AgentModule {
     async #rename(ctx: Context, current: BotRecord, name: string): Promise<BotRecord> {
         if (current.name === name && current.nameConfigured) return current;
         await this.#setAgentTitle(ctx, current.agentId, name);
-        return await this.#change(ctx, current, (bot) => ({
+        // A generated short name described the old name; the reader falls back to the new one.
+        return await this.#change(ctx, current, ({ shortName: _short, ...bot }) => ({
             ...bot,
             name,
             nameConfigured: true,
@@ -760,7 +772,7 @@ export class BotsModule implements AgentModule {
             const current = await readBot(txCtx, botId);
             if (current === undefined) return;
             await deleteBot(txCtx, botId);
-            this.#publish(txCtx, {
+            await this.#publish(txCtx, {
                 eventId: globalThis.crypto.randomUUID(),
                 at: Math.max(Date.now(), current.updatedAt + 1),
                 type: "bot_deleted",
@@ -983,7 +995,7 @@ export class BotsModule implements AgentModule {
         }
         if (!Value.Check(botRecordSchema, next)) throw new Error("The bot mutation is invalid.");
         const stored = await updateBot(ctx, next, current.version);
-        this.#publish(ctx, {
+        await this.#publish(ctx, {
             eventId: globalThis.crypto.randomUUID(),
             at: stored.updatedAt,
             type: "bot_updated",
@@ -1066,7 +1078,7 @@ export class BotsModule implements AgentModule {
         if (bot.version !== expectedVersion) throw new BotConflictError("The bot has changed.");
     }
 
-    #publish(ctx: Context, event: BotEvent): void {
+    async #publish(ctx: Context, event: BotEvent): Promise<void> {
         if (!Value.Check(botEventSchema, event)) throw new Error("The bot event is invalid.");
         const frozen = deepFreeze(structuredClone(event)) as BotEvent;
         afterCommit(ctx, async (eventCtx) => {
@@ -1082,6 +1094,7 @@ export class BotsModule implements AgentModule {
                 }
             }
         });
+        for (const listener of [...this.#transactionalListeners]) await listener(ctx, frozen);
     }
 
     #requireAgents(): AgentSystemRef {

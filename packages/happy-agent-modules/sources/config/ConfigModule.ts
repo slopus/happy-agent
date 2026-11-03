@@ -5915,7 +5915,7 @@ function readRunners(value: TomlValue | undefined): RunnersConfig | undefined {
         }
         if (!isTable(item)) throw new Error(`runners.${key} must be a TOML table.`);
         for (const field of Object.keys(item)) {
-            if (field !== "name" && field !== "token") {
+            if (field !== "name" && field !== "token" && field !== "sync_skills") {
                 throw new Error(`runners.${key}.${field.slice(0, 64)} is not a runner setting.`);
             }
         }
@@ -5927,7 +5927,14 @@ function readRunners(value: TomlValue | undefined): RunnersConfig | undefined {
                 `runners.${key}.token must be 43 characters of letters, digits, "-", and "_".`,
             );
         }
-        entries[key] = { name: item.name as string, token: item.token as string };
+        if (item.sync_skills !== undefined && typeof item.sync_skills !== "boolean") {
+            throw new Error(`runners.${key}.sync_skills must be true or false.`);
+        }
+        entries[key] = {
+            name: item.name as string,
+            token: item.token as string,
+            ...(item.sync_skills === undefined ? {} : { syncSkills: item.sync_skills }),
+        };
     }
     if (Object.keys(entries).length > MAX_RUNNERS) {
         throw new Error(`At most ${String(MAX_RUNNERS)} runners may be configured.`);

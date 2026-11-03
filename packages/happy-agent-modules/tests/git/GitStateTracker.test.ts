@@ -220,6 +220,40 @@ describe("GitStateTracker scheduling", () => {
         }
     });
 
+    it("watches only the entries of a folder that is not a repository until Git appears", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const scan = testScan();
+        scan.repository = false;
+        const treeRoots: string[] = [];
+        const tree = {
+            dispose: () => undefined,
+            watch: (root: string) => {
+                treeRoots.push(root);
+                return () => undefined;
+            },
+        } as unknown as WorkingTreeWatcher;
+        const tracker = new GitStateTracker(createRootContext(), scan.run, owner(), tree);
+        try {
+            await startTracking(tracker);
+            // A scratch folder full of caches must not cost a kernel watch per directory.
+            expect(treeRoots).toEqual([]);
+
+            scan.repository = true;
+            tracker.markChanged(entity);
+            await advance(150);
+            await advance(0);
+            expect(treeRoots).toEqual([entity.path]);
+
+            // Further scans keep the one working-tree watch.
+            tracker.markChanged(entity);
+            await advance(150);
+            expect(treeRoots).toEqual([entity.path]);
+        } finally {
+            tracker.dispose();
+        }
+    });
+
     it("runs at most two full repository scans concurrently", async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
@@ -299,6 +333,8 @@ describe("gitReferenceChangeAffectsSnapshot", () => {
 
 interface TestScan {
     diffReads: number;
+    /** Whether the folder is a repository; Git fails outside one. */
+    repository: boolean;
     fullStatusReads: number;
     pathStatusDirty: boolean;
     pathStatusReads: number;
@@ -312,9 +348,13 @@ function testScan(): TestScan {
         fullStatusReads: 0,
         pathStatusDirty: false,
         pathStatusReads: 0,
+        repository: true,
         statusEntries: [],
         run: async (options) => {
             const command = options.args[0];
+            if (!scan.repository) {
+                throw new Error("fatal: not a git repository (or any of the parent directories)");
+            }
             if (command === "status") {
                 if (options.args.includes("--branch")) {
                     scan.fullStatusReads += 1;

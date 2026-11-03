@@ -1,10 +1,12 @@
+import { open } from "node:fs/promises";
+
 import {
     agentDatabaseRows,
     agentDatabaseRun,
     type AgentModuleMigration,
 } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
-import { storyLayersSchema } from "@slopus/happy-agent-client";
+import { storyLayersSchema, storyMediaLayerInputSchema } from "@slopus/happy-agent-client";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
@@ -16,6 +18,13 @@ const mediaSchema = Type.Object({
     size: Type.Integer(),
     sha256: Type.String(),
 });
+/** One media layer: its own stored file and its own placement, never composed into another. */
+export const storyMediaLayerRecordSchema = Type.Composite([
+    Type.Object({ id: Type.String(), media: mediaSchema }),
+    Type.Omit(storyMediaLayerInputSchema, ["uploadId"]),
+]);
+export type StoryMediaLayerRecord = Static<typeof storyMediaLayerRecordSchema>;
+
 /**
  * A story as stored: what is served, plus the snapshots its media is kept under. A repost names
  * the story it reposts and its reposter (`null` standalone), and copies where that was posted.
@@ -31,6 +40,8 @@ export const storyRecordSchema = Type.Object({
     userId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     round: Type.Optional(mediaSchema),
     layers: Type.Optional(storyLayersSchema),
+    /** In paint order; a repost holds the original's layers, then its own, by reference. */
+    mediaLayers: Type.Optional(Type.Array(storyMediaLayerRecordSchema)),
     postedAt: Type.Integer(),
     expiresAt: Type.Integer(),
 });
@@ -203,33 +214,64 @@ export type StoryReply = {
     readonly createdAt: number;
 };
 
+/** Bytes at an offset of an MP4 being checked; fewer at its end. */
+type ReadMp4 = (at: number, length: number) => Promise<Buffer>;
+
+/** The most box headers one check reads, so a file of tiny boxes cannot keep it busy. */
+const MAX_MP4_BOXES = 100_000;
+
 /** An MP4 opens with its ftyp box, and an H.264 track is an avc1 or avc3 sample entry. */
-export function isH264Mp4(bytes: Uint8Array): boolean {
+export async function isH264Mp4(bytes: Uint8Array): Promise<boolean> {
     const file = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const scan = (start: number, end: number, path: readonly string[]): boolean => {
+    return await hasH264Track(async (at, length) => file.subarray(at, at + length), file.length);
+}
+
+/**
+ * What a stored file can be as story media, from its box headers alone, never its frame data:
+ * an ISO box file is an H.264 video, an AVIF picture, or refused; anything else may be a picture.
+ */
+export async function storedMediaKind(path: string): Promise<"video" | "avif" | "image" | "none"> {
+    const handle = await open(path, "r");
+    try {
+        const read: ReadMp4 = async (at, length) => {
+            const { buffer, bytesRead } = await handle.read(Buffer.alloc(length), 0, length, at);
+            return buffer.subarray(0, bytesRead);
+        };
+        const head = (await read(4, 8)).toString("latin1");
+        if (!head.startsWith("ftyp")) return "image";
+        if (/^ftypavi[fs]$/u.test(head)) return "avif";
+        return (await hasH264Track(read, (await handle.stat()).size)) ? "video" : "none";
+    } finally {
+        await handle.close();
+    }
+}
+
+async function hasH264Track(read: ReadMp4, length: number): Promise<boolean> {
+    let boxes = 0;
+    const scan = async (start: number, end: number, path: readonly string[]): Promise<boolean> => {
         for (let at = start; at + 8 <= end; ) {
-            const wide = file.readUInt32BE(at) === 1,
+            if (++boxes > MAX_MP4_BOXES) return false;
+            const head = await read(at, 16);
+            if (head.length < 8) return false;
+            const wide = head.readUInt32BE(0) === 1,
                 header = wide ? 16 : 8;
-            if (at + header > end) return false;
-            const size = wide
-                ? Number(file.readBigUInt64BE(at + 8))
-                : file.readUInt32BE(at) || end - at;
+            if (at + header > end || head.length < header) return false;
+            const size = wide ? Number(head.readBigUInt64BE(8)) : head.readUInt32BE(0) || end - at;
             if (size < header || size > end - at) return false;
-            const kind = file.toString("latin1", at + 4, at + 8);
+            const kind = head.toString("latin1", 4, 8);
             if (
                 kind === path[0] &&
                 (path.length === 1 ||
-                    scan(at + header + (kind === "stsd" ? 8 : 0), at + size, path.slice(1)))
+                    (await scan(at + header + (kind === "stsd" ? 8 : 0), at + size, path.slice(1))))
             )
                 return true;
             at += size;
         }
         return false;
     };
-    return (
-        file.toString("latin1", 4, 8) === "ftyp" &&
-        ["avc1", "avc3"].some((kind) =>
-            scan(0, file.length, ["moov", "trak", "mdia", "minf", "stbl", "stsd", kind]),
-        )
-    );
+    if ((await read(4, 4)).toString("latin1") !== "ftyp") return false;
+    for (const kind of ["avc1", "avc3"])
+        if (await scan(0, length, ["moov", "trak", "mdia", "minf", "stbl", "stsd", kind]))
+            return true;
+    return false;
 }

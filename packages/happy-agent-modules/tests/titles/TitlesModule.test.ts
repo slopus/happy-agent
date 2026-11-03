@@ -124,7 +124,7 @@ describe("TitlesModule naming", () => {
         const test = await titles([textTurn("<title>Release Steward</title>")]);
         await expect(
             test.module.suggestBotName(ctx, "Watch our releases.", "scripted"),
-        ).resolves.toBe("Release Steward");
+        ).resolves.toEqual({ title: "Release Steward" });
         const session = test.provider.sessions[0]!;
         expect(session.options.tools).toEqual([]);
         expect(session.options.inferenceMaxRetries).toBe(0);
@@ -140,7 +140,65 @@ describe("TitlesModule naming", () => {
         ["a".repeat(60), "a".repeat(40)],
     ])("bounds bot names more tightly than chat titles: %s", async (answer, expected) => {
         const test = await titles([textTurn(`<title>${answer}</title>`)]);
-        await expect(test.module.suggestBotName(ctx, "Track releases.")).resolves.toBe(expected);
+        await expect(test.module.suggestBotName(ctx, "Track releases.")).resolves.toEqual({
+            title: expected,
+        });
+    });
+
+    it("asks for a short title in the same request, removes emoji, and discards one over budget, never cutting it", async () => {
+        const answer = (short: string) =>
+            textTurn(`<title>Release Steward</title>\n<short>${short}</short>`);
+        const test = await titles([answer("👩‍💻 Release 🚀 v2!"), answer("Release Steward")]);
+        await expect(test.module.suggestBotName(ctx, "Watch our releases.")).resolves.toEqual({
+            title: "Release Steward",
+            short: "Release v2",
+        });
+        await expect(test.module.suggestBotName(ctx, "Watch our releases.")).resolves.toEqual({
+            title: "Release Steward",
+        });
+        expect(test.provider.sessions).toHaveLength(2);
+        const request = JSON.stringify(test.provider.sessions[0]!.requests[0]);
+        expect(request).toContain("one word in Title Case, or two only if they fit within");
+        expect(request).toContain("10 characters including the space");
+        expect(request).toContain("no emoji");
+        expect(request).toContain("<short>Name</short>");
+        expect(request.toLowerCase()).not.toContain("stor");
+    });
+
+    it.each([
+        ["dark mode", "Dark Mode"],
+        ["iPhone app", "iPhone App"],
+        ["API keys", "API Keys"],
+        ["release notes", undefined],
+    ])(
+        "capitalizes lowercase short-title words, keeps other casing, discards over 10: %s",
+        async (short, expected) => {
+            const test = await titles([textTurn(`<title>A title</title><short>${short}</short>`)]);
+            await expect(
+                test.module.suggestNames(ctx, {
+                    firstMessage: "Name this.",
+                    wanted: { title: true, short: true },
+                }),
+            ).resolves.toEqual({
+                title: "A title",
+                ...(expected === undefined ? {} : { short: expected }),
+            });
+        },
+    );
+
+    it("names a task's title and short title in one request", async () => {
+        const test = await titles([
+            textTurn("<title>Onboarding flow changes</title><short>Onboarding</short>"),
+        ]);
+        await expect(
+            test.module.suggestNames(ctx, {
+                firstMessage: "Rework the onboarding flow.",
+                wanted: { title: true, short: true },
+            }),
+        ).resolves.toEqual({ title: "Onboarding flow changes", short: "Onboarding" });
+        expect(test.provider.sessions).toHaveLength(1);
+        const request = JSON.stringify(test.provider.sessions[0]!.requests[0]);
+        expect(request).toContain("one word in Title Case, or two only if they fit within");
     });
 
     it("names a chat on the cheapest model of its own account, outside the chat's own session", async () => {

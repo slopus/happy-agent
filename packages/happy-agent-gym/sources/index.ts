@@ -26,6 +26,7 @@ export {
     type HappyAgentSocketTransport,
 } from "./HappyAgentDuplex.js";
 export { createGymCompute, type GymMachineConnection } from "./createGymCompute.js";
+export { GymRunner, type GymRunnerOptions } from "./GymRunner.js";
 export * from "./chaos/index.js";
 export {
     createGymHome,

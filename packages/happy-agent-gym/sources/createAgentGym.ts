@@ -16,6 +16,7 @@ import { startHappyAgentDaemon, type HappyAgentDaemon } from "@slopus/happy-agen
 import type { ConfigInferenceOverride } from "@slopus/happy-agent-modules";
 
 import { createGymCompute, type GymMachineConnection } from "./createGymCompute.js";
+import { GymRunner, type GymRunnerOptions } from "./GymRunner.js";
 import {
     createGymHome,
     resolveFixturePath,
@@ -219,6 +220,11 @@ export interface AgentGym {
     /** Every file in the workspace, relative to it and sorted. */
     listFiles(): Promise<readonly string[]>;
 
+    /**
+     * Start a real `happy-agent runner` process that dials this gym's daemon with `token`. The gym
+     * kills it when it is disposed. Configure the runner with `config` first.
+     */
+    startRunner(options: GymRunnerOptions): Promise<GymRunner>;
     /** Stop the daemon and start it again on the same folder, the way a restart really happens. */
     restart(options?: { readonly whileStopped?: () => Promise<void> }): Promise<void>;
     /** Stop everything and delete the folder. Always call this, including when a test fails. */
@@ -255,6 +261,7 @@ class AgentGymInstance implements AgentGym {
     #defaultSessionId: string | undefined;
     #rootWorkspaceId: string | undefined;
     readonly #workspaceIdsByPath = new Map<string, string>();
+    readonly #runners = new Set<GymRunner>();
 
     constructor(home: GymHome, options: AgentGymOptions) {
         this.#home = home;
@@ -565,8 +572,16 @@ class AgentGymInstance implements AgentGym {
         await this.start();
     }
 
+    async startRunner(options: GymRunnerOptions): Promise<GymRunner> {
+        const runner = await GymRunner.start(this.socketPath, options);
+        this.#runners.add(runner);
+        return runner;
+    }
+
     async dispose(): Promise<void> {
         await this.#daemon?.close().catch(() => undefined);
+        await Promise.all([...this.#runners].map(async (runner) => await runner.kill()));
+        this.#runners.clear();
         this.#daemon = undefined;
         this.#client = undefined;
         this.#http = undefined;

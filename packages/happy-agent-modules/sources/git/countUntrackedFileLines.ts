@@ -60,3 +60,15 @@ export async function countUntrackedFileLines(
         await handle.close().catch(() => undefined);
     }
 }
+
+/**
+ * The same count over bytes already read, for a file read whole from another machine. `bytes`
+ * must be the entire file.
+ */
+export function countLinesInBytes(bytes: Uint8Array): UntrackedFileCount {
+    if (bytes.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return { binary: true, inexact: false };
+    let lines = 0;
+    for (const byte of bytes) if (byte === 0x0a) lines += 1;
+    if (bytes.byteLength > 0 && bytes[bytes.byteLength - 1] !== 0x0a) lines += 1;
+    return { binary: false, inexact: false, insertions: lines };
+}

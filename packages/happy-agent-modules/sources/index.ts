@@ -623,6 +623,9 @@ export * from "./userInput/index.js";
 // Stories: a task's or bot's result, shared for a day.
 export * from "./stories/index.js";
 
+// Feed: each person's list of what happened, folded per subject until they look.
+export * from "./feed/index.js";
+
 // Observation: what the agent records about itself — logs, traces, and a readable history dump.
 export * from "./observation/index.js";
 

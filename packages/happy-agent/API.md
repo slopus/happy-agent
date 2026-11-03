@@ -658,6 +658,13 @@ until its person turns the `stories` setting on, and it ignores `story.changed` 
 like every event type it does not recognize.
 The capability is deliberately not `stories`, which named the Stories removed below.
 
+The Feed is additive and does not increment the protocol version. A daemon that serves the routes
+under `/v0/feed` and the `feed.*` events reports `capabilities.feed: true` from health and
+includes `feedUnread` in desktop bootstrap. Older daemons omit both, answer the routes with
+`404`, and never emit the events; clients then show no Feed. `POST /v0/tasks/:taskId/read` and
+`POST /v0/agents/:agentId/read` keep their requests and responses; on a daemon with the Feed they
+also mark the subject seen.
+
 Provider routes are additive and do not increment the protocol version. A daemon that serves
 `GET /v0/provider-routes` and `POST /v0/provider-routes/:routeId/use` reports
 `capabilities.providerRoutes: true` from health. Older daemons omit it and answer the routes with
@@ -1268,9 +1275,11 @@ While runners are configured and one of them is the default:
   `503 runner_unavailable`, naming the runner. Nothing falls back to this machine.
 - Repository tokens never reach a runner. Git on a runner reaches the remote through a loopback
   address on the runner that leads back over the runner connection to the daemon, which adds the
-  token itself, exactly as it does for Git on this machine. Attached secrets stay on the daemon:
-  an agent command on a runner that selects attached secrets is refused, with a message saying
-  secrets are not available on runners yet.
+  token itself, exactly as it does for Git on this machine. Attached secrets are resolved on the
+  daemon: an agent command on a runner that selects attached secrets receives exactly the selected
+  values with that one command, and the runner forgets them once the process has started. A
+  runner too old to receive them refuses the command, asking for the runner to be updated. A
+  command in a container, on a runner or here, that selects attached secrets is refused.
 - A runner may run another operating system than the daemon. Paths on it follow its own rules, such
   as `C:\Users\happy\happy\workspaces\...` on a Windows runner under a Linux daemon, and folders
   are laid out as that system lays out its own. An agent working in a folder on a runner is told
@@ -5711,9 +5720,12 @@ carried; `"usb"` is the only value today. Codes:
   (`btusb`).
 - `container_compute` — the workspace runs in a Docker container, which has neither the host's
   devices nor its loopback network.
-- `runner_compute` — the workspace is on a runner, where bridges are not available yet.
+- `runner_compute` — the workspace is on a runner. Reported on `usb` and `bluetooth` only, and
+  permanent: runners do not support USB or Bluetooth, so clients hide those options for a
+  workspace that reports this code rather than offering them disabled.
 
-`localToWorkspace` is unavailable only with `container_compute`. `cursor` is captured before the
+`localToWorkspace` is unavailable only with `container_compute`, and `workspaceToLocal` likewise:
+a port bridge on a runner workspace listens on the runner. `cursor` is captured before the
 read; follow events from it. The daemon repeats its machine probe about once a minute and
 publishes `bridges.capabilities.updated` when the answer changes; clients then reread the
 capabilities they show. Bot and task workspaces are addressable here. An unknown workspace is
@@ -5803,11 +5815,14 @@ connection it accepts to the client. Query parameters:
 - `port` — required; 1–65535, or `0` to let the daemon choose.
 - `id`, `name` — as for USB.
 
-The listener binds `127.0.0.1` only, before the upgrade: a port in use or not bindable by the
-daemon's user is `409 port_unavailable`. Other rejections match USB; the limits are 32 open port
-bridges per workspace and 256 per daemon. On Linux the listener accepts only connections from
-processes running as the daemon's own OS user and closes any other at once. On other platforms,
-every local user of that machine can connect.
+The listener binds `127.0.0.1` on the workspace's machine only, before the upgrade: a port in use
+or not bindable there is `409 port_unavailable`. A runner too old for port bridges is
+`409 bridge_unavailable`, asking for the runner to be updated, and a runner that is not connected is `503 runner_unavailable`. Other
+rejections match USB; the limits are 32 open port bridges per workspace and 256 per daemon. On
+Linux the listener accepts only connections from processes running as the OS user that serves the
+workspace's machine — the daemon's own user, the workload user, or the runner's user — and closes
+any other at once. On other platforms, every local user of that machine can connect. A runner that
+comes back without the listener, for example after it restarted, ends the bridge with `failed`.
 
 Every message on this control WebSocket is a JSON text message of at most 16 KiB. The daemon sends:
 
@@ -8417,7 +8432,9 @@ a stale indefinitely-running block.
 
 Marks the agent read: clears `unread`. The body is `{}`, optionally with a `mutationId`. On a
 task's agent it also clears the caller's own task membership `unread`, as
-`POST /v0/tasks/:taskId/read` does, with its `task.membership.updated` event.
+`POST /v0/tasks/:taskId/read` does, with its `task.membership.updated` event. On a task's or bot's
+agent it also marks that task or bot seen in the caller's Feed, as `POST /v0/feed/seen` does
+without `through`.
 
 Response — `200`: `{ "agent": { ... }, "profiles": [ ... ], "slashCommands": [ ... ] }` with `unread` `null`.
 
@@ -8942,7 +8959,7 @@ Fields:
 - `stories` — whether this bot has story tools and visible stories, off by default. Current daemons return a boolean; older compatible daemons may omit it. Stored in the bot's settings and included in `bot.updated`.
 - `name` — the human display name. Required, 1–256 nonblank characters, no ASCII control
   characters.
-- `shortName` — optional generated label for compact places, at most 14 UTF-16 code units
+- `shortName` — optional generated label for compact places, at most 13 UTF-16 code units
   (JavaScript string length, emoji included). Absent until automatic naming produces one, after
   any rename, and on older compatible daemons; clients then shorten `name` themselves. A
   generated label over the budget is discarded, never shortened.
@@ -10626,7 +10643,7 @@ Fields:
 - `name` — the human display name, 1–256 nonblank characters without ASCII control characters.
   The task's agent title follows it. A task created without a name is called `New Task` until it
   names itself; see `POST /v0/tasks`.
-- `shortName` — optional generated label for compact places, at most 14 UTF-16 code units
+- `shortName` — optional generated label for compact places, at most 13 UTF-16 code units
   (JavaScript string length, emoji included). Absent until automatic naming produces one, after
   any rename, and on older compatible daemons; clients then shorten `name` themselves. A
   generated label over the budget is discarded, never shortened.
@@ -10743,7 +10760,7 @@ first accepted text-bearing message starts one durable asynchronous naming job: 
 or the message from the agent that created it, which is how a `create_task` call's opening `text`
 arrives. Naming uses that message alone and the same cheap, bounded inference as workspace naming,
 and asks for a short title of the work, two to six words, and in the same request a `shortName` of
-at most 14 UTF-16 code units, preferably one word and an emoji; an answer over that budget leaves
+at most 13 UTF-16 code units, preferably one word and an emoji; an answer over that budget leaves
 `shortName` absent. The excerpt fallback supplies no `shortName`. Message acceptance and the task's own
 turn never wait for naming. Failure or timeout does not fail the message. A new naming job makes
 at most three bounded attempts, waiting one second before its second attempt and five seconds
@@ -10794,6 +10811,9 @@ not joined, changes nothing and emits no event.
 Response — `200`: `{ "task": { ... }, "membership": { ... } }`, the membership being the caller's
 or `null`. A cleared mark emits `task.membership.updated` after commit, echoing `mutationId`.
 `404` when no such task exists. Additive: older compatible daemons return `404`.
+
+It also marks the task seen in the caller's Feed, closing their open entry for it with the Feed's
+own events, as `POST /v0/feed/seen` does without `through`.
 
 ### `POST /v0/tasks/:taskId/leave`
 
@@ -11138,19 +11158,36 @@ under the file object's path rules below, and otherwise follow the file tools ag
 
 | Tool                  | Arguments                                                                         | Does                                                                                    |
 | --------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `create_artifact`     | `type`, `title`, `display`, `background`, `files`, `url`                          | Issues the artifact's ID and makes version 1.0                                          |
+| `create_artifact`     | `type`, `title`, `display`, `background`, `content`, `files`, `url`               | Issues the artifact's ID and makes version 1.0                                          |
 | `write_artifact_file` | `artifactId`, `path`, `content`                                                   | Writes one whole text file, adding it or replacing the one there                        |
 | `edit_artifact_file`  | `artifactId`, `path`, `old_string`, `new_string`, `replace_all`                   | Replaces exact text in one text file of the latest version                              |
 | `read_artifact_file`  | `artifactId`, `path`, `version`, `offset`, `limit`                                | Reads a text file as numbered lines, or shows an image                                  |
 | `update_artifact`     | `artifactId`, `title`, `display`, `background`, `files`, `remove`, `major`, `url` | Changes metadata or a live URL, copies files in, removes files, bumps the major version |
 
-The daemon issues every artifact's ID in `create_artifact`; the model never chooses one. A Markdown
-or HTML artifact starts from a short entry holding its title, and an image, image series, video, or
-document starts from the files the call copies in. `files` on `create_artifact` and
-`update_artifact` copies files from the agent's machine, each `{ "fromPath": "...", "path": "..." }`,
+The daemon issues every artifact's ID in `create_artifact`; the model never chooses one. For a
+Markdown or HTML artifact, optional `content` supplies the complete UTF-8 text of `index.md` or
+`index.html` in the initial version. It may accompany auxiliary `files`, but cannot accompany a
+file supplied at that entry path or a live `url`, and is refused for other artifact types. The entry
+must satisfy the same non-empty and byte-size limits as any other artifact file. Without `content`
+or an entry in `files`, a Markdown or HTML artifact starts from a short entry holding its title. An
+image, image series, video, or document starts from the files the call supplies. Initial content
+and all supplied files publish together as one version 1.0; a rejected call publishes no artifact.
+`files` on `create_artifact` and `update_artifact` copies files from the agent's machine, each
+`{ "fromPath": "...", "path": "..." }`,
 which is how an agent publishes images it generated and files it built with the shell; a `path`
 left out is the file's own name. Reading those files follows the agent's permission mode like any
 other read on its machine.
+
+On `create_artifact` only, each `files` item may instead be `{ "path": "style.css", "content": "…" }`
+to supply that file's UTF-8 text directly. Inline files require an explicit `path`; each item
+supplies exactly one of `content` and `fromPath`. Inline and copied files may be mixed, and an
+inline entry in `files` is allowed when top-level `content` is omitted. All files follow the same
+path, non-empty, byte-size, count, media-type, and bundle rules below. Duplicate destination paths,
+including a top-level `content` entry also supplied in `files`, and file/folder path conflicts are
+refused without publishing an artifact. Inline files require no access to the agent's machine;
+only `fromPath` copies undergo local-file permission checks. `update_artifact` keeps its existing
+copy-only `files` shape; later inline text changes use the artifact file tools. REST creation and
+update shapes are unchanged.
 
 `edit_artifact_file` works as an exact-text edit does: `old_string` must appear exactly once in the
 latest version's text unless `replace_all` is `true`, and must differ from `new_string`; otherwise
@@ -11201,8 +11238,8 @@ a browser resolves them, so `![](images/chart.png)` in `index.md` and `<img src=
 `index.html` reach their files without any rewriting through the file route below.
 
 **Live URLs.** `create_artifact` with `type: "html"` and `url` creates a live-URL artifact. The URL
-is its content, not a request to download or snapshot a page. `files` cannot accompany `url`, and
-other artifact types cannot take it. The daemon parses and normalizes the URL; only absolute
+is its content, not a request to download or snapshot a page. Neither `files` nor `content` can
+accompany `url`, and other artifact types cannot take it. The daemon parses and normalizes the URL; only absolute
 `http` and `https` URLs without a user name or password are accepted, at most 4,096 characters
 after normalization. Invalid input fails without creating an artifact or version. The daemon
 never fetches the URL body.
@@ -12107,6 +12144,324 @@ counted in `dropped`, and the request still succeeds. An invalid body is `400`.
 The log lives beside the artifact's data, in `logs.sqlite` in the same directory, and keeps the
 newest 1,000 entries of the last 7 days. It is read by agents through their `read_artifact_logs`
 tool, newest first, filtered by level, user, and time. Pages cannot read it.
+
+## Feed
+
+The Feed is one list per person of what happened on the installation: new tasks, bots, and
+Surfaces, new todos, edits to documents, and new and changed artifacts. Changes to one thing that
+the person has not looked at yet fold into one entry. Once they look at it, the next change starts
+a new entry. A daemon that serves the Feed reports `capabilities.feed: true` from health.
+
+**Subjects.** Every entry is about one subject, `{ "type": "...", "id": "..." }`. The types are:
+
+- `task` — a task, by its task ID.
+- `bot` — a bot, by its bot ID.
+- `surface` — a Surface of any type, by its Surface ID. A todo list's new todos and a document's
+  edits are changes to their Surface, so they fold into the Surface's entry.
+- `artifact` — an artifact, by its artifact ID.
+
+The set of types grows with the product; a client shows an entry with a type it does not
+recognize by its snapshot title and offers no navigation for it.
+
+**What makes an entry.** These changes reach the Feed:
+
+| Subject    | Change                                          | Counted as               | Clusters                         |
+| ---------- | ----------------------------------------------- | ------------------------ | -------------------------------- |
+| `task`     | the task was created                            | creation                 | `team`, `task:<taskId>`          |
+| `bot`      | the bot was created                             | creation                 | `team`, `bot:<botId>`            |
+| `surface`  | the Surface was created, of any type            | creation                 | `team`, `surface:<surfaceId>`    |
+| `surface`  | a todo was created in a todo list               | update: one new todo     | `surface:<surfaceId>`            |
+| `surface`  | a document was edited                           | update: one edit session | `surface:<surfaceId>`            |
+| `artifact` | the artifact was created with its first version | creation                 | from its `source`, below         |
+| `artifact` | a new version was made                          | update: one new version  | from the version's source, below |
+
+Document edits are folded before they reach the Feed: a person's or agent's edits to one document
+form one **edit session**, which ends after 10 minutes without an edit by that same actor. A
+session is one change, recorded when its first edit is accepted; later edits in the same session
+add nothing to the Feed.
+
+Nothing else reaches the Feed today: renaming, archiving, completing or editing todos, deleting
+artifacts, calendar events, and chat Surface messages do not. Older entries are unaffected by
+renames until the next change brings a fresh snapshot.
+
+**Clusters.** Every change belongs to one or more clusters, which are what a person subscribes
+to, mutes, and peeks at. A cluster is named by a string:
+
+- `team` — what happens across the team: new tasks, bots, and Surfaces.
+- `task:<taskId>`, `bot:<botId>`, `surface:<surfaceId>`, `project:<projectId>`,
+  `workspace:<workspaceId>` — one task, bot, Surface, project, or workspace.
+
+An artifact change belongs to the clusters of its source: `task:<taskId>` for a task source,
+`bot:<botId>` for a bot, `project:<projectId>` for a project, both `project:<projectId>` and
+`workspace:<workspaceId>` for a workspace, and `team` for an `agent` source, no source, or a kind
+the daemon does not map. The last cluster in each list above is the change's **home cluster**,
+which entries report as `cluster`. The set of cluster kinds grows with the product; clients treat
+an unknown kind as an opaque name.
+
+**Who receives a change.** In team mode, every enrolled member who can sign in has their own
+feed; guests of exported bots have none, and every Feed route answers them `404 not_found`. A
+member who has not finished their profile yet has an empty feed. In standalone mode the
+installation's one person has the only feed. A change reaches a person when all of these hold:
+
+- its **audience** includes them. A change's audience is `everyone`, or a list of user IDs. Today
+  every change is for everyone; the audience is checked everywhere the Feed reads its history, so
+  a restricted change never appears through seeding or peeking either;
+- they have not muted any of its clusters;
+- they are subscribed to `*`, which means everything, or to one of its clusters.
+
+Every person is subscribed to `*` until they mute it, so by default everyone's feed holds
+everything. Muting a cluster wins over every subscription: muting `task:<taskId>` silences that
+task's creation and its artifacts even while subscribed to `*`. Muting `*` stops everything except
+clusters the person subscribed to themselves. Fan-out to people happens shortly after the change
+commits, in the order the changes happened, and survives daemon restarts; a client learns of new
+entries through the events below rather than by reading the feed right after a mutation.
+
+**Folding.** Each person has at most one **open** (unseen) entry per subject. A change to a
+subject folds into the person's open entry for it: `updates` grows by one (or `created` becomes
+`true`), `cursor` and `lastAt` advance, the actor is added, and `snapshot` is replaced by the
+change's. Without an open entry, the change opens a new one. Seeing the subject closes the open
+entry, so the next change opens another. A person who opens an artifact after each of fifty
+changes has fifty-one entries, each with one change; a person who never opens it has one entry
+with its creation and fifty updates.
+
+**Your own changes count as seen.** A change a person makes directly, whose actor is that person
+with no agent, is already seen for them: it folds into their newest entry for the subject, open
+or seen, and leaves that entry seen; when they have no entry for the subject yet, it opens one
+already seen. It never raises their unread count. A change an agent makes, including one on that
+person's behalf, does not count as seen.
+
+**Seeing.** Clients mark subjects seen with `POST /v0/feed/seen` when the person opens one: a task
+or bot chat, a Surface, an artifact, or the entry itself. `POST /v0/tasks/:taskId/read` also marks
+the `task` subject seen for the caller, and `POST /v0/agents/:agentId/read` on a task's or bot's
+agent marks that task or bot seen, so clients that already call them need nothing more for those.
+
+**Seeding.** When a person joins the Feed — a member finishing their profile, or the standalone
+person when the daemon first serves the Feed — and when they subscribe to a cluster, the daemon
+gives them context from the shared history instead of unread entries: for the clusters concerned
+(everything, on joining), it takes the changes of the last 30 days that would reach them, groups
+them per subject, and writes one entry for each of the 200 most recently changed subjects. Seeded
+entries are already seen. Subjects the person already has an entry for are skipped. Seeded
+entries announce themselves through `feed.item.created` like any other.
+
+**Retention.** The shared history keeps 90 days of changes. Each person's feed keeps their newest
+1,000 entries by `cursor` and drops entries whose `lastAt` is older than 90 days. Retention emits
+no item events; a client holding an entry the daemon dropped may keep showing it until it next
+reads the feed. Dropping open entries emits `feed.unread.updated` with the person's new count. When an admin bot [permanently deletes](#permanent-deletion) a task or bot, its changes
+and every person's entries for it are removed, and each person holding such an entry receives
+`feed.item.removed`.
+
+**Privacy.** Each person's entries, unread count, subscriptions, and Feed events are their own. In
+team mode one member never reads or receives another member's.
+
+### The feed item object
+
+```json
+{
+    "id": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "version": "01991f3b-0a1c-7000-8000-1b2c3d4e5f60",
+    "cursor": "01991f3b-09f2-7000-8000-7a6b5c4d3e2f",
+    "subject": { "type": "artifact", "id": "r7k2m9q4w1e5t8y3u6i0o2p5" },
+    "cluster": "task:t4k8m2q9w1e5r7y3u6i0o2p4",
+    "created": true,
+    "updates": 49,
+    "actors": [
+        { "userId": null, "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8" },
+        { "userId": "u1x2y3z4a5b6c7d8e9f0g1h2", "agentId": null }
+    ],
+    "actorCount": 2,
+    "snapshot": {
+        "title": "Q3 revenue report",
+        "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
+        "artifactType": "markdown",
+        "artifactVersion": 50
+    },
+    "firstAt": 1755300000000,
+    "lastAt": 1755400000000,
+    "seenAt": null
+}
+```
+
+- `id` — a UUIDv7 minted when the entry opened. It never changes, including when the entry takes
+  in a change and moves up; clients key rows by it.
+- `version` — a UUIDv7 minted at every change to the entry, including being seen. Of two copies
+  of the same entry, the one with the greater `version` is current.
+- `cursor` — the UUIDv7 of the newest change folded in, and the feed's sort key: entries are
+  listed newest `cursor` first. It is a position in the Feed's history, not an event-stream
+  cursor.
+- `subject` — what the entry is about, as described above.
+- `cluster` — the home cluster of the newest change folded in.
+- `created` — whether the subject's creation is among the folded changes.
+- `updates` — how many further changes are folded in: new todos for a todo list, edit sessions for
+  a document, new versions for an artifact.
+- `actors` — who made the folded changes: the first five distinct actors, in the order they first
+  acted. An actor is `{ "userId", "agentId" }`. A person acting directly has their `userId` and a
+  `null` `agentId`. An agent's change has its `agentId`, with `userId` naming the person it was
+  working for when the daemon knows them, otherwise `null`. Both are `null` for a change nobody is
+  attributed with. In standalone mode `userId` is always `null`. Resolve people through
+  `GET /v0/users`, and the standalone person through the profile.
+- `actorCount` — how many distinct actors are folded in, which may exceed the five listed.
+- `snapshot` — how to show and open the subject, as of the newest change folded in:
+    - `title` — the subject's display name at that change: the task's, bot's, or Surface's name,
+      or the artifact's title. Always present, 1–256 characters.
+    - `agentId` — for a `task` or `bot`, its agent, which opens its chat. For an `artifact`, the
+      conversation the newest change came from, or `null` when a person made it outside one.
+      Absent for a `surface`.
+    - `surfaceType` — for a `surface`, its type, such as `"todo"` or `"document"`. Absent
+      otherwise.
+    - `artifactType`, `artifactVersion` — for an `artifact`, its type and the number of the newest
+      version folded in. Absent otherwise.
+    - `detail` — optional plain text about the newest change, at most 500 characters: the new
+      todo's text for a todo list. Absent when there is none.
+
+    Fields may be added; clients ignore ones they do not know.
+
+- `firstAt`, `lastAt` — when the oldest and newest folded changes happened, epoch milliseconds.
+- `seenAt` — when the person saw the entry, or `null` while it is open. Seeded entries and entries
+  of the person's own changes carry the time they were written.
+
+**Peek entries.** Peeking and the history it reads have no person attached, so a peek entry is
+the feed item without `id`, `version`, and `seenAt`: `cursor`, `subject`, `cluster`, `created`,
+`updates`, `actors`, `actorCount`, `snapshot`, `firstAt`, and `lastAt`, folding every change to
+the subject that the window covers.
+
+### The cluster object
+
+```json
+{
+    "cluster": "task:t4k8m2q9w1e5r7y3u6i0o2p4",
+    "kind": "task",
+    "name": "Fix login redirect",
+    "state": null,
+    "lastAt": 1755400000000
+}
+```
+
+- `cluster` — the cluster's name, as above, or `*` for everything.
+- `kind` — `"everything"` for `*`, `"team"`, `"task"`, `"bot"`, `"surface"`, `"project"`, or
+  `"workspace"`. The set grows with the product.
+- `name` — human display text: `Everything`, `Team`, or the current name of the task, bot,
+  Surface, project, or workspace.
+- `state` — the caller's own choice: `"subscribed"`, `"muted"`, or `null` when they made none and
+  the cluster follows `*`. For `*` it is `"subscribed"` or `"muted"`, never `null`.
+- `lastAt` — the newest retained change in the cluster that the caller's audience allows, or
+  `null`.
+
+### `GET /v0/feed`
+
+The caller's feed, newest `cursor` first.
+
+Query parameters:
+
+- `before` — optional; an entry `cursor`. Only entries with an older `cursor` are listed, so a
+  client passes the last entry it holds to load the next page.
+- `limit` — optional, 1–200, default 50.
+
+A malformed `before` or `limit` is `400 invalid_request`.
+
+Response — `200`:
+
+```json
+{
+    "items": [
+        /* feed item objects, newest cursor first */
+    ],
+    "unread": 3,
+    "hasMore": true,
+    "cursor": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f"
+}
+```
+
+- `items` — at most `limit` entries.
+- `unread` — how many of the caller's entries are open.
+- `hasMore` — whether older entries exist beyond this page.
+- `cursor` — the event cursor captured before reading. Follow the `feed.*` events from it. An entry
+  that takes in a change while a client pages moves to the top, so a client merges entries by
+  `id` and keeps the greater `version`.
+
+### `POST /v0/feed/seen`
+
+Marks subjects seen for the caller, closing their open entries.
+
+Request:
+
+```json
+{
+    "subjects": [
+        {
+            "type": "artifact",
+            "id": "r7k2m9q4w1e5t8y3u6i0o2p5",
+            "through": "01991f3b-09f2-7000-8000-7a6b5c4d3e2f"
+        }
+    ],
+    "mutationId": "..."
+}
+```
+
+- `subjects` — 1–100 subjects. `type` is 1–64 characters and `id` 1–96 characters.
+- `through` — optional: the entry `cursor` the client was showing. When the open entry has since
+  taken in a newer change, it stays open, so a change that arrived while the person was looking
+  is not hidden. Omitted, the open entry closes whatever it holds.
+
+Subjects the caller has no open entry for, including unknown subjects and types, change nothing
+and are not an error. Unknown fields and malformed values are `400 invalid_request`.
+
+Response — `200`: `{ "items": [ /* the entries this request closed */ ], "unread": 2 }`. Each
+closed entry emits `feed.item.updated`, then `feed.unread.updated` follows once, all after
+commit and echoing `mutationId`. A request that closes nothing emits nothing.
+
+### `POST /v0/feed/read-all`
+
+Closes every open entry of the caller.
+
+Request: `{}`, or `{ "through": "...", "mutationId": "..." }`. Optional `through` is an entry
+`cursor`: only open entries whose `cursor` is not newer close, so entries that arrived after the
+client last drew the feed stay open.
+
+Response — `200`: `{ "unread": 0 }`, the caller's remaining open entries. Each closed entry emits
+`feed.item.updated`, then `feed.unread.updated` follows once, all after commit and echoing
+`mutationId`. A request that closes nothing emits nothing.
+
+### `GET /v0/feed/clusters`
+
+Response — `200`: `{ "clusters": [ /* cluster objects */ ] }`: `*` first, then `team`, then every
+other cluster named by a retained change the caller's audience allows or by one of the caller's
+choices, newest `lastAt` first with clusters without changes last, at most 500 in all. A task,
+bot, Surface, project, or workspace that no longer exists is left out.
+
+### `PUT /v0/feed/subscriptions/:cluster`
+
+Subscribes the caller to a cluster and seeds it, as described under Seeding. `:cluster` is the
+cluster's name as one percent-encoded path segment, such as `task%3At4k8m2q9w1e5r7y3u6i0o2p4`, or
+`*` (`%2A`) for everything. The body is `{}` or `{ "mutationId": "..." }`. Subscribing again
+changes nothing but still seeds subjects the caller has no entry for. Subscribing to `*` seeds
+every cluster.
+
+Response — `200`: `{ "cluster": { ... } }` with `state` `"subscribed"`. Each seeded entry emits
+`feed.item.created` after commit, echoing `mutationId`. Subscription choices themselves emit no
+event; a client showing them reads `GET /v0/feed/clusters` again.
+
+A cluster name that is not `*`, `team`, or a known kind followed by `:` and a lowercase
+alphanumeric ID is `400 invalid_request`. A well-formed name whose task, bot, Surface, project, or
+workspace does not exist is `404 not_found`.
+
+### `DELETE /v0/feed/subscriptions/:cluster`
+
+Mutes a cluster for the caller, as described under Who receives a change. Entries the caller
+already has stay. The body is empty, `{}`, or `{ "mutationId": "..." }`; the path and errors are as
+for subscribing.
+
+Response — `200`: `{ "cluster": { ... } }` with `state` `"muted"`. Nothing else changes and no
+event is emitted.
+
+### `GET /v0/feed/clusters/:cluster`
+
+Peeks at a cluster without subscribing: reads the shared history of the last 30 days for the
+cluster, filtered by the caller's audience, grouped per subject. Nothing is written and nothing is
+marked seen. The path and errors are as for subscribing; `*` peeks at everything.
+
+Query `limit` is optional, 1–200, default 50: how many subjects to return.
+
+Response — `200`: `{ "cluster": { ... }, "entries": [ /* peek entries, newest cursor first */ ] }`.
 
 ## Live voice sessions
 
@@ -13169,6 +13524,26 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
   person who saw it; clients drop it at once.
     - `storyId`.
 
+**Feed**
+
+Feed events belong to one person: in team mode only that person receives them, including journal
+pulls, replay, and live delivery, and the payloads never name them. Guests receive none. A
+mutation's `mutationId` is echoed; fan-out, seeding on enrollment, and the read routes of tasks
+and agents carry none.
+
+- `feed.item.created` — an entry was opened in the person's feed: a change opened it, or seeding
+  wrote it.
+    - `item` (full feed item object).
+- `feed.item.updated` — an entry took in a change or was seen. It is a complete replacement rather
+  than a version-chain diff; clients keep the copy with the greater `version` for its `id` and
+  re-sort by `cursor`.
+    - `item` (full feed item object).
+- `feed.item.removed` — an entry was removed because its subject was permanently deleted.
+    - `itemId` (the entry's `id`).
+- `feed.unread.updated` — the person's count of open entries changed. It follows the item events
+  of the same change.
+    - `unread` (non-negative integer).
+
 The set grows with the product; clients skip event types they do not recognize.
 
 ### `GET /v0/events`
@@ -13417,6 +13792,7 @@ Response — `200`:
     "stories": [
         /* exactly the stories array from GET /v0/stories for this reader */
     ],
+    "feedUnread": 3,
     "archivedAgents": [
         /* the most recently archived agents of those projects and workspaces, newest first */
     ],
@@ -13466,6 +13842,9 @@ Response — `200`:
   bootstrap addition; an off flag accompanies an empty array. Optional on older compatible
   daemons, where clients load the feed separately. Follow `story.changed` and `story.removed`
   from the ordinary bootstrap `cursor`; no separate feed cursor or initial feed request is needed.
+- `feedUnread` — the caller's count of open Feed entries, exactly `unread` from `GET /v0/feed`, so
+  a client can show the Feed's badge before reading the Feed itself. Follow `feed.unread.updated`
+  from the bootstrap `cursor`. Optional; absent on daemons without the Feed and for guests.
 - `archivedAgents` — the archived agents that would otherwise belong to the included projects'
   and workspaces' `agents` series, as full agent objects, newest `archivedAt` first with the
   agent ID as the tie-breaker. Each carries the `workspaceId` of its owner, which is the

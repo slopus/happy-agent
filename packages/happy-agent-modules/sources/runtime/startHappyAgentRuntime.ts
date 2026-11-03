@@ -31,6 +31,7 @@ import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { AbortModule } from "../abort/index.js";
 import { ActivityModule } from "../activity/index.js";
 import { StoriesModule } from "../stories/index.js";
+import { FeedModule } from "../feed/index.js";
 import { ApiModule } from "../api/index.js";
 import { ArtifactDataModule } from "../artifactData/index.js";
 import { ArtifactsModule } from "../artifacts/index.js";
@@ -82,7 +83,12 @@ import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
 import { SlashCommandsModule } from "../slashCommands/index.js";
-import { SkillsModule, GlobalSkillsModule, SkillFoldersModule } from "../skills/index.js";
+import {
+    SkillsModule,
+    GlobalSkillsModule,
+    SkillFoldersModule,
+    SkillMirrorModule,
+} from "../skills/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
 import { TailcatModule } from "../tailcat/index.js";
 import { MobileConnectorModule } from "../mobileConnector/index.js";
@@ -219,6 +225,7 @@ export interface HappyAgentRuntimeModules {
     readonly userInput: UserInputModule;
     readonly userSettings: UserSettingsModule;
     readonly surfaces: SurfacesModule;
+    readonly feed: FeedModule;
     readonly workflows: WorkflowsModule;
     readonly workspaces: WorkspacesModule;
 }
@@ -470,6 +477,8 @@ export async function startHappyAgentRuntime(
         const globalSkills = new GlobalSkillsModule(config, durableFunctions);
         const compute = createComputeModules(computeModule, globalSkills, config);
         registerShutdown("global-skills", async () => await globalSkills.close());
+        const skillMirror = new SkillMirrorModule(config, runners, globalSkills, durableFunctions);
+        registerShutdown("skill-mirror", async () => await skillMirror.close());
         registerShutdown("compute", async (shutdownCtx) => {
             await Promise.allSettled([
                 system?.close(shutdownCtx) ?? Promise.resolve(),
@@ -591,7 +600,12 @@ export async function startHappyAgentRuntime(
         const node = new NodeModule(config, bots, compute.computeModule, durableFunctions);
         const skillFolders = new SkillFoldersModule(config, bots);
         const tailcat = new TailcatModule(config, bots, durableFunctions);
-        registerShutdown("tailcat", async (shutdownCtx) => await tailcat.close(shutdownCtx));
+        registerShutdown("tailcat", async (shutdownCtx) => {
+            // Runners reached through Tailcat must hear the daemon's goodbye before the carrier
+            // goes; otherwise each one waits out its idle timeout before reconnecting.
+            await settleRuntimeShutdownTasks(shutdownCtx, shutdownTasks, ["runners"]);
+            await tailcat.close(shutdownCtx);
+        });
         const mobileConnector = new MobileConnectorModule(
             config,
             team,
@@ -750,6 +764,17 @@ export async function startHappyAgentRuntime(
             bots,
             team,
             userSettings,
+            artifacts,
+        );
+        const feed = new FeedModule(
+            durableFunctions,
+            team,
+            tasks,
+            bots,
+            surfaces,
+            artifacts,
+            projects,
+            workspaces,
         );
         const apiModule = new ApiModule(
             abort,
@@ -794,6 +819,7 @@ export async function startHappyAgentRuntime(
             providerClis,
             providerRoutes,
             stories,
+            feed,
         );
         api = apiModule;
 
@@ -865,6 +891,7 @@ export async function startHappyAgentRuntime(
             userInput,
             userSettings,
             surfaces,
+            feed,
             workflows,
             workspaces,
         };
@@ -906,6 +933,7 @@ export async function startHappyAgentRuntime(
             surfaceAutoJoin,
             botSettings,
             globalSkills,
+            skillMirror,
             live,
             bots,
             tasks,
@@ -938,6 +966,7 @@ export async function startHappyAgentRuntime(
             gemini,
             imageGeneration,
             stories,
+            feed,
             compute.skillsModule,
             compute.computeModule,
             happy,

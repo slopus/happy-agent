@@ -61,6 +61,35 @@ spends hundreds of watches per checkout instead of tens of thousands. Polling re
 fallback for a tree that cannot be watched, backs off while nothing changes, and proves "nothing
 changed" with a status and a stat of each changed path before it will run a diff.
 
+## Only a repository gets a recursive watch
+
+A long-running daemon held 127,825 of the host's 129,317 inotify watches, and every new watch then
+failed (`ENOSPC`): live Git fell back to polling and watcher tests timed out. About 112,000 of them
+covered five task folders that were not Git repositories. Live tracking armed the recursive
+working-tree watch on every tracked folder before asking whether it was a repository, and a folder
+outside a repository ignores nothing but `.git` and `node_modules`, so an agent's `.context`
+holding a Nix store (80,000 directories) or cloned references cost one watch per directory. The
+tracker now looks the folder up first. Only a repository gets the working-tree and Git directory
+watches; any other folder gets one non-recursive watch of its own entries on this machine, or
+polling on a runner, and is upgraded when `.git` appears or a later scan finds a repository.
+File search watched the same folders through the shared watch; it now asks for a plain-folder
+watch that leaves out hidden and dependency directories, which fff does not index there.
+
+A third source remains open. Parcel's ignore list is fixed when the subscription starts, and a
+second subscription on the same folder goes deaf (below), so an ignored directory created later,
+such as Gradle's `build/` or a `.context`, keeps its watches until the folder is next watched
+afresh. On the host above that was about 2,000 watches; on a fixture repository, 2,050 ignored
+build directories created after the watch started took it from 67 watches to 2,118. Moving Linux
+onto the compute host watcher, which runners already use, would let the recheck drop those
+subtrees, but compute 0.1.26 cannot express it: its `ignore` matches directory names at any depth,
+not paths, and a watch cannot change what it ignores once started, so moving onto it as it is would
+watch every directory Git ignores. The follow-up is an additive compute change —
+`ComputeWatchOptions.ignorePaths` for relative directories, an optional `ComputeWatch.ignore(paths)`
+that removes newly ignored subtrees and watches folders no longer ignored, and a `watch.ignore`
+runner request so runners gain the same, with older runners keeping today's event filtering — and
+then local Linux folders going through `RunnerWatches` with this machine's host compute, while
+macOS FSEvents and Windows keep their native paths. It needs a compute release first.
+
 ## A working-tree watch must never be replaced or outlive its folder
 
 Two watcher failures surfaced only in the release gate. On Linux, replacing a folder's Parcel
@@ -118,6 +147,24 @@ changes. Missing roots keep the original path and the ordinary subscription retr
 With `[execution]` configured, a folder on this machine belongs to the workload user, and the
 daemon's own Git would run as the daemon's user against it. Every native branch now asks
 `RunnersModule.native(runnerId)`, so worktrees, clones, and probes on such a folder run through the
-default workload user's runner, exactly as on a runner. The embedded live Git tracking is not
-ported there, like on runners, so the API answers its Git state with `404` and a message saying
-why.
+default workload user's runner, exactly as on a runner. Live tracking runs there too, below.
+
+## Live tracking on a runner swaps the machine, not the tracker
+
+Runner folders used to have no live Git at all (`404`, left out of `git/watch`). Porting it as a
+second tracker would have duplicated the debounce, the path-scoped classification, and the
+fingerprint stale checks, and they would drift. The tracker now asks `#machine(entity)` for a
+`GitRepositoryMachine` — scan runner, working files, tree watch, metadata watch — and everything
+else is shared. `GitWorkingFiles` is the seam for the reads the scanner used to make with `node:fs`
+(index fingerprint, worktree fingerprint, untracked counts, display bytes); the local one keeps the
+`O_NOFOLLOW` open-once behavior, the runner one uses `lstatMany` and `readFileBuffer` with
+`noFollow`. A runner's fingerprint is size, mtime, and mode, since it reports no inode or ctime.
+
+A scan reports a failed Git command as its result, so a runner that went away mid-scan would have
+published "not a repository". Both the tracker and `snapshot` ask the machine whether it is still
+reachable after a failed scan and throw `RunnerUnavailableError` instead; `snapshot` also refuses
+its cache for a runner that is not connected. On a Windows runner the scan's hooks path and global
+configuration point at `NUL`, not `/dev/null`, or every scan fails.
+
+The `.git/` filter on tree events is case-insensitive everywhere, because a runner on macOS or
+Windows can report `.GIT/` paths whatever the daemon's own platform is.

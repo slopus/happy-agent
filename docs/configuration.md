@@ -255,7 +255,20 @@ there earlier stay listed so they can be archived, and their work fails with
 `local_execution_disabled`. Work on a folder whose runner is away fails with `runner_unavailable`;
 nothing falls back to the daemon. A runner project can run its workspaces in containers on the
 runner by setting `defaultWorkspaceCompute` to `{ "type": "docker", "image": "..." }`; the runner
-needs Docker. Attached secrets are not available on runners yet.
+needs Docker. A command on a runner that selects attached secrets receives their values with that
+one command; the runner keeps no copy.
+
+Agents on a runner get the skills this installation offers its own agents. The daemon copies its
+documentation and native skills to `~/.happy-agent/` on the runner, and its enabled installed
+skills and `[skills] directories` to `~/.happy-agent/synced-skills/`, whenever they change. Copying hands the runner
+whatever those skills contain; set `sync_skills = false` for a runner that should not have them:
+
+```toml
+[runners.build-box]
+name = "Build box"
+token = "REPLACE_WITH_FRESH_43_CHARACTER_BASE64URL_TOKEN"
+sync_skills = false
+```
 
 ## Work as separate Linux users
 

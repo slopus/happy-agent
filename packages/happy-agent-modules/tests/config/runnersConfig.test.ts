@@ -110,6 +110,22 @@ describe("runner configuration", () => {
         ).rejects.toThrow("runners.b.token must differ");
     });
 
+    it("lets a runner opt out of receiving this installation's skills", async () => {
+        const config = await load(
+            `[runners.build-box]\nname = "Build box"\ntoken = "${BUILD}"\nsync_skills = false\n`,
+        );
+        expect(config.runners.entries["build-box"]).toEqual({
+            name: "Build box",
+            token: BUILD,
+            syncSkills: false,
+        });
+        await expect(
+            load(
+                `[runners.build-box]\nname = "Build box"\ntoken = "${BUILD}"\nsync_skills = "no"\n`,
+            ),
+        ).rejects.toThrow("runners.build-box.sync_skills must be true or false.");
+    });
+
     it("explains malformed entries in plain words", async () => {
         await expect(load(`[runners.Build]\nname = "x"\ntoken = "${BUILD}"\n`)).rejects.toThrow(
             'Runner ID "Build" must start with a lowercase letter',

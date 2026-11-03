@@ -37,10 +37,12 @@ collection still works — it takes a lifetime of its own.
 - **Changing a repository.** `clone`, `resolveWorkspaceBase`, `createWorktree`, `removeWorktree`,
   `renameBranch`.
 - **Authentication.** Foreground Git uses the authentication configured on the machine running it.
-- **Snapshots.** `generation`, `snapshot`, `watch`, `invalidate`.
+- **Snapshots.** `generation`, `snapshot`, `watch`, `invalidate`; each takes the folder's
+  `runnerId`, and a folder on a runner is scanned there.
 - **Live tracking.** `track`, `untrack`, `replaceTracked`, `markChanged`, `trackedSnapshot`,
   `trackedKeys`, `liveSnapshots`, `refresh`, and `onSnapshot(observer)` which returns its own
-  unsubscribe. `watchWorkingTree(root, observer)` shares the live working-tree watch.
+  unsubscribe. `watchWorkingTree(root, observer, { runnerId })` shares the live working-tree watch,
+  and `coversWorkingTreePath` says whether a path is inside it.
 - **Shutdown.** `dispose` stops every watcher and clears the cache.
 
 ## Behavior worth knowing
@@ -62,6 +64,27 @@ new directories appear, and events from newly ignored directories are dropped; t
 itself is never replaced, because a second subscription on an already-watched folder can go deaf. `watchWorkingTree` shares that one watch per folder with other modules.
 The home directory and its ancestors are never watched; their observers poll, because such a
 tree holds other applications' data.
+
+Live tracking gives the recursive watch only to a repository. A tracked folder that is not one,
+such as a task's shared folder, gets a watch of its own entries on this machine (one inotify
+watch) and is polled on a runner. Seeing `.git` appear there, or a later scan finding a repository
+(after `git init`, a clone, or a lookup that failed for a moment), upgrades it to the full
+working-tree and Git directory watches.
+`watchWorkingTree(root, observer, { plainFolder: true })` watches a folder on this machine that is
+in no repository only where a file index of it reads: hidden entries and dependency directories
+are left out of the native watch at any depth. It is a separate shared watch from the full one.
+
+A repository on a runner, or a workload user's, is tracked by the same code with the runner behind
+it: the scan runs there through the hardened scanner, and untracked counts and binary bytes are read
+through its filesystem. `RunnerWatches` keeps one recursive watch per folder on the runner, shared
+through `watchWorkingTree` with the files module, and one watch per common Git directory (skipping
+`objects`, `logs`, `hooks`, `lfs`, `modules`, `rr-cache`), shared by its worktrees: a change to
+`HEAD` or `index` reaches its own worktree, one to `refs`, `packed-refs`, or `config` every
+worktree, through the same ref filtering as here. The runner skips dependency and repository
+directories by name; directories Git ignores are listed on the runner and their events dropped
+here. At most 32 tree and 16 Git-directory watches are open per runner, and further folders poll. A
+watch that ends is re-armed with backoff and reported as a change of everything. `coversWorkingTreePath`
+says whether a path is under that watch, so a caller can watch a skipped directory on its own.
 
 Working-tree events are debounced and first checked with a path-scoped status, so ignored build
 output does not schedule the full snapshot scan. Full rescans run two at a time on the module's own

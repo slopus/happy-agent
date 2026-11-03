@@ -1,26 +1,19 @@
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
-import { lstat } from "node:fs/promises";
-import { join } from "node:path";
 
+import type { GitWorkingFiles } from "./gitWorkingFiles.js";
 import type { GitStatusV2 } from "./parseGitStatusV2.js";
 
 /** Beyond this many changed paths a fingerprint costs more than it saves. */
 export const GIT_FINGERPRINT_PATH_LIMIT = 2_000;
-const STAT_BATCH = 64;
 
 /** The index and HEAD as the filesystem sees them, without asking Git. */
-export function gitIndexFingerprint(gitDirectory: string | undefined): string {
-    if (gitDirectory === undefined) return "";
-    return [join(gitDirectory, "index"), join(gitDirectory, "HEAD")]
-        .map((path) => {
-            try {
-                const stats = statSync(path);
-                return `${String(stats.size)}:${String(stats.mtimeMs)}`;
-            } catch {
-                return "missing";
-            }
-        })
+export function gitIndexFingerprint(
+    stats: readonly ({ readonly size: number; readonly mtimeMs: number } | undefined)[],
+): string {
+    return stats
+        .map((stat) =>
+            stat === undefined ? "missing" : `${String(stat.size)}:${String(stat.mtimeMs)}`,
+        )
         .join("|");
 }
 
@@ -33,6 +26,7 @@ export function gitIndexFingerprint(gitDirectory: string | undefined): string {
  * removed path changes status itself. `undefined` means the tree is too large to prove this way.
  */
 export async function gitWorktreeFingerprint(options: {
+    files: GitWorkingFiles;
     indexFingerprint: string;
     root: string;
     status: GitStatusV2;
@@ -43,19 +37,9 @@ export async function gitWorktreeFingerprint(options: {
     hash.update(options.indexFingerprint);
     hash.update("\0\0");
     hash.update(options.statusOutput);
-    const paths = options.status.entries.map((entry) => entry.path);
-    for (let offset = 0; offset < paths.length; offset += STAT_BATCH) {
-        const stats = await Promise.all(
-            paths.slice(offset, offset + STAT_BATCH).map(async (path) => {
-                try {
-                    const details = await lstat(join(options.root, path));
-                    return [details.ino, details.size, details.mtimeMs, details.ctimeMs].join(":");
-                } catch {
-                    return "missing";
-                }
-            }),
-        );
-        for (const stat of stats) hash.update(`\0${stat}`);
-    }
+    const stats = await options.files.lstatMany(
+        options.status.entries.map((entry) => options.files.paths.join(options.root, entry.path)),
+    );
+    for (const stat of stats) hash.update(`\0${stat?.fingerprint ?? "missing"}`);
     return hash.digest("hex");
 }

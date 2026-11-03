@@ -1,6 +1,7 @@
 import {
     MAX_NAMING_MESSAGE_CHARS,
     MAX_NAMING_TRANSCRIPT_CHARS,
+    MAX_SHORT_TITLE_CHARS,
     type TitleNamesWanted,
 } from "../Title.js";
 
@@ -11,10 +12,16 @@ export interface NamingRequestText {
 
 const CLOSING = "Use only what you were given; do not guess at work you cannot see.";
 
+const SHORT_RULE = [
+    "<short>: one word in Title Case, or two only if they fit within",
+    `${String(MAX_SHORT_TITLE_CHARS)} characters including the space; words only, no emoji.`,
+].join(" ");
+
 /** What each name is for, and what shape the answer takes. */
 const WHAT_IT_IS: Readonly<Record<keyof TitleNamesWanted, string>> = {
     slug: "The slug names the folder the work happens in and the Git branch it happens on, which are the same name.",
     title: "The title is what the saved chat is called in a list a person reads.",
+    short: "The short title names the same subject in as few characters as possible.",
 };
 
 const RULES: Readonly<Record<keyof TitleNamesWanted, string>> = {
@@ -26,11 +33,13 @@ const RULES: Readonly<Record<keyof TitleNamesWanted, string>> = {
         "<title>: two to six words naming what the work is about, the way a person writes a title.",
         "No quotes, no trailing punctuation, no markdown.",
     ].join(" "),
+    short: SHORT_RULE,
 };
 
 const EXAMPLES: Readonly<Record<keyof TitleNamesWanted, string>> = {
     slug: "<slug>the-name</slug>",
     title: "<title>The name</title>",
+    short: "<short>Name</short>",
 };
 
 /**
@@ -77,11 +86,13 @@ export function createBotNamingRequest(firstMessage: string): NamingRequestText 
             "character rather than a task title. Prefer names such as Scout, Release Steward, Bug Hunter,",
             "or Archivist. Name the likely ongoing function, not the particular first task.",
             "",
-            "Reply with exactly this tag and nothing else:",
+            "Reply with exactly these tags and nothing else:",
             "",
             "<title>The name</title>",
+            EXAMPLES.short,
             "",
             "At most three words and 40 characters. No quotes, punctuation, markdown, or generic words such as Bot or Assistant.",
+            SHORT_RULE,
             "",
             CLOSING,
         ].join("\n"),
@@ -129,6 +140,7 @@ export function wantedNames(wanted: TitleNamesWanted): (keyof TitleNamesWanted)[
     return [
         ...(wanted.title === true ? (["title"] as const) : []),
         ...(wanted.slug === true ? (["slug"] as const) : []),
+        ...(wanted.short === true ? (["short"] as const) : []),
     ];
 }
 

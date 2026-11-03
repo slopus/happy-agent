@@ -9,17 +9,24 @@ const NETWORK_GIT_TIMEOUT_MS = 5 * 60 * 1_000;
 const GIT_OUTPUT_LIMIT = 1024 * 1024;
 const SCAN_TIMEOUT_MS = 10_000;
 const SCAN_OUTPUT_LIMIT = 16 * 1024 * 1024;
-/** The scanner's hardening, for the POSIX machines runners are. */
-const SAFE_CONFIGURATION = [
-    "-c",
-    "core.fsmonitor=false",
-    "-c",
-    "core.hooksPath=/dev/null",
-    "-c",
-    "diff.external=",
-    "-c",
-    "credential.helper=",
-];
+/** The scanner's hardening, with the runner's own name for the null device. */
+function safeConfiguration(nullDevice: string): string[] {
+    return [
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        `core.hooksPath=${nullDevice}`,
+        "-c",
+        "diff.external=",
+        "-c",
+        "credential.helper=",
+    ];
+}
+
+/** Where a runner's Git reads nothing: `NUL` on Windows, `/dev/null` everywhere else. */
+function nullDevice(paths: PlatformPath): string {
+    return paths.sep === "\\" ? "NUL" : "/dev/null";
+}
 
 /** How a runner's Git runs: one program at a time on the runner's product machine. */
 export interface RunnerGitTarget {
@@ -82,9 +89,10 @@ export function runnerScanGit(
     return async (options) => {
         const maximumBytes = options.maximumBytes ?? SCAN_OUTPUT_LIMIT;
         const ceiling = gitCeilingDirectories?.();
+        const devNull = nullDevice(target.paths);
         const environment: Record<string, string | null> = {
             GIT_ATTR_NOSYSTEM: "1",
-            GIT_CONFIG_GLOBAL: "/dev/null",
+            GIT_CONFIG_GLOBAL: devNull,
             GIT_CONFIG_NOSYSTEM: "1",
             GIT_NO_LAZY_FETCH: "1",
             GIT_OPTIONAL_LOCKS: "0",
@@ -100,7 +108,7 @@ export function runnerScanGit(
                 "-C",
                 options.cwd,
                 "--no-optional-locks",
-                ...SAFE_CONFIGURATION,
+                ...safeConfiguration(devNull),
                 ...options.args,
             ],
             environment,

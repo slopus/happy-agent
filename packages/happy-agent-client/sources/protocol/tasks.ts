@@ -49,7 +49,7 @@ export const taskSchema = Type.Object({
     id: cuid2Schema,
     name: taskNameSchema,
     /**
-     * A generated label of at most 14 UTF-16 code units, absent until generated, after a rename,
+     * A generated label of at most 10 UTF-16 code units, absent until generated, after a rename,
      * and on older compatible daemons. Clients fall back to `name`.
      */
     shortName: Type.Optional(taskNameSchema),

@@ -13,7 +13,8 @@ import {
 } from "@slopus/happy-agent-compute";
 import type { Context } from "@steve.kite/stdlib";
 
-import type { SecretApiTarget, SecretsModule } from "../../secrets/index.js";
+import type { SecretsModule } from "../../secrets/index.js";
+import { secretCommandTargets } from "./secretCommandTargets.js";
 
 interface AttachedSecretsHostSession {
     active: boolean;
@@ -126,20 +127,10 @@ export function createAttachedSecretsHostShell(
     const commandShell = async (
         runOptions: ComputeRunOptions,
     ): Promise<{ readonly environment: NodeJS.ProcessEnv; readonly shell: ComputeShell }> => {
-        const selected = runOptions.secrets ?? [];
-        const targets: SecretApiTarget[] = [
-            { type: "agent", id: options.agentId },
-            ...(options.targetScope?.workspaceId === undefined
-                ? []
-                : [{ type: "workspace" as const, id: options.targetScope.workspaceId }]),
-            ...(options.targetScope?.projectId === undefined
-                ? []
-                : [{ type: "project" as const, id: options.targetScope.projectId }]),
-        ];
         const resolved = await options.secrets.resolveForCommandTargets(
             options.ctx,
-            targets,
-            selected,
+            secretCommandTargets(options.agentId, options.targetScope),
+            runOptions.secrets ?? [],
         );
         const environment = mergeCommandEnvironment(
             options.environment ?? process.env,

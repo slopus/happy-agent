@@ -43,3 +43,18 @@ means chosen for compatibility; an explicit false keeps the workspace eligible f
 naming. Names supplied by the workspace-creation agent tool are deliberate. Eligibility is checked
 again by the workspaces catalog when the generated slug is applied, so a user rename that races
 naming still wins.
+
+## Short titles share the naming request, are one capitalized word, and are never cut
+
+Kirill asked for a very short label for tasks and bots, for compact places, then that it be words
+only (an earlier "one word plus an emoji" shape such as "Onboarding 🚀" was dropped), then that it
+be shorter still. It is asked in the same request as the title, so it costs no extra model call,
+and the prompt says only: one word in Title Case, or two only if they fit within 10 characters
+including the space; words only, no emoji. Its purpose is deliberately not described. Emoji the
+model adds anyway are removed (with their variation selectors, skin-tone modifiers, and joiners),
+and an all-lowercase word is capitalized, before the budget is checked; other casing such as
+"iPhone" or "API" is kept. The budget is 10 UTF-16 code units, the length of "Your Story", as
+Kirill set it; the earlier 13 (the most the desktop's 78 px label fits) still gave long labels.
+An answer over budget is discarded rather than shortened, and the excerpt fallback supplies none;
+clients fall back to the full name. A rename clears it, since it described the old name. Existing
+tasks and bots get no backfill: Kirill asked for no compatibility work.

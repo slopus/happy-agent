@@ -4,6 +4,8 @@ import { dirname } from "node:path";
 import type { Compute, ComputeWatch } from "@slopus/happy-agent-compute";
 import type { Context } from "@steve.kite/stdlib";
 
+import type { GitModule } from "../git/index.js";
+
 const MAX_CHANGED_PATHS = 256;
 const MAX_PATH_LENGTH = 16_384;
 /** A watched folder with more entries than this is compared as a whole, not entry by entry. */
@@ -11,7 +13,9 @@ const MAX_RECONCILED_ENTRIES = 1_000;
 const MAX_WATCHED_DIRECTORIES = 256;
 const MAX_WATCHED_FILES = 256;
 const MAX_WATCHED_TREES = 8;
-/** Directory names a runner folder's watch never descends into. */
+/** Runner folders a client opened inside a directory the shared watch leaves out. */
+const MAX_WATCHED_RUNNER_DIRECTORIES = 8;
+/** Directory names a watch of a left-out runner directory still never descends into. */
 const UNWATCHED_DIRECTORIES = [
     ".cache",
     ".git",
@@ -62,9 +66,15 @@ interface FileWatch {
 }
 
 interface TreeWatch {
-    ended: boolean;
     readonly root: string;
     readonly runnerId: string | undefined;
+    unwatch: () => void;
+    /** Whether the shared watch is delivering events, so a listing is current until it reports. */
+    watching: boolean;
+}
+
+interface RunnerDirectoryWatch {
+    ended: boolean;
     watch: ComputeWatch | undefined;
 }
 
@@ -86,9 +96,12 @@ interface PendingChange {
  * dependency folders into a second recursive index. Watches are retained in least-recently-used
  * order and eviction closes the native handle immediately.
  *
- * A folder on a runner is watched as a whole through that runner's own watcher instead, skipping
- * dependency and repository directories, because each watch there is a request to another machine
- * rather than a native handle. Only the few most recently read runner folders are watched.
+ * A folder on a runner is watched as a whole instead, through the Git module's shared watch of
+ * that folder on the runner — the same watch live Git tracking uses, skipping dependency,
+ * repository, and Git-ignored directories — because each watch there is a stream to another
+ * machine rather than a native handle. A client that opens a directory the shared watch leaves
+ * out, such as one inside `node_modules`, gets a watch of that directory of its own. Only the few
+ * most recently read runner folders and left-out directories are watched.
  */
 export class ProjectFileWatcher {
     readonly #changes = new Map<string, PendingChange>();
@@ -99,11 +112,14 @@ export class ProjectFileWatcher {
     readonly #inFlight = new Set<Promise<void>>();
     readonly #onChange: ProjectFileChangeObserver;
     readonly #trees = new Map<string, TreeWatch>();
+    readonly #runnerDirectories = new Map<string, RunnerDirectoryWatch>();
     readonly #watches = new Map<string, DirectoryWatch>();
+    readonly #git: GitModule;
     #closed = false;
 
-    constructor(ctx: Context, onChange: ProjectFileChangeObserver) {
+    constructor(ctx: Context, git: GitModule, onChange: ProjectFileChangeObserver) {
         this.#ctx = ctx;
+        this.#git = git;
         this.#onChange = onChange;
     }
 
@@ -207,64 +223,142 @@ export class ProjectFileWatcher {
         }
     }
 
-    /** Watches a whole folder on a runner, remote or a workload user's, through its watcher. */
-    watchTree(root: ProjectFileWatchRoot, machine: Compute): void {
-        const watcher = machine.watcher;
-        if (this.#closed || watcher === undefined) return;
+    /**
+     * Watches a whole folder on a runner, remote or a workload user's, through the shared watch of
+     * it, and — when the client read a directory that watch leaves out — that directory too.
+     * `directory` is that directory's path on the runner.
+     */
+    watchTree(
+        root: ProjectFileWatchRoot,
+        machine: Compute,
+        relativeDirectory = "",
+        directory = root.root,
+    ): void {
+        if (this.#closed) return;
         const key = root.workspaceId ?? root.projectId;
         const existing = this.#trees.get(key);
         if (existing?.root === root.root && existing.runnerId === root.runnerId) {
             this.#trees.delete(key);
             this.#trees.set(key, existing);
-            return;
+        } else {
+            if (existing !== undefined) this.#removeTree(key);
+            const entry: TreeWatch = {
+                root: root.root,
+                runnerId: root.runnerId,
+                watching: false,
+                unwatch: () => undefined,
+            };
+            // Set first: the shared watch may already be live and say so at once.
+            this.#trees.set(key, entry);
+            entry.unwatch = this.#git.watchWorkingTree(
+                root.root,
+                {
+                    onChanges: (changes) => {
+                        if (this.#trees.get(key) !== entry) return;
+                        if (changes === null) {
+                            this.#observed(root, null, true);
+                            return;
+                        }
+                        for (const change of changes) {
+                            this.#observed(root, changedPath("", change.path), true);
+                        }
+                    },
+                    onWatching: (watching) => {
+                        entry.watching = watching;
+                    },
+                },
+                root.runnerId === undefined ? {} : { runnerId: root.runnerId },
+            );
+            while (this.#trees.size > MAX_WATCHED_TREES) {
+                const oldestKey = this.#trees.keys().next().value as string | undefined;
+                if (oldestKey === undefined) break;
+                this.#removeTree(oldestKey);
+            }
         }
-        if (existing !== undefined) this.#removeTree(key);
-        const entry: TreeWatch = {
-            ended: false,
-            root: root.root,
-            runnerId: root.runnerId,
-            watch: undefined,
-        };
-        this.#trees.set(key, entry);
-        while (this.#trees.size > MAX_WATCHED_TREES) {
-            const oldestKey = this.#trees.keys().next().value as string | undefined;
-            if (oldestKey === undefined) break;
-            this.#removeTree(oldestKey);
+        if (
+            relativeDirectory !== "" &&
+            !this.#git.coversWorkingTreePath(
+                root.root,
+                relativeDirectory,
+                root.runnerId === undefined ? {} : { runnerId: root.runnerId },
+            )
+        ) {
+            this.#watchRunnerDirectory(root, machine, relativeDirectory, directory);
         }
-        const forget = (): void => {
-            entry.ended = true;
-            if (this.#trees.get(key) === entry) this.#trees.delete(key);
-        };
-        watcher.watch(this.#ctx, { path: root.root, ignore: UNWATCHED_DIRECTORIES }).then(
-            (watch) => {
-                if (entry.ended) {
-                    watch.close();
-                    return;
-                }
-                entry.watch = watch;
-                watch.onChange((batch) => {
-                    if (batch.overflow) {
-                        this.#observed(root, null, true);
-                        return;
-                    }
-                    for (const path of batch.paths) {
-                        this.#observed(root, changedPath("", path), true);
-                    }
-                });
-                // A runner that went away ends its watches; the next read arms a new one.
-                void watch.closed.then(forget);
-            },
-            (error: unknown) => {
-                forget();
-                this.#ctx.log.warn("A runner folder could not be watched.", { key }, error);
-            },
-        );
     }
 
     /** Whether a runner folder's watch is live, so its listing is current until it reports. */
     watchingTree(root: ProjectFileWatchRoot): boolean {
         const entry = this.#trees.get(root.workspaceId ?? root.projectId);
-        return entry?.root === root.root && entry.watch !== undefined && !entry.ended;
+        return entry?.root === root.root && entry.watching;
+    }
+
+    /** Watches one runner directory the shared watch leaves out, with what is below it. */
+    #watchRunnerDirectory(
+        root: ProjectFileWatchRoot,
+        machine: Compute,
+        relativeDirectory: string,
+        directory: string,
+    ): void {
+        const watcher = machine.watcher;
+        if (watcher === undefined) return;
+        const key = `${root.runnerId ?? ""}\0${root.workspaceId ?? root.projectId}\0${relativeDirectory}`;
+        const existing = this.#runnerDirectories.get(key);
+        if (existing !== undefined && !existing.ended) {
+            this.#runnerDirectories.delete(key);
+            this.#runnerDirectories.set(key, existing);
+            return;
+        }
+        const entry: RunnerDirectoryWatch = { ended: false, watch: undefined };
+        this.#runnerDirectories.set(key, entry);
+        while (this.#runnerDirectories.size > MAX_WATCHED_RUNNER_DIRECTORIES) {
+            const oldestKey = this.#runnerDirectories.keys().next().value as string | undefined;
+            if (oldestKey === undefined) break;
+            this.#removeRunnerDirectory(oldestKey);
+        }
+        const forget = (): void => {
+            entry.ended = true;
+            if (this.#runnerDirectories.get(key) === entry) this.#runnerDirectories.delete(key);
+        };
+        watcher
+            .watch(this.#ctx, {
+                path: directory,
+                ignore: UNWATCHED_DIRECTORIES.filter(
+                    (name) => !relativeDirectory.split("/").includes(name),
+                ),
+            })
+            .then(
+                (watch) => {
+                    if (entry.ended) {
+                        watch.close();
+                        return;
+                    }
+                    entry.watch = watch;
+                    watch.onChange((batch) => {
+                        if (batch.overflow) {
+                            this.#observed(root, null, true);
+                            return;
+                        }
+                        for (const path of batch.paths) {
+                            this.#observed(root, changedPath(relativeDirectory, path), true);
+                        }
+                    });
+                    // A runner that went away ends its watches; the next read arms a new one.
+                    void watch.closed.then(forget);
+                },
+                (error: unknown) => {
+                    forget();
+                    this.#ctx.log.warn("A runner directory could not be watched.", { key }, error);
+                },
+            );
+    }
+
+    #removeRunnerDirectory(key: string): void {
+        const entry = this.#runnerDirectories.get(key);
+        if (entry === undefined) return;
+        this.#runnerDirectories.delete(key);
+        entry.ended = true;
+        entry.watch?.close();
     }
 
     /** Announces a successful module-owned write even when its directory was not already watched. */
@@ -286,6 +380,7 @@ export class ProjectFileWatcher {
         for (const { watcher } of this.#files.values()) if (watcher) closeWatcher(watcher);
         this.#files.clear();
         for (const key of [...this.#trees.keys()]) this.#removeTree(key);
+        for (const key of [...this.#runnerDirectories.keys()]) this.#removeRunnerDirectory(key);
         for (const change of this.#changes.values()) {
             if (change.timer !== undefined) clearTimeout(change.timer);
             change.timer = undefined;
@@ -382,8 +477,7 @@ export class ProjectFileWatcher {
         const entry = this.#trees.get(key);
         if (entry === undefined) return;
         this.#trees.delete(key);
-        entry.ended = true;
-        entry.watch?.close();
+        entry.unwatch();
     }
 
     /**

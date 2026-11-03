@@ -141,4 +141,14 @@ export const taskMigrations = [
             );
         },
     ],
+    [
+        // A generated label within a strict length budget; existing tasks have none.
+        "008-task-short-name",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(TASKS_TABLE)} ADD COLUMN short_name TEXT`,
+            );
+        },
+    ],
 ] as const;

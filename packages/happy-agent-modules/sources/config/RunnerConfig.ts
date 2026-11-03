@@ -21,6 +21,11 @@ export const runnerConfigSchema = Type.Object(
             pattern: "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$",
         }),
         token: apiTokenSchema,
+        /**
+         * Whether this installation's own skills are copied to the runner so its agents can use
+         * them. On unless `sync_skills = false`; turn it off for a runner not trusted with them.
+         */
+        syncSkills: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: false },
 );

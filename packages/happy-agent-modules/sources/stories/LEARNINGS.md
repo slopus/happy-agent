@@ -21,7 +21,7 @@ schema, so every caller and the daemon validate the same public contract.
 ## Replacing stale stories is part of posting
 
 Deleting an old story before posting its replacement could leave the ring empty if posting
-failed. `post_story.replaces` now removes up to five of the agent's own live originals and their
+failed. `post_story.replaces` now removes up to twenty of the agent's own live originals and their
 reposts in the new post's transaction. Foreign, repost, missing, and ended IDs are ignored;
 the result reports the originals actually replaced, and events publish only after commit.
 
@@ -31,8 +31,36 @@ Stories previously followed the last human sender, supported bots, and checked t
 inside each tool. They now check only the task owner's setting when assembling the turn's tools;
 later messages and setting changes do not revoke tools already assembled. Each bot instead uses
 its own Stories switch, off by default, and its originals reach non-guest members with personal
-stories on while enabled. A task agent original reaches only its task owner; a person's original
-or repost reaches every non-guest team member with stories on.
+stories on while enabled.
+
+## Posting always publishes
+
+Kirill asked to drop the split where a task's story stayed internal to its owner until reposted:
+a task agent's original now reaches everyone who joined the task, in the sidebar ring and the top
+row alike. Membership changes who sees a story, so joining and leaving (and archiving) push
+`story.changed`/`story.removed` to the affected readers instead of leaving clients to refetch.
+
+## Several frames, no length limit
+
+The prompt used to demand one live story per agent and one short video for several steps. Kirill
+asked for one frame per part of an outline instead, with no duration limit; only byte limits
+remain. The prompt states the viewer's 9:16 frame and the safe area agreed with the desktop
+(x 48–1032, y 384–1344 of 1080×1920) in a few lines; layout stays the model's decision.
+
+## Stories are layers, never composites
+
+A story is base media plus ordered media layers (several videos allowed), text, and a legacy
+round, each its own stored file with its own transform. The server never composes or re-encodes
+them; a repost references the original's files and layers. New files arrive through the shared
+streamed `POST /v0/artifact-uploads` and are hard-linked into chat media's store; only a picture
+is read, to be measured, and a video's H.264 check reads box headers only. The multipart route
+remains for older clients and still buffers its body.
+
+## Startup carries the feed
+
+Stories appeared late because the desktop asked for the feed after bootstrap. The bootstrap now
+includes `storiesEnabled` and the reader's stories under its own cursor; posts arrive live as
+`story.changed`.
 
 ## Multipart files keep their declared content type
 

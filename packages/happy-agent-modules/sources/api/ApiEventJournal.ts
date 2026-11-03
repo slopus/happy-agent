@@ -96,6 +96,7 @@ export class ApiEventJournal {
                 event.type !== "user_settings.updated" &&
                 event.type !== "story.changed" &&
                 event.type !== "story.removed" &&
+                !event.type.startsWith("feed.") &&
                 event.type !== "mobile_connector.updated") ||
             userId === undefined
         );

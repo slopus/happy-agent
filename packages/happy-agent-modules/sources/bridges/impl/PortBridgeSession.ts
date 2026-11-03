@@ -1,4 +1,4 @@
-import { createServer, type AddressInfo, type Server, type Socket } from "node:net";
+import type { Duplex } from "node:stream";
 
 import { createId } from "@paralleldrive/cuid2";
 import {
@@ -9,6 +9,7 @@ import {
     type WorkspacePortBridgeListener,
     type WorkspacePortBridgeServerMessage,
 } from "@slopus/happy-agent-client";
+import type { Compute, ComputeListener } from "@slopus/happy-agent-compute";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -22,7 +23,6 @@ import {
     type BridgeWebSocket,
     type BridgeWebSocketBinding,
 } from "../Bridge.js";
-import { loopbackPeerUid } from "./loopbackPeerUid.js";
 import { PortBridgeConnection } from "./PortBridgeConnection.js";
 
 const LOOPBACK = "127.0.0.1";
@@ -37,7 +37,7 @@ export interface PortBridgeSessionOptions {
 }
 
 interface WaitingConnection {
-    readonly socket: Socket;
+    readonly socket: Duplex;
     readonly timer: ReturnType<typeof setTimeout>;
 }
 
@@ -45,16 +45,15 @@ interface WaitingConnection {
  * A loopback listener on the workspace's machine whose connections are relayed to the client.
  *
  * The control WebSocket announces each connection; the client accepts one by opening its own
- * WebSocket for it, or declines it. Only the daemon's own OS user may connect on Linux, which is
- * checked against the kernel's socket table before a connection is announced at all.
+ * WebSocket for it, or declines it. The listener is the machine's own, on this computer or on a
+ * runner, and on Linux it admits only programs running as that machine's user, checked against the
+ * kernel's socket table before a connection reaches the bridge at all.
  */
 export class PortBridgeSession {
     readonly #options: PortBridgeSessionOptions;
     readonly #waiting = new Map<string, WaitingConnection>();
     readonly #connections = new Set<PortBridgeConnection>();
-    /** Connections whose owner is still being checked. They count against both limits. */
-    #arriving = 0;
-    #server: Server | undefined;
+    #server: ComputeListener | undefined;
     #listener: WorkspacePortBridgeListener | undefined;
     #control: BridgeWebSocket | undefined;
     #ending: BridgeEnding | undefined;
@@ -70,29 +69,21 @@ export class PortBridgeSession {
     }
 
     /** Binds the listener, before the WebSocket upgrade, so a taken port is refused as a status. */
-    async listen(port: number): Promise<WorkspacePortBridgeListener> {
-        // A connection is not read until it has been accepted and has somewhere to go.
-        const server = createServer({ pauseOnConnect: true });
-        this.#server = server;
-        server.on("connection", (socket) => {
-            void this.#arrive(socket);
-        });
+    async listen(machine: Compute, port: number): Promise<WorkspacePortBridgeListener> {
+        const network = machine.network;
+        if (network?.listen === undefined) {
+            throw new BridgeError(
+                "bridge_unavailable",
+                "The workspace's machine cannot listen for connections.",
+            );
+        }
+        let server: ComputeListener;
         try {
-            await new Promise<void>((resolve, reject) => {
-                // Ending the bridge while it binds closes the listener before it reports ready.
-                const closed = (): void => {
-                    reject(new Error("The bridge ended before its listener was ready."));
-                };
-                server.once("error", reject);
-                server.once("close", closed);
-                server.listen({ host: LOOPBACK, port }, () => {
-                    server.off("error", reject);
-                    server.off("close", closed);
-                    resolve();
-                });
+            server = await network.listen(this.#options.ctx, {
+                ...(port === 0 ? {} : { port }),
+                ownerOnly: true,
             });
         } catch (error) {
-            server.close();
             const code = (error as NodeJS.ErrnoException).code;
             if (code === "EADDRINUSE")
                 throw new BridgeError(
@@ -104,17 +95,27 @@ export class PortBridgeSession {
                     "port_unavailable",
                     `Happy Agent cannot listen on port ${String(port)} on the workspace's machine.`,
                 );
+            if (code === "ENOTSUP")
+                throw new BridgeError("bridge_unavailable", (error as Error).message);
             throw error;
         }
-        server.on("error", (error) => {
-            this.#options.ctx.log.warn("A port bridge's listener failed.", {}, error);
+        // Ending the bridge while it binds closes the listener before it reports ready.
+        if (this.#ending !== undefined) {
+            server.close();
+            throw new Error("The bridge ended before its listener was ready.");
+        }
+        this.#server = server;
+        server.onConnection((socket) => {
+            this.#arrive(socket);
+        });
+        void server.closed.then(() => {
             this.end({
                 reason: "failed",
                 code: WORKSPACE_BRIDGE_CLOSE_CODES.internal,
                 message: "The bridge's listener stopped working.",
             });
         });
-        this.#listener = { host: LOOPBACK, port: (server.address() as AddressInfo).port };
+        this.#listener = { host: LOOPBACK, port: server.port };
         return this.#listener;
     }
 
@@ -185,27 +186,13 @@ export class PortBridgeSession {
         this.#options.ended(ending);
     }
 
-    async #arrive(socket: Socket): Promise<void> {
+    #arrive(socket: Duplex): void {
         socket.on("error", () => undefined);
         if (
             this.#ending !== undefined ||
-            this.#waiting.size + this.#arriving + this.#connections.size >=
-                MAX_PORT_BRIDGE_CONNECTIONS ||
-            this.#waiting.size + this.#arriving >= MAX_PORT_BRIDGE_WAITING_CONNECTIONS
+            this.#waiting.size + this.#connections.size >= MAX_PORT_BRIDGE_CONNECTIONS ||
+            this.#waiting.size >= MAX_PORT_BRIDGE_WAITING_CONNECTIONS
         ) {
-            socket.destroy();
-            return;
-        }
-        this.#arriving += 1;
-        let admitted = false;
-        try {
-            admitted = await this.#isOwnUser(socket);
-        } catch (error) {
-            this.#options.ctx.log.warn("A port bridge could not check a connection.", {}, error);
-        } finally {
-            this.#arriving -= 1;
-        }
-        if (!admitted || this.#ending !== undefined || socket.destroyed) {
             socket.destroy();
             return;
         }
@@ -224,16 +211,6 @@ export class PortBridgeSession {
             this.#waiting.delete(connectionId);
         });
         if (this.#opened) this.#send({ type: "connection", connectionId });
-    }
-
-    /**
-     * Whether the connecting process runs as the daemon's user. Elsewhere than Linux there is no
-     * socket table to ask, and every local user may connect, as the specification says.
-     */
-    async #isOwnUser(socket: Socket): Promise<boolean> {
-        if (process.platform !== "linux" || process.getuid === undefined) return true;
-        const uid = await loopbackPeerUid(socket);
-        return uid !== undefined && uid === process.getuid();
     }
 
     #controlMessage(data: Uint8Array | string): void {

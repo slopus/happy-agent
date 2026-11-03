@@ -15,10 +15,17 @@ import { cloneRemoteRepository, remoteUrlForSource } from "./cloneRemoteReposito
 import { countUntrackedFileLines, type UntrackedFileCount } from "./countUntrackedFileLines.js";
 import { createGitWorktree } from "./createGitWorktree.js";
 import { detectGitDefaultBranch } from "./detectGitDefaultBranch.js";
+import { localGitWorkingFiles, type GitWorkingFiles } from "./gitWorkingFiles.js";
 import { cloneOnRunner } from "./impl/cloneOnRunner.js";
-import { GitStateTracker } from "./impl/GitStateTracker.js";
+import { GitStateTracker, type GitRepositoryMachine } from "./impl/GitStateTracker.js";
+import { machineGitWorkingFiles } from "./impl/machineGitWorkingFiles.js";
 import { runnerGitCommandRunner, runnerScanGit } from "./impl/runnerGitRunners.js";
-import { WorkingTreeWatcher, type WorkingTreeObserver } from "./impl/WorkingTreeWatcher.js";
+import { RunnerWatches } from "./impl/RunnerWatches.js";
+import {
+    WorkingTreeWatcher,
+    type WorkingTreeObserver,
+    type WorkingTreeWatchOptions,
+} from "./impl/WorkingTreeWatcher.js";
 import { isGitWorktreeAt } from "./isGitWorktreeAt.js";
 import { listGitWorkingTreeFiles, type GitWorkingTreeFiles } from "./listGitWorkingTreeFiles.js";
 import { normalizeFuturePath } from "./normalizeFuturePath.js";
@@ -105,6 +112,7 @@ interface GitMachine {
     readonly foreground: GitCommandRunner;
     readonly read: GitCommandRunner;
     readonly scan: ScanGitRunner;
+    readonly files: GitWorkingFiles;
     isDirectory(path: string): Promise<boolean>;
     makeDirectory(path: string): Promise<void>;
     inspect(path: string): Promise<{ isDirectory: boolean; isSymbolicLink: boolean }>;
@@ -120,6 +128,7 @@ export type GitSnapshotObserver = (
 interface CachedSnapshot {
     readonly expiresAt: number;
     readonly root: string;
+    readonly runnerId?: string;
     readonly snapshot: GitChangeSnapshot;
 }
 
@@ -145,6 +154,8 @@ export class GitModule implements AgentModule {
     readonly #observers = new Set<GitSnapshotObserver>();
     readonly #runners: RunnersModule | undefined;
     readonly #runnerMachines = new Map<string, GitMachine>();
+    readonly #repositoryMachines = new Map<string, GitRepositoryMachine>();
+    #runnerWatches: RunnerWatches | undefined;
     #config: ConfigModule | undefined;
     #disposed = false;
     #foreground: GitCommandRunner;
@@ -619,21 +630,42 @@ export class GitModule implements AgentModule {
         return this.#generation;
     }
 
-    /** One repository's change snapshot, served from a short-lived cache. */
-    async snapshot(root: string, key = root, signal?: AbortSignal): Promise<GitChangeSnapshot> {
+    /**
+     * One repository's change snapshot, served from a short-lived cache. A repository on a runner
+     * is scanned there, exactly as one here is scanned here.
+     */
+    async snapshot(
+        root: string,
+        key = root,
+        options: GitOperationOptions = {},
+    ): Promise<GitChangeSnapshot> {
         const now = Date.now();
         this.#evictExpired(now);
+        // Nothing is answered for a runner that has gone away, however recent: it is reported as
+        // unavailable, as every other read from its folders is.
+        if (options.runnerId !== undefined) this.#runners?.assertConnected(options.runnerId);
         const cached = this.#cache.get(key);
-        if (cached !== undefined && cached.expiresAt > now && cached.root === root) {
+        if (
+            cached !== undefined &&
+            cached.expiresAt > now &&
+            cached.root === root &&
+            cached.runnerId === options.runnerId
+        ) {
             this.#cache.delete(key);
             this.#cache.set(key, cached);
             return cached.snapshot;
         }
+        const machine = this.#machine(options.runnerId);
         const state = await scanGitRepository({
+            files: machine.files,
             path: root,
-            runGit: this.#scan,
-            ...(signal === undefined ? {} : { signal }),
+            runGit: machine.scan,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
         });
+        // A scan reports a failed Git command as its result; one that failed because the runner
+        // went away mid-scan is the runner's unavailability instead.
+        if (state.error !== undefined && options.runnerId !== undefined)
+            this.#runners?.assertConnected(options.runnerId);
         const files = state.files.slice(0, MAX_SNAPSHOT_FILES);
         const snapshot: GitChangeSnapshot = {
             ...state,
@@ -651,6 +683,7 @@ export class GitModule implements AgentModule {
         this.#cache.set(key, {
             expiresAt: Date.now() + SNAPSHOT_CACHE_MS,
             root,
+            ...(options.runnerId === undefined ? {} : { runnerId: options.runnerId }),
             snapshot,
         });
         return snapshot;
@@ -658,19 +691,21 @@ export class GitModule implements AgentModule {
 
     /** Snapshots for a batch of catalog entities, addressed the way a live subscriber reads them. */
     async watch(
-        entities: readonly (GitEntity & { readonly root: string })[],
+        entities: readonly (GitEntity & { readonly root: string; readonly runnerId?: string })[],
     ): Promise<readonly GitLiveSnapshot[]> {
         const snapshots: GitLiveSnapshot[] = [];
         for (const entity of entities.slice(0, MAX_WATCH_ENTITIES)) {
             const snapshot = await this.snapshot(
                 entity.root,
                 `${entity.projectId}:${entity.workspaceId ?? ""}`,
+                entity.runnerId === undefined ? {} : { runnerId: entity.runnerId },
             );
             snapshots.push(
                 liveSnapshot(
                     {
                         path: entity.root,
                         projectId: entity.projectId,
+                        ...(entity.runnerId === undefined ? {} : { runnerId: entity.runnerId }),
                         ...(entity.workspaceId === undefined
                             ? {}
                             : { workspaceId: entity.workspaceId }),
@@ -683,13 +718,13 @@ export class GitModule implements AgentModule {
     }
 
     /** Drops cached snapshots, for one repository root or for all of them. */
-    invalidate(root?: string): void {
+    invalidate(root?: string, options: GitPlacement = {}): void {
         if (root === undefined) {
             this.#cache.clear();
             return;
         }
         for (const [key, value] of this.#cache) {
-            if (value.root === root) this.#cache.delete(key);
+            if (value.root === root && value.runnerId === options.runnerId) this.#cache.delete(key);
         }
     }
 
@@ -734,14 +769,37 @@ export class GitModule implements AgentModule {
     /**
      * Watches one folder's working tree until the returned function is called.
      *
-     * Every observer of the same folder shares one native recursive watch that excludes what Git
-     * ignores, and it is the same watch the live Git tracking uses. `onWatching(false)` means
-     * events are not arriving and the caller must poll; `onChanges(null)` means some may have
-     * been missed.
+     * Every observer of the same folder shares one recursive watch that excludes what Git
+     * ignores, and it is the same watch the live Git tracking uses: a native one for a folder on
+     * this machine, or one on the folder's runner, which reports every changed path as an update.
+     * `onWatching(false)` means events are not arriving and the caller must poll;
+     * `onChanges(null)` means some may have been missed. `plainFolder` narrows a folder on this
+     * machine that is in no repository to what a file index of it reads.
      */
-    watchWorkingTree(root: string, observer: WorkingTreeObserver): () => void {
+    watchWorkingTree(
+        root: string,
+        observer: WorkingTreeObserver,
+        options: GitPlacement & WorkingTreeWatchOptions = {},
+    ): () => void {
         if (this.#disposed) return () => undefined;
-        return this.#treeInstance().watch(root, observer);
+        if (this.#native(options.runnerId)) {
+            return this.#treeInstance().watch(
+                root,
+                observer,
+                options.plainFolder === true ? { plainFolder: true } : {},
+            );
+        }
+        return this.#runnerWatchesInstance().watchTree(options.runnerId, root, observer);
+    }
+
+    /**
+     * Whether the shared working-tree watch of a folder on a runner reports changes below a
+     * relative path. Dependency, repository, and Git-ignored directories are left out of it, so a
+     * caller showing one of them needs a watch of that directory itself.
+     */
+    coversWorkingTreePath(root: string, relativePath: string, options: GitPlacement = {}): boolean {
+        if (this.#native(options.runnerId)) return true;
+        return this.#runnerWatchesInstance().covers(options.runnerId, root, relativePath);
     }
 
     /** Tells the watcher a repository is dirty, for a change it saw before the watcher did. */
@@ -793,7 +851,10 @@ export class GitModule implements AgentModule {
         this.#tracker = undefined;
         this.#tree?.dispose();
         this.#tree = undefined;
+        this.#runnerWatches?.dispose();
+        this.#runnerWatches = undefined;
         this.#runnerMachines.clear();
+        this.#repositoryMachines.clear();
         this.#observers.clear();
         this.#cache.clear();
     }
@@ -828,8 +889,47 @@ export class GitModule implements AgentModule {
                 stamp: (state) => this.#stamp(state),
             },
             tree,
+            (runnerId) => (this.#native(runnerId) ? undefined : this.#repositoryMachine(runnerId)),
         );
         return this.#tracker;
+    }
+
+    #runnerWatchesInstance(): RunnerWatches {
+        const runners = this.#runnersModule();
+        this.#runnerWatches ??= new RunnerWatches(this.#root(), {
+            machine: async (runnerId) => await runners.machine(runnerId),
+            scan: (runnerId) => this.#machine(runnerId).scan,
+            paths: (runnerId) => runners.paths(runnerId),
+            home: (runnerId) => {
+                if (runnerId !== undefined) return runners.home(runnerId);
+                try {
+                    return runners.machineHome(undefined)?.home;
+                } catch {
+                    return undefined;
+                }
+            },
+        });
+        return this.#runnerWatches;
+    }
+
+    /** A repository on a runner, scanned and watched there. */
+    #repositoryMachine(runnerId: string | undefined): GitRepositoryMachine {
+        const key = runnerId ?? "";
+        const existing = this.#repositoryMachines.get(key);
+        if (existing !== undefined) return existing;
+        const machine = this.#machine(runnerId);
+        const watches = this.#runnerWatchesInstance();
+        const created: GitRepositoryMachine = {
+            scan: machine.scan,
+            files: machine.files,
+            watchTree: (root, observer) => watches.watchTree(runnerId, root, observer),
+            watchMetadata: (options) => watches.watchGit(runnerId, options),
+            assertAvailable: () => {
+                if (runnerId !== undefined) this.#runners?.assertConnected(runnerId);
+            },
+        };
+        this.#repositoryMachines.set(key, created);
+        return created;
     }
 
     #stamp(state: GitChangeState): GitChangeSnapshot {
@@ -865,6 +965,7 @@ export class GitModule implements AgentModule {
                 foreground: this.#foreground,
                 read: this.#read,
                 scan: this.#scan,
+                files: localGitWorkingFiles,
                 isDirectory: async (path) =>
                     await stat(path)
                         .then((stats) => stats.isDirectory())
@@ -899,6 +1000,10 @@ export class GitModule implements AgentModule {
             foreground: plain,
             read: gitCommandRunnerFromScanGitRunner(scan),
             scan,
+            files: machineGitWorkingFiles(
+                async () => await this.#runnerMachine(runnerId),
+                () => runners.paths(runnerId),
+            ),
             isDirectory: async (path) => {
                 const machine = await this.#runnerMachine(runnerId);
                 return await machine.fs

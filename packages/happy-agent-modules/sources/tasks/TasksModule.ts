@@ -196,21 +196,22 @@ export class TasksModule implements AgentModule {
                             );
                         },
                         async () => {
-                            return (
-                                await this.#titles.suggestNames(
-                                    ctx,
-                                    {
-                                        firstMessage: message,
-                                        wanted: { title: true },
-                                        providerId,
-                                    },
-                                    ctx.lifetime === undefined ? {} : { signal: ctx.lifetime },
-                                )
-                            ).title;
+                            // One request names both; only a missing title is worth retrying.
+                            const names = await this.#titles.suggestNames(
+                                ctx,
+                                {
+                                    firstMessage: message,
+                                    wanted: { title: true, short: true },
+                                    providerId,
+                                },
+                                ctx.lifetime === undefined ? {} : { signal: ctx.lifetime },
+                            );
+                            return names.title === undefined ? undefined : names;
                         },
                     );
                     if (name === null) return null;
-                    const chosen = name ?? this.#titles.fallbackName(message);
+                    const chosen = name?.title ?? this.#titles.fallbackName(message);
+                    const short = name?.short;
                     const title = chosen
                         ?.split(/\s+/u)
                         .slice(0, 6)
@@ -227,6 +228,7 @@ export class TasksModule implements AgentModule {
                             ...value,
                             name: title,
                             nameConfigured: true,
+                            ...(short === undefined ? {} : { shortName: short }),
                         }));
                     });
                     return null;
@@ -817,7 +819,8 @@ export class TasksModule implements AgentModule {
             if (current.name !== name) {
                 await this.#updateAgentMetadata(txCtx, current.agentId, { title: name });
             }
-            return await this.#change(txCtx, current, (task) => ({
+            // A generated short name described the old name; the reader falls back to the new one.
+            return await this.#change(txCtx, current, ({ shortName: _short, ...task }) => ({
                 ...task,
                 name,
                 nameConfigured: true,

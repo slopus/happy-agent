@@ -11,6 +11,7 @@ import type { ProjectsModule } from "../../sources/projects/index.js";
 import { RunnersModule } from "../../sources/runners/index.js";
 import type { WorkspacesModule } from "../../sources/workspaces/index.js";
 import { git, gitRunner } from "../git/helpers.js";
+import { inotifyWatchCount } from "../git/inotifyWatchCount.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 
 const directories = new Set<string>();
@@ -108,6 +109,41 @@ describe("ProjectFilesModule index", () => {
             expect.arrayContaining(["README.md", "assets/data.bin", "assets/logo.png"]),
         );
     });
+
+    it.runIf(process.platform === "linux")(
+        "watches a folder outside any repository only where it indexes",
+        async () => {
+            const root = await plainFolder();
+            await mkdir(join(root, "src"));
+            await writeFile(join(root, "src", "main.ts"), "export {};");
+            // An agent's scratch: a package store under a hidden folder, which fff never reads.
+            for (let index = 0; index < 400; index += 1) {
+                await mkdir(
+                    join(root, ".context", "store", `p${String(index % 20)}`, `d${String(index)}`),
+                    { recursive: true },
+                );
+            }
+            await mkdir(join(root, "node_modules", "dependency"), { recursive: true });
+            const files = await createFiles();
+            const resolvedRoot = await fileRoot(root);
+            const before = inotifyWatchCount() ?? 0;
+
+            await files.search(resolvedRoot, { query: "main" });
+            // Let the watch arm, then compare: the root and `src` are all fff reads.
+            await new Promise((resolve) => setTimeout(resolve, 1_000));
+            expect((inotifyWatchCount() ?? 0) - before).toBeLessThanOrEqual(4);
+
+            await writeFile(join(root, "src", "added.ts"), "export {};");
+            await vi.waitFor(
+                async () => {
+                    const result = await files.search(resolvedRoot, { query: "added" });
+                    expect(result.files.map((file) => file.path)).toContain("src/added.ts");
+                },
+                { timeout: 15_000 },
+            );
+        },
+        30_000,
+    );
 
     it("keeps its repository's ignore rules for a folder nested below the top level", async () => {
         const repository = await workspace();

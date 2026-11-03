@@ -40,10 +40,11 @@ export function createBotTool(bots: BotsModule, actingAgentId: string) {
             if (actingBot !== undefined && !actingBot.isAdmin) {
                 throw new Error(formatAdminBotRequired(await bots.list(ctx)));
             }
-            return await bots.create(ctx, {
-                ...input,
-                id: await call.kv.getOrCreate(ctx, "botId", () => createId()),
-            });
+            return await bots.create(
+                ctx,
+                { ...input, id: await call.kv.getOrCreate(ctx, "botId", () => createId()) },
+                actingAgentId,
+            );
         },
         toLLM: (bot) => [
             {

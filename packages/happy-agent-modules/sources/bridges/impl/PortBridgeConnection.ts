@@ -1,4 +1,4 @@
-import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 
 import { WORKSPACE_BRIDGE_CLOSE_CODES } from "@slopus/happy-agent-client";
 
@@ -12,13 +12,13 @@ import { relayBridgeSocket, type BridgeRelay } from "./relayBridgeSocket.js";
  * it, so a program that stops writing has also stopped reading.
  */
 export class PortBridgeConnection implements BridgeAdmission {
-    readonly #socket: Socket;
+    readonly #socket: Duplex;
     readonly #ended: () => void;
     #webSocket: BridgeWebSocket | undefined;
     #relay: BridgeRelay | undefined;
     #done = false;
 
-    constructor(socket: Socket, ended: () => void) {
+    constructor(socket: Duplex, ended: () => void) {
         this.#socket = socket;
         this.#ended = ended;
     }

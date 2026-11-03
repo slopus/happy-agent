@@ -1,15 +1,21 @@
 import { watch as watchDirectory } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
-import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { AsyncSubscription, Event } from "@parcel/watcher";
 import type { Context, RootContext } from "@steve.kite/stdlib";
 
 import type { ScanGitRunner } from "../runScanGit.js";
+import { containsHomeDirectory } from "./containsHomeDirectory.js";
+import { RUNNER_UNWATCHED_DIRECTORIES } from "./RunnerWatches.js";
 
 /** Directories no working tree needs watched, whether or not Git ignores them. */
 const ALWAYS_IGNORED = [".git", "**/node_modules"];
+/**
+ * What a plain folder's watch leaves out besides: hidden entries and dependency directories at any
+ * depth, which a file index of a folder in no repository does not read either.
+ */
+const PLAIN_FOLDER_IGNORED = ["**/.*", ...RUNNER_UNWATCHED_DIRECTORIES.map((name) => `**/${name}`)];
 const IGNORED_DIRECTORY_LIMIT = 4_096;
 const IGNORED_LISTING_BYTES = 1024 * 1024;
 const CREATED_PATH_PROBES = 32;
@@ -34,6 +40,15 @@ export interface WorkingTreeChange {
     readonly path: string;
 }
 
+export interface WorkingTreeWatchOptions {
+    /**
+     * Watch the folder as one in no repository: only the entries a file index of such a folder
+     * reads, leaving out hidden entries and dependency directories at any depth. An agent's
+     * scratch folder can hold a package store or caches of tens of thousands of directories.
+     */
+    readonly plainFolder?: boolean;
+}
+
 export interface WorkingTreeObserver {
     /** Changed paths, or `null` when changes may have been missed and everything is suspect. */
     readonly onChanges: (changes: readonly WorkingTreeChange[] | null) => void;
@@ -43,6 +58,8 @@ export interface WorkingTreeObserver {
 
 interface WatchedRoot {
     readonly observers: Set<WorkingTreeObserver>;
+    readonly key: string;
+    readonly plainFolder: boolean;
     closed: boolean;
     /** Every directory Git currently ignores, whose events are dropped whether watched or not. */
     ignored: readonly string[];
@@ -124,17 +141,24 @@ export class WorkingTreeWatcher {
     }
 
     /** Whether events are currently arriving for `root`. */
-    isWatching(root: string): boolean {
-        return this.#roots.get(resolve(root))?.watching === true;
+    isWatching(root: string, options: WorkingTreeWatchOptions = {}): boolean {
+        return this.#roots.get(rootKey(resolve(root), options))?.watching === true;
     }
 
-    watch(root: string, observer: WorkingTreeObserver): () => void {
+    watch(
+        root: string,
+        observer: WorkingTreeObserver,
+        options: WorkingTreeWatchOptions = {},
+    ): () => void {
         if (this.#disposed) return () => undefined;
         const path = resolve(root);
-        let entry = this.#roots.get(path);
+        const key = rootKey(path, options);
+        let entry = this.#roots.get(key);
         if (entry === undefined) {
             entry = {
                 closed: false,
+                key,
+                plainFolder: options.plainFolder === true,
                 ignoreCheckedAt: 0,
                 ignoreTimer: undefined,
                 ignored: [],
@@ -147,7 +171,7 @@ export class WorkingTreeWatcher {
                 subscriptionGeneration: 0,
                 watching: false,
             };
-            this.#roots.set(path, entry);
+            this.#roots.set(key, entry);
             void this.#subscribe(entry);
         }
         entry.observers.add(observer);
@@ -206,6 +230,7 @@ export class WorkingTreeWatcher {
                             {
                                 ignore: [
                                     ...ALWAYS_IGNORED,
+                                    ...(entry.plainFolder ? PLAIN_FOLDER_IGNORED : []),
                                     ...ignored.map((path) => join(nativeRoot, path)),
                                 ],
                             },
@@ -267,7 +292,8 @@ export class WorkingTreeWatcher {
                 path === undefined ||
                 isUnder(path, ".git") ||
                 path.split("/").includes("node_modules") ||
-                isIgnored(entry.ignored, path)
+                isIgnored(entry.ignored, path) ||
+                (entry.plainFolder && outsidePlainFolderWatch(path))
             ) {
                 continue;
             }
@@ -298,6 +324,7 @@ export class WorkingTreeWatcher {
 
     #scheduleIgnoreCheck(entry: WatchedRoot): void {
         if (entry.closed || entry.ignoreTimer !== undefined || !LISTS_IGNORED) return;
+        if (entry.plainFolder) return;
         const delay = Math.max(
             IGNORE_RECHECK_DELAY_MS,
             entry.ignoreCheckedAt + IGNORE_RECHECK_INTERVAL_MS - Date.now(),
@@ -363,7 +390,7 @@ export class WorkingTreeWatcher {
         }
         entry.subscription = undefined;
         entry.observers.clear();
-        if (this.#roots.get(entry.root) === entry) this.#roots.delete(entry.root);
+        if (this.#roots.get(entry.key) === entry) this.#roots.delete(entry.key);
     }
 
     /**
@@ -372,7 +399,7 @@ export class WorkingTreeWatcher {
      * that is not a repository ignores nothing beyond the fixed list.
      */
     async #ignoredDirectories(entry: WatchedRoot): Promise<readonly string[]> {
-        if (!LISTS_IGNORED || entry.closed) return [];
+        if (!LISTS_IGNORED || entry.closed || entry.plainFolder) return [];
         try {
             const result = await this.#scan({
                 args: [
@@ -406,21 +433,19 @@ export class WorkingTreeWatcher {
     }
 }
 
-/**
- * Whether `root` is the user's home directory or one of its ancestors.
- *
- * Such a tree holds other applications' data. On macOS the native watcher stats every changed
- * path it reports, and a stat inside `~/Library/Containers`, the Photos library, Contacts or
- * Documents asks the user to grant the app access to that data, again and again while those
- * applications write. On Linux it would spend an inotify watch on every directory in the home.
- */
-async function containsHomeDirectory(root: string): Promise<boolean> {
-    const [canonicalRoot, home] = await Promise.all([
-        realpath(root).catch(() => resolve(root)),
-        realpath(homedir()).catch(() => resolve(homedir())),
-    ]);
-    const path = relative(canonicalRoot, home);
-    return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+function rootKey(path: string, options: WorkingTreeWatchOptions): string {
+    return options.plainFolder === true ? `plain\0${path}` : path;
+}
+
+/** Whether a plain folder's watch leaves this relative path out. */
+function outsidePlainFolderWatch(path: string): boolean {
+    return path
+        .split("/")
+        .some(
+            (segment) =>
+                segment.startsWith(".") ||
+                (RUNNER_UNWATCHED_DIRECTORIES as readonly string[]).includes(segment),
+        );
 }
 
 function relativePath(root: string, path: string): string | undefined {

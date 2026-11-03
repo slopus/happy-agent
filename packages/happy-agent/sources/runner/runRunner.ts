@@ -1,19 +1,12 @@
 import { openTailcatRemote } from "@slopus/happy-agent-modules/tailcat";
 import { createRootContext, withLogger } from "@steve.kite/stdlib";
 
-import { connectRunnerWebSocket, RunnerConnectError } from "./connectRunnerWebSocket.js";
+import { connectRunnerWebSocket } from "./connectRunnerWebSocket.js";
 import { createRunnerHostFor } from "./createRunnerHostFor.js";
 import { createRunnerLogger } from "./createRunnerLogger.js";
-import { disposeHost } from "./disposeHost.js";
 import { readRunnerOptions } from "./readRunnerOptions.js";
 import { runStdioRunner } from "./runStdioRunner.js";
-
-const FIRST_RETRY_MS = 1_000;
-const LAST_RETRY_MS = 30_000;
-/** A refused token is a configuration change away from working, so it is retried slowly. */
-const REFUSED_RETRY_MS = 60_000;
-/** A connection that lasted this long was healthy, so the next drop retries quickly again. */
-const HEALTHY_CONNECTION_MS = 60_000;
+import { serveDaemon } from "./serveDaemon.js";
 
 /**
  * Run this machine as a runner until it is stopped.
@@ -43,62 +36,23 @@ export async function runRunner(args: readonly string[]): Promise<void> {
             ? undefined
             : async () => await remote.connect(tailcat.port);
 
-    let stopping = false;
-    let wake: (() => void) | undefined;
-    let current: { close(reason: string): void } | undefined;
+    const stopping = new AbortController();
     const stop = (signal: string) => {
-        if (stopping) return;
-        stopping = true;
+        if (stopping.signal.aborted) return;
         ctx.log.info(`The runner is stopping after ${signal}.`);
-        current?.close("The runner is shutting down.");
-        wake?.();
+        stopping.abort();
     };
     process.once("SIGINT", () => stop("SIGINT"));
     process.once("SIGTERM", () => stop("SIGTERM"));
 
     ctx.log.info(`Happy Agent runner ${identity.version} on ${identity.hostname} is starting.`);
-    let delay = FIRST_RETRY_MS;
-    while (!stopping) {
-        const startedAt = Date.now();
-        try {
-            const channel = await connectRunnerWebSocket(options.url, options.token, dial);
-            if (stopping) {
-                channel.close("The runner is shutting down.");
-                break;
-            }
-            current = channel;
-            ctx.log.info("Connected to the daemon.");
-            const reason = await host.serve(channel);
-            current = undefined;
-            ctx.log.info(`The connection to the daemon ended: ${reason}`);
-            delay = Date.now() - startedAt >= HEALTHY_CONNECTION_MS ? FIRST_RETRY_MS : delay;
-        } catch (error: unknown) {
-            current = undefined;
-            const refused = error instanceof RunnerConnectError && error.refused;
-            ctx.log.warn(error instanceof Error ? error.message : String(error));
-            if (refused) delay = REFUSED_RETRY_MS;
-        }
-        if (stopping) break;
-        await sleep(jitter(delay), (resolve) => {
-            wake = resolve;
-        });
-        wake = undefined;
-        delay = Math.min(delay * 2, LAST_RETRY_MS);
-    }
-    await disposeHost(root.named("runner-shutdown"), host);
-    await remote?.close();
-}
-
-function jitter(ms: number): number {
-    return Math.round(ms * (0.8 + Math.random() * 0.4));
-}
-
-async function sleep(ms: number, onWake: (resolve: () => void) => void): Promise<void> {
-    await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, ms);
-        onWake(() => {
-            clearTimeout(timer);
-            resolve();
-        });
+    await serveDaemon({
+        ctx,
+        host,
+        connect: async () => await connectRunnerWebSocket(options.url, options.token, dial),
+        stop: stopping.signal,
+        shutdownCtx: root.named("runner-shutdown"),
     });
+    // Only now, with the goodbye delivered, may the carrier that carried it go.
+    await remote?.close();
 }

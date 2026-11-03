@@ -4,6 +4,7 @@ import type { PlatformPath } from "node:path";
 import type { AgentModule } from "@slopus/happy-agent-base";
 import {
     computePermissions,
+    RunnerDisconnectedError,
     RunnerUnavailableError,
     type Compute,
 } from "@slopus/happy-agent-compute";
@@ -663,17 +664,19 @@ export class ProjectFilesModule implements AgentModule {
 
     /** Tells live Git state, the search index, and watchers that these paths changed. */
     #changed(root: ProjectFileRoot, paths: readonly string[], structural: boolean): void {
-        if (this.#runners.native(root.runnerId)) {
-            // Live Git state and the native index follow folders this process reads itself.
-            this.#git.invalidate(root.root);
-            this.#git.markChanged({
-                path: root.root,
-                projectId: root.projectId,
-                ...(root.workspaceId === undefined ? {} : { workspaceId: root.workspaceId }),
-            });
-            if (structural) this.#index.refresh(root.root);
-        } else if (structural) {
-            this.#machineIndex.refresh(root.runnerId, root.root);
+        // Live Git state follows every folder, here or on its runner, before its watch reports.
+        const placement = root.runnerId === undefined ? {} : { runnerId: root.runnerId };
+        if (root.runnerId === undefined) this.#git.invalidate(root.root);
+        else this.#git.invalidate(root.root, placement);
+        this.#git.markChanged({
+            path: root.root,
+            projectId: root.projectId,
+            ...placement,
+            ...(root.workspaceId === undefined ? {} : { workspaceId: root.workspaceId }),
+        });
+        if (structural) {
+            if (this.#runners.native(root.runnerId)) this.#index.refresh(root.root);
+            else this.#machineIndex.refresh(root.runnerId, root.root);
         }
         for (const path of paths) this.#watcherInstance().changed(root, path);
     }
@@ -811,7 +814,7 @@ export class ProjectFilesModule implements AgentModule {
         if (this.#runners.native(root.runnerId)) {
             this.#watcherInstance().watchDirectory(root, relativeDirectory, directory);
         } else {
-            this.#watcherInstance().watchTree(root, machine);
+            this.#watcherInstance().watchTree(root, machine, relativeDirectory, directory);
         }
     }
 
@@ -904,6 +907,7 @@ export class ProjectFilesModule implements AgentModule {
     #watcherInstance(): ProjectFileWatcher {
         this.#watcher ??= new ProjectFileWatcher(
             this.#root().named("project-file-watcher"),
+            this.#git,
             async (ctx, root, paths, structural) => {
                 if (structural) {
                     if (this.#runners.native(root.runnerId)) this.#index.refresh(root.root);
@@ -985,9 +989,16 @@ function isWithin(paths: PlatformPath, root: string, candidate: string): boolean
     return candidatePath === rootPath || candidatePath.startsWith(`${rootPath}${paths.sep}`);
 }
 
-/** A refusal from the folder's machine itself, which the caller reports as it stands. */
+/**
+ * A refusal from the folder's machine itself, which the caller reports as it stands: the runner is
+ * away, its connection ended mid-call, or this machine runs nothing.
+ */
 function isMachineRefusal(error: unknown): boolean {
-    return error instanceof RunnerUnavailableError || error instanceof LocalExecutionDisabledError;
+    return (
+        error instanceof RunnerUnavailableError ||
+        error instanceof RunnerDisconnectedError ||
+        error instanceof LocalExecutionDisabledError
+    );
 }
 
 function errorCode(error: unknown): unknown {

@@ -89,6 +89,10 @@ import { mcpConnectionFingerprint } from "./mcpConnectionFingerprint.js";
 
 const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_OUTPUT_CHARACTERS = 12_000;
+/**
+ * The user-wide catalog as it applies on this machine. Its stdio servers run here; each runner with
+ * active agents gets its own copy (`runnerGlobalCatalog`) whose stdio servers run on that runner.
+ */
 const GLOBAL_CATALOG = "global";
 /** A failed server is retried after this delay, doubling while it keeps failing. */
 const RETRY_FIRST_DELAY_MS = 1_000;
@@ -142,6 +146,13 @@ interface McpCatalogServer {
  */
 const SEPARATE_USER_STDIO =
     "This bot runs as its own Linux user, and stdio MCP servers run as the installation's workload user, so they are not available to it. HTTP servers still are.";
+
+/**
+ * Why a user-wide stdio server is not started on this machine while a runner is the default:
+ * nothing runs here then, and every agent gets the server on its own runner instead.
+ */
+const NO_LOCAL_STDIO =
+    "Stdio MCP servers run on the machine of the agent's folder, and this agent has no folder on a machine that can run them.";
 
 interface McpCatalog {
     readonly servers: ReadonlyMap<string, McpCatalogServer>;
@@ -204,9 +215,10 @@ export class McpModule implements AgentModule {
     #closed = false;
 
     /**
-     * @param runners The owner of the machines folders live on. A stdio server for a workspace on a
-     * runner starts on that runner, and while runners are configured the user's own stdio servers
-     * start on the default runner, because nothing runs on this machine then.
+     * @param runners The owner of the machines folders live on. A stdio server starts on the machine
+     * of the folder whose agent uses it: a workspace's own server on that workspace's runner, and
+     * a user-wide server once on each runner that has agents, as well as on this machine while
+     * work may run here.
      * @param compute The owner of each agent's placement, which says which runner its folder is on.
      */
     constructor(
@@ -434,6 +446,9 @@ export class McpModule implements AgentModule {
                 ctx,
                 new Map([
                     [GLOBAL_CATALOG, servers],
+                    ...[...this.#activeRunners()].map(
+                        (runnerId) => [runnerGlobalCatalog(runnerId), servers] as const,
+                    ),
                     ...workspaceServers.flatMap((entry) =>
                         entry === undefined
                             ? []
@@ -1123,7 +1138,12 @@ export class McpModule implements AgentModule {
             }
         }
         // User configuration is trusted and keeps its name when a workspace declares a collision.
-        for (const [name, server] of this.#catalogs.get(GLOBAL_CATALOG)?.servers ?? []) {
+        // Its stdio servers are the ones running on the agent's own machine.
+        const runnerId =
+            workspace === undefined ? undefined : parseWorkspaceKey(workspace).runnerId;
+        const globalCatalog =
+            runnerId === undefined ? GLOBAL_CATALOG : runnerGlobalCatalog(runnerId);
+        for (const [name, server] of this.#catalogs.get(globalCatalog)?.servers ?? []) {
             servers.set(name, server);
         }
         if (this.#runsAsWorkloadUser(agentId)) return servers;
@@ -1149,7 +1169,12 @@ export class McpModule implements AgentModule {
     async #ensureAgentWorkspace(ctx: Context, agentId: string): Promise<void> {
         if (this.#closed) return;
         const workspace = this.#agentWorkspaces.get(agentId);
-        if (workspace !== undefined && this.#catalogs.has(workspaceCatalog(workspace))) return;
+        if (
+            workspace !== undefined &&
+            this.#catalogs.has(workspaceCatalog(workspace)) &&
+            this.#hasRunnerGlobalCatalog(workspace)
+        )
+            return;
         const agents = this.#agents;
         if (agents === undefined) return;
         await this.#activateAgent(ctx, agents, agentId);
@@ -1176,7 +1201,12 @@ export class McpModule implements AgentModule {
             if (this.#archivedWorkspaces.has(normalized)) return;
             const previous = this.#agentWorkspaces.get(agentId);
             const catalogId = workspaceCatalog(normalized);
-            if (previous === normalized && this.#catalogs.has(catalogId)) return;
+            if (
+                previous === normalized &&
+                this.#catalogs.has(catalogId) &&
+                this.#hasRunnerGlobalCatalog(normalized)
+            )
+                return;
             if (previous !== undefined && previous !== normalized) {
                 await this.#releaseAgentLocked(agentId, previous);
             }
@@ -1192,6 +1222,7 @@ export class McpModule implements AgentModule {
                     this.#recordWorkspaceFailure(ctx, normalized, error);
                 }
             }
+            await this.#ensureRunnerGlobalCatalog(ctx, runnerId);
         });
     }
 
@@ -1213,6 +1244,47 @@ export class McpModule implements AgentModule {
         this.#workspaceAgents.delete(workspace);
         this.#workspaceFailures.delete(workspace);
         await this.#removeCatalog(workspaceCatalog(workspace));
+        await this.#removeIdleRunnerGlobalCatalogs();
+    }
+
+    /**
+     * Give a runner its copy of the user-wide catalog once one of its folders has an agent, so the
+     * user's stdio servers start there rather than on another machine.
+     */
+    async #ensureRunnerGlobalCatalog(ctx: Context, runnerId: string | undefined): Promise<void> {
+        if (runnerId === undefined || this.#catalogs.has(runnerGlobalCatalog(runnerId))) return;
+        const global = this.#catalogs.get(GLOBAL_CATALOG);
+        await this.#reconcileCatalog(
+            ctx,
+            runnerGlobalCatalog(runnerId),
+            global === undefined ? {} : catalogServerConfigs(global),
+        );
+    }
+
+    /** Stop the user's stdio servers on a runner none of whose folders has an agent any more. */
+    async #removeIdleRunnerGlobalCatalogs(): Promise<void> {
+        const active = this.#activeRunners();
+        for (const catalogId of [...this.#catalogs.keys()]) {
+            const runnerId = runnerOfGlobalCatalog(catalogId);
+            if (runnerId !== undefined && !active.has(runnerId))
+                await this.#removeCatalog(catalogId);
+        }
+    }
+
+    /** Whether a folder on a runner has that runner's user-wide catalog; always true here. */
+    #hasRunnerGlobalCatalog(workspace: string): boolean {
+        const { runnerId } = parseWorkspaceKey(workspace);
+        return runnerId === undefined || this.#catalogs.has(runnerGlobalCatalog(runnerId));
+    }
+
+    /** Runners holding a folder that has an agent. */
+    #activeRunners(): Set<string> {
+        const runners = new Set<string>();
+        for (const workspace of this.#workspaceAgents.keys()) {
+            const { runnerId } = parseWorkspaceKey(workspace);
+            if (runnerId !== undefined) runners.add(runnerId);
+        }
+        return runners;
     }
 
     async #releaseWorkspace(ctx: Context, workspace: string): Promise<void> {
@@ -1226,6 +1298,7 @@ export class McpModule implements AgentModule {
             this.#workspaceAgents.delete(normalized);
             this.#workspaceFailures.delete(normalized);
             await this.#removeCatalog(workspaceCatalog(normalized));
+            await this.#removeIdleRunnerGlobalCatalogs();
         });
     }
 
@@ -1280,6 +1353,14 @@ export class McpModule implements AgentModule {
                 }
                 // A stdio server is a process on one machine, so the same configuration on two
                 // machines is two servers. An HTTP server is reached from here either way.
+                if (
+                    config.transport === "stdio" &&
+                    catalogId === GLOBAL_CATALOG &&
+                    !this.#runners.localExecution
+                ) {
+                    desired.set(name, { config, unavailable: NO_LOCAL_STDIO });
+                    continue;
+                }
                 const runnerId =
                     config.transport === "stdio" ? this.#catalogRunner(catalogId) : undefined;
                 const fingerprint = mcpConnectionFingerprint(config);
@@ -1494,9 +1575,9 @@ export class McpModule implements AgentModule {
 
     /** The runner a catalog's stdio servers start on, or undefined for this machine. */
     #catalogRunner(catalogId: string): string | undefined {
-        if (catalogId === GLOBAL_CATALOG) {
-            return this.#runners.defaultRunnerId;
-        }
+        if (catalogId === GLOBAL_CATALOG) return undefined;
+        const runnerId = runnerOfGlobalCatalog(catalogId);
+        if (runnerId !== undefined) return runnerId;
         return parseWorkspaceKey(catalogId.slice(WORKSPACE_CATALOG_PREFIX.length)).runnerId;
     }
 
@@ -1805,6 +1886,19 @@ function parseWorkspaceKey(key: string): { readonly path: string; readonly runne
 
 function workspaceCatalog(workspace: string): string {
     return `${WORKSPACE_CATALOG_PREFIX}${workspace}`;
+}
+
+const RUNNER_GLOBAL_CATALOG_PREFIX = "global:runner:";
+
+/** The user-wide catalog as it applies on one runner. */
+function runnerGlobalCatalog(runnerId: string): string {
+    return `${RUNNER_GLOBAL_CATALOG_PREFIX}${runnerId}`;
+}
+
+function runnerOfGlobalCatalog(catalogId: string): string | undefined {
+    return catalogId.startsWith(RUNNER_GLOBAL_CATALOG_PREFIX)
+        ? catalogId.slice(RUNNER_GLOBAL_CATALOG_PREFIX.length)
+        : undefined;
 }
 
 function catalogConnectionIds(catalog: McpCatalog | undefined): ReadonlySet<string> {

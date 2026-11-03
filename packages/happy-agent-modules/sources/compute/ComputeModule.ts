@@ -37,7 +37,7 @@ import type { Duplex } from "node:stream";
 import type { BotSettingsModule } from "../botSettings/index.js";
 import type { ChatMediaModule } from "../chatMedia/index.js";
 import type { ConfigModule } from "../config/index.js";
-import type { RunnersModule } from "../runners/index.js";
+import type { RunnerProductFiles, RunnersModule } from "../runners/index.js";
 import { FileReadLog } from "../impl/FileReadLog.js";
 import { machinePaths } from "../impl/machinePaths.js";
 import type { SecretsModule } from "../secrets/index.js";
@@ -58,6 +58,7 @@ import { computeInstructionsForVendor } from "./impl/computeInstructionsForVendo
 import { computePermissionsForContext } from "./impl/computePermissionsForContext.js";
 import { createAttachedSecretsHostShell } from "./impl/createAttachedSecretsHostShell.js";
 import { describeComputePathAction } from "./impl/describeComputePathAction.js";
+import { forwardAttachedSecrets } from "./impl/forwardAttachedSecrets.js";
 import { refuseAttachedSecrets } from "./impl/refuseAttachedSecrets.js";
 import {
     basenameComputePath,
@@ -698,6 +699,18 @@ export class ComputeModule implements AgentModule {
     }
 
     /**
+     * Where the agent's machine keeps the product documentation and skills its agents read, when
+     * a runner serves it — on another computer, or as a workload user on this one. Undefined for
+     * a machine this daemon serves itself, whose agents read the daemon's own copies.
+     */
+    productFiles(ctx: Context, compute: Compute): RunnerProductFiles | undefined {
+        const home = compute.fs.home;
+        if (this.#runners === undefined || home === undefined) return undefined;
+        if (!this.#runnerMachines.has(compute)) return undefined;
+        return this.#runners.productFilesOn(home, this.paths(ctx));
+    }
+
+    /**
      * Identity for sharing concurrent read-only discovery. Native machines with the same working
      * directory, home, and host policy see the same filesystem. Alternate providers remain scoped
      * to the exact filesystem object: matching `id`, `kind`, or paths do not prove shared storage.
@@ -1114,7 +1127,18 @@ export class ComputeModule implements AgentModule {
             await compute.dispose(ctx);
             throw new Error("The agent's machine opened in another folder.");
         }
-        const machine = refuseAttachedSecrets(compute);
+        // A runner takes a command's secrets with that command; a container cannot.
+        const machine =
+            config.docker !== undefined || database === undefined
+                ? refuseAttachedSecrets(compute)
+                : forwardAttachedSecrets(compute, {
+                      agentId,
+                      ctx: processContext,
+                      secrets: this.#secrets,
+                      ...(config.secretScope === undefined
+                          ? {}
+                          : { targetScope: config.secretScope }),
+                  });
         if (onRunner) this.#runnerMachines.add(machine);
         return {
             compute: machine,

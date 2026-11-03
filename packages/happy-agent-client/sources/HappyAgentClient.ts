@@ -203,6 +203,19 @@ import {
 } from "./protocol/userSettings.js";
 import type { MobileConnectorResponse } from "./protocol/mobileConnector.js";
 import type {
+    FeedClusterResponse,
+    FeedClustersResponse,
+    FeedPeekQuery,
+    FeedPeekResponse,
+    FeedQuery,
+    FeedReadAllRequest,
+    FeedResponse,
+    FeedSeenRequest,
+    FeedSeenResponse,
+    FeedSubscriptionRequest,
+    FeedUnread,
+} from "./protocol/feed.js";
+import type {
     Story,
     StoryCreateRequest,
     StoryMetadata,
@@ -1241,6 +1254,104 @@ export class HappyAgentClient {
     ): Promise<Record<string, never>> {
         const path = `v0/stories/${encodeURIComponent(storyId)}`;
         return await this.#json({ method: "DELETE", path, signal: options.signal });
+    }
+
+    // Feed
+
+    /**
+     * `GET /v0/feed` — the caller's entries, newest `cursor` first, with their open count. Pass
+     * the last entry's `cursor` as `before` for the next page. Daemons with `capabilities.feed`.
+     */
+    async getFeed(query: FeedQuery = {}, options: RequestOptions = {}): Promise<FeedResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/feed",
+            query: { before: query.before, limit: query.limit },
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/feed/seen` — closes the caller's open entries for these subjects. With `through`,
+     * an entry that took in a newer change stays open.
+     */
+    async markFeedSeen(
+        request: FeedSeenRequest,
+        options: RequestOptions = {},
+    ): Promise<FeedSeenResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/feed/seen",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/feed/read-all` — closes every open entry, or those not newer than `through`. */
+    async markFeedReadAll(
+        request: FeedReadAllRequest = {},
+        options: RequestOptions = {},
+    ): Promise<FeedUnread> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/feed/read-all",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/feed/clusters` — `*`, `team`, then known clusters with the caller's choices. */
+    async listFeedClusters(options: RequestOptions = {}): Promise<FeedClustersResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/feed/clusters",
+            signal: options.signal,
+        });
+    }
+
+    /** `PUT /v0/feed/subscriptions/:cluster` — subscribes and seeds the cluster as seen history. */
+    async subscribeFeedCluster(
+        cluster: string,
+        request: FeedSubscriptionRequest = {},
+        options: RequestOptions = {},
+    ): Promise<FeedClusterResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: feedSubscriptionPath(cluster),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/feed/subscriptions/:cluster` — mutes the cluster; existing entries stay. */
+    async muteFeedCluster(
+        cluster: string,
+        request: FeedSubscriptionRequest = {},
+        options: RequestOptions = {},
+    ): Promise<FeedClusterResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: feedSubscriptionPath(cluster),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `GET /v0/feed/clusters/:cluster` — the cluster's last 30 days grouped per subject, without
+     * subscribing or marking anything seen.
+     */
+    async peekFeedCluster(
+        cluster: string,
+        query: FeedPeekQuery = {},
+        options: RequestOptions = {},
+    ): Promise<FeedPeekResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/feed/clusters/${encodeFeedCluster(cluster)}`,
+            query: { limit: query.limit },
+            signal: options.signal,
+        });
     }
 
     // Mobile connector
@@ -3593,6 +3704,15 @@ function userSettingPath(key: UserSettingKey): string {
         throw new Error("The user setting key is invalid.");
     }
     return `v0/user-settings/${key}`;
+}
+
+/** A cluster name as one path segment: `task:...` becomes `task%3A...`, and `*` becomes `%2A`. */
+function encodeFeedCluster(cluster: string): string {
+    return encodeURIComponent(cluster).replaceAll("*", "%2A");
+}
+
+function feedSubscriptionPath(cluster: string): string {
+    return `v0/feed/subscriptions/${encodeFeedCluster(cluster)}`;
 }
 
 function artifactVersionPath(artifactId: Cuid2, version: ArtifactVersionSelector): string {

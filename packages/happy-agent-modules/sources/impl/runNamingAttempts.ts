@@ -9,12 +9,12 @@ const progressSchema = Type.Object({
 });
 
 /** A durable naming budget. Null means the owner no longer needs a name; undefined needs fallback. */
-export async function runNamingAttempts(
+export async function runNamingAttempts<Name>(
     ctx: Context,
     kv: AgentKV,
     eligible: () => Promise<boolean>,
-    attempt: () => Promise<string | undefined>,
-): Promise<string | null | undefined> {
+    attempt: () => Promise<Name | undefined>,
+): Promise<Name | null | undefined> {
     const stored = await kv.read(ctx, "progress");
     if (stored !== undefined && !Value.Check(progressSchema, stored)) {
         throw new Error("The stored automatic naming budget is invalid.");
