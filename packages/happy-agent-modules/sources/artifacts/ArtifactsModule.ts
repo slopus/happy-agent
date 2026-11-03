@@ -171,6 +171,7 @@ export class ArtifactsModule implements AgentModule {
     readonly #bots: BotsModule;
     readonly #tasks: TasksModule;
     readonly #listeners = new Set<ArtifactEventListener>();
+    readonly #transactionalListeners = new Set<ArtifactEventListener>();
     #agents: AgentSystemRef | undefined;
     #home: Promise<void> | undefined;
 
@@ -229,6 +230,12 @@ export class ArtifactsModule implements AgentModule {
     onEvent(listener: ArtifactEventListener): ArtifactUnsubscribe {
         this.#listeners.add(listener);
         return () => this.#listeners.delete(listener);
+    }
+
+    /** Participate in an artifact change before its transaction commits. */
+    onEventTransactional(listener: ArtifactEventListener): ArtifactUnsubscribe {
+        this.#transactionalListeners.add(listener);
+        return () => this.#transactionalListeners.delete(listener);
     }
 
     /** One artifact, a tombstone included. */
@@ -568,7 +575,7 @@ export class ArtifactsModule implements AgentModule {
                 createdAt: now,
             };
             await insertArtifact(txCtx, artifact, version);
-            this.#publish(txCtx, {
+            await this.#publish(txCtx, {
                 eventId: globalThis.crypto.randomUUID(),
                 at: now,
                 type: "artifact_created",
@@ -727,7 +734,7 @@ export class ArtifactsModule implements AgentModule {
                 createdAt: now,
             };
             await insertArtifactVersion(txCtx, next, version, current.revision, input.operationId);
-            this.#publish(txCtx, {
+            await this.#publish(txCtx, {
                 eventId: globalThis.crypto.randomUUID(),
                 at: now,
                 type: "artifact_updated",
@@ -768,7 +775,7 @@ export class ArtifactsModule implements AgentModule {
                 next.deletedSource = input.source;
             }
             await updateArtifactDeleted(txCtx, next, current.revision);
-            this.#publish(txCtx, {
+            await this.#publish(txCtx, {
                 eventId: globalThis.crypto.randomUUID(),
                 at: now,
                 type: "artifact_deleted",
@@ -1142,7 +1149,7 @@ export class ArtifactsModule implements AgentModule {
         }
     }
 
-    #publish(ctx: Context, event: ArtifactEvent): void {
+    async #publish(ctx: Context, event: ArtifactEvent): Promise<void> {
         if (!Value.Check(artifactEventSchema, event)) {
             throw new Error("The artifact event is invalid.");
         }
@@ -1160,6 +1167,7 @@ export class ArtifactsModule implements AgentModule {
                 }
             }
         });
+        for (const listener of [...this.#transactionalListeners]) await listener(ctx, frozen);
     }
 
     #requireAgents(): AgentSystemRef {

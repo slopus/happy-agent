@@ -31,6 +31,7 @@ import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { AbortModule } from "../abort/index.js";
 import { ActivityModule } from "../activity/index.js";
 import { StoriesModule } from "../stories/index.js";
+import { FeedModule } from "../feed/index.js";
 import { ApiModule } from "../api/index.js";
 import { ArtifactDataModule } from "../artifactData/index.js";
 import { ArtifactsModule } from "../artifacts/index.js";
@@ -224,6 +225,7 @@ export interface HappyAgentRuntimeModules {
     readonly userInput: UserInputModule;
     readonly userSettings: UserSettingsModule;
     readonly surfaces: SurfacesModule;
+    readonly feed: FeedModule;
     readonly workflows: WorkflowsModule;
     readonly workspaces: WorkspacesModule;
 }
@@ -763,6 +765,16 @@ export async function startHappyAgentRuntime(
             userSettings,
             artifacts,
         );
+        const feed = new FeedModule(
+            durableFunctions,
+            team,
+            tasks,
+            bots,
+            surfaces,
+            artifacts,
+            projects,
+            workspaces,
+        );
         const apiModule = new ApiModule(
             abort,
             config,
@@ -806,6 +818,7 @@ export async function startHappyAgentRuntime(
             providerClis,
             providerRoutes,
             stories,
+            feed,
         );
         api = apiModule;
 
@@ -877,6 +890,7 @@ export async function startHappyAgentRuntime(
             userInput,
             userSettings,
             surfaces,
+            feed,
             workflows,
             workspaces,
         };
@@ -951,6 +965,7 @@ export async function startHappyAgentRuntime(
             gemini,
             imageGeneration,
             stories,
+            feed,
             compute.skillsModule,
             compute.computeModule,
             happy,

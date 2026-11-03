@@ -43,6 +43,7 @@ import {
     providerRouteUseRequestSchema,
 } from "../providerRoutes/index.js";
 import { StoriesModule, StoryInputError } from "../stories/index.js";
+import { FeedError, FeedModule } from "../feed/index.js";
 import {
     closeWorkspaceBridgeRequestSchema,
     createSurfaceRequestSchema,
@@ -83,6 +84,10 @@ import {
     unarchiveTaskRequestSchema,
     renameBotRequestSchema,
     storyCreateRequestSchema,
+    feedCursorSchema,
+    feedReadAllRequestSchema,
+    feedSeenRequestSchema,
+    feedSubscriptionRequestSchema,
     storyReplyRequestSchema,
     storyRepostRequestSchema,
     storyMetadataSchema,
@@ -643,6 +648,7 @@ export class ApiModule implements AgentModule {
     readonly #providerClis: ProviderClisModule | undefined;
     readonly #providerRoutes: ProviderRoutesModule | undefined;
     readonly #stories: StoriesModule | undefined;
+    readonly #feed: FeedModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -815,6 +821,7 @@ export class ApiModule implements AgentModule {
         providerClis?: ProviderClisModule,
         providerRoutes?: ProviderRoutesModule,
         stories?: StoriesModule,
+        feed?: FeedModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -861,6 +868,7 @@ export class ApiModule implements AgentModule {
         this.#providerClis = providerClis;
         this.#providerRoutes = providerRoutes;
         this.#stories = stories;
+        this.#feed = feed;
     }
 
     readonly beforeStart = async (
@@ -2010,6 +2018,7 @@ export class ApiModule implements AgentModule {
             if (await this.#handleBotRoute(ctx, request, response, url)) return;
             if (await this.#handleTaskRoute(ctx, request, response, url)) return;
             if (await this.#handleStoryRoute(ctx, request, response, url)) return;
+            if (await this.#handleFeedRoute(ctx, request, response, url)) return;
             if (await this.#handleSurfaceRoute(ctx, request, response, url)) return;
             if (await this.#handleArtifactRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/projects") {
@@ -3285,6 +3294,15 @@ export class ApiModule implements AgentModule {
                 // Seen state is each reader's own, so every reader gets their own copy.
                 this.#stories.onEvent((_eventCtx, { readerId, type, payload }) => {
                     this.#journal.append(type, payload, Date.now(), readerId);
+                }),
+            );
+        if (this.#feed !== undefined)
+            this.#unsubscribe.push(
+                // Each reader's entries are their own. Fan-out and joining answer no request.
+                this.#feed.onEvent((_eventCtx, { readerId, type, payload, background }) => {
+                    const append = () => this.#journal.append(type, payload, Date.now(), readerId);
+                    if (background) this.#mutationIds.exit(append);
+                    else append();
                 }),
             );
         if (this.#userSettings !== undefined)
@@ -4975,6 +4993,18 @@ export class ApiModule implements AgentModule {
                         await this.#tasks!.markRead(ctx, task.id, this.#taskMember(ctx));
                     }
                 });
+                // Opening a task's or bot's chat is seeing it in the Feed.
+                const task = await this.#tasks?.forAgent(ctx, agentId);
+                const bot =
+                    task === undefined ? await this.#bots.forAgent(ctx, agentId) : undefined;
+                const subject =
+                    task !== undefined
+                        ? { type: "task", id: task.id }
+                        : bot !== undefined
+                          ? { type: "bot", id: bot.id }
+                          : undefined;
+                if (subject !== undefined)
+                    await this.#feed?.markSeen(ctx, [subject], { background: true });
                 sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
                 return true;
             }
@@ -7335,6 +7365,86 @@ export class ApiModule implements AgentModule {
         return true;
     }
 
+    async #handleFeedRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<boolean> {
+        const feed = this.#feed;
+        if (feed === undefined) return false;
+        if (url.pathname !== "/v0/feed" && !url.pathname.startsWith("/v0/feed/")) return false;
+        const route = `${request.method} ${url.pathname}`;
+        try {
+            if (route === "GET /v0/feed") {
+                const before = url.searchParams.get("before") ?? undefined;
+                if (before !== undefined && !Value.Check(feedCursorSchema, before))
+                    throw invalidRequest("The feed cursor is invalid.");
+                const limit = feedLimit(url);
+                const cursor = this.#journal.cursor();
+                const page = await feed.list(ctx, {
+                    ...(before === undefined ? {} : { before }),
+                    ...(limit === undefined ? {} : { limit }),
+                });
+                sendJson(response, 200, { ...page, cursor });
+                return true;
+            }
+            if (route === "POST /v0/feed/seen") {
+                const body = await bodyAs(request, feedSeenRequestSchema, "feed seen marker");
+                const seen = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await feed.markSeen(ctx, body.subjects),
+                );
+                sendJson(response, 200, seen);
+                return true;
+            }
+            if (route === "POST /v0/feed/read-all") {
+                const body = await bodyAs(request, feedReadAllRequestSchema, "feed read marker");
+                const read = await this.#withMutationId(
+                    body.mutationId,
+                    async () => await feed.markAllSeen(ctx, body.through),
+                );
+                sendJson(response, 200, read);
+                return true;
+            }
+            if (route === "GET /v0/feed/clusters") {
+                sendJson(response, 200, { clusters: await feed.clusters(ctx) });
+                return true;
+            }
+            const match = /^\/v0\/feed\/(subscriptions|clusters)\/([^/]+)$/.exec(url.pathname);
+            if (match === null) return false;
+            let cluster: string;
+            try {
+                cluster = decodeURIComponent(match[2]!);
+            } catch {
+                throw invalidRequest("The cluster name is invalid.");
+            }
+            if (match[1] === "clusters" && request.method === "GET") {
+                const limit = feedLimit(url);
+                sendJson(response, 200, await feed.peek(ctx, cluster, limit));
+                return true;
+            }
+            if (match[1] !== "subscriptions") return false;
+            if (request.method !== "PUT" && request.method !== "DELETE") return false;
+            const body = await readJson(request, MAX_JSON_BODY_BYTES, true);
+            if (!Value.Check(feedSubscriptionRequestSchema, body))
+                throw invalidRequest("The feed subscription is invalid.");
+            const described = await this.#withMutationId(body.mutationId, async () =>
+                request.method === "PUT"
+                    ? await feed.subscribe(ctx, cluster)
+                    : await feed.mute(ctx, cluster),
+            );
+            sendJson(response, 200, { cluster: described });
+            return true;
+        } catch (error: unknown) {
+            if (error instanceof FeedError) {
+                if (error.code === "not_found") throw notFound(error.message);
+                throw invalidRequest(error.message);
+            }
+            throw error;
+        }
+    }
+
     async #handleTaskRoute(
         ctx: Context,
         request: IncomingMessage,
@@ -7468,6 +7578,10 @@ export class ApiModule implements AgentModule {
                     body.mutationId,
                     async () => await tasks.markRead(ctx, taskId, member),
                 );
+                if ((await tasks.get(ctx, taskId)) !== undefined)
+                    await this.#feed?.markSeen(ctx, [{ type: "task", id: taskId }], {
+                        background: true,
+                    });
             } else if (operation === "join" || operation === "leave") {
                 const body = await bodyAs(
                     request,
@@ -9535,7 +9649,7 @@ export class ApiModule implements AgentModule {
         // may cause a harmless dirty/refetch but can never disappear between snapshot and stream.
         const cursor = this.#journal.cursor();
         // The feed is read alongside the catalog, so stories cost the desktop no extra request.
-        const [profile, projects, workspaces, bots, stories] = await Promise.all([
+        const [profile, projects, workspaces, bots, stories, feed] = await Promise.all([
             this.#team.enabled
                 ? this.#team.currentUser(ctx).then(teamProfileResource)
                 : this.#profile.ensure(ctx).then(profileResource),
@@ -9545,6 +9659,7 @@ export class ApiModule implements AgentModule {
                 : Promise.resolve([]),
             this.#bots.list(ctx),
             this.#storiesBootstrap(ctx),
+            this.#feedBootstrap(ctx),
         ]);
         const shallow = workspaces.filter(
             (workspace: Workspace) => workspace.parentId === workspace.projectRef,
@@ -9592,8 +9707,15 @@ export class ApiModule implements AgentModule {
                 ? {}
                 : { userSettings: await this.#userSettings.list(ctx) }),
             ...stories,
+            ...feed,
             cursor,
         };
+    }
+
+    /** The caller's count of open Feed entries, for the badge. */
+    async #feedBootstrap(ctx: Context): Promise<Record<string, unknown>> {
+        const unread = await this.#feed?.unread(ctx);
+        return unread === undefined ? {} : { feedUnread: unread };
     }
 
     /** Whether Stories is on for the caller, and exactly the feed `GET /v0/stories` lists. */
@@ -9919,6 +10041,7 @@ export class ApiModule implements AgentModule {
                     : { providerRoutes: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#stories === undefined ? {} : { storyFeed: true }),
+                ...(this.#feed === undefined ? {} : { feed: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),
@@ -10529,6 +10652,15 @@ const runtimeConfigPatchSchema = Type.Object(
  * A document route's query: only the named fields, each at most once. Positions are non-negative
  * integers and state vectors are base64.
  */
+/** A Feed page size, 1–200, or undefined for the default. */
+function feedLimit(url: URL): number | undefined {
+    const value = url.searchParams.get("limit");
+    if (value === null) return undefined;
+    if (!/^[1-9][0-9]{0,2}$/.test(value) || Number(value) > 200)
+        throw invalidRequest("The feed limit is invalid.");
+    return Number(value);
+}
+
 function documentQuery<const Key extends "seq" | "afterSeq" | "limit" | "stateVector">(
     url: URL,
     allowed: readonly Key[],
