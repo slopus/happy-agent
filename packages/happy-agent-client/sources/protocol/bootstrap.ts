@@ -89,6 +89,11 @@ export const desktopBootstrapResponseSchema = Type.Object({
     /** The reader's current feed; follow story events from `cursor`. Empty while disabled. */
     stories: Type.Optional(Type.Array(storySchema)),
     /**
+     * The caller's count of open Feed entries; follow `feed.unread.updated` from `cursor`. Absent
+     * on daemons without the Feed and for guests.
+     */
+    feedUnread: Type.Optional(Type.Integer({ minimum: 0 })),
+    /**
      * The caller's own user settings, exactly as `GET /v0/user-settings` lists them. Absent on
      * daemons without user settings; keep those preferences on the device there.
      */

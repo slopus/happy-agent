@@ -166,6 +166,8 @@ export const healthResponseSchema = Type.Object({
             webSocketTunnels: Type.Optional(Type.Boolean()),
             /** True when the daemon serves `/v0/stories`, `story.changed`, and `story.removed`, under Stories. */
             storyFeed: Type.Optional(Type.Boolean()),
+            /** True when the daemon serves `/v0/feed` and the `feed.*` events, under Feed. */
+            feed: Type.Optional(Type.Boolean()),
         }),
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */

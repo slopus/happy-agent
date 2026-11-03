@@ -59,6 +59,17 @@ oldest first; continue older with `beforeSeq: nextBeforeSeq` or forward with `af
 Follow `surface_message.created` and `surface_message.updated`; when a created message's `seq` is
 not one past the newest held, read forward with `afterSeq`.
 
+The Feed is each person's list of what happened, served when health reports
+`capabilities.feed`. `getFeed({ before, limit })` reads entries newest `cursor` first; pass the
+last entry's `cursor` as `before` for the next page. Key rows by item `id` and keep the greater
+`version`: an entry that takes in a change moves up under the same `id`. `markFeedSeen()` closes
+open entries when the person opens their subjects, with `through` set to the shown `cursor`, and
+`markFeedReadAll()` closes them all. `listFeedClusters()`, `subscribeFeedCluster()`,
+`muteFeedCluster()`, and `peekFeedCluster()` take cluster names such as `team`, `task:<id>`, or
+`*` and encode them for the path. Follow owner-private `feed.item.created`, `feed.item.updated`,
+`feed.item.removed`, and `feed.unread.updated` from the response's or bootstrap's `cursor`;
+desktop bootstrap carries the badge as `feedUnread`.
+
 `HappyAgentClient` is built from an endpoint and a bearer token. The token may be a function called
 for every request, so refreshed credentials apply without a new client; it may be omitted only to
 call `getAuthentication()` before signing in.
