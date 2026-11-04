@@ -65,6 +65,15 @@ gigabytes. Each level now serializes as a flat description of its collections, s
 serialized form no longer grows with depth, while TypeBox validation still walks the real levels
 and enforces the bound.
 
+## Each connection lists its tools once
+
+An outside report (slopus/happy-desktop#78) found every MCP server receiving `tools/list` every
+second or two while a few agents worked. The tools hook runs for every provider request and tool
+execution, and each run listed every server twice: once for the summary's tool count and once for
+its tools. The module now keeps one listing per connection, shared by every session. It is not
+bound to its caller, who only stops waiting for it. It is dropped on
+`notifications/tools/list_changed`, on any reload, and when it fails; a new connection starts empty.
+
 ## Configuration edits reload through the same bounded path
 
 Model-driven global changes update one named server so unrelated records are preserved, then use
