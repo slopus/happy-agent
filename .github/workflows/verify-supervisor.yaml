@@ -178,6 +178,40 @@ jobs:
               continue-on-error: true
               run: Get-ChildItem -Recurse "$env:HAPPY_WINDOWS_SANDBOX_HOME" -Filter *.log | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Tail 60 }
 
+    windows-idle-git:
+        if: ${{ inputs.lsass_only }}
+        name: Idle Windows Git tracking does not storm the sandbox or grow LSASS
+        runs-on: windows-2025
+        timeout-minutes: 45
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+            - name: Provision the published sandbox once on this disposable runner
+              run: |
+                  if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Hosted CI only' }
+                  $supervisor = @'
+                  const { createRequire } = require('node:module');
+                  const { dirname, join, resolve } = require('node:path');
+                  const modules = createRequire(resolve('packages/happy-agent-modules/package.json'));
+                  const compute = createRequire(modules.resolve('@slopus/happy-agent-compute'));
+                  const platform = dirname(compute.resolve('@slopus/happy-agent-supervisor-win32-x64/package.json'));
+                  process.stdout.write(join(platform, 'vendor/x86_64-pc-windows-gnu/bin/happy-agent-supervisor.exe'));
+                  '@ | node
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  & $supervisor --setup
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  $status = & $supervisor --setup-status | ConvertFrom-Json
+                  if ($LASTEXITCODE -ne 0 -or -not $status.ready) { throw 'Sandbox setup did not complete' }
+                  "HAPPY_WINDOWS_SANDBOX_HOME=$($status.stateDirectory)" >> $env:GITHUB_ENV
+            - name: Track idle repositories through a minute of ignored-file churn
+              run: pnpm --filter @slopus/happy-agent-modules exec vitest run --config vitest.live.config.ts tests/git/windowsIdleGitTracking.live.test.ts
+
     supervisor:
         if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only }}
         name: ${{ matrix.name }}
