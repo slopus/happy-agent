@@ -7,6 +7,31 @@ permissions:
     contents: read
 
 jobs:
+    unit-tests:
+        name: Native unit tests
+        runs-on: windows-2025
+        timeout-minutes: 60
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+              id: msys2
+              with:
+                  msystem: MINGW64
+                  install: mingw-w64-x86_64-gcc
+            - name: Select pinned toolchain
+              env:
+                  MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+              run: |
+                  "$env:MSYS2_LOCATION\mingw64\bin" >> $env:GITHUB_PATH
+                  rustup toolchain install 1.95.0-x86_64-pc-windows-gnu --profile minimal
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            - name: Run patched sandbox unit tests
+              run: node packages/happy-agent-supervisor/scripts/build-native-windows.mjs --test
+
     windows:
         runs-on: windows-2025
         timeout-minutes: 60
@@ -68,6 +93,8 @@ jobs:
                   node packages/happy-agent-supervisor/scripts/verify-native-windows-output.mjs
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
                   node packages/happy-agent-supervisor/scripts/verify-native-windows-stability.mjs
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  node packages/happy-agent-supervisor/scripts/verify-native-windows-busy-ancestor.mjs
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
               with:

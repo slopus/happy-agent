@@ -20,6 +20,10 @@ on:
                 description: Build and validate only the standalone Windows Agent
                 type: boolean
                 default: false
+            windows_sandbox_only:
+                description: Build the Windows sandbox from source and run only its native checks
+                type: boolean
+                default: false
             lsass_only:
                 description: Measure only whether repeated Windows sandbox launches grow LSASS
                 type: boolean
@@ -42,7 +46,7 @@ concurrency:
 
 jobs:
     compute-services:
-        if: ${{ !inputs.lsass_only && (inputs.services_only || !inputs.windows_only) }}
+        if: ${{ !inputs.lsass_only && (inputs.services_only || !inputs.windows_only && !inputs.windows_sandbox_only) }}
         name: Published service runtime on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 20
@@ -79,10 +83,16 @@ jobs:
         permissions:
             contents: read
             id-token: write
-        if: ${{ !inputs.services_only && !inputs.lsass_only }}
+        if: ${{ !inputs.services_only && !inputs.lsass_only && !inputs.windows_sandbox_only }}
         uses: ./.github/workflows/build-windows.yml
         with:
             version: 0.4.48-windows-ci.${{ github.run_number }}
+
+    windows-sandbox:
+        # The Agent build above exercises the published sandbox SDK. This builds the patched
+        # sources in this checkout, so a sandbox change is proven before it is released.
+        if: ${{ !inputs.services_only && !inputs.windows_only && !inputs.lsass_only }}
+        uses: ./.github/workflows/build-windows-sandbox.yml
 
     windows-lsass:
         if: ${{ inputs.lsass_only }}
@@ -217,7 +227,7 @@ jobs:
               run: pnpm --filter @slopus/happy-agent-modules exec vitest run --config vitest.live.config.ts tests/git/windowsIdleGitTracking.live.test.ts
 
     supervisor:
-        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only }}
+        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only && !inputs.windows_sandbox_only }}
         name: ${{ matrix.name }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 30
@@ -298,7 +308,7 @@ jobs:
                   if-no-files-found: error
 
     package:
-        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only }}
+        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only && !inputs.windows_sandbox_only }}
         name: TypeScript package
         runs-on: ubuntu-24.04
         timeout-minutes: 20

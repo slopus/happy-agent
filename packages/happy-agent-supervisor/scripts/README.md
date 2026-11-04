@@ -37,3 +37,12 @@ The same verifier also checks restricted ConPTY stdin roundtrips and preservatio
 commands. It verifies write denials on protected paths and outside the workspace,
 then compares the permanent ACLs and capability registry against their warmed
 baseline. Command scratch directories must not grow either persistent structure.
+
+`verify-native-windows-busy-ancestor.mjs` keeps processes sitting in the user profile and in
+fresh project ancestors, the way Happy Agent and ordinary terminals do, then runs first,
+repeated, and concurrent workspace-write commands below them. Granting an ancestor's traversal
+ACE must succeed while its directory is another process's current directory, must not propagate
+to existing children, must keep the directory's inheritance flags, and must be reused afterward.
+
+`build-native-windows.mjs --test` applies the pinned patch and runs the sandbox's ACL and setup
+error unit tests on a real Windows kernel. They need no provisioned sandbox accounts.

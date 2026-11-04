@@ -315,52 +315,417 @@ index 6ba79e6..6d588e9 100644
      Ok(())
  }
 diff --git a/codex-rs/windows-sandbox-rs/src/acl.rs b/codex-rs/windows-sandbox-rs/src/acl.rs
-index 064b7fe..1008d62 100644
+index 064b7fe..ecf2da5 100644
 --- a/codex-rs/windows-sandbox-rs/src/acl.rs
 +++ b/codex-rs/windows-sandbox-rs/src/acl.rs
-@@ -524,6 +524,17 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+@@ -12,6 +12,8 @@ use std::os::windows::io::AsRawHandle;
+ use std::path::Path;
+ use windows_sys::Win32::Foundation::CloseHandle;
+ use windows_sys::Win32::Foundation::ERROR_SUCCESS;
++use windows_sys::Win32::Foundation::GetLastError;
++use windows_sys::Win32::Foundation::HANDLE;
+ use windows_sys::Win32::Foundation::HLOCAL;
+ use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+ use windows_sys::Win32::Foundation::LocalFree;
+@@ -35,9 +37,19 @@ use windows_sys::Win32::Security::EqualSid;
+ use windows_sys::Win32::Security::GENERIC_MAPPING;
+ use windows_sys::Win32::Security::GetAce;
+ use windows_sys::Win32::Security::GetAclInformation;
++use windows_sys::Win32::Security::GetSecurityDescriptorControl;
++use windows_sys::Win32::Security::InitializeSecurityDescriptor;
+ use windows_sys::Win32::Security::IsValidAcl;
+ use windows_sys::Win32::Security::MapGenericMask;
+ use windows_sys::Win32::Security::OWNER_SECURITY_INFORMATION;
++use windows_sys::Win32::Security::SE_DACL_AUTO_INHERIT_REQ;
++use windows_sys::Win32::Security::SE_DACL_AUTO_INHERITED;
++use windows_sys::Win32::Security::SE_DACL_PROTECTED;
++use windows_sys::Win32::Security::SECURITY_DESCRIPTOR;
++use windows_sys::Win32::Security::SECURITY_DESCRIPTOR_CONTROL;
++use windows_sys::Win32::Security::SetKernelObjectSecurity;
++use windows_sys::Win32::Security::SetSecurityDescriptorControl;
++use windows_sys::Win32::Security::SetSecurityDescriptorDacl;
+ use windows_sys::Win32::Storage::FileSystem::CreateFileW;
+ use windows_sys::Win32::Storage::FileSystem::DELETE;
+ use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+@@ -60,6 +72,7 @@ use windows_sys::Win32::Storage::FileSystem::READ_CONTROL;
+ use windows_sys::Win32::Storage::FileSystem::VOLUME_NAME_NONE;
+ use windows_sys::Win32::Storage::FileSystem::WRITE_DAC;
+ use windows_sys::Win32::Storage::FileSystem::WRITE_OWNER;
++use windows_sys::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
+ const SE_KERNEL_OBJECT: u32 = 6;
+ const OBJECT_INHERIT_ACE_FLAG: u8 = 0x01;
+ const INHERIT_ONLY_ACE: u8 = 0x08;
+@@ -524,25 +537,11 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
      disallow_mask: u32,
      inheritance: u32,
  ) -> Result<bool> {
-+    // Directory-only ACEs must not reapply inherited permissions across a
-+    // user's existing subtree. A MAXIMUM_ALLOWED handle disables propagation
-+    // for SetSecurityInfo, as documented by Windows. Pin the directory without
-+    // following reparses while reading and changing its DACL.
-+    let directory_only = if inheritance == 0 && path.is_dir() {
-+        Some(crate::no_reparse_dir::open_directory_no_reparse(
-+            path, 0x02000000 /* MAXIMUM_ALLOWED */,
-+            FILE_SHARE_READ | FILE_SHARE_WRITE,
-+            crate::no_reparse_dir::DirectoryOpenDisposition::OpenExisting,
-+        )?)
-+    } else { None };
-     let (p_dacl, p_sd) = fetch_dacl_handle(path)?;
-     let mut entries: Vec<EXPLICIT_ACCESS_W> = Vec::new();
-     for sid in sids {
-@@ -553,7 +564,13 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
-             &mut p_new_dacl,
-         );
-         if code2 == ERROR_SUCCESS {
--            let code3 = SetNamedSecurityInfoW(
-+            let code3 = if let Some(directory) = directory_only.as_ref() {
-+                SetSecurityInfo(
-+                    directory.as_raw_handle() as isize, 1, DACL_SECURITY_INFORMATION,
-+                    std::ptr::null_mut(), std::ptr::null_mut(), p_new_dacl, std::ptr::null_mut(),
-+                )
-+            } else {
-+                SetNamedSecurityInfoW(
-                 to_wide(path).as_ptr() as *mut u16,
-                 1,
-                 DACL_SECURITY_INFORMATION,
-@@ -561,7 +578,8 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
-                 std::ptr::null_mut(),
-                 p_new_dacl,
-                 std::ptr::null_mut(),
--            );
-+            )
-+            };
-             if code3 == ERROR_SUCCESS {
-                 added = true;
-                 if !p_new_dacl.is_null() {
+-    let (p_dacl, p_sd) = fetch_dacl_handle(path)?;
+-    let mut entries: Vec<EXPLICIT_ACCESS_W> = Vec::new();
+-    for sid in sids {
+-        if !dacl_allow_mask_needs_refresh(p_dacl, *sid, allow_mask, disallow_mask) {
+-            continue;
+-        }
+-        entries.push(EXPLICIT_ACCESS_W {
+-            grfAccessPermissions: allow_mask,
+-            grfAccessMode: 2, // SET_ACCESS
+-            grfInheritance: inheritance,
+-            Trustee: TRUSTEE_W {
+-                pMultipleTrustee: std::ptr::null_mut(),
+-                MultipleTrusteeOperation: 0,
+-                TrusteeForm: TRUSTEE_IS_SID,
+-                TrusteeType: TRUSTEE_IS_UNKNOWN,
+-                ptstrName: *sid as *mut u16,
+-            },
+-        });
++    if inheritance == 0 && path.is_dir() {
++        return ensure_directory_only_allow_mask_aces(path, sids, allow_mask, disallow_mask);
+     }
++    let (p_dacl, p_sd) = fetch_dacl_handle(path)?;
++    let entries = allow_mask_entries(p_dacl, sids, allow_mask, disallow_mask, inheritance);
+     let mut added = false;
+     if !entries.is_empty() {
+         let mut p_new_dacl: *mut ACL = std::ptr::null_mut();
+@@ -589,6 +588,149 @@ unsafe fn ensure_allow_mask_aces_with_inheritance_impl(
+     Ok(added)
+ }
+ 
++unsafe fn allow_mask_entries(
++    p_dacl: *mut ACL,
++    sids: &[*mut c_void],
++    allow_mask: u32,
++    disallow_mask: u32,
++    inheritance: u32,
++) -> Vec<EXPLICIT_ACCESS_W> {
++    sids.iter()
++        .filter(|sid| dacl_allow_mask_needs_refresh(p_dacl, **sid, allow_mask, disallow_mask))
++        .map(|sid| EXPLICIT_ACCESS_W {
++            grfAccessPermissions: allow_mask,
++            grfAccessMode: 2, // SET_ACCESS
++            grfInheritance: inheritance,
++            Trustee: TRUSTEE_W {
++                pMultipleTrustee: std::ptr::null_mut(),
++                MultipleTrusteeOperation: 0,
++                TrusteeForm: TRUSTEE_IS_SID,
++                TrusteeType: TRUSTEE_IS_UNKNOWN,
++                ptstrName: *sid as *mut u16,
++            },
++        })
++        .collect()
++}
++
++/// Access for changing one directory's own DACL. Project ancestors include the
++/// user profile, which Happy Agent, terminals, and editors keep as their current
++/// directory. Those handles never share delete, so asking for DELETE, or for
++/// MAXIMUM_ALLOWED, which includes it for the owner, is a sharing violation.
++/// Neither right below participates in sharing checks.
++pub(crate) const DIRECTORY_DACL_ACCESS: u32 = READ_CONTROL | WRITE_DAC;
++
++/// Adds non-inheritable allow ACEs to exactly one directory. An existing grant
++/// is reused without opening the directory for WRITE_DAC. Otherwise the DACL is
++/// read and replaced through one no-reparse handle. SetKernelObjectSecurity
++/// changes only that object: SetSecurityInfo would re-propagate inherited ACEs
++/// across the user's whole existing subtree.
++unsafe fn ensure_directory_only_allow_mask_aces(
++    path: &Path,
++    sids: &[*mut c_void],
++    allow_mask: u32,
++    disallow_mask: u32,
++) -> Result<bool> {
++    let (p_dacl, p_sd) = fetch_dacl_handle(path)?;
++    let needed = !allow_mask_entries(p_dacl, sids, allow_mask, disallow_mask, 0).is_empty();
++    if !p_sd.is_null() {
++        LocalFree(p_sd as HLOCAL);
++    }
++    if !needed {
++        return Ok(false);
++    }
++    let directory = crate::no_reparse_dir::open_directory_no_reparse(
++        path,
++        DIRECTORY_DACL_ACCESS,
++        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
++        crate::no_reparse_dir::DirectoryOpenDisposition::OpenExisting,
++    )
++    .context("open directory to add its own ACE")?;
++    let handle = directory.as_raw_handle() as HANDLE;
++    let mut p_dacl: *mut ACL = std::ptr::null_mut();
++    let mut p_sd: *mut c_void = std::ptr::null_mut();
++    let code = GetSecurityInfo(
++        handle,
++        1, // SE_FILE_OBJECT
++        DACL_SECURITY_INFORMATION,
++        std::ptr::null_mut(),
++        std::ptr::null_mut(),
++        &mut p_dacl,
++        std::ptr::null_mut(),
++        &mut p_sd,
++    );
++    acl_api_result(path, "GetSecurityInfo", code)?;
++    let result = (|| {
++        let entries = allow_mask_entries(p_dacl, sids, allow_mask, disallow_mask, 0);
++        if entries.is_empty() {
++            return Ok(false);
++        }
++        let mut control: SECURITY_DESCRIPTOR_CONTROL = 0;
++        let mut revision = 0;
++        ensure!(
++            GetSecurityDescriptorControl(p_sd, &mut control, &mut revision) != 0,
++            "GetSecurityDescriptorControl failed for {}: {}",
++            path.display(),
++            GetLastError()
++        );
++        let mut p_new_dacl: *mut ACL = std::ptr::null_mut();
++        let code = SetEntriesInAclW(
++            entries.len() as u32,
++            entries.as_ptr(),
++            p_dacl,
++            &mut p_new_dacl,
++        );
++        acl_api_result(path, "SetEntriesInAclW", code)?;
++        let set = set_directory_dacl(handle, p_new_dacl, control);
++        if !p_new_dacl.is_null() {
++            LocalFree(p_new_dacl as HLOCAL);
++        }
++        set.with_context(|| format!("set the DACL of {}", path.display()))?;
++        Ok(true)
++    })();
++    if !p_sd.is_null() {
++        LocalFree(p_sd as HLOCAL);
++    }
++    result
++}
++
++/// Replaces one object's DACL while keeping whether it is protected and whether
++/// its inherited ACEs follow the automatic inheritance model. The kernel clears
++/// SE_DACL_AUTO_INHERITED unless the request asks for automatic inheritance.
++unsafe fn set_directory_dacl(
++    handle: HANDLE,
++    p_dacl: *mut ACL,
++    control: SECURITY_DESCRIPTOR_CONTROL,
++) -> Result<()> {
++    let mut descriptor: SECURITY_DESCRIPTOR = std::mem::zeroed();
++    let p_descriptor = &mut descriptor as *mut SECURITY_DESCRIPTOR as *mut c_void;
++    ensure!(
++        InitializeSecurityDescriptor(p_descriptor, SECURITY_DESCRIPTOR_REVISION) != 0,
++        "InitializeSecurityDescriptor failed: {}",
++        GetLastError()
++    );
++    ensure!(
++        SetSecurityDescriptorDacl(p_descriptor, 1, p_dacl, 0) != 0,
++        "SetSecurityDescriptorDacl failed: {}",
++        GetLastError()
++    );
++    let mut flags = control & SE_DACL_PROTECTED;
++    if control & SE_DACL_AUTO_INHERITED != 0 {
++        flags |= SE_DACL_AUTO_INHERITED | SE_DACL_AUTO_INHERIT_REQ;
++    }
++    let inheritance = SE_DACL_AUTO_INHERITED | SE_DACL_AUTO_INHERIT_REQ | SE_DACL_PROTECTED;
++    ensure!(
++        SetSecurityDescriptorControl(p_descriptor, inheritance, flags) != 0,
++        "SetSecurityDescriptorControl failed: {}",
++        GetLastError()
++    );
++    ensure!(
++        SetKernelObjectSecurity(handle, DACL_SECURITY_INFORMATION, p_descriptor) != 0,
++        "SetKernelObjectSecurity failed: {}",
++        std::io::Error::last_os_error()
++    );
++    Ok(())
++}
++
+ /// Ensure all provided SIDs have an allow ACE with the requested mask on the path.
+ /// Returns true if any ACE was added.
+ ///
+diff --git a/codex-rs/windows-sandbox-rs/src/acl_tests.rs b/codex-rs/windows-sandbox-rs/src/acl_tests.rs
+index 597df03..81f116d 100644
+--- a/codex-rs/windows-sandbox-rs/src/acl_tests.rs
++++ b/codex-rs/windows-sandbox-rs/src/acl_tests.rs
+@@ -53,3 +53,186 @@ fn existing_deny_ace_is_visible_without_write_dac() {
+             .expect("read existing deny ACE");
+     assert!(already_present);
+ }
++
++const TRAVERSE_MASK: u32 = windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES
++    | windows_sys::Win32::Storage::FileSystem::FILE_TRAVERSE
++    | windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE;
++
++fn dacl_control(path: &std::path::Path) -> u16 {
++    unsafe {
++        let (_dacl, descriptor) = super::fetch_dacl_handle(path).expect("read DACL");
++        let mut control = 0;
++        let mut revision = 0;
++        let read = windows_sys::Win32::Security::GetSecurityDescriptorControl(
++            descriptor,
++            &mut control,
++            &mut revision,
++        );
++        windows_sys::Win32::Foundation::LocalFree(descriptor as _);
++        assert_ne!(read, 0, "read DACL control");
++        control
++    }
++}
++
++fn delete_open_is_shared(path: &std::path::Path) -> bool {
++    match OpenOptions::new()
++        .access_mode(windows_sys::Win32::Storage::FileSystem::DELETE)
++        .share_mode(
++            windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ
++                | windows_sys::Win32::Storage::FileSystem::FILE_SHARE_WRITE
++                | windows_sys::Win32::Storage::FileSystem::FILE_SHARE_DELETE,
++        )
++        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
++        .open(path)
++    {
++        Ok(_) => true,
++        Err(error)
++            if error.raw_os_error()
++                == Some(windows_sys::Win32::Foundation::ERROR_SHARING_VIOLATION as i32) =>
++        {
++            false
++        }
++        Err(error) => panic!("probe {}: {error}", path.display()),
++    }
++}
++
++/// Adds an inheritable ACE to one directory without propagating it, leaving
++/// existing children without the inherited copy a propagating write would add.
++fn add_unpropagated_inheritable_ace(path: &std::path::Path, sid: *mut std::ffi::c_void) {
++    unsafe {
++        let directory = OpenOptions::new()
++            .access_mode(READ_CONTROL | windows_sys::Win32::Storage::FileSystem::WRITE_DAC)
++            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
++            .open(path)
++            .expect("open directory for its DACL");
++        let (dacl, descriptor) = super::fetch_dacl_handle(path).expect("read DACL");
++        let entries = super::allow_mask_entries(
++            dacl,
++            &[sid],
++            FILE_GENERIC_READ_MASK,
++            0,
++            windows_sys::Win32::Security::OBJECT_INHERIT_ACE
++                | windows_sys::Win32::Security::CONTAINER_INHERIT_ACE,
++        );
++        let mut new_dacl = std::ptr::null_mut();
++        assert_eq!(
++            windows_sys::Win32::Security::Authorization::SetEntriesInAclW(
++                entries.len() as u32,
++                entries.as_ptr(),
++                dacl,
++                &mut new_dacl,
++            ),
++            0
++        );
++        super::set_directory_dacl(
++            std::os::windows::io::AsRawHandle::as_raw_handle(&directory) as _,
++            new_dacl,
++            dacl_control(path),
++        )
++        .expect("write DACL");
++        windows_sys::Win32::Foundation::LocalFree(new_dacl as _);
++        windows_sys::Win32::Foundation::LocalFree(descriptor as _);
++    }
++}
++
++#[test]
++fn directory_only_grant_succeeds_while_a_process_uses_the_directory() {
++    let directory = tempfile::tempdir().expect("temporary directory");
++    let path = directory.path();
++    // Happy Agent and terminals sit in the user profile like this child does.
++    let mut holder = std::process::Command::new("cmd.exe")
++        .args(["/d", "/c", "ping -n 60 127.0.0.1 >nul"])
++        .current_dir(path)
++        .stdin(std::process::Stdio::null())
++        .stdout(std::process::Stdio::null())
++        .stderr(std::process::Stdio::null())
++        .spawn()
++        .expect("start a process in the directory");
++    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
++    while delete_open_is_shared(path) {
++        assert!(std::time::Instant::now() < deadline, "the child never held its current directory");
++        std::thread::sleep(std::time::Duration::from_millis(20));
++    }
++    let sid = LocalSid::from_string("S-1-5-21-10-20-30-40").expect("test SID");
++    let psid = sid.as_ptr();
++
++    let granted = unsafe {
++        super::ensure_allow_mask_aces_with_inheritance(path, &[psid], TRAVERSE_MASK, 0)
++    };
++    let reused = unsafe {
++        super::ensure_allow_mask_aces_with_inheritance(path, &[psid], TRAVERSE_MASK, 0)
++    };
++    let _ = holder.kill();
++    let _ = holder.wait();
++
++    assert!(granted.expect("grant beside a current-directory handle"));
++    assert!(super::path_mask_allows(path, &[psid], TRAVERSE_MASK, true).expect("read grant"));
++    assert!(!reused.expect("reuse the existing grant"));
++}
++
++#[test]
++fn directory_only_grant_changes_only_that_directory() {
++    let directory = tempfile::tempdir().expect("temporary directory");
++    let path = directory.path();
++    // Profile directories are protected and follow automatic inheritance.
++    // ntmarta stores both flags when it writes a protected DACL.
++    unsafe {
++        let (dacl, descriptor) = super::fetch_dacl_handle(path).expect("read DACL");
++        let code = windows_sys::Win32::Security::Authorization::SetNamedSecurityInfoW(
++            crate::winutil::to_wide(path).as_ptr() as *mut u16,
++            1,
++            windows_sys::Win32::Security::DACL_SECURITY_INFORMATION
++                | windows_sys::Win32::Security::PROTECTED_DACL_SECURITY_INFORMATION,
++            std::ptr::null_mut(),
++            std::ptr::null_mut(),
++            dacl,
++            std::ptr::null_mut(),
++        );
++        windows_sys::Win32::Foundation::LocalFree(descriptor as _);
++        assert_eq!(code, 0, "protect the directory DACL");
++    }
++    let child = path.join("child");
++    std::fs::create_dir(&child).expect("create child");
++    std::fs::write(child.join("existing.txt"), b"existing").expect("create file");
++    let inheritable = LocalSid::from_string("S-1-5-21-10-20-30-41").expect("inheritable SID");
++    add_unpropagated_inheritable_ace(path, inheritable.as_ptr());
++    let child_has_inherited_ace = || {
++        super::path_mask_allows(&child, &[inheritable.as_ptr()], FILE_GENERIC_READ_MASK, true)
++            .expect("read child")
++    };
++    assert!(!child_has_inherited_ace(), "the fixture must not propagate");
++    let control = dacl_control(path);
++    assert_ne!(control & windows_sys::Win32::Security::SE_DACL_PROTECTED, 0);
++    assert_ne!(control & windows_sys::Win32::Security::SE_DACL_AUTO_INHERITED, 0);
++    let sid = LocalSid::from_string("S-1-5-21-10-20-30-40").expect("test SID");
++
++    assert!(unsafe {
++        super::ensure_allow_mask_aces_with_inheritance(path, &[sid.as_ptr()], TRAVERSE_MASK, 0)
++    }
++    .expect("grant"));
++
++    assert_eq!(dacl_control(path), control, "inheritance flags are preserved");
++    assert!(
++        !child_has_inherited_ace(),
++        "a directory-only grant must not propagate inherited ACEs to children"
++    );
++    // Control: a propagating DACL write does add the inherited ACE, so the
++    // assertion above would have observed propagation.
++    unsafe {
++        let (dacl, descriptor) = super::fetch_dacl_handle(path).expect("read DACL");
++        let code = windows_sys::Win32::Security::Authorization::SetNamedSecurityInfoW(
++            crate::winutil::to_wide(path).as_ptr() as *mut u16,
++            1,
++            windows_sys::Win32::Security::DACL_SECURITY_INFORMATION,
++            std::ptr::null_mut(),
++            std::ptr::null_mut(),
++            dacl,
++            std::ptr::null_mut(),
++        );
++        windows_sys::Win32::Foundation::LocalFree(descriptor as _);
++        assert_eq!(code, 0, "propagating DACL write");
++    }
++    assert!(child_has_inherited_ace());
++}
++
++const FILE_GENERIC_READ_MASK: u32 = windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_READ;
 diff --git a/codex-rs/windows-sandbox-rs/src/bin/command_runner/main.rs b/codex-rs/windows-sandbox-rs/src/bin/command_runner/main.rs
 index 1e3c88b..54f4755 100644
 --- a/codex-rs/windows-sandbox-rs/src/bin/command_runner/main.rs
@@ -397,7 +762,7 @@ index 2624607..40189d0 100644
 +    panic!("happy-sandbox-setup is Windows-only");
  }
 diff --git a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
-index f80efe4..7f2baa2 100644
+index f80efe4..3be40d9 100644
 --- a/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
 +++ b/codex-rs/windows-sandbox-rs/src/bin/setup_main/win.rs
 @@ -46,11 +46,8 @@ use std::ffi::OsStr;
@@ -445,7 +810,50 @@ index f80efe4..7f2baa2 100644
  struct ReadAclSubjects<'a> {
      sandbox_group_psid: *mut c_void,
      rx_psids: &'a [*mut c_void],
-@@ -360,7 +338,10 @@ fn lock_sandbox_dir(
+@@ -264,17 +242,14 @@ fn apply_read_acls(
+             )
+         };
+         if let Err(err) = result {
+-            refresh_errors.push(format!(
+-                "grant {access_label} ACE failed on {} for sandbox_group: {err}",
++            // Keep the operating system cause: a bare "open directory" hides
++            // whether the grant was refused, raced, or blocked by another process.
++            let message = format!(
++                "grant {access_label} ACE failed on {} for sandbox_group: {err:#}",
+                 root.display()
+-            ));
+-            log_line(
+-                log,
+-                &format!(
+-                    "grant {access_label} ACE failed on {} for sandbox_group: {err}",
+-                    root.display()
+-                ),
+-            )?;
++            );
++            log_line(log, &message)?;
++            refresh_errors.push(message);
+         }
+     }
+     Ok(())
+@@ -296,7 +271,7 @@ fn read_mask_allows_or_log(
+                 .map(|value| format!(" for {value}"))
+                 .unwrap_or_default();
+             refresh_errors.push(format!(
+-                "{access_label} mask check failed on {}{}: {}",
++                "{access_label} mask check failed on {}{}: {:#}",
+                 root.display(),
+                 label_suffix,
+                 e
+@@ -304,7 +279,7 @@ fn read_mask_allows_or_log(
+             log_line(
+                 log,
+                 &format!(
+-                    "{access_label} mask check failed on {}{}: {}; continuing",
++                    "{access_label} mask check failed on {}{}: {:#}; continuing",
+                     root.display(),
+                     label_suffix,
+                     e
+@@ -360,7 +335,10 @@ fn lock_sandbox_dir(
              FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE,
              GRANT_ACCESS,
          ),
@@ -457,9 +865,37 @@ index f80efe4..7f2baa2 100644
      ];
      unsafe {
          let mut eas: Vec<EXPLICIT_ACCESS_W> = Vec::new();
-@@ -598,13 +579,7 @@ fn run_setup(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Result<(
+@@ -533,11 +511,7 @@ fn real_main(setup_mode: &mut Option<SetupMode>) -> Result<()> {
+     if let Err(err) = &result {
+         let _ = log_line(&mut log, &format!("setup error: {err:?}"));
+         log_note(&format!("setup error: {err:?}"), Some(sbx_dir.as_path()));
+-        let failure = extract_setup_failure(err)
+-            .map(|f| SetupFailure::new(f.code, f.message.clone()))
+-            .unwrap_or_else(|| {
+-                SetupFailure::new(SetupErrorCode::HelperUnknownError, err.to_string())
+-            });
++        let failure = setup_failure_for(err);
+         let report = SetupErrorReport {
+             code: failure.code,
+             message: failure.message,
+@@ -597,14 +571,22 @@ fn run_setup(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Result<(
+     Ok(())
  }
  
++/// The command that needed this refresh fails with this text, so it names each
++/// path and operating system error rather than only that errors occurred.
++fn read_acl_run_failure(errors: &[String]) -> anyhow::Error {
++    anyhow::anyhow!("{}", errors.join("; "))
++}
++
++/// Uncategorized failures report their whole cause chain; the outermost
++/// context alone reads like "prepare selected project read access".
++fn setup_failure_for(err: &anyhow::Error) -> SetupFailure {
++    extract_setup_failure(err)
++        .map(|f| SetupFailure::new(f.code, f.message.clone()))
++        .unwrap_or_else(|| SetupFailure::new(SetupErrorCode::HelperUnknownError, format!("{err:#}")))
++}
++
  fn run_read_acl_only(payload: &Payload, log: &mut dyn Write) -> Result<()> {
 -    let _read_acl_guard = match acquire_read_acl_mutex()? {
 -        Some(guard) => guard,
@@ -472,7 +908,7 @@ index f80efe4..7f2baa2 100644
      log_line(log, "read-acl-only mode: applying read ACLs")?;
      let sandbox_group_sid = resolve_sandbox_users_group_sid()?;
      let sandbox_group_psid = sid_bytes_to_psid(&sandbox_group_sid)?;
-@@ -621,6 +596,19 @@ fn run_read_acl_only(payload: &Payload, log: &mut dyn Write) -> Result<()> {
+@@ -621,6 +603,19 @@ fn run_read_acl_only(payload: &Payload, log: &mut dyn Write) -> Result<()> {
              sandbox_group_psid,
              rx_psids: &rx_psids,
          };
@@ -492,7 +928,16 @@ index f80efe4..7f2baa2 100644
          apply_read_acls(
              &payload.read_roots,
              &subjects,
-@@ -716,10 +704,10 @@ fn provision_sandbox(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) ->
+@@ -653,7 +648,7 @@ fn run_read_acl_only(payload: &Payload, log: &mut dyn Write) -> Result<()> {
+             &format!("read ACL run completed with errors: {refresh_errors:?}"),
+         )?;
+         if payload.refresh_only {
+-            anyhow::bail!("read ACL run had errors");
++            return Err(read_acl_run_failure(&refresh_errors));
+         }
+     }
+     log_line(log, "read ACL run completed")?;
+@@ -716,10 +711,10 @@ fn provision_sandbox(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) ->
              let _ = log_line(log, message);
          },
      );
@@ -506,7 +951,7 @@ index f80efe4..7f2baa2 100644
          for username in [&payload.offline_username, &payload.online_username] {
              let flags = local_user_flags(username)?.ok_or_else(|| {
                  anyhow::anyhow!("sandbox user {username} disappeared during repair")
-@@ -889,45 +877,13 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
+@@ -889,45 +884,13 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
          )?;
      }
  
@@ -558,7 +1003,7 @@ index f80efe4..7f2baa2 100644
  
      let mut grant_tasks: Vec<(PathBuf, String)> = Vec::new();
  
-@@ -1090,7 +1046,7 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
+@@ -1090,7 +1053,7 @@ fn run_setup_full(payload: &Payload, log: &mut dyn Write, sbx_dir: &Path) -> Res
          log_line(
              log,
              &format!(
@@ -567,7 +1012,32 @@ index f80efe4..7f2baa2 100644
                  payload.write_roots.len(),
                  refresh_errors
              ),
-@@ -1144,8 +1100,8 @@ mod tests {
+@@ -1141,11 +1104,33 @@ mod tests {
+     use windows_sys::Win32::Foundation::LocalFree;
+     use windows_sys::Win32::Storage::FileSystem::FILE_DELETE_CHILD;
+ 
++    #[test]
++    fn unknown_setup_failure_names_the_operating_system_error() {
++        let os_error = std::io::Error::from_raw_os_error(32);
++        let grant = anyhow::Error::new(os_error)
++            .context("open directory C:\\Users\\person")
++            .context("grant project ancestor metadata and traversal ACE failed");
++        let failure = super::setup_failure_for(
++            &super::read_acl_run_failure(&[format!("{grant:#}")])
++                .context("prepare selected project read access"),
++        );
++
++        assert_eq!(failure.code, codex_windows_sandbox::SetupErrorCode::HelperUnknownError);
++        assert_eq!(
++            failure.message,
++            format!(
++                "prepare selected project read access: grant project ancestor metadata and \
++                 traversal ACE failed: open directory C:\\Users\\person: {}",
++                std::io::Error::from_raw_os_error(32)
++            )
++        );
++    }
++
      fn payload_json() -> serde_json::Value {
          json!({
              "version": SETUP_VERSION,

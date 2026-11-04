@@ -68,6 +68,27 @@ copyFileSync(
 );
 const profile = process.argv.includes("--debug") ? "debug" : "release";
 const cargoRoot = join(source, "codex-rs");
+if (process.argv.includes("--test")) {
+    // Unit tests that need a real Windows kernel and no provisioned sandbox accounts.
+    run(
+        "cargo",
+        [
+            "+" + metadata.buildToolchain,
+            "test",
+            "--manifest-path",
+            join(cargoRoot, "windows-sandbox-rs/Cargo.toml"),
+            "--locked",
+            "--lib",
+            "--bin",
+            "happy-sandbox-setup",
+            "--",
+            "acl::tests",
+            "tests::unknown_setup_failure",
+        ],
+        { cwd: cargoRoot, env: { ...process.env, CARGO_PROFILE_DEV_DEBUG: "0" } },
+    );
+    process.exit(0);
+}
 run(
     "cargo",
     [
