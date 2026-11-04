@@ -35,12 +35,21 @@ export function postStoryTool(
     const agentId = scope.agent.id;
     return defineAgentTool({
         name: "post_story",
-        defer: false,
+        defer: true,
         capabilities: [
-            "Post story frames to this conversation's ring when you shipped something people can see or try; never for progress.",
+            "Stories: when you ship a change that is mostly visual or has a major UX part, post a screenshot or short video of it with post_story; skip stories for everything else.",
+        ],
+        searchKeywords: [
+            "story",
+            "stories",
+            "post story",
+            "screenshot",
+            "demo video",
+            "show the change",
+            "ring",
         ],
         description: [
-            "Post a story frame about something you shipped: an image or H.264 .mp4 video at path, with an optional caption. It is published at once to everyone who joined this task, or for a bot to non-guest team members with Stories on, for 24 hours, as a ring around this conversation's icon. Clicking the ring plays your frames in order.",
+            "Post a story frame about a visual or UX change you shipped: an image or H.264 .mp4 video at path, with an optional caption. It is published at once to everyone who joined this task, or for a bot to non-guest team members with Stories on, for 24 hours, as a ring around this conversation's icon. Clicking the ring plays your frames in order.",
             "Post only when something real shipped that people can see or try: a release went out, a change was merged or pushed to main, a new build is on their phone, a page is live. Never post progress, plans, test runs, rebases, or that you started or are still working. Most turns post nothing.",
             "Each call posts one frame. For an update with several parts, outline it first and post one frame per part, in order, rather than combining the parts into one image or video.",
             "Keep the ring fresh: an old story left in the ring is noise. When an update makes earlier frames stale, pass their ids as replaces on the first new frame (up to twenty); they and their reposts leave as it is posted. Never replace frames of the update you are posting. If you do not know what is live, call list_stories first. Use delete_story to remove a frame without posting a new one.",

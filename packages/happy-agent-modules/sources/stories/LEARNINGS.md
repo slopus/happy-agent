@@ -99,3 +99,16 @@ private context reaches it. An image story's frame is its own snapshot; a video'
 the agent machine's `ffmpeg` decodes once at `post_story`, because the daemon has no video decoder.
 Reposts carry the original's still. Stored stills and image ThumbHashes never reach the served
 story object.
+
+## Story tools are deferred behind one visual-change line
+
+Making post_story eager on Oct 29 raised shipped-moment posts on gpt-6.1-sol from 0/3 to 7/9. It
+also put three schemas and three capability lines in every request, and its trigger, anything
+people can see or try, covered nearly every change. Kirill asked for stories only when a change is
+mostly visual or has a major UX part. post_story, list_stories and delete_story are deferred again
+with search keywords, and only post_story contributes a capability line: post a screenshot or
+short video when a mostly visual or major UX change ships, and skip stories for everything else.
+There is no Stories skill or turn-end reminder. Deferring saves about 1,100 input tokens per
+request on Opus 5.5. Replaying nine real final turns on Opus 5.5 at medium effort, eager and
+deferred matched: neither posted, and every final reply arrived. Those visual turns were subtasks
+answering a parent agent, so whether top-level visual turns still post is checked separately.

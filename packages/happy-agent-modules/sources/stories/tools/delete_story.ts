@@ -7,8 +7,9 @@ import type { StoriesModule } from "../StoriesModule.js";
 export function deleteStoryTool(stories: StoriesModule, scope: AgentModuleScope) {
     return defineAgentTool({
         name: "delete_story",
-        defer: false,
-        capabilities: ["Delete one of this conversation's live stories."],
+        defer: true,
+        capabilities: [],
+        searchKeywords: ["delete story", "remove story", "take down story"],
         description:
             "Delete one of your live stories, and every repost of it, for everyone at once. list_stories gives the ids.",
         parameters: Type.Object({ id: Type.String() }, { additionalProperties: false }),
