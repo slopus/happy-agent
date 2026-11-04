@@ -23,6 +23,10 @@ import { AsyncInputQueue } from "@/vendors/claudeAgent/impl/AsyncInputQueue.js";
 import { claudeAgentUpdates } from "@/vendors/claudeAgent/impl/claudeAgentUpdates.js";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+// Happy's own Claude loop compacts for Claude Code, so its privacy environment turns Claude Code's
+// auto-compaction off. Nothing compacts this one but Claude Code itself.
+const { DISABLE_AUTO_COMPACT: _, ...CLAUDE_CODE_PRIVACY_ENVIRONMENT } =
+    CLAUDE_SDK_PRIVACY_ENVIRONMENT;
 const MODES: readonly PermissionMode[] = [
     "default",
     "acceptEdits",
@@ -203,7 +207,7 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                 env: {
                     ...process.env,
                     ...this.#environment,
-                    ...CLAUDE_SDK_PRIVACY_ENVIRONMENT,
+                    ...CLAUDE_CODE_PRIVACY_ENVIRONMENT,
                 },
                 canUseTool: async (toolName, toolInput, { toolUseID }) => {
                     const answer = await this.#client.requestPermission({
@@ -259,8 +263,22 @@ class ClaudeAgentConnection implements AcpAgentConnection {
     /** Translate one query's messages into ACP updates and end each prompt at its result. */
     async #pump(sessionId: string, thread: ClaudeThread): Promise<void> {
         const updates = claudeAgentUpdates();
+        // The context is the prompt of the last main-thread API call, cache included. The result
+        // sums every call of the turn and counts only uncached input.
+        let context = 0;
         try {
             for await (const message of thread.query as AsyncIterable<SDKMessage>) {
+                if (
+                    message.type === "stream_event" &&
+                    message.parent_tool_use_id === null &&
+                    message.event.type === "message_start"
+                ) {
+                    const { usage } = message.event.message;
+                    context =
+                        usage.input_tokens +
+                        (usage.cache_read_input_tokens ?? 0) +
+                        (usage.cache_creation_input_tokens ?? 0);
+                }
                 for (const update of updates.translate(message)) {
                     await this.#client.sessionUpdate({ sessionId, update });
                 }
@@ -280,11 +298,11 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                           ? "max_turn_requests"
                           : "end_turn",
                     usage: {
-                        inputTokens: message.usage.input_tokens,
+                        inputTokens: context,
                         outputTokens: message.usage.output_tokens,
                         cachedReadTokens: message.usage.cache_read_input_tokens ?? 0,
                         cachedWriteTokens: message.usage.cache_creation_input_tokens ?? 0,
-                        totalTokens: message.usage.input_tokens + message.usage.output_tokens,
+                        totalTokens: context + message.usage.output_tokens,
                     },
                 });
             }
