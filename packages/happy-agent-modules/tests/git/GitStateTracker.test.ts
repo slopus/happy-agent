@@ -153,6 +153,165 @@ describe("GitStateTracker scheduling", () => {
         tracker.dispose();
     });
 
+    it("asks Git about churn in an ignored file once, not on every write", async () => {
+        const repository = await createRepository();
+        const head = await commitFile(repository, ".gitignore", "*.log\nstorage/cache/\n");
+        await setOriginMain(repository, head);
+        await mkdir(join(repository, "storage", "cache"), { recursive: true });
+        let pathStatusReads = 0;
+        const pathStatusQuestions: string[] = [];
+        let activeCommands = 0;
+        const scan = scanGitRunnerFromCommandRunner({
+            async run(cwd, args, options) {
+                if (args[0] === "status" && !args.includes("--branch")) {
+                    pathStatusReads += 1;
+                    pathStatusQuestions.push(args.slice(args.indexOf("--") + 1).join(" "));
+                }
+                activeCommands += 1;
+                try {
+                    return await gitRunner.run(cwd, ["--no-optional-locks", ...args], options);
+                } finally {
+                    activeCommands -= 1;
+                }
+            },
+        });
+        const tracker = new GitStateTracker(createRootContext(), scan, owner());
+        const watched = { path: repository, projectId: "project-ignored-churn" };
+        try {
+            tracker.watch(watched);
+            await waitFor(() => tracker.snapshot(watched) !== undefined);
+            await waitForSettled(
+                () => activeCommands === 0,
+                () => pathStatusReads,
+                300,
+            );
+            const before = pathStatusReads;
+
+            // A server log and a cache directory written to continuously while nobody works.
+            for (let write = 0; write < 10; write += 1) {
+                await writeFile(join(repository, "server.log"), `line ${write}\n`, { flag: "a" });
+                await writeFile(join(repository, "storage", "cache", `entry-${write}`), "cached");
+                tracker.markWorktreeChanged(watched, "server.log");
+                tracker.markWorktreeChanged(watched, `storage/cache/entry-${write}`);
+                await new Promise((resolve) => setTimeout(resolve, 200));
+                await waitFor(() => activeCommands === 0);
+            }
+            expect(pathStatusQuestions.slice(before)).toHaveLength(1);
+
+            // Changed ignore rules are asked about again.
+            tracker.markWorktreeChanged(watched, ".gitignore");
+            tracker.markWorktreeChanged(watched, "server.log");
+            await waitFor(() => pathStatusReads > before + 1);
+        } finally {
+            tracker.dispose();
+        }
+    }, 20_000);
+
+    it("remembers ignored paths for a project folder inside a larger repository", async () => {
+        const repository = await createRepository();
+        await mkdir(join(repository, "site"));
+        const head = await commitFile(repository, "site/.gitignore", "*.log\n");
+        await setOriginMain(repository, head);
+        const folder = join(repository, "site");
+        let pathStatusReads = 0;
+        let activeCommands = 0;
+        const scan = scanGitRunnerFromCommandRunner({
+            async run(cwd, args, options) {
+                if (args[0] === "status" && !args.includes("--branch")) pathStatusReads += 1;
+                activeCommands += 1;
+                try {
+                    return await gitRunner.run(cwd, ["--no-optional-locks", ...args], options);
+                } finally {
+                    activeCommands -= 1;
+                }
+            },
+        });
+        const tracker = new GitStateTracker(createRootContext(), scan, owner());
+        const watched = { path: folder, projectId: "project-subfolder" };
+        try {
+            tracker.watch(watched);
+            await waitFor(() => tracker.snapshot(watched) !== undefined);
+            await waitForSettled(
+                () => activeCommands === 0,
+                () => pathStatusReads,
+                300,
+            );
+            const before = pathStatusReads;
+            // Long enough to outlast the wait for a path Git merely saw nothing in.
+            for (let write = 0; write < 12; write += 1) {
+                await writeFile(join(folder, "server.log"), `line ${write}\n`, { flag: "a" });
+                tracker.markWorktreeChanged(watched, "server.log");
+                await new Promise((resolve) => setTimeout(resolve, 200));
+                await waitFor(() => activeCommands === 0);
+            }
+            expect(pathStatusReads - before).toBe(1);
+        } finally {
+            tracker.dispose();
+        }
+    }, 20_000);
+
+    it("waits out a path Git keeps seeing nothing in without delaying other paths", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const scan = testScan();
+        scan.pathStatus = (paths) =>
+            paths.includes("src/edited.ts")
+                ? "1 .M N... 100644 100644 100644 a a src/edited.ts\0"
+                : "";
+        const tracker = new GitStateTracker(createRootContext(), scan.run, owner());
+        try {
+            await startTracking(tracker);
+            // A tool rewrites one tracked file with identical contents ten times a second.
+            for (let tick = 0; tick < 600; tick += 1) {
+                tracker.markWorktreeChanged(entity, "src/rewritten.ts");
+                await advance(100);
+            }
+            // One question per doubling wait (1, 2, 4, 8, 16, then 30 seconds), not one per write.
+            expect(scan.pathStatusReads).toBeLessThanOrEqual(8);
+
+            const reads = scan.pathStatusReads;
+            const scans = scan.fullStatusReads;
+            tracker.markWorktreeChanged(entity, "src/edited.ts");
+            await advance(150);
+            expect(scan.pathStatusReads).toBe(reads + 1);
+            expect(scan.fullStatusReads).toBe(scans + 1);
+        } finally {
+            tracker.dispose();
+        }
+    });
+
+    it("remembers a directory Git reports ignored for every path inside it", async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const scan = testScan();
+        scan.pathStatus = (paths) =>
+            paths.some((path) => path.startsWith("vendor/")) ? "! vendor/\0" : "";
+        const tracker = new GitStateTracker(createRootContext(), scan.run, owner());
+        try {
+            await startTracking(tracker);
+            tracker.markWorktreeChanged(entity, "vendor/a/b.php");
+            await advance(150);
+            expect(scan.pathStatusReads).toBe(1);
+            for (let index = 0; index < 50; index += 1) {
+                tracker.markWorktreeChanged(entity, `vendor/package-${index}/file.php`);
+                tracker.markWorktreeChanged(entity, "vendor");
+                await advance(150);
+            }
+            expect(scan.pathStatusReads).toBe(1);
+
+            // The memory is bounded in time, so rules changed outside the tree are relearned.
+            for (let minute = 0; minute < 10; minute += 1) {
+                tracker.watch(entity);
+                await advance(60_000);
+            }
+            tracker.markWorktreeChanged(entity, "vendor/a/b.php");
+            await advance(1_000);
+            expect(scan.pathStatusReads).toBe(2);
+        } finally {
+            tracker.dispose();
+        }
+    });
+
     it("backs idle reconciliation off and checks only status while nothing changed", async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
@@ -337,6 +496,8 @@ interface TestScan {
     repository: boolean;
     fullStatusReads: number;
     pathStatusDirty: boolean;
+    /** Answers a scoped status for the paths after `--`, overriding `pathStatusDirty`. */
+    pathStatus: ((paths: readonly string[]) => string) | undefined;
     pathStatusReads: number;
     run: ScanGitRunner;
     statusEntries: string[];
@@ -347,6 +508,7 @@ function testScan(): TestScan {
         diffReads: 0,
         fullStatusReads: 0,
         pathStatusDirty: false,
+        pathStatus: undefined,
         pathStatusReads: 0,
         repository: true,
         statusEntries: [],
@@ -370,6 +532,11 @@ function testScan(): TestScan {
                     );
                 }
                 scan.pathStatusReads += 1;
+                if (scan.pathStatus !== undefined) {
+                    return result(
+                        scan.pathStatus(options.args.slice(options.args.indexOf("--") + 1)),
+                    );
+                }
                 return result(scan.pathStatusDirty ? "? src/tracked.ts\0" : "");
             }
             if (command === "rev-parse") {

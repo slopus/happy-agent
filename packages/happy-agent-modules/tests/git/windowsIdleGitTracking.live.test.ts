@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { GitModule } from "../../sources/git/GitModule.js";
 import { directGitCommandRunner } from "../../sources/git/runGitCommand.js";
 import { runScanGit } from "../../sources/git/runScanGit.js";
+import type { GitTrackedEntity } from "../../sources/git/types.js";
 import { cleanupRoots, commitFile, createRepository, setOriginMain } from "./helpers.js";
 
 // On Windows every read-only Git scan is a sandboxed process that logs a sandbox account on
@@ -41,7 +42,7 @@ describe.runIf(sandboxReady)("idle Windows Git tracking", () => {
                 },
             });
             modules.push(module);
-            const entities = [];
+            const entities: GitTrackedEntity[] = [];
             for (let index = 0; index < REPOSITORIES; index += 1) {
                 const repository = await createRepository();
                 const head = await commitFile(repository, ".gitignore", "*.log\ncache/\n");
