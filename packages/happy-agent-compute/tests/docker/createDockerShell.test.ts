@@ -322,6 +322,45 @@ describe("createDockerShell", () => {
         );
     });
 
+    it("keeps a deny-all project intersection valid when the command narrows ports", async () => {
+        const bookkeepingCommands: string[][] = [];
+        const foregroundStreams: PassThrough[] = [];
+        const container = createBookkeepingDockerContainer(
+            bookkeepingCommands,
+            foregroundStreams,
+            false,
+        );
+        const environment = {
+            config: { workingDirectory: "/workspace" },
+            container: async () => container,
+            supervisorBinary: async () => "/tools/happy-agent-sandbox",
+        } as unknown as DockerEnvironment;
+        const shell = createDockerShell(environment, {
+            hostPolicy: { networkPolicyFiles: ["agent-policy.toml"] },
+            parseNetworkConfig: () => ({ allowedDomains: [] }),
+        });
+
+        await shell.startSession({
+            command: "true",
+            permissions: computePermissions("workspace_write", {
+                network: {
+                    egress: true,
+                    allowedHosts: ["example.com"],
+                    allowedPorts: [443],
+                    deniedHosts: ["uploads.example.com"],
+                    localBinding: false,
+                },
+            }),
+        });
+
+        const command = bookkeepingCommands.find((candidate) => candidate[3] === "compute-command");
+        expect((readSupervisorPolicy(command!) as { network: unknown }).network).toEqual({
+            egress: true,
+            localBinding: false,
+            outgoingProxy: { frontEnds: ["http", "socks5"] },
+        });
+    });
+
     it("keeps an absent project policy reserved across shells sharing a container", async () => {
         const bookkeepingCommands: string[][] = [];
         const foregroundStreams: PassThrough[] = [];

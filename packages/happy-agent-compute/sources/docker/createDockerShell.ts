@@ -961,10 +961,11 @@ function resolveDockerSupervisorNetwork(
         network: {
             ...network,
             allowedHosts,
-            ...(permissions.network.deniedHosts === undefined
+            // An empty intersection is a deny-all proxy, which has no host list left to narrow.
+            ...(permissions.network.deniedHosts === undefined || allowedHosts.length === 0
                 ? {}
                 : { deniedHosts: permissions.network.deniedHosts }),
-            ...(permissions.network.allowedPorts === undefined
+            ...(permissions.network.allowedPorts === undefined || allowedHosts.length === 0
                 ? {}
                 : { allowedPorts: permissions.network.allowedPorts }),
         },
