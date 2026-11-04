@@ -37,7 +37,7 @@ on:
                 type: string
                 default: windows-2025
             managed_network_only:
-                description: Prove only that configured network policy reaches Agent shell commands
+                description: Prove only that configured network policy reaches Agent shell commands, using this checkout's supervisor and compute
                 type: boolean
                 default: false
 
@@ -247,7 +247,18 @@ jobs:
                   node-version: "24"
                   package-manager-cache: false
             - run: pnpm install --frozen-lockfile
-            - name: Allow namespaces only for the supervisor the Agent modules install
+            - name: Build this checkout's supervisor
+              working-directory: packages/happy-agent-supervisor/native
+              run: |
+                  rustup show active-toolchain || rustup toolchain install
+                  cargo build --locked --release --bin happy-agent-supervisor
+                  pnpm --filter @slopus/happy-agent-supervisor build
+            - name: Load this checkout's supervisor and compute where the Agent modules load them
+              run: |
+                  node packages/happy-agent-supervisor/scripts/use-source-sandbox.mjs supervisor packages/happy-agent-supervisor/native/target/release/happy-agent-supervisor
+                  pnpm --filter @slopus/happy-agent-compute build
+                  node packages/happy-agent-supervisor/scripts/use-source-sandbox.mjs compute
+            - name: Allow namespaces only for the supervisor the Agent modules load
               if: runner.os == 'Linux'
               run: |
                   [[ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" == 1 ]]
