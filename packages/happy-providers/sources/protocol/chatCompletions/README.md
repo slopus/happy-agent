@@ -11,7 +11,9 @@ ChatCompletionsSession --- vendor compaction prompt + replacement context
         |
 createChatCompletionsRequest
         |
-ChatCompletionsConnection --- OpenAI SSE + Bedrock SigV4/bearer, or a plain API key
+ChatCompletionsConnection --- OpenAI SDK request + Bedrock SigV4/bearer, or a plain API key
+        |
+readServerSentEvents --- owned SSE decoding of the response body
         |
 mapChatCompletionsStream --- ordered blocks, parallel tool IDs, usage, completion
 ```
@@ -35,6 +37,14 @@ The session names its vendor in every error and retry message; Bedrock is the de
 reasoning is read from `reasoning_content` or OpenRouter's `reasoning`. Replay of assistant
 reasoning is a session option: Kimi and GLM always send `reasoning_content`, while generic
 endpoints send `reasoning`, `reasoning_content`, or nothing, as configured.
+
+The SDK sends the request and raises HTTP errors, but the response body is decoded by
+`readServerSentEvents`, not the SDK's stream. On Bun for Windows the SDK's async-iterator read was
+reported to drop intermediate events from fast gateway answers; the SDK also discards a final event
+that a gateway closes without a blank line. The owned decoder reads with `getReader()`, accepts LF,
+CRLF, and CR framing split anywhere across reads, comments, multi-line `data:`, and a missing final
+blank line. Gateway chunks may omit `choices`, `delta`, or `finish_reason`. An `error` object in the
+stream is raised as the SDK's `APIError`, and anything after `[DONE]` is ignored.
 
 Tests exercise the complete SDK request/stream path through mocked HTTP responses. Live tests
 are opt-in; deterministic tests do not establish live account eligibility or golden-trace fidelity.

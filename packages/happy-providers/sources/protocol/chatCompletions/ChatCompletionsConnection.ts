@@ -1,37 +1,42 @@
 import OpenAI, { APIError } from "openai";
-import type { Stream } from "openai/core/streaming";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { Hash } from "@smithy/hash-node";
 import { SignatureV4 } from "@smithy/signature-v4";
 import type { BedrockCredential } from "@/vendors/VendorCredential.js";
+import { readServerSentEvents } from "./readServerSentEvents.js";
 
+/** Gateways may omit `choices` on a usage-only chunk and `delta` or `finish_reason` on a choice. */
 const chunkSchema = Type.Object({
-    choices: Type.Array(
-        Type.Object({
-            index: Type.Integer(),
-            delta: Type.Object({
-                content: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                reasoning_content: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                /** OpenRouter and several gateways stream reasoning under this name instead. */
-                reasoning: Type.Optional(Type.Union([Type.String(), Type.Null()])),
-                tool_calls: Type.Optional(
-                    Type.Array(
-                        Type.Object({
-                            index: Type.Integer(),
-                            id: Type.Optional(Type.String()),
-                            function: Type.Optional(
+    choices: Type.Optional(
+        Type.Array(
+            Type.Object({
+                index: Type.Integer(),
+                delta: Type.Optional(
+                    Type.Object({
+                        content: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                        reasoning_content: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                        /** OpenRouter and several gateways stream reasoning under this name. */
+                        reasoning: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                        tool_calls: Type.Optional(
+                            Type.Array(
                                 Type.Object({
-                                    name: Type.Optional(Type.String()),
-                                    arguments: Type.Optional(Type.String()),
+                                    index: Type.Integer(),
+                                    id: Type.Optional(Type.String()),
+                                    function: Type.Optional(
+                                        Type.Object({
+                                            name: Type.Optional(Type.String()),
+                                            arguments: Type.Optional(Type.String()),
+                                        }),
+                                    ),
                                 }),
                             ),
-                        }),
-                    ),
+                        ),
+                    }),
                 ),
+                finish_reason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
             }),
-            finish_reason: Type.Union([Type.String(), Type.Null()]),
-        }),
+        ),
     ),
     usage: Type.Optional(
         Type.Union([
@@ -50,6 +55,11 @@ const chunkSchema = Type.Object({
 });
 
 export type ChatCompletionsChunk = Static<typeof chunkSchema>;
+
+/** An error reported inside an open stream, which the OpenAI SDK raises as an `APIError`. */
+const streamErrorSchema = Type.Object({
+    error: Type.Union([Type.Object({}), Type.String({ minLength: 1 })]),
+});
 
 class BedrockChatClient extends OpenAI {
     protected override makeStatusError(
@@ -169,20 +179,32 @@ export class ChatCompletionsConnection {
     }
 
     async *run(body: object, signal?: AbortSignal): AsyncGenerator<ChatCompletionsChunk> {
-        const stream = await this.client.post<Stream<unknown>>("/chat/completions", {
-            body,
-            stream: true,
-            ...(signal === undefined ? {} : { signal }),
-        });
-        try {
-            for await (const chunk of stream) {
-                if (!Value.Check(chunkSchema, chunk)) {
-                    throw new Error(`${this.vendor} returned an invalid chat response chunk.`);
-                }
-                yield chunk;
+        // The SDK still builds, authenticates, and rejects the request; the body is decoded here.
+        const response = await this.client
+            .post("/chat/completions", {
+                body,
+                stream: true,
+                ...(signal === undefined ? {} : { signal }),
+            })
+            .asResponse();
+        if (response.body === null) {
+            throw new Error(`${this.vendor} returned a chat response without a body.`);
+        }
+        for await (const event of readServerSentEvents(response.body)) {
+            if (event.data.startsWith("[DONE]")) return;
+            let chunk: unknown;
+            try {
+                chunk = JSON.parse(event.data);
+            } catch {
+                throw new Error(`${this.vendor} returned an invalid chat response chunk.`);
             }
-        } finally {
-            stream.controller.abort();
+            if (Value.Check(streamErrorSchema, chunk)) {
+                throw new APIError(undefined, chunk.error, undefined, response.headers);
+            }
+            if (!Value.Check(chunkSchema, chunk)) {
+                throw new Error(`${this.vendor} returned an invalid chat response chunk.`);
+            }
+            yield chunk;
         }
     }
 }

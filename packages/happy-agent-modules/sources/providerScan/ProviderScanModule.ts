@@ -93,8 +93,12 @@ export class ProviderScanModule implements AgentModule {
         let performedLevel = requestedLevel;
         let modelId: string | null = null;
         let passed = false;
+        let failure: string | undefined;
         try {
             const credentials = await this.#probe(providerId);
+            if (credentials !== "available") {
+                failure = `Local credential discovery reported "${credentials}".`;
+            }
             if (requestedLevel === "credentials") {
                 passed = credentials === "available";
             } else if (credentials === "available" && requestedLevel === "authentication") {
@@ -112,19 +116,23 @@ export class ProviderScanModule implements AgentModule {
                         );
                         modelId = inference.modelId;
                         passed = inference.passed;
+                        failure = inference.failure;
                     } else {
                         passed = true;
                     }
-                } catch {
+                } catch (error) {
                     passed = false;
+                    failure = `The account check failed: ${describe(error)}`;
                 }
             } else if (credentials === "available" && requestedLevel === "inference") {
                 const inference = await this.#verifyInference(ctx, providerId, controller.signal);
                 modelId = inference.modelId;
                 passed = inference.passed;
+                failure = inference.failure;
             }
-        } catch {
+        } catch (error) {
             passed = false;
+            failure = describe(error);
         } finally {
             clearTimeout(timeout);
             active.delete(controller);
@@ -132,6 +140,16 @@ export class ProviderScanModule implements AgentModule {
         }
 
         if (passed) await this.#remember(ctx, providerId);
+        else {
+            // The response withholds provider errors; the daemon log keeps the reason for support.
+            ctx.log.warn("Provider verification failed.", {
+                providerId,
+                requestedLevel,
+                performedLevel,
+                modelId,
+                reason: failure ?? "The check did not pass.",
+            });
+        }
         return {
             checkedAt: Date.now(),
             modelId,
@@ -265,20 +283,36 @@ export class ProviderScanModule implements AgentModule {
         ctx: Context,
         providerId: string,
         signal: AbortSignal,
-    ): Promise<{ readonly modelId: string | null; readonly passed: boolean }> {
+    ): Promise<{
+        readonly modelId: string | null;
+        readonly passed: boolean;
+        readonly failure?: string;
+    }> {
         const model = verificationModel(
             this.#config.offeredModels,
             providerId,
             this.#config.providers.typeOf(providerId),
         );
-        if (model === undefined) return { modelId: null, passed: false };
+        if (model === undefined) {
+            return {
+                modelId: null,
+                passed: false,
+                failure: "The provider offers no model to check inference with.",
+            };
+        }
         let session: BaseSession | undefined;
         try {
             const provider = await Promise.race([
                 this.#config.resolveProviderUnchecked(providerId, model.id),
                 rejectWhenAborted(signal),
             ]);
-            if (provider === null) return { modelId: model.id, passed: false };
+            if (provider === null) {
+                return {
+                    modelId: model.id,
+                    passed: false,
+                    failure: "The provider could not be prepared for inference.",
+                };
+            }
             session = await Promise.race([
                 provider.session(`provider-verification:${createId()}`, {
                     inferenceMaxRetries: 0,
@@ -288,7 +322,7 @@ export class ProviderScanModule implements AgentModule {
                 rejectWhenAborted(signal),
             ]);
             const runCtx = verificationContext(ctx, signal);
-            const consume = async (): Promise<boolean> => {
+            const consume = async (): Promise<string | undefined> => {
                 for await (const event of session!.run(runCtx, {
                     context: {
                         instructions: "Reply with OK.",
@@ -299,16 +333,20 @@ export class ProviderScanModule implements AgentModule {
                     effort: verificationEffort(model),
                     model: model.id,
                 })) {
-                    if (event.type === "done") return event.state === "normal";
+                    if (event.type !== "done") continue;
+                    if (event.state === "normal") return undefined;
+                    return event.state === "error"
+                        ? `The model request failed: ${event.message}`
+                        : `The model request ended in the "${event.state}" state.`;
                 }
-                return false;
+                return "The model stream ended without a final result.";
             };
-            return {
-                modelId: model.id,
-                passed: await Promise.race([consume(), rejectWhenAborted(signal)]),
-            };
-        } catch {
-            return { modelId: model.id, passed: false };
+            const failure = await Promise.race([consume(), rejectWhenAborted(signal)]);
+            return failure === undefined
+                ? { modelId: model.id, passed: true }
+                : { modelId: model.id, passed: false, failure };
+        } catch (error) {
+            return { modelId: model.id, passed: false, failure: describe(error) };
         } finally {
             if (session !== undefined) {
                 await Promise.resolve(session.destroy()).catch(() => undefined);
@@ -366,6 +404,10 @@ function rejectWhenAborted(signal: AbortSignal): Promise<never> {
         if (signal.aborted) fail();
         else signal.addEventListener("abort", fail, { once: true });
     });
+}
+
+function describe(error: unknown): string {
+    return error instanceof Error && error.message !== "" ? error.message : "An unknown error.";
 }
 
 function replaceSet<T>(target: Set<T>, source: ReadonlySet<T>): void {

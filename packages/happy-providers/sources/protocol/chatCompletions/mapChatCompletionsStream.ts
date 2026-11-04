@@ -30,12 +30,12 @@ export async function* mapChatCompletionsStream(
                 totalTokens: chunk.usage.prompt_tokens + chunk.usage.completion_tokens,
             };
         }
-        const choice = chunk.choices.find((item) => item.index === 0);
+        const choice = chunk.choices?.find((item) => item.index === 0);
         if (choice === undefined) continue;
-        if (choice.finish_reason !== null) finish = choice.finish_reason;
+        if (choice.finish_reason != null) finish = choice.finish_reason;
         for (const [kind, delta] of [
-            ["reasoning", choice.delta.reasoning_content ?? choice.delta.reasoning],
-            ["text", choice.delta.content],
+            ["reasoning", choice.delta?.reasoning_content ?? choice.delta?.reasoning],
+            ["text", choice.delta?.content],
         ] as const) {
             if (!delta) continue;
             if (active !== kind) {
@@ -47,7 +47,7 @@ export async function* mapChatCompletionsStream(
             hasContent = true;
             yield { type: kind === "text" ? "text_delta" : "reasoning_delta", delta };
         }
-        for (const update of choice.delta.tool_calls ?? []) {
+        for (const update of choice.delta?.tool_calls ?? []) {
             if (active !== undefined) {
                 yield { type: active === "text" ? "text_end" : "reasoning_end" };
                 active = undefined;

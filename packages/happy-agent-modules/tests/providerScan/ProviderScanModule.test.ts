@@ -12,7 +12,7 @@ import {
     type SessionRunRequest,
     type SessionStream,
 } from "@slopus/happy-providers";
-import { createRootContext, type Context } from "@steve.kite/stdlib";
+import { createRootContext, withLogger, type Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ConfigModule, type ConfigInferenceOverride } from "../../sources/config/index.js";
@@ -280,6 +280,42 @@ describe("ProviderScanModule", () => {
         },
     );
 
+    it("logs why an inference verification failed without returning the provider error", async () => {
+        const installationRoot = await root();
+        const providers = new AgentProviders();
+        providers.add("gateway", new EmptyResponseProvider(), "gateway");
+        const model = { ...MODEL, id: "gateway/model", name: "Gateway", providerId: "gateway" };
+        const config = await ConfigModule.load(join(installationRoot, "happy"), {
+            inference: { models: [model], providers },
+        });
+        const warnings: unknown[][] = [];
+        const ctx = withLogger(createRootContext(), {
+            trace: () => {},
+            debug: () => {},
+            info: () => {},
+            warn: (_logContext, ...args) => {
+                warnings.push(args);
+            },
+            error: () => {},
+            fatal: () => {},
+        });
+
+        const result = await new ProviderScanModule(config).verify(ctx, "gateway", "inference");
+
+        expect(result).toMatchObject({ performedLevel: "inference", status: "failed" });
+        expect(JSON.stringify(result)).not.toContain("zero output tokens");
+        expect(warnings).toContainEqual([
+            "Provider verification failed.",
+            {
+                modelId: "gateway/model",
+                performedLevel: "inference",
+                providerId: "gateway",
+                reason: "The model request failed: Gateway returned a response with zero output tokens.",
+                requestedLevel: "inference",
+            },
+        ]);
+    });
+
     it("does not apply a live override when its durable write fails", async () => {
         const { config } = await scriptedConfig();
         const scan = new ProviderScanModule(config);
@@ -356,6 +392,23 @@ class PassingSession extends BaseSession {
     }
 
     destroy(): void {}
+}
+
+class EmptyResponseProvider extends BaseProvider {
+    async session(id: string, _options: SessionOptions): Promise<BaseSession> {
+        return new (class extends PassingSession {
+            override run(_ctx: Context, _request: SessionRunRequest): SessionStream {
+                return (async function* () {
+                    yield {
+                        type: "done",
+                        state: "error",
+                        kind: "unknown",
+                        message: "Gateway returned a response with zero output tokens.",
+                    } as const;
+                })();
+            }
+        })(id);
+    }
 }
 
 class SubscriptionProvider extends BaseProvider {

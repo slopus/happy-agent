@@ -42,7 +42,7 @@
         "check": "tsc --noEmit",
         "prepack": "pnpm run build",
         "test": "vitest run --passWithNoTests && pnpm run test:bun",
-        "test:bun": "bun tests/bun/grokOpenAIClient.bun.mjs && bun tests/bun/grokXSearch.bun.mjs"
+        "test:bun": "bun tests/bun/grokOpenAIClient.bun.mjs && bun tests/bun/grokXSearch.bun.mjs && bun tests/bun/openAICompatibleGatewayStream.bun.mjs"
     },
     "dependencies": {
         "@agentclientprotocol/sdk": "1.9.0",
