@@ -476,9 +476,10 @@ export class SkillsModule implements AgentModule {
                 this.#promptStores.get(scope.agent.id)?.refreshed === true
             ) {
                 assertValue(shortlistSchema, selected, "Current skill shortlist");
-                return formatInstructions(
-                    await this.#revalidateShortlist(ctx, scope.agent.id, selected),
-                );
+                const shortlist = await this.#revalidateShortlist(ctx, scope.agent.id, selected);
+                // The same rule as the discovery path below: every run of a turn must give the
+                // same text, or the provider session is rebuilt between runs.
+                return shortlist.length === 0 ? "" : formatInstructions(shortlist);
             }
             const entries = await this.#discover(ctx, scope.agent.id);
             // The model's catalog omits user-only skills; a user's own invocation of one still
@@ -487,7 +488,7 @@ export class SkillsModule implements AgentModule {
             const promptStore = this.#promptStores.get(scope.agent.id);
             if (promptStore !== undefined) promptStore.refreshed = true;
             return [
-                entries.length === 0 ? "" : formatInstructions(catalog),
+                catalog.length === 0 ? "" : formatInstructions(catalog),
                 ...invocations
                     .filter((invocation) => entries.some((entry) => invokes(invocation, entry)))
                     .map(formatInvokedSkill),
