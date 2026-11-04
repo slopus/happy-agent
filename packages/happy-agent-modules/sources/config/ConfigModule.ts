@@ -2,9 +2,7 @@ import {
     computePermissions,
     localAgentSocketPath,
     ensurePrivateDirectory,
-    toManagedNetworkPolicy,
     type Compute,
-    type ManagedNetworkPolicy,
     type ComputeServiceExecution,
 } from "@slopus/happy-agent-compute";
 import { randomUUID } from "node:crypto";
@@ -2113,10 +2111,15 @@ export class ConfigModule implements AgentModule {
         await ensurePrivateDirectory(join(this.configuration.paths.agentHome, "services"));
     }
 
-    /** Re-read the target workspace's root policy, never another agent's startup directory. */
-    async serviceNetworkPolicy(workspacePath: string): Promise<ManagedNetworkPolicy | undefined> {
+    /**
+     * The network policy restricted commands in one workspace run under, read from the files now
+     * rather than at startup so a change applies to the next command. The workspace's root policy
+     * replaces the global one, except that denials from both apply: a repository cannot lift a
+     * machine-wide denial.
+     */
+    async networkPolicy(workspacePath: string): Promise<HappyAgentConfigValues["network"]> {
         if (!Value.Check(pathSchema, workspacePath))
-            throw new Error("The service workspace path is invalid.");
+            throw new Error("The workspace path is invalid.");
         const [global, local] = await Promise.all([
             readConfigSource(this.configuration.paths.globalConfigPath, "global"),
             readConfigSource(join(workspacePath, "happy.toml"), "local"),
@@ -2126,7 +2129,14 @@ export class ConfigModule implements AgentModule {
             withoutProjectMachineSettings(local.values),
             this.#runtimeValues,
         );
-        return toManagedNetworkPolicy(values.network);
+        if (values.network === undefined) return undefined;
+        const deniedDomains = [
+            ...new Set([
+                ...(global.values.network?.denied_domains ?? []),
+                ...(values.network.deniedDomains ?? []),
+            ]),
+        ];
+        return { ...values.network, ...(deniedDomains.length === 0 ? {} : { deniedDomains }) };
     }
 
     /** One immutable bot folder below the configuration-owned bot root. */
