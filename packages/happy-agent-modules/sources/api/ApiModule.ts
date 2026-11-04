@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import * as inspector from "node:inspector";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
@@ -5267,6 +5267,25 @@ export class ApiModule implements AgentModule {
                 // An item's snapshot is taken once, so the same URL never names other bytes.
                 cacheControl: "private, max-age=31536000, immutable",
             });
+            return true;
+        }
+        const storyFrame =
+            /^\/v0\/agents\/([a-z][a-z0-9]*)\/messages\/([a-z][a-z0-9]{0,255})\/story-frame$/.exec(
+                url.pathname,
+            );
+        if (storyFrame !== null && request.method === "GET") {
+            const agentId = storyFrame[1] as string;
+            await this.#requireAgentResource(ctx, agentId);
+            const message = await this.#history.message(ctx, agentId, storyFrame[2] as string);
+            const frame = message?.quote?.frame;
+            if (!frame) throw notFound("The message has no story frame.");
+            const contentPath = this.#config.chatMediaContentPath(frame.sha256);
+            const facts = await stat(contentPath).catch(() => undefined);
+            if (facts?.isFile() !== true || facts.size !== frame.size)
+                throw notFound("The message has no story frame.");
+            // A frame is a snapshot taken once, so the same URL never names other bytes.
+            const cacheControl = "private, max-age=31536000, immutable";
+            await sendStoredFile(request, response, { ...frame, contentPath, cacheControl });
             return true;
         }
         const slashCommandImage =

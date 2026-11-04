@@ -15,6 +15,7 @@ import {
     type ClientMetadata,
 } from "@slopus/happy-agent-client";
 
+import { storyQuoteSchema } from "../impl/storyQuote.js";
 import { toolPermissionReviewSchema } from "../permissions/ToolPermissionReview.js";
 import { historyValidator } from "./impl/historyValidator.js";
 
@@ -545,6 +546,8 @@ const historyMessageFields = {
     mutationId: Type.Optional(historyMutationIdSchema),
     /** Opaque JSON owned by the client that submitted this user message. */
     clientMetadata: Type.Optional(historyClientMetadataSchema),
+    /** What a person's message replies to, beside what they wrote. */
+    quote: Type.Optional(storyQuoteSchema),
     /** Keep this operational message out of person-facing transcript projection. */
     hideFromUser: Type.Optional(Type.Boolean()),
     /** Happy's source identity, used to suppress a remote message echo. */

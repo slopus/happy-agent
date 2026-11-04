@@ -17,6 +17,7 @@ const mediaSchema = Type.Object({
     mimeType: Type.String(),
     size: Type.Integer(),
     sha256: Type.String(),
+    thumbhash: Type.Optional(Type.String()),
 });
 /** One media layer: its own stored file and its own placement, never composed into another. */
 export const storyMediaLayerRecordSchema = Type.Composite([
@@ -36,6 +37,8 @@ export const storyRecordSchema = Type.Object({
     botId: Type.Union([Type.String(), Type.Null()]),
     caption: Type.Union([Type.String(), Type.Null()]),
     media: mediaSchema,
+    /** A still of a video's first frame, which a reply quotes. */
+    still: Type.Optional(mediaSchema),
     repostOf: Type.Optional(Type.String()),
     userId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     round: Type.Optional(mediaSchema),

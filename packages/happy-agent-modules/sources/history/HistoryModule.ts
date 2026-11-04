@@ -49,6 +49,7 @@ import {
     senderAgentIdOf,
 } from "../impl/messageOrigin.js";
 import { decodeRequestProfile } from "../impl/requestProfile.js";
+import { storyQuoteOf } from "../impl/storyQuote.js";
 import type { BotSettingsModule } from "../botSettings/index.js";
 import type { EventsModule } from "../events/index.js";
 import type {
@@ -2593,6 +2594,7 @@ export class HistoryModule implements AgentModule {
                     : Value.Check(userIdSchema, metadataUserId)
                       ? metadataUserId
                       : undefined;
+            const quote = fromUser ? storyQuoteOf(accepted.metadata) : undefined;
             const sender = fromUser ? undefined : senderAgentIdOf(accepted.metadata);
             const senderExplanation =
                 sender === undefined ? undefined : senderAgentExplanationOf(accepted.metadata);
@@ -2618,6 +2620,7 @@ export class HistoryModule implements AgentModule {
                           profile: pending?.profile ?? accepted.profile,
                           ...(clientMetadata === undefined ? {} : { clientMetadata }),
                           ...(userId === undefined ? {} : { userId }),
+                          ...(quote === undefined ? {} : { quote }),
                       }
                     : {}),
                 // Any accepted message may start a run on a request's behalf, such as the hidden

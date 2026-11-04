@@ -6,6 +6,7 @@ import type { Compute, ComputeModule } from "../../compute/index.js";
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
 import type { StoriesModule } from "../StoriesModule.js";
 import { isH264Mp4 } from "../storyStore.js";
+import { videoPoster } from "./videoPoster.js";
 
 const postStoryInputSchema = Type.Object(
     {
@@ -80,7 +81,12 @@ export function postStoryTool(
             const { kind, mimeType, size, sha256 } = item;
             if (kind !== "image" && kind !== "video")
                 throw new Error(`${quoteVisibleExact(path)} is not an image a story can show.`);
-            const media = { kind, name: item.name, mimeType, size, sha256 };
+            const thumbhash = item.kind === "image" ? { thumbhash: item.thumbhash } : {};
+            const media = { kind, name: item.name, mimeType, size, sha256, ...thumbhash };
+            const still =
+                kind === "video"
+                    ? await videoPoster(compute, permissions, resolved, chatMedia)
+                    : undefined;
             const story = await stories.post(
                 ctx,
                 agentId,
@@ -88,6 +94,7 @@ export function postStoryTool(
                 caption ?? null,
                 media,
                 replaces,
+                still,
             );
             return { id: story.id, expiresAt: story.expiresAt, replaced: story.replaced };
         },

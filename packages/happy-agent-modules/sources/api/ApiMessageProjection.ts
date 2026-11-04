@@ -99,6 +99,9 @@ export function messageResource(
         ...(role === "user" && message.clientMetadata !== undefined
             ? { clientMetadata: message.clientMetadata }
             : {}),
+        ...(role === "user" && message.quote !== undefined
+            ? { quote: publicQuote(message.quote) }
+            : {}),
         ...(role === "user"
             ? {
                   status: "accepted",
@@ -109,6 +112,12 @@ export function messageResource(
               }
             : {}),
     };
+}
+
+/** A quoted story as clients see it: its frame's snapshot stays private. */
+function publicQuote({ frame, ...quote }: NonNullable<HistoryMessage["quote"]>) {
+    const thumbhash = frame?.thumbhash === undefined ? {} : { thumbhash: frame.thumbhash };
+    return { ...quote, frame: frame && { mimeType: frame.mimeType, ...thumbhash } };
 }
 
 /** Project the live provider reducer's partial message content into the same public block shape. */

@@ -85,3 +85,17 @@ rejects AVIF before measuring it. H.264 markers previously matched anywhere in a
 gate now walks bounded MP4 boxes and accepts only avc1/avc3 sample entries under moov's track
 sample table, so a marker in frame data or unrelated metadata cannot make another codec an
 H.264 video.
+
+## A reply quotes its story, and the quote outlives it
+
+Kirill asked for story replies to show a rich quote, with the story's first frame paused and its
+author, instead of a plain text line. He then asked that the quote be its own field on the message,
+like an attachment, with the text left exactly as the person wrote it. The reply's content is now
+only their words; the message's `quote` carries the story, its agent, the reposter, its caption,
+and `expiresAt`, and history keeps its frame as a chat media snapshot that the message's
+`story-frame` route serves after the story ends. The model still learns what was quoted: a system
+notification just before the reply names the story and shows the frame as an image, the way other
+private context reaches it. An image story's frame is its own snapshot; a video's is a still JPEG
+the agent machine's `ffmpeg` decodes once at `post_story`, because the daemon has no video decoder.
+Reposts carry the original's still. Stored stills and image ThumbHashes never reach the served
+story object.

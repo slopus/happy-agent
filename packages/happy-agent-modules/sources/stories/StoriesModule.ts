@@ -21,6 +21,7 @@ import { ComputeModule } from "../compute/index.js";
 import { ConfigModule } from "../config/index.js";
 import { agentDeliveryMode } from "../impl/agentDeliveryMode.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
+import type { StoryQuote } from "../impl/storyQuote.js";
 import { STANDALONE_TASK_MEMBER, TasksModule } from "../tasks/index.js";
 import { TeamAuthenticationError, TeamModule, teamUser } from "../team/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
@@ -28,6 +29,7 @@ import * as store from "./storyStore.js";
 import type { StoryMediaLayerRecord, StoryRecord } from "./storyStore.js";
 import { deleteStoryTool } from "./tools/delete_story.js";
 import { listStoriesTool } from "./tools/list_stories.js";
+import { storyQuoteNotice } from "./storyQuoteNotice.js";
 import { postStoryTool } from "./tools/post_story.js";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -103,6 +105,8 @@ export class StoriesModule implements AgentModule {
             });
         }
         return {
+            systemNotificationsTransact: (_ctx, _scope, boundary) =>
+                storyQuoteNotice(this.#config, boundary),
             tools: async (ctx, scope) => {
                 if (!(await this.canPost(ctx, scope))) return [];
                 const compute = await this.#compute.resolve(ctx, scope.agent.id);
@@ -138,6 +142,7 @@ export class StoriesModule implements AgentModule {
         caption: string | null,
         media: StoryRecord["media"],
         replaces: readonly string[] = [],
+        still?: StoryRecord["media"],
     ): Promise<StoryRecord & { replaced: string[] }> {
         const poster = await this.#poster(ctx, agentId);
         if (poster === undefined) throw new Error("Only a task's or a bot's agent posts stories.");
@@ -150,6 +155,7 @@ export class StoriesModule implements AgentModule {
             botId,
             caption,
             media,
+            ...(still && { still }),
             postedAt,
             expiresAt: postedAt + DAY,
         };
@@ -192,11 +198,17 @@ export class StoriesModule implements AgentModule {
                 original.agentId === null
             )
                 return undefined;
-            const { agentId, taskId, botId, media } = original;
+            const { agentId, taskId, botId, media, still } = original;
             const [postedAt, userId] = [Date.now(), this.#reader(txCtx).readerId ?? null];
             const from = { agentId, taskId, botId, media, repostOf: id, userId };
             const life = { postedAt, expiresAt: postedAt + DAY };
-            const story: StoryRecord = { id: createId(), caption, ...from, ...life };
+            const story: StoryRecord = {
+                id: createId(),
+                caption,
+                ...from,
+                ...(still && { still }),
+                ...life,
+            };
             // Without text of its own, a repost shows the original's.
             const text = layers?.text ?? original.layers?.text;
             const placed = { ...layers, ...(text === undefined ? {} : { text }) };
@@ -317,7 +329,7 @@ export class StoriesModule implements AgentModule {
     /** The caller's reply, sent to the story's agent as their own message quoting it. */
     async reply(ctx: Context, id: string, text: string) {
         return await ctx.inTx(async (txCtx) => {
-            const story = await this.get(txCtx, id);
+            const [story] = await this.#read(txCtx, id);
             if (story === undefined) return undefined;
             const userId = this.#reader(txCtx).readerId ?? null;
             const reply = { id: createId(), storyId: id, userId, text, createdAt: Date.now() };
@@ -333,18 +345,28 @@ export class StoriesModule implements AgentModule {
                 this.#config.models,
                 story.agentId,
             );
-            const caption = (story.caption ?? story.media.kind).replace(/\s+/gu, " ");
-            const quote = `> Replying to your story “${caption}” (story ${id})`;
-            const content = [{ type: "text" as const, text: `${quote}\n\n${text}` }];
+            const { kind: _kind, ...frame } =
+                (story.media.kind === "image" ? story.media : story.still) ?? {};
+            // The person's words stay their own; the agent is told the story before them.
+            const quote: StoryQuote = {
+                kind: "story",
+                storyId: id,
+                agentId: story.agentId,
+                userId: story.repostOf === undefined ? null : (story.userId ?? null),
+                caption: story.caption,
+                expiresAt: story.expiresAt,
+                frame: "sha256" in frame ? frame : null,
+            };
             await agents.send(
                 txCtx,
                 story.agentId,
-                { role: "user", content },
+                { role: "user", content: [{ type: "text", text }] },
                 {
                     id: reply.id,
                     metadata: {
                         ...USER_MESSAGE_ORIGIN_METADATA,
                         ...(userId === null ? {} : { userId }),
+                        quote,
                         ...(delivery === undefined ? {} : { mode: delivery.mode }),
                     },
                     ...delivery?.options,
@@ -469,7 +491,8 @@ export class StoriesModule implements AgentModule {
 
     /** A story as one reader is served it: no snapshot digests, and their own `seen`. */
     async #serve(ctx: Context, story: StoryRecord & { seen: boolean }) {
-        const { sha256: _sha256, name: _name, ...media } = story.media;
+        const { sha256: _sha256, name: _name, thumbhash: _thumbhash, ...media } = story.media;
+        const { still: _still, ...served } = story;
         const { count, replies } = await store.readReplies(ctx, story.id, 2);
         const { readerId } = this.#reader(ctx);
         // A person deletes their own repost, and a task's owner its agent's stories.
@@ -483,7 +506,7 @@ export class StoriesModule implements AgentModule {
         const extra = { poster, round: round ?? null, replyCount: count, replies, canDelete };
         const layers = servedMediaLayers(story);
         const mediaLayers = layers.length === 0 ? {} : { mediaLayers: layers };
-        return { ...story, media, userId, repostOf, ...extra, ...mediaLayers };
+        return { ...served, media, userId, repostOf, ...extra, ...mediaLayers };
     }
 
     /** Announce a story's current state to every reader who sees it, after commit. */

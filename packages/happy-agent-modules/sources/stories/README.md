@@ -40,7 +40,9 @@ call's ID is the story's ID: a replayed call returns the story it first posted, 
 without inserting or announcing anything. Media is served only while its snapshot is present.
 An agent may keep any number of live frames; the prompt asks for one frame per part of a multipart
 update and states the 9:16 viewer's safe area. `replaces` names up to twenty own live originals to remove with their reposts in the posting
-transaction; other IDs are ignored, and the result names the replaced originals.
+transaction; other IDs are ignored, and the result names the replaced originals. A video's first
+frame is kept as a still JPEG through chat media, decoded by the agent machine's own `ffmpeg` under
+the call's permissions; without ffmpeg there is no still and posting still succeeds.
 
 The same agent also gets `list_stories` (its live stories and reposts of them, with seen and reply
 counts and the latest 50 replies) and `delete_story` (one of its own stories, with its reposts).
@@ -61,8 +63,12 @@ A repost references the original's agent, task, media, and media layers, copying
 reaches every non-guest team member with stories on; it may add media layers of its own, and
 shows the original's text when it has none; its caption, optional round MP4 (16 MiB, checked like a posted video),
 reposter, and lifetime are its own. A reply is stored with the story and sent to the story's agent
-as the replier's own user message quoting the story, delivered in the agent's current mode, so the
-agent answers it like anything the person typed. `canDelete` is computed per reader: a task's owner
+as the replier's own user message, delivered in the agent's current mode, so the agent answers it
+like anything the person typed. The message's content is exactly what they wrote; its `quote`
+names the story (ID, agent, reposter, caption, `expiresAt`) and its frame: an image story's own
+snapshot or a video's still, served by `GET /v0/agents/:agentId/messages/:messageId/story-frame`
+after the story ends. Just before the message, a system notification tells the model which story
+it answers and shows the frame as an image. `canDelete` is computed per reader: a task's owner
 deletes their task's agent stories, a person their own stories and reposts, and anyone standalone.
 The agent deletes its own originals. Deleting ends the story and its reposts (they read
 as missing at once) and announces `story.removed` to everyone who saw them.

@@ -978,11 +978,10 @@ describe("story replies, reposts, and deletes", () => {
             expect(JSON.parse(replied.body.toString())).toMatchObject({
                 reply: { storyId: story!.id, userId: aliceId, text: "Looks great" },
             });
-            const quote = `> Replying to your story “Ready to try” (story ${story!.id})\n\nLooks great`;
             await gym.waitUntil(
                 async () =>
                     JSON.stringify((await alice.getMessages(task.agent.id)).runs).includes(
-                        JSON.stringify(quote).slice(1, -1),
+                        '[{"type":"text","text":"Looks great"}]',
                     ) || undefined,
                 "the reply in the agent's chat",
             );
@@ -1026,6 +1025,112 @@ describe("story replies, reposts, and deletes", () => {
             expect(gym.errors).toEqual([]);
         },
     );
+
+    it("quotes the replied story on the message, with a frame that outlives the story", async () => {
+        const { gym, alice, bob, aliceId, task, call, api, feed, tokenFor } = await harness();
+        for (const person of [alice, bob]) await person.saveUserSetting("stories", { value: true });
+        await call("post_story", { path: "shot.png", caption: "Ready to try" });
+        await call("post_story", { path: "clip.mp4" });
+        const [image, clip] = await feed("alice");
+        const reposted = await api("alice", "POST", `/v0/stories/${clip!.id}/repost`, {});
+        const repost = JSON.parse(reposted.body.toString()).story as Story;
+        const agentId = task.agent.id;
+        type Quoted = { id: string; content: unknown; quote?: Record<string, unknown> };
+        async function quoted(count: number) {
+            return await gym.waitUntil(async () => {
+                const { runs } = await alice.getMessages(agentId);
+                const messages = runs.flatMap((run) => run.messages as unknown as Quoted[]);
+                const replies = messages.filter((message) => message.quote);
+                return replies.length === count ? replies : undefined;
+            }, "the quoted replies");
+        }
+        const frameOf = async (messageId: string) =>
+            await api("bob", "GET", `/v0/agents/${agentId}/messages/${messageId}/story-frame`);
+
+        await api("alice", "POST", `/v0/stories/${image!.id}/replies`, { text: "Looks great" });
+        await api("bob", "POST", `/v0/stories/${repost.id}/replies`, { text: "Nice clip" });
+        const [toImage, toRepost] = await quoted(2);
+        // What the person wrote is the whole message; the story travels beside it.
+        expect(toImage!.content).toEqual([{ type: "text", text: "Looks great" }]);
+        expect(toImage!.quote).toEqual({
+            kind: "story",
+            storyId: image!.id,
+            agentId,
+            userId: null,
+            caption: "Ready to try",
+            expiresAt: image!.expiresAt,
+            frame: { mimeType: "image/png", thumbhash: expect.any(String) },
+        });
+        // The story itself is served without its snapshot details.
+        expect(image!.media).toEqual({
+            kind: "image",
+            mimeType: "image/png",
+            size: SHOT.byteLength,
+        });
+        expect(Object.keys(clip!)).not.toContain("still");
+        // A repost is the reposter's story; this machine has no ffmpeg to take a video's still.
+        expect(toRepost!.quote).toEqual({
+            kind: "story",
+            storyId: repost.id,
+            agentId,
+            userId: aliceId,
+            caption: null,
+            expiresAt: repost.expiresAt,
+            frame: null,
+        });
+        expect((await frameOf(toRepost!.id)).status).toBe(404);
+        // The agent is told which story each reply answers, with its first frame when there is one.
+        const told = await gym.waitUntil(async () => {
+            const asked = gym.inference.requests.filter((r) => r.sessionId === agentId).at(-1);
+            return JSON.stringify(asked?.messages ?? []).includes("Nice clip") ? asked : undefined;
+        }, "the agent to read both replies");
+        type Block = { type: string; data?: string };
+        const context = told.messages.map((message) => ({
+            role: message.role,
+            content: (Array.isArray(message.content) ? (message.content as Block[]) : []).map(
+                (block) =>
+                    block.data === undefined
+                        ? block
+                        : { ...block, data: `<${String(block.data.length)} base64 chars>` },
+            ),
+        }));
+        if (process.env.STORY_QUOTE_MODEL_INPUT)
+            await writeFile(process.env.STORY_QUOTE_MODEL_INPUT, JSON.stringify(context, null, 2));
+        const notice = `The person's next message replies to your story “Ready to try” (story ${image!.id}). Its first frame follows.`;
+        const index = context.findIndex((m) =>
+            JSON.stringify(m.content).includes(JSON.stringify(notice)),
+        );
+        expect(context[index]).toEqual({
+            role: "system",
+            content: [
+                { type: "text", text: notice },
+                { type: "image", mimeType: "image/png", data: expect.any(String) },
+            ],
+        });
+        expect(context[index + 1]).toEqual({
+            role: "user",
+            content: [{ type: "text", text: "Looks great" }],
+        });
+        const repostNotice = `The person's next message replies to a repost of your story (story ${repost.id}).`;
+        expect(JSON.stringify(context)).toContain(JSON.stringify(repostNotice));
+
+        // The frame is the story's own image, and stays once the story is gone.
+        expect((await api("alice", "DELETE", `/v0/stories/${image!.id}`)).status).toBe(200);
+        await gym.restart();
+        const served = await fetch(
+            new URL(
+                `/v0/agents/${agentId}/messages/${toImage!.id}/story-frame`,
+                gym.daemon.httpUrl,
+            ),
+            { headers: { authorization: `Bearer ${tokenFor("bob")}` } },
+        );
+        expect(served.status).toBe(200);
+        expect(served.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+        expect(Buffer.from(await served.arrayBuffer()).equals(SHOT)).toBe(true);
+        expect((await api("bob", "GET", `/v0/stories/${image!.id}/media`)).status).toBe(404);
+        expect((await quoted(2))[0]!.quote).toMatchObject({ storyId: image!.id });
+        expect(gym.errors).toEqual([]);
+    });
 
     it("reposts the owner's agent story to teammates, including those outside the task", async () => {
         const { gym, alice, bob, aliceId, task, call, api, feed, clientFor, onboard } =
