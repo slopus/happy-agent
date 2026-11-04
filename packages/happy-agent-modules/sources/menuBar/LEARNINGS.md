@@ -57,11 +57,15 @@ open, and the exit of the parent process itself through a dispatch process sourc
 alone was the original mechanism and is not sufficient, because anything else holding that pipe open
 keeps the app alive after the daemon is gone.
 
-## The macOS status item shows no count and the menu has no footer
+## Quit Happy stops Desktop and the agent together
 
-The bar carries the glyph alone: no number, no badge. The menu ends after plan usage — there is
-no version line, no ready/draining state, and no Quit item. A Quit item would be a lie, because
-the module would start the app again. These were explicit product decisions, not omissions.
+The bar carries the glyph alone: no number, no badge. Quit Happy has its own section immediately
+below the working-agent headline. It requests normal termination of running stable, Nightly, and
+workspace development Desktop apps, waits for them to exit, then calls the existing private
+shutdown endpoint. Stopping only the helper would cause supervision to start it again. Desktop
+must exit first so it cannot reconnect during agent shutdown. A refused or stalled Desktop quit
+leaves the agent running and reports the failure; a rejected shutdown can be retried. The helper
+exits with its daemon through the existing parent and stdin watches.
 
 ## The menu is compact: one line per thing
 
@@ -187,8 +191,8 @@ snapshots on its existing open-menu timer.
 ## The existing private API is the boundary
 
 Both apps use the ordinary HTTP API over the daemon's private socket with its bearer token.
-macOS remains read-only and uses events as refresh hints. Windows uses the existing shutdown
-endpoint for its explicit Stop action; if shutdown stalls, Force stop terminates the retained
+macOS uses events as refresh hints and the existing shutdown endpoint for Quit Happy. Windows uses
+the existing shutdown endpoint for its explicit Stop action; if shutdown stalls, Force stop terminates the retained
 parent process and its tree. No new server endpoint, public listener, or token exposure is needed.
 
 ## A new daemon stops the apps old ones left behind

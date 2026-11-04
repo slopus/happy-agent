@@ -10,6 +10,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let menu = NSMenu()
     private let headlineItem = NSMenuItem()
+    private let quitItem = NSMenuItem(title: "Quit Happy", action: #selector(quitHappy), keyEquivalent: "")
+    private let quitter: QuitHappy
     private let separatorItem = NSMenuItem.separator()
     private let bodyItem = NSMenuItem()
     private let body = MenuBody()
@@ -37,6 +39,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     init(client: DaemonClient) {
         self.client = client
+        self.quitter = QuitHappy(client: client)
         super.init()
     }
 
@@ -45,10 +48,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         menu.showsStateColumn = false
         bodyItem.view = body.view
-        for item in [headlineItem, separatorItem, bodyItem] {
+        for item in [headlineItem, NSMenuItem.separator(), quitItem, separatorItem, bodyItem] {
             item.isEnabled = false
             menu.addItem(item)
         }
+        quitItem.target = self
+        quitItem.isEnabled = true
         statusItem.menu = menu
         statusItem.button?.image = StatusIcon.resting
         statusItem.button?.toolTip = "Happy Agent"
@@ -68,6 +73,24 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         refreshAgents()
         refreshPlans()
         streamQueue.async { [weak self] in self?.follow() }
+    }
+
+    @objc private func quitHappy() {
+        guard quitItem.isEnabled else { return }
+        quitItem.isEnabled = false
+        quitItem.title = "Quitting Happy…"
+        menu.cancelTracking()
+        quitter.quit(desktopApplications: QuitHappy.desktopApplications) { [weak self] error in
+            guard let self, let error else { return }
+            self.quitItem.isEnabled = true
+            self.quitItem.title = "Quit Happy"
+            let alert = NSAlert()
+            alert.messageText = "Could not quit Happy"
+            alert.informativeText = error
+            alert.addButton(withTitle: "OK")
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
     }
 
     // MARK: - Reading the daemon
@@ -262,12 +285,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if resized { menu.itemChanged(bodyItem) }
     }
 
-    /// What is left of the screen share once the headline, its separator, and the menu's own
-    /// padding are drawn.
+    /// Space left after the headline, Quit section, separators, and menu padding.
     private func bodyMaxHeight(below headline: NSView) -> CGFloat {
         let screen = statusItem.button?.window?.screen ?? NSScreen.main
         let available = (screen?.visibleFrame.height ?? 800) * MenuMetrics.screenShare
-        return available - headline.frame.height - MenuMetrics.separatorHeight
+        return available - headline.frame.height - MenuMetrics.rowHeight - 2 * MenuMetrics.separatorHeight
             - MenuMetrics.menuPadding
     }
 
