@@ -94,6 +94,17 @@ struct ProxiedRun {
 }
 
 fn run_workload(operation: &str, allowed_hosts: &[&str], front_ends: &[&str]) -> ProxiedRun {
+    run_narrowed_workload(operation, allowed_hosts, front_ends, |_| json!({}))
+}
+
+/// Runs a workload whose host list is narrowed further by `narrowing`, which is given the origin's
+/// port and returns network fields to add to the policy.
+fn run_narrowed_workload(
+    operation: &str,
+    allowed_hosts: &[&str],
+    front_ends: &[&str],
+    narrowing: impl FnOnce(u16) -> serde_json::Value,
+) -> ProxiedRun {
     let workspace =
         tempfile::tempdir().unwrap_or_else(|error| panic!("temporary workspace: {error}"));
     let origin = start_origin();
@@ -101,6 +112,7 @@ fn run_workload(operation: &str, allowed_hosts: &[&str], front_ends: &[&str]) ->
         &workspace,
         allowed_hosts,
         front_ends,
+        narrowing(origin.address.port()),
         operation,
         &origin.address.to_string(),
     );
@@ -114,20 +126,25 @@ fn supervise(
     workspace: &TempDir,
     allowed_hosts: &[&str],
     front_ends: &[&str],
+    narrowing: serde_json::Value,
     operation: &str,
     origin: &str,
 ) -> Output {
     let policy_path = workspace.path().join("policy.json");
+    let mut network = json!({
+        "egress": true,
+        "allowedHosts": allowed_hosts,
+        "localBinding": false,
+        "outgoingProxy": {"frontEnds": front_ends}
+    });
+    if let (Some(network), Some(narrowing)) = (network.as_object_mut(), narrowing.as_object()) {
+        network.extend(narrowing.clone());
+    }
     std::fs::write(
         &policy_path,
         serde_json::to_vec(&json!({
             "mode": "workspace_write",
-            "network": {
-                "egress": true,
-                "allowedHosts": allowed_hosts,
-                "localBinding": false,
-                "outgoingProxy": {"frontEnds": front_ends}
-            }
+            "network": network
         }))
         .unwrap_or_else(|error| panic!("serialize policy: {error}")),
     )
@@ -246,6 +263,44 @@ fn a_denied_host_is_refused_in_each_front_end_vocabulary() {
     assert!(stdout.contains("connect-denied=403"), "stdout:\n{stdout}");
     assert!(stdout.contains("forward-denied=403"), "stdout:\n{stdout}");
     assert!(stdout.contains("socks-denied=2"), "stdout:\n{stdout}");
+    assert_eq!(run.origin_connections, 0);
+}
+
+#[test]
+fn an_allowed_host_on_a_port_outside_allowed_ports_is_refused() {
+    let run = run_narrowed_workload(
+        "origin_refused",
+        &["127.0.0.1"],
+        &["http", "socks5"],
+        |port| json!({"allowedPorts": [if port == 443 { 8443 } else { 443 }]}),
+    );
+    let stdout = assert_succeeded(&run);
+
+    assert!(stdout.contains("connect-origin=403"), "stdout:\n{stdout}");
+    assert!(stdout.contains("socks-origin=2"), "stdout:\n{stdout}");
+    assert_eq!(run.origin_connections, 0);
+
+    let allowed = run_narrowed_workload(
+        "tunnels",
+        &["127.0.0.1"],
+        &["http", "socks5"],
+        |port| json!({"allowedPorts": [port]}),
+    );
+    assert!(assert_succeeded(&allowed).contains("connect-tunnel=tunnelled"));
+}
+
+#[test]
+fn a_denied_host_is_refused_even_when_allowed() {
+    let run = run_narrowed_workload(
+        "origin_refused",
+        &["127.0.0.1"],
+        &["http", "socks5"],
+        |_| json!({"deniedHosts": ["127.0.0.1"]}),
+    );
+    let stdout = assert_succeeded(&run);
+
+    assert!(stdout.contains("connect-origin=403"), "stdout:\n{stdout}");
+    assert!(stdout.contains("socks-origin=2"), "stdout:\n{stdout}");
     assert_eq!(run.origin_connections, 0);
 }
 
@@ -411,6 +466,13 @@ fn proxy_workload_process() {
             );
 
             println!("socks-denied={}", socks_reply(DENIED_HOST, 443));
+        }
+        "origin_refused" => {
+            println!(
+                "connect-origin={}",
+                connect_status("127.0.0.1", origin_port)
+            );
+            println!("socks-origin={}", socks_reply("127.0.0.1", origin_port));
         }
         "private_address" => {
             println!(

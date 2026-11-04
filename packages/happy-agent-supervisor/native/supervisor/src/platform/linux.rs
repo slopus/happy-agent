@@ -126,7 +126,7 @@ pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> Superviso
     let egress = match &policy.network.outgoing_proxy {
         Some(_) => Some(match &policy.service {
             Some(service) => egress::start_service(&service.outbound)?,
-            None => egress::start(&policy.network.allowed_hosts)?,
+            None => egress::start(&policy.network)?,
         }),
         None => None,
     };
