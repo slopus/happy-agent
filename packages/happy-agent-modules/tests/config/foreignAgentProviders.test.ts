@@ -169,6 +169,35 @@ describe("harnesses", () => {
         ).toBe("/opt/pinned/claude");
     });
 
+    it("starts Claude Code with its telemetry only when the harness opts in", async () => {
+        const start = async (lines: readonly string[]) => {
+            const config = await testConfigRootedAt(
+                await root(),
+                ["[providers.claude]", "enabled = true", "[harnesses.claude_code]", ...lines].join(
+                    "\n",
+                ),
+            );
+            const route = foreignAgentRoutes(config.configuration).find(
+                (r) => r.harnessId === "claude_code" && r.providerId === "claude",
+            )!;
+            return foreignAgentStart(route);
+        };
+        expect((await start([])).telemetry).toBeUndefined();
+        expect((await start(["telemetry = false"])).telemetry).toBeUndefined();
+        expect((await start(["telemetry = true"])).telemetry).toBe(true);
+        await expect(
+            testConfigRootedAt(
+                await root(),
+                [
+                    "[providers.codex]",
+                    "enabled = true",
+                    "[harnesses.codex_cli]",
+                    "telemetry = true",
+                ].join("\n"),
+            ),
+        ).rejects.toThrow(/telemetry/);
+    });
+
     it("offers agents with their own login as accounts named after their harness", async () => {
         const config = await testConfigRootedAt(
             await root(),

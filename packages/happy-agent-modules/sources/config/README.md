@@ -151,6 +151,9 @@ catalog treat them as accounts. `impl/createForeignAgentProvider.ts` turns each 
 pair into a route; the registry sends a model with a foreign prefix to that route's agent. Foreign
 agents are the one exception to the curated list: each reports its own models when the daemon
 starts (`impl/foreignAgentModels.ts`), cached per route, with the built-in list until it answers.
+Claude Code reports only its built-in aliases under Happy's privacy environment;
+`[harnesses.claude_code] telemetry = true` starts it with Claude Code's own telemetry so it
+reports every model the account is granted (`foreignAgentStart` carries the flag).
 
 `harnessAllowsSubagents` decides which harnesses an agent on one harness may start sub-agents on:
 its own; else the creator's `subagent_harnesses`; else, for `happy`, only `antigravity` (models

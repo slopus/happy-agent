@@ -18,7 +18,10 @@ import type {
     AcpConnection,
 } from "@/protocol/acp/AcpConnection.js";
 import { processTreeGroups, terminateProcessTree } from "@/protocol/acp/impl/processTree.js";
-import { CLAUDE_SDK_PRIVACY_ENVIRONMENT } from "@/vendors/claude/claudeSdkPrivacyEnvironment.js";
+import {
+    CLAUDE_CODE_TELEMETRY_ENVIRONMENT,
+    CLAUDE_SDK_PRIVACY_ENVIRONMENT,
+} from "@/vendors/claude/claudeSdkPrivacyEnvironment.js";
 import { claudeUsageFromRateLimitInfo } from "@/vendors/claude/claudeUsageFromRateLimitInfo.js";
 import { resolveClaudeCodeExecutablePath } from "@/vendors/claude/resolveClaudeCodeExecutablePath.js";
 import { AsyncInputQueue } from "@/vendors/claudeAgent/impl/AsyncInputQueue.js";
@@ -29,6 +32,8 @@ const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 // auto-compaction off. Nothing compacts this one but Claude Code itself.
 const { DISABLE_AUTO_COMPACT: _, ...CLAUDE_CODE_PRIVACY_ENVIRONMENT } =
     CLAUDE_SDK_PRIVACY_ENVIRONMENT;
+const { DISABLE_AUTO_COMPACT: _telemetryCompact, ...CLAUDE_CODE_TELEMETRY_COMPACTING_ENVIRONMENT } =
+    CLAUDE_CODE_TELEMETRY_ENVIRONMENT;
 const MODES: readonly PermissionMode[] = [
     "default",
     "acceptEdits",
@@ -42,21 +47,15 @@ const MODES: readonly PermissionMode[] = [
  *
  * Each ACP session is one streaming SDK query: Claude Code's own prompt, tools, subagents,
  * settings and compaction, with Happy's tools reached over the MCP bridge. Its loop takes input
- * mid-turn, so steering joins the running turn instead of interrupting it. `executable` is the
- * Claude Code build to run; without it the SDK runs the one Happy ships with.
+ * mid-turn, so steering joins the running turn instead of interrupting it.
  */
 export function claudeAgentConnect(
     environment: NodeJS.ProcessEnv,
     onAccountUsage?: (usage: ProviderUsage) => void,
-    executable?: string,
+    options: ClaudeAgentOptions = {},
 ): AcpConnect {
     return async (_cwd, client) => {
-        const connection = new ClaudeAgentConnection(
-            environment,
-            client,
-            onAccountUsage,
-            executable,
-        );
+        const connection = new ClaudeAgentConnection(environment, client, onAccountUsage, options);
         return {
             conn: connection,
             init: {
@@ -74,6 +73,17 @@ export function claudeAgentConnect(
             terminate: (groups) => connection.terminate(groups),
         } satisfies AcpConnection;
     };
+}
+
+/** How one account's Claude Code is started. */
+export interface ClaudeAgentOptions {
+    /** The Claude Code build to run; without it the SDK runs the one Happy ships with. */
+    readonly executable?: string;
+    /**
+     * Let Claude Code send its own telemetry, which it needs to offer the models the signed-in
+     * account is granted beyond its built-in aliases.
+     */
+    readonly telemetry?: boolean;
 }
 
 interface ClaudeThread {
@@ -95,7 +105,7 @@ interface ClaudeThread {
 
 class ClaudeAgentConnection implements AcpAgentConnection {
     readonly #environment: NodeJS.ProcessEnv;
-    readonly #executable: string | undefined;
+    readonly #options: ClaudeAgentOptions;
     readonly #client: acp.Client;
     readonly #onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
     readonly #threads = new Map<string, ClaudeThread>();
@@ -111,10 +121,10 @@ class ClaudeAgentConnection implements AcpAgentConnection {
         environment: NodeJS.ProcessEnv,
         client: acp.Client,
         onAccountUsage: ((usage: ProviderUsage) => void) | undefined,
-        executable?: string,
+        options: ClaudeAgentOptions,
     ) {
         this.#environment = environment;
-        this.#executable = executable;
+        this.#options = options;
         this.#client = client;
         this.#onAccountUsage = onAccountUsage;
     }
@@ -224,11 +234,15 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                 // Claude Code as its user configured it: their settings, CLAUDE.md and skills.
                 settingSources: ["user", "project", "local"],
                 systemPrompt: { type: "preset", preset: "claude_code" },
-                pathToClaudeCodeExecutable: this.#executable ?? resolveClaudeCodeExecutablePath(),
+                pathToClaudeCodeExecutable:
+                    this.#options.executable ?? resolveClaudeCodeExecutablePath(),
                 env: {
                     ...process.env,
                     ...this.#environment,
-                    ...CLAUDE_CODE_PRIVACY_ENVIRONMENT,
+                    // Either way Claude Code keeps its own auto-compaction (see above).
+                    ...(this.#options.telemetry === true
+                        ? CLAUDE_CODE_TELEMETRY_COMPACTING_ENVIRONMENT
+                        : CLAUDE_CODE_PRIVACY_ENVIRONMENT),
                 },
                 canUseTool: async (toolName, toolInput, { toolUseID }) => {
                     const answer = await this.#client.requestPermission({

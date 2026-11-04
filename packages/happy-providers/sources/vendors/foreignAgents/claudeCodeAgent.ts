@@ -24,7 +24,11 @@ export const claudeCodeAgent: ForeignAgent = {
     type: "claude-code",
     modelPrefix: "claude-code",
     label: "Claude Code",
-    connect: (start) => claudeAgentConnect(start.env, start.onAccountUsage, start.command),
+    connect: (start) =>
+        claudeAgentConnect(start.env, start.onAccountUsage, {
+            ...(start.command === undefined ? {} : { executable: start.command }),
+            ...(start.telemetry === true ? { telemetry: true } : {}),
+        }),
     models,
     modelsFromSelector: (values) =>
         foreignModelsWithEfforts("claude-code", values, (value, name) => ({

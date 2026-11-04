@@ -76,13 +76,23 @@ those accounts, or `enabled = false` to leave only foreign agents.
 
 Claude Code uses the account's `oauth_token`, `api_key`, `auth_token`, or `config_dir`, or the
 machine's Claude Code login for the built-in `claude`. It runs the account's `executable`, or the
-harness's `command`, which wins; without either it runs the Claude Code Happy ships. An
-installed Claude Code offers the models its own login serves, including ones a bundled build
-does not list yet. Codex CLI uses the account's `api_key`, or
+harness's `command`, which wins; without either it runs the Claude Code Happy ships, whose
+built-in model list can lag a newer installed one. Codex CLI uses the account's `api_key`, or
 the folder holding its `auth_file` (which must be named `auth.json`) as `CODEX_HOME`, or
 `~/.codex` for the built-in `codex`. Antigravity and OpenCode use their own logins; set `api_key`
 on their harness to use a key instead. A generic `acp` agent gets credentials only through `env`
 or its own login.
+
+Happy starts Claude Code with its telemetry and non-essential traffic off. Claude Code then offers
+only its built-in aliases, so a model the account is granted beyond them, such as a preview, is
+missing from the picker. `telemetry = true` on `[harnesses.claude_code]` lets Claude Code send
+its own telemetry, as it does when run directly, and its account's models appear. Error reporting,
+surveys, updates and OpenTelemetry stay off either way. Other harnesses refuse the setting.
+
+```toml
+[harnesses.claude_code]
+telemetry = true
+```
 
 Then [reload the daemon](../configuration.md#applying-configuration-changes).
 

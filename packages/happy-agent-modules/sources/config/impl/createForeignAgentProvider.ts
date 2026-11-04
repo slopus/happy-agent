@@ -174,6 +174,7 @@ export function foreignAgentStart(route: ForeignAgentRoute): ForeignAgentStart {
         ...(command === undefined ? {} : { command }),
         ...(harness.args === undefined ? {} : { args: harness.args }),
         env: { ...agent.credentialEnvironment(credentials), ...harness.env },
+        ...(harness.telemetry === true ? { telemetry: true } : {}),
     };
 }
 
