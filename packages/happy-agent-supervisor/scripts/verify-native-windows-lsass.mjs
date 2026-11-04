@@ -94,24 +94,13 @@ async function sandboxedConcurrently(count, parallel) {
 }
 
 function sandboxed() {
-    const result = spawnSync(
-        supervisor,
-        [
-            "--no-provision",
-            "--state-dir",
-            state,
-            "--cwd",
-            cwd,
-            "--policy",
-            JSON.stringify(policy),
-            "--",
-            "C:\\Windows\\System32\\cmd.exe",
-            "/d",
-            "/c",
-            "exit 0",
-        ],
-        { cwd, windowsHide: true, encoding: "utf8", timeout: 60_000, stdio: "pipe" },
-    );
+    const result = spawnSync(supervisor, sandboxedArguments(), {
+        cwd,
+        windowsHide: true,
+        encoding: "utf8",
+        timeout: 60_000,
+        stdio: "pipe",
+    });
     assert.equal(
         result.status,
         0,
