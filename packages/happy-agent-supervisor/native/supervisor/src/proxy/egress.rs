@@ -11,6 +11,7 @@
 //! dependent on a descriptor closing at the right moment.
 
 use crate::SupervisorResult;
+use crate::policy::NetworkPolicy;
 use crate::proxy::hosts::HostPolicy;
 use crate::proxy::locks::{guard, wait};
 use crate::proxy::protocol::{
@@ -43,8 +44,12 @@ pub(crate) struct Egress {
 ///
 /// The fork happens while this process is single-threaded, so the child reaches its own serving
 /// loop without a chance of waiting on a lock whose owner did not survive the fork.
-pub(crate) fn start(allowed_hosts: &[String]) -> SupervisorResult<Egress> {
-    start_with_policy(HostPolicy::new(allowed_hosts))
+pub(crate) fn start(network: &NetworkPolicy) -> SupervisorResult<Egress> {
+    start_with_policy(HostPolicy::new(
+        &network.allowed_hosts,
+        &network.denied_hosts,
+        network.allowed_ports.as_deref(),
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -287,7 +292,7 @@ impl Session {
             return session.refuse(
                 id,
                 REFUSED_BLOCKED,
-                &format!("{host}:{port} is not in this command's allowed hosts"),
+                &format!("{host}:{port} is not allowed by this command's network policy"),
             );
         }
         let connecting = Arc::clone(session);

@@ -247,6 +247,11 @@ unless the policy named that IP literal directly. A bare `*` is refused: open
 egress is expressed by configuring no proxy at all, and an empty list with a
 proxy configured reaches nothing.
 
+Two optional fields narrow a non-empty `allowedHosts`. A name matching any
+`deniedHosts` entry, in the same syntax, is refused even when an allowed entry
+also matches it. When `allowedPorts` is present, it lists the only destination
+ports any allowed host may be reached on; it cannot be empty.
+
 Egress with a non-empty `allowedHosts` and no proxy fails closed, because nothing
 would be enforcing the list. A host list with egress disabled is already enforced
 by the isolated network namespace. No TLS is terminated anywhere, so the boundary

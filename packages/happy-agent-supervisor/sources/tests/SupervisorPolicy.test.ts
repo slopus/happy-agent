@@ -31,6 +31,23 @@ describe("parseSupervisorPolicy", () => {
         expect(policy.network.outgoingProxy).toEqual({ frontEnds: ["http", "socks5"] });
     });
 
+    it("accepts denied hosts and allowed ports beside a host list", () => {
+        const network = {
+            egress: true,
+            allowedHosts: ["*.example.com"],
+            deniedHosts: ["uploads.example.com"],
+            allowedPorts: [443, 8443],
+            localBinding: false,
+            outgoingProxy: { frontEnds: ["http" as const] },
+        };
+        expect(parseSupervisorPolicy({ mode: "auto", network }).network).toEqual(network);
+        for (const allowedPorts of [[], [0], [65_536], [44.3]]) {
+            expect(() =>
+                parseSupervisorPolicy({ mode: "auto", network: { ...network, allowedPorts } }),
+            ).toThrow();
+        }
+    });
+
     it("rejects a proxy the supervisor could not act on", () => {
         for (const outgoingProxy of [
             { frontEnds: [] },

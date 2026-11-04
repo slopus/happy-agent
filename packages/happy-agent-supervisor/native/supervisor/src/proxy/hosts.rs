@@ -13,9 +13,15 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 /// An empty list reaches nothing. Open egress is expressed by configuring no proxy at all, not by
 /// configuring a proxy that permits everything.
 pub(crate) struct HostPolicy {
+    allowed: HostPatterns,
+    denied: HostPatterns,
+    ports: Option<Vec<u16>>,
+    service_destinations: Option<Vec<(String, u16)>>,
+}
+
+struct HostPatterns {
     names: Vec<HostPattern>,
     literals: Vec<IpAddr>,
-    service_destinations: Option<Vec<(String, u16)>>,
 }
 
 enum HostPattern {
@@ -24,11 +30,11 @@ enum HostPattern {
     Suffix(String),
 }
 
-impl HostPolicy {
-    pub(crate) fn new(allowed_hosts: &[String]) -> Self {
+impl HostPatterns {
+    fn new(hosts: &[String]) -> Self {
         let mut names = Vec::new();
         let mut literals = Vec::new();
-        for host in allowed_hosts {
+        for host in hosts {
             let host = normalize_name(host);
             if let Ok(address) = host.parse::<IpAddr>() {
                 literals.push(normalize_address(address));
@@ -45,9 +51,35 @@ impl HostPolicy {
                 None => names.push(HostPattern::Exact(host)),
             }
         }
+        Self { names, literals }
+    }
+
+    fn matches(&self, host: &str) -> bool {
+        let host = normalize_name(host);
+        if let Ok(address) = host.parse::<IpAddr>() {
+            return self.names_address(normalize_address(address));
+        }
+        self.names.iter().any(|pattern| match pattern {
+            HostPattern::Exact(name) => name == &host,
+            HostPattern::Suffix(suffix) => host.len() > suffix.len() && host.ends_with(suffix),
+        })
+    }
+
+    fn names_address(&self, address: IpAddr) -> bool {
+        self.literals.iter().any(|literal| literal == &address)
+    }
+}
+
+impl HostPolicy {
+    pub(crate) fn new(
+        allowed_hosts: &[String],
+        denied_hosts: &[String],
+        allowed_ports: Option<&[u16]>,
+    ) -> Self {
         Self {
-            names,
-            literals,
+            allowed: HostPatterns::new(allowed_hosts),
+            denied: HostPatterns::new(denied_hosts),
+            ports: allowed_ports.map(<[u16]>::to_vec),
             service_destinations: None,
         }
     }
@@ -59,6 +91,8 @@ impl HostPolicy {
                 .iter()
                 .map(|destination| destination.hostname.clone())
                 .collect::<Vec<_>>(),
+            &[],
+            None,
         );
         policy.service_destinations = Some(
             destinations
@@ -72,6 +106,10 @@ impl HostPolicy {
     pub(crate) fn permits_destination(&self, host: &str, port: u16) -> bool {
         self.permits_name(host)
             && self
+                .ports
+                .as_ref()
+                .is_none_or(|ports| ports.contains(&port))
+            && self
                 .service_destinations
                 .as_ref()
                 .is_none_or(|destinations| {
@@ -81,16 +119,9 @@ impl HostPolicy {
                 })
     }
 
-    /// Whether the command named this destination.
+    /// Whether the command named this destination, and did not also deny it.
     pub(crate) fn permits_name(&self, host: &str) -> bool {
-        let host = normalize_name(host);
-        if let Ok(address) = host.parse::<IpAddr>() {
-            return self.names_address(normalize_address(address));
-        }
-        self.names.iter().any(|pattern| match pattern {
-            HostPattern::Exact(name) => name == &host,
-            HostPattern::Suffix(suffix) => host.len() > suffix.len() && host.ends_with(suffix),
-        })
+        self.allowed.matches(host) && !self.denied.matches(host)
     }
 
     /// Whether the address a name resolved to may be connected to.
@@ -112,12 +143,8 @@ impl HostPolicy {
                 return false;
             }
         }
-        (self.service_destinations.is_none() && self.names_address(address))
+        (self.service_destinations.is_none() && self.allowed.names_address(address))
             || !is_private_address(address)
-    }
-
-    fn names_address(&self, address: IpAddr) -> bool {
-        self.literals.iter().any(|literal| literal == &address)
     }
 }
 
@@ -189,13 +216,12 @@ fn is_private_ipv6(address: Ipv6Addr) -> bool {
 mod tests {
     use super::{HostPolicy, is_private_address};
 
+    fn strings(hosts: &[&str]) -> Vec<String> {
+        hosts.iter().map(|host| (*host).to_string()).collect()
+    }
+
     fn policy(hosts: &[&str]) -> HostPolicy {
-        HostPolicy::new(
-            &hosts
-                .iter()
-                .map(|host| (*host).to_string())
-                .collect::<Vec<_>>(),
-        )
+        HostPolicy::new(&strings(hosts), &[], None)
     }
 
     #[test]
@@ -209,6 +235,34 @@ mod tests {
         assert!(!policy.permits_name("internal.example.com"));
         assert!(!policy.permits_name("notexample.com"));
         assert!(!policy.permits_name("example.com.evil.test"));
+    }
+
+    #[test]
+    fn denied_hosts_win_over_allowed_hosts() {
+        let policy = HostPolicy::new(
+            &strings(&["*.example.com", "93.184.216.34"]),
+            &strings(&[
+                "uploads.example.com",
+                "*.private.example.com",
+                "93.184.216.34",
+            ]),
+            None,
+        );
+        assert!(policy.permits_name("api.example.com"));
+        assert!(!policy.permits_name("UPLOADS.example.com."));
+        assert!(!policy.permits_name("a.private.example.com"));
+        assert!(policy.permits_name("private.example.com"));
+        assert!(!policy.permits_name("93.184.216.34"));
+    }
+
+    #[test]
+    fn allowed_ports_limit_every_allowed_host() {
+        let limited = HostPolicy::new(&strings(&["example.com"]), &[], Some(&[443, 8443]));
+        assert!(limited.permits_destination("example.com", 443));
+        assert!(limited.permits_destination("example.com", 8443));
+        assert!(!limited.permits_destination("example.com", 80));
+        assert!(!limited.permits_destination("other.example", 443));
+        assert!(policy(&["example.com"]).permits_destination("example.com", 80));
     }
 
     #[test]

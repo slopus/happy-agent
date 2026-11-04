@@ -42,6 +42,12 @@ pub(crate) struct NetworkPolicy {
     pub(crate) egress: bool,
     #[serde(default)]
     pub(crate) allowed_hosts: Vec<String>,
+    /// Hosts refused even when `allowed_hosts` names them, in the same syntax.
+    #[serde(default)]
+    pub(crate) denied_hosts: Vec<String>,
+    /// The only destination ports the allowed hosts may be reached on. Absent means any port.
+    #[serde(default)]
+    pub(crate) allowed_ports: Option<Vec<u16>>,
     pub(crate) local_binding: bool,
     #[serde(default)]
     pub(crate) outgoing_proxy: Option<OutgoingProxyPolicy>,
@@ -90,7 +96,27 @@ impl SupervisorPolicy {
             validate_absolute_path(path)?;
         }
         for host in &self.network.allowed_hosts {
-            validate_allowed_host(host)?;
+            validate_host("network.allowedHosts", host)?;
+        }
+        for host in &self.network.denied_hosts {
+            validate_host("network.deniedHosts", host)?;
+        }
+        if let Some(ports) = &self.network.allowed_ports
+            && (ports.is_empty() || ports.contains(&0))
+        {
+            return Err(invalid_input(
+                "network.allowedPorts must name at least one port, and port 0 is not a destination",
+            )
+            .into());
+        }
+        // Both narrow a host list, so without one there is nothing for them to narrow.
+        if (!self.network.denied_hosts.is_empty() || self.network.allowed_ports.is_some())
+            && self.network.allowed_hosts.is_empty()
+        {
+            return Err(invalid_input(
+                "network.deniedHosts and network.allowedPorts narrow network.allowedHosts, which is empty",
+            )
+            .into());
         }
         if self.mode == PermissionMode::FullAccess {
             let mut restrictions = Vec::new();
@@ -102,6 +128,12 @@ impl SupervisorPolicy {
             }
             if !self.network.allowed_hosts.is_empty() {
                 restrictions.push("network.allowedHosts");
+            }
+            if !self.network.denied_hosts.is_empty() {
+                restrictions.push("network.deniedHosts");
+            }
+            if self.network.allowed_ports.is_some() {
+                restrictions.push("network.allowedPorts");
             }
             if !self.network.egress {
                 restrictions.push("network.egress");
@@ -171,13 +203,13 @@ fn validate_outgoing_proxy(proxy: &OutgoingProxyPolicy, egress: bool) -> Supervi
 /// A bare `*` is refused rather than read as open egress: a policy that meant to reach everything
 /// says so by configuring no proxy at all, and a wildcard that slipped into a list would otherwise
 /// silently undo every other entry beside it.
-fn validate_allowed_host(host: &str) -> SupervisorResult<()> {
+fn validate_host(field: &str, host: &str) -> SupervisorResult<()> {
     if host.is_empty() {
-        return Err(invalid_input("network.allowedHosts cannot contain an empty host").into());
+        return Err(invalid_input(format!("{field} cannot contain an empty host")).into());
     }
     if host.len() > MAX_HOST_BYTES {
         return Err(invalid_input(format!(
-            "network.allowedHosts entries must be at most {MAX_HOST_BYTES} bytes: {host}"
+            "{field} entries must be at most {MAX_HOST_BYTES} bytes: {host}"
         ))
         .into());
     }
@@ -189,7 +221,7 @@ fn validate_allowed_host(host: &str) -> SupervisorResult<()> {
             .any(|byte| byte <= b' ' || byte == b'/' || byte == b'@' || byte == 0x7f);
     if unusable {
         return Err(invalid_input(format!(
-            "network.allowedHosts entries name one host or one *.suffix, so {host} cannot be used"
+            "{field} entries name one host or one *.suffix, so {host} cannot be used"
         ))
         .into());
     }
@@ -352,6 +384,54 @@ mod tests {
             .unwrap_or_else(|| panic!("proxy section should be present"));
         assert!(proxy.exposes(ProxyFrontEnd::Http));
         assert!(proxy.exposes(ProxyFrontEnd::Socks5));
+    }
+
+    #[test]
+    fn denied_hosts_and_ports_only_narrow_a_host_list() {
+        let parse = |network: serde_json::Value| {
+            serde_json::from_value::<SupervisorPolicy>(serde_json::json!({
+                "mode": "auto",
+                "network": network,
+            }))
+            .unwrap_or_else(|error| panic!("{error}"))
+            .validate()
+        };
+        let proxy = serde_json::json!({"frontEnds": ["http"]});
+        assert!(
+            parse(serde_json::json!({
+                "egress": true, "localBinding": false, "outgoingProxy": proxy,
+                "allowedHosts": ["*.example.com"], "deniedHosts": ["uploads.example.com"],
+                "allowedPorts": [443, 8443]
+            }))
+            .is_ok()
+        );
+        for network in [
+            serde_json::json!({
+                "egress": true, "localBinding": false, "outgoingProxy": proxy,
+                "deniedHosts": ["uploads.example.com"]
+            }),
+            serde_json::json!({
+                "egress": true, "localBinding": false, "outgoingProxy": proxy,
+                "allowedPorts": [443]
+            }),
+            serde_json::json!({
+                "egress": true, "localBinding": false, "outgoingProxy": proxy,
+                "allowedHosts": ["example.com"], "allowedPorts": []
+            }),
+            serde_json::json!({
+                "egress": true, "localBinding": false, "outgoingProxy": proxy,
+                "allowedHosts": ["example.com"], "allowedPorts": [0]
+            }),
+            serde_json::json!({
+                "egress": true, "localBinding": false, "outgoingProxy": proxy,
+                "allowedHosts": ["example.com"], "deniedHosts": ["*"]
+            }),
+        ] {
+            assert!(
+                parse(network.clone()).is_err(),
+                "{network} should be refused"
+            );
+        }
     }
 
     #[test]

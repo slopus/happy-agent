@@ -38,7 +38,7 @@ pub(crate) fn run(policy: SupervisorPolicy, command: Vec<OsString>) -> Superviso
     let mut egress_process = None;
     let proxy = match &policy.network.outgoing_proxy {
         Some(proxy_policy) => {
-            let egress = egress::start(&policy.network.allowed_hosts)?;
+            let egress = egress::start(&policy.network)?;
             // The link outlives this borrow: the proxy holds it until the process ends, and closing
             // it is how the egress process is told the workload is finished.
             egress_process = Some((egress.pid, egress.link.as_raw_fd()));

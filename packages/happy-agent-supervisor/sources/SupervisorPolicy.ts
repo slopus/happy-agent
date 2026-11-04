@@ -39,6 +39,12 @@ export const supervisorNetworkPolicySchema = Type.Object(
     {
         egress: Type.Boolean(),
         allowedHosts: Type.Optional(Type.Array(Type.String())),
+        /** Hosts refused even when `allowedHosts` names them, in the same syntax. */
+        deniedHosts: Type.Optional(Type.Array(Type.String())),
+        /** The only destination ports the allowed hosts may be reached on. Absent means any port. */
+        allowedPorts: Type.Optional(
+            Type.Array(Type.Integer({ minimum: 1, maximum: 65_535 }), { minItems: 1 }),
+        ),
         localBinding: Type.Boolean(),
         outgoingProxy: Type.Optional(supervisorOutgoingProxySchema),
     },
@@ -55,6 +61,7 @@ export type SupervisorNetworkPolicy = Static<typeof supervisorNetworkPolicySchem
  * requires `network.outgoingProxy`, because the host list is enforced in the egress process the
  * proxy creates, and without a proxy there would be nothing enforcing it. Each entry names one host
  * or one `*.suffix`; a bare `*` is refused, and open egress is expressed by configuring no proxy.
+ * `deniedHosts` and `allowedPorts` only narrow a non-empty `allowedHosts`.
  */
 export const supervisorPolicySchema = Type.Object(
     {
