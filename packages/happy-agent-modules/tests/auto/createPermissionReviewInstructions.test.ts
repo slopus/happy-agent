@@ -84,9 +84,9 @@ describe("createPermissionReviewInstructions", () => {
     it("pins the generated no-policy prompt to known bytes", () => {
         // Codex's bundled Guardian prompts at openai/codex f2b94ef with the differences listed in
         // `createPermissionReviewInstructions.ts`. Any drift should be a deliberate edit.
-        expect(PERMISSION_REVIEW_INSTRUCTIONS).toHaveLength(19_888);
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toHaveLength(19_917);
         expect(createHash("sha256").update(PERMISSION_REVIEW_INSTRUCTIONS).digest("hex")).toBe(
-            "51555b3a7b23f60645526a2ae344d351395472cf005f25b8c3f5705cf7512a98",
+            "6a622aeb5dc2572f4b1141a14daaeaf4536fe27299b0a29404378ca05fb7648d",
         );
     });
 
