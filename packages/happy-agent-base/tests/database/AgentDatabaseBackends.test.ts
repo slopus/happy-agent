@@ -1,10 +1,17 @@
 import { sql } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { agentDatabaseRows, agentDatabaseRun } from "../../sources/index.js";
 import { databaseBackends } from "../gym/databaseBackends.js";
 
-describe.each(databaseBackends)("Agent Database owner ($label)", ({ open }) => {
+describe.each(databaseBackends)("Agent Database owner ($label)", ({ label, open }) => {
+    beforeAll(async () => {
+        if (label === "PGlite") {
+            const opened = await open();
+            await opened.close();
+        }
+    }, 30_000);
+
     it("orders root operations through one FIFO", async () => {
         const opened = await open();
         const entered = deferred<void>();
