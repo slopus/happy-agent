@@ -407,7 +407,10 @@ export class GitStateTracker {
         tracker.firstDirtyAt = undefined;
         const unclassified = tracker.unclassifiedDirty;
         tracker.unclassifiedDirty = false;
-        const paths = Array.from(tracker.pendingWorktreePaths);
+        // A path that changed while Git was being asked about it may have been learned since.
+        const paths = Array.from(tracker.pendingWorktreePaths).filter(
+            (path) => !isKnownIgnored(tracker, path),
+        );
         tracker.pendingWorktreePaths.clear();
         if (unclassified) {
             this.#enqueue(tracker.key);
