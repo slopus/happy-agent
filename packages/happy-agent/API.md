@@ -6455,12 +6455,13 @@ response — inference, tool calls, compaction, and everything until the next ex
 Sending a message to an idle agent starts a run immediately; sending to a working agent queues the
 message, and it starts its run when the current one ends. Steering does not cancel active inference
 or tool execution. It waits for the current assistant response and its complete tool-call batch to
-finish, then accepts every pending steering message before the next inference request. Whenever
-accepted steering finishes one run as `aborted/steering` and starts its successor without first
-going idle, that transition is a boundary regardless of whether the steering message came from a
-person, another agent, or the system. Automatic compaction stays inside the active run. Explicit
-compaction starts its own maintenance run because history is grouped by run; it never emits
-`run.boundary`.
+finish, then accepts every pending steering message before the next inference request. Only a
+person's steering, a `user` message, is a boundary: it finishes the active run as
+`aborted/steering` and starts its successor without first going idle. A steering message from
+another agent or from the system reaches the model at the same point but joins the active run,
+which continues as one run. A message accepted while no run is active starts one, whoever sent
+it. Automatic compaction stays inside the active run. Explicit compaction starts its own
+maintenance run because history is grouped by run; it never emits `run.boundary`.
 
 Every run has the same metadata:
 
@@ -6502,9 +6503,12 @@ The boundary transitions are atomic in the event journal:
 - Accepting one or more queued or idle messages together emits `run.started` with the new run and
   the ordered IDs of its visible accepted messages. It does not also emit `message.updated` for
   those acceptances.
-- Steering emits one `run.boundary` carrying the old run finished with reason `"steering"`,
-  its newly started successor, and the ordered IDs of every visible steering message accepted
-  into the successor. Message role and origin do not suppress this lifecycle event.
+- A person's steering emits one `run.boundary` carrying the old run finished with reason
+  `"steering"`, its newly started successor, and the ordered IDs of every visible steering message
+  accepted into the successor.
+- A steering message from another agent or from the system accepted while a run is active joins
+  that run and emits no run lifecycle event. A visible one is announced by `message.created`
+  carrying the active run's ID.
 - A run that ends without an immediate successor emits `run.finished`.
 
 These compound events let a client close the old group, move the accepted messages, open the
@@ -13398,9 +13402,9 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
     - `acceptedMessageIds` (array of ID strings) — every visible message accepted into this run,
       oldest first; empty for an explicit-compaction maintenance run or when every accepted
       message is hidden.
-- `run.boundary` — steering atomically ended one run and began its successor; the agent remains
-  active. It is emitted for every such durable transition, including collaboration and system
-  steering.
+- `run.boundary` — a person's steering atomically ended one run and began its successor; the
+  agent remains active. Steering from another agent or from the system joins the active run
+  instead and never emits it.
     - `agentId` (ID string).
     - `finishedRun` (full run metadata object) — terminal with reason `"steering"`.
     - `startedRun` (full run metadata object) — status `"running"`.

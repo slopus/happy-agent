@@ -136,7 +136,9 @@ report is made again the next time it settles rather than being lost.
 
 Nothing here waits. There is no `wait_for_reply`, no reply obligation, and no record that an answer
 is owed. A message is delivered and the sending agent carries on with its turn. Messages in either
-direction steer an active recipient after its current response and complete tool batch.
+direction steer an active recipient after its current response and complete tool batch. The
+message joins the recipient's active run rather than ending it, so the recipient's conversation
+shows it inside the turn already going; only a person's steering opens a new run.
 
 This is what makes the module small. A synchronous request/response would need the answer to reach
 an agent that is parked inside its own tool call — which its own run loop cannot deliver, because

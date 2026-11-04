@@ -149,9 +149,9 @@ describe("subagent replies and interruption", () => {
         }, "the interrupted child run to settle");
         expect(childRun).toMatchObject({ reason: "abort", status: "aborted" });
 
-        expect(parentHistory.runs).toHaveLength(2);
-        expect(parentHistory.runs[0]).toMatchObject({ reason: "steering", status: "aborted" });
-        expect(parentHistory.runs[1]).toMatchObject({ reason: "completed", status: "completed" });
+        // The child's message joins the parent's run rather than ending it.
+        expect(parentHistory.runs).toHaveLength(1);
+        expect(parentHistory.runs[0]).toMatchObject({ reason: "completed", status: "completed" });
         expect(JSON.stringify(parentHistory)).toContain("CHILD_EXPLICIT_PROGRESS");
         expect(JSON.stringify(parentHistory)).toContain("PARENT_CONTINUED_AFTER_CHILD_STEERING");
         expect(JSON.stringify(parentHistory)).not.toContain("finished working");

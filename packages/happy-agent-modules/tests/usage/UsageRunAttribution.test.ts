@@ -8,6 +8,7 @@ import { withAfterCommit, type Context } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
 import { EventsModule } from "../../sources/events/EventsModule.js";
+import { USER_MESSAGE_ORIGIN_METADATA } from "../../sources/impl/messageOrigin.js";
 import { UsageModule } from "../../sources/usage/UsageModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
@@ -66,7 +67,9 @@ async function acceptRun(
             await events.runIdForAccepted(txCtx, agentId, {
                 id: messageId,
                 kind,
-                message: { content: [{ type: "text", text: messageId }] },
+                message: { role: "user", content: [{ type: "text", text: messageId }] },
+                // Only a person's steering opens a successor run.
+                metadata: USER_MESSAGE_ORIGIN_METADATA,
             } as never),
     );
 }

@@ -1,5 +1,17 @@
 # Events learnings
 
+## Only a person's steering is a run boundary
+
+Every message accepted after provider work began used to open the next run, so each
+`send_agent_message` reply or system notice steered into a working agent ended its run as
+`aborted/steering` and opened a new one. The transcript became a row of tiny turns, each cut off
+with a "Steered after" footer. Steve asked that agent messages not create a new turn. Steering
+that does not carry a person's origin (user or guest) now joins the active run, and its
+`message.accepted` payload carries `joinedRun: true` so the API and Happy projections show it inside
+that run instead of announcing a boundary. A joined message is not added to the run's accepted IDs;
+those only bound the messages that opened it. Queued messages and anything reaching an idle agent
+still open a run.
+
 ## Oversized tool arguments belong in History, not repeated replay projections
 
 An explicit tool request can contain arguments larger than the event journal permits. Repeating

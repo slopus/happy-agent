@@ -22,6 +22,7 @@ const acceptedMessageSchema = Type.Object(
         id: Type.String({ minLength: 1 }),
         kind: Type.String({ minLength: 1 }),
         runId: Type.String({ minLength: 1 }),
+        joinedRun: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: true },
 );
@@ -253,8 +254,12 @@ export class HappyMessageMapper {
             .trim();
         const content = richUserInput(message);
         if (text.length === 0 && content === undefined) return [];
-        // A message arriving mid-turn is the person interrupting; the turn ends here.
-        const interrupted = this.#closeTurn(event, accepted.runId, "completed", "steering");
+        // A message arriving mid-turn is the person interrupting; the turn ends here. A message
+        // from another agent or the system that joined the run is part of the same turn.
+        const interrupted =
+            accepted.joinedRun === true
+                ? []
+                : this.#closeTurn(event, accepted.runId, "completed", "steering");
         if (message.role === "user") {
             return [
                 ...interrupted,

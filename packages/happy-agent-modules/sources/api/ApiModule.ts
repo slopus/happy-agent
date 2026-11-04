@@ -4518,6 +4518,20 @@ export class ApiModule implements AgentModule {
         const role = projected["role"];
         const fromUser = role === "user";
         const hidden = messageHiddenFromUser(message);
+        if (payload?.["joinedRun"] === true) {
+            // Steering from another agent or the system continues the announced run: the message
+            // appears inside it, and no run lifecycle event marks a boundary that did not happen.
+            await this.#flushAcceptedMessages(ctx, agentId);
+            if (!hidden) {
+                this.#journal.append(
+                    "message.created",
+                    { agentId, runId, message: projected },
+                    event.occurredAt,
+                );
+            }
+            await this.#appendAgentUpdate(ctx, event, { updatedAt: event.occurredAt });
+            return;
+        }
         if (!fromUser) {
             if (!hidden) {
                 this.#journal.append(

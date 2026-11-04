@@ -54,8 +54,8 @@ async function invokeReview(gym: AgentGym, agentId: string, mutationId: string):
     }, `the ${mutationId} run to start`);
 }
 
-/** The run that accepted one message, whether it started on its own or after a boundary. */
-async function runOf(gym: AgentGym, messageId: string): Promise<string> {
+/** The run that started with one message, once it has been announced. */
+async function runStartedBy(gym: AgentGym, messageId: string): Promise<string> {
     return await gym.waitUntil(async () => {
         for (const event of await gym.events()) {
             if (
@@ -64,15 +64,17 @@ async function runOf(gym: AgentGym, messageId: string): Promise<string> {
             ) {
                 return event.payload.run.id;
             }
-            if (
-                event.type === "run.boundary" &&
-                event.payload.acceptedMessageIds.includes(messageId)
-            ) {
-                return event.payload.startedRun.id;
-            }
         }
         return undefined;
     }, "the delivered message to start a run");
+}
+
+/** The run whose history holds one message. */
+async function runHolding(gym: AgentGym, agentId: string, messageId: string): Promise<string> {
+    const runs = (await gym.client.getMessages(agentId)).runs;
+    const run = runs.find((candidate) => candidate.messages.some(({ id }) => id === messageId));
+    if (run === undefined) throw new Error("The delivered message is in no run.");
+    return run.id;
 }
 
 /** The ID of the message an agent received from another agent, once it is in its history. */
@@ -100,7 +102,19 @@ function strayEchoes(
         );
 }
 
-async function messageAcceptedAfterTheSendingRunSettled(senderMovesOn: boolean): Promise<void> {
+/** Every event of one run that echoed any mutation, with what it echoed. */
+function anyEchoes(
+    events: readonly GymAgentEvent[],
+    runId: string,
+): readonly (readonly [string, unknown])[] {
+    return events
+        .filter((event) => runIdOf(event) === runId && echoOf(event) !== undefined)
+        .map((event) => [event.type, echoOf(event)] as const);
+}
+
+async function messageJoiningABusyRecipientAfterTheSendingRunSettled(
+    senderMovesOn: boolean,
+): Promise<void> {
     const target = gate();
     const targetStarted = gate();
     const secondRun = gate();
@@ -155,7 +169,10 @@ async function messageAcceptedAfterTheSendingRunSettled(senderMovesOn: boolean):
     running.add(gym);
     senderAgentId = gym.defaultSessionId;
     targetAgentId = (await gym.createSession({ title: "Target" })).id;
-    await gym.send("answer something else", { sessionId: targetAgentId, wait: false });
+    const busy = await gym.send("answer something else", {
+        sessionId: targetAgentId,
+        wait: false,
+    });
     await targetStarted.opened;
 
     const firstRunId = await invokeReview(gym, senderAgentId, "a-echo");
@@ -168,31 +185,82 @@ async function messageAcceptedAfterTheSendingRunSettled(senderMovesOn: boolean):
 
     target.open();
     const messageId = await receivedMessageId(gym, targetAgentId, "Sent from the first run.");
-    const targetRunId = await runOf(gym, messageId);
-    await gym.waitForRun(targetRunId);
+    await gym.waitForRun(busy.runId);
     secondRun.open();
     if (secondRunId !== undefined) await gym.waitForRun(secondRunId);
 
+    // The message joins the run the target was already in, which keeps the echo it had: none.
+    expect(await runHolding(gym, targetAgentId, messageId)).toBe(busy.runId);
     const events = await gym.events();
     expect(
-        events.filter((event) => runIdOf(event) === targetRunId).map((event) => event.type),
+        events.filter((event) => runIdOf(event) === busy.runId).map((event) => event.type),
     ).toContain("run.finished");
-    expect(strayEchoes(events, targetRunId, "a-echo")).toEqual([]);
+    expect(anyEchoes(events, busy.runId)).toEqual([]);
     if (secondRunId !== undefined) expect(strayEchoes(events, secondRunId, "b-echo")).toEqual([]);
     expect(gym.errors).toEqual([]);
     expect(gym.inference.unscripted).toEqual([]);
 }
 
 describe("a message one agent sends another", () => {
-    it("echoes the run that sent it after the sender moved on to a differently tagged run", async () => {
-        await messageAcceptedAfterTheSendingRunSettled(true);
+    it("echoes the run that sent it on the run it wakes an idle recipient into", async () => {
+        let senderAgentId = "";
+        let targetAgentId = "";
+        let senderCalls = 0;
+        const gym = await createAgentGym({
+            files: { ".agents/skills/review/SKILL.md": SKILL },
+            inference: (request: GymInferenceRequest): GymTurn => {
+                if (request.sessionId.startsWith("naming:")) {
+                    return { content: [{ text: "<title>Messages</title>", type: "text" }] };
+                }
+                if (request.sessionId === targetAgentId) {
+                    return { content: [{ text: "target answered", type: "text" }] };
+                }
+                senderCalls += 1;
+                if (senderCalls > 1) return { content: [{ text: "message sent", type: "text" }] };
+                return {
+                    content: [
+                        {
+                            arguments: {
+                                explanation: "Update from the first run",
+                                text: "Sent to an idle target.",
+                                toAgentId: targetAgentId,
+                            },
+                            callId: "idletargetmessage",
+                            name: "send_agent_message",
+                            type: "tool_call",
+                        },
+                    ],
+                };
+            },
+        });
+        running.add(gym);
+        senderAgentId = gym.defaultSessionId;
+        targetAgentId = (await gym.createSession({ title: "Target" })).id;
+
+        const sendingRunId = await invokeReview(gym, senderAgentId, "a-echo");
+        await gym.waitForRun(sendingRunId);
+        const messageId = await receivedMessageId(gym, targetAgentId, "Sent to an idle target.");
+        const targetRunId = await runStartedBy(gym, messageId);
+        await gym.waitForRun(targetRunId);
+
+        const events = await gym.events();
+        expect(
+            events.filter((event) => runIdOf(event) === targetRunId).map((event) => event.type),
+        ).toContain("run.finished");
+        expect(strayEchoes(events, targetRunId, "a-echo")).toEqual([]);
+        expect(gym.errors).toEqual([]);
+        expect(gym.inference.unscripted).toEqual([]);
     }, 60_000);
 
-    it("echoes the run that sent it after that run settled", async () => {
-        await messageAcceptedAfterTheSendingRunSettled(false);
+    it("leaves a busy recipient's run echo alone after the sender moved on to a tagged run", async () => {
+        await messageJoiningABusyRecipientAfterTheSendingRunSettled(true);
     }, 60_000);
 
-    it("echoes, in a helper's report, the run that started the helper", async () => {
+    it("leaves a busy recipient's run echo alone after the sending run settled", async () => {
+        await messageJoiningABusyRecipientAfterTheSendingRunSettled(false);
+    }, 60_000);
+
+    it("leaves a busy parent's run echo alone when a helper's report joins it", async () => {
         const parent = gate();
         const parentBusy = gate();
         const helper = gate();
@@ -248,7 +316,7 @@ describe("a message one agent sends another", () => {
         const spawningRunId = await invokeReview(gym, parentAgentId, "a-echo");
         await gym.waitForRun(spawningRunId);
         await helperStarted.opened;
-        await gym.send("answer something else", { wait: false });
+        const busy = await gym.send("answer something else", { wait: false });
         await parentBusy.opened;
         helper.open();
         await gym.waitForEvent(
@@ -261,14 +329,15 @@ describe("a message one agent sends another", () => {
 
         parent.open();
         const reportId = await receivedMessageId(gym, parentAgentId, "helper result");
-        const reportRunId = await runOf(gym, reportId);
-        await gym.waitForRun(reportRunId);
+        await gym.waitForRun(busy.runId);
 
+        // The report joins the parent's untagged run instead of starting one tagged by the spawn.
+        expect(await runHolding(gym, parentAgentId, reportId)).toBe(busy.runId);
         const events = await gym.events();
         expect(
-            events.filter((event) => runIdOf(event) === reportRunId).map((event) => event.type),
+            events.filter((event) => runIdOf(event) === busy.runId).map((event) => event.type),
         ).toContain("run.finished");
-        expect(strayEchoes(events, reportRunId, "a-echo")).toEqual([]);
+        expect(anyEchoes(events, busy.runId)).toEqual([]);
         expect(gym.errors).toEqual([]);
         expect(gym.inference.unscripted).toEqual([]);
     }, 60_000);

@@ -76,6 +76,10 @@ Every event belonging to a run also names it. A loop opens before its first mess
 announced it: the start, the messages accepted into the run, and `loop.settled` therefore all carry
 one `runId`, and a loop that never accepts a message is bracketed by its own loop identity.
 
+Once a run has provider events, the next accepted message opens the next run, except steering from
+another agent or the system: it joins the run already going, and its `message.accepted` payload
+says so with `joinedRun: true`. A person's steering is the only mid-run boundary.
+
 ## Storage and lifetime
 
 The module owns migrations for its event journal, origin cursor, and active provider-run

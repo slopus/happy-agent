@@ -87,11 +87,11 @@ describe("finished subagent reporting", () => {
         }, "the parent to answer after receiving the report");
         expect(JSON.stringify(parentAnswered)).toContain("PARENT_RECEIVED_REPORT");
 
+        // The report reaches the working parent inside the run it is already in.
         const history = await gym.client.getMessages(parentAgentId);
-        expect(history.runs).toHaveLength(2);
-        expect(history.runs[0]).toMatchObject({ reason: "steering", status: "aborted" });
-        expect(history.runs[1]).toMatchObject({ reason: "completed", status: "completed" });
-        const report = history.runs[1]?.messages.find(
+        expect(history.runs).toHaveLength(1);
+        expect(history.runs[0]).toMatchObject({ reason: "completed", status: "completed" });
+        const report = history.runs[0]?.messages.find(
             (message) => message.role === "agent" && message.metadata.senderAgentId !== undefined,
         );
         if (report === undefined)
@@ -100,21 +100,17 @@ describe("finished subagent reporting", () => {
             senderAgentExplanation: "Finished: final answer",
         });
 
-        const boundaries = (await gym.client.getEvents({ limit: 10_000 })).events.filter(
-            (event) => event.type === "run.boundary" && event.payload.agentId === parentAgentId,
+        const parentEvents = (await gym.client.getEvents({ limit: 10_000 })).events.filter(
+            (event) => (event.payload as { readonly agentId?: unknown }).agentId === parentAgentId,
         );
-        expect(boundaries).toHaveLength(1);
-        const boundary = boundaries[0];
-        if (boundary?.type !== "run.boundary") {
-            throw new Error("The collaboration steering transition emitted no run boundary.");
-        }
-        expect(boundary.payload.finishedRun).toMatchObject({
-            id: history.runs[0]?.id,
-            reason: "steering",
-            status: "aborted",
-        });
-        expect(boundary.payload.startedRun.id).toBe(history.runs[1]?.id);
-        expect(boundary.payload.acceptedMessageIds).toEqual([report.id]);
+        expect(parentEvents.filter((event) => event.type === "run.boundary")).toEqual([]);
+        expect(parentEvents.filter((event) => event.type === "run.started")).toHaveLength(1);
+        const created = parentEvents.find(
+            (event) => event.type === "message.created" && event.payload.message.id === report.id,
+        );
+        expect(created?.type === "message.created" ? created.payload.runId : undefined).toBe(
+            history.runs[0]?.id,
+        );
         expect(gym.errors).toEqual([]);
         expect(gym.inference.unscripted).toEqual([]);
     }, 30_000);

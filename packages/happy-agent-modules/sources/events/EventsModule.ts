@@ -39,6 +39,7 @@ import {
     trimEvents,
     validateAppendEvent,
 } from "./EventsDatabase.js";
+import { isGuestOriginMetadata, isUserOriginMetadata } from "../impl/messageOrigin.js";
 import { createUuidV7Factory } from "./createUuidV7.js";
 import {
     appendEventInputSchema,
@@ -263,16 +264,25 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
      * transaction.
      *
      * Multiple messages consumed together share the first message's run. Once provider work has
-     * begun, the next accepted message opens the next run; steering is therefore a boundary while
-     * messages merely queued during a run remain pending until that run has produced its answer.
-     * Repeating this for the same accepted ID is harmless, which lets another module ask before
-     * the Events hook records its own envelope.
+     * begun, the next accepted message opens the next run, with one exception: steering that did
+     * not come from a person joins the run already going. A person's steering is therefore the
+     * only boundary, while messages merely queued during a run remain pending until that run has
+     * produced its answer. Repeating this for the same accepted ID is harmless, which lets another
+     * module ask before the Events hook records its own envelope.
      */
     async runIdForAccepted(
         ctx: Context,
         agentId: string,
         accepted: AgentBaseAcceptedMessage,
     ): Promise<string> {
+        return (await this.#resolveAcceptedRun(ctx, agentId, accepted)).runId;
+    }
+
+    async #resolveAcceptedRun(
+        ctx: Context,
+        agentId: string,
+        accepted: AgentBaseAcceptedMessage,
+    ): Promise<{ readonly runId: string; readonly joined: boolean }> {
         if (
             !Value.Check(eventAgentIdSchema, agentId) ||
             !Value.Check(eventAgentIdSchema, accepted.id)
@@ -280,6 +290,15 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
             throw new Error("The event journal received an invalid accepted message identity.");
         }
         const previous = await loadActiveRun(ctx.db, agentId, parseActiveRun);
+        if (
+            previous?.hasProviderEvent === true &&
+            !previous.acceptedMessageIds.includes(accepted.id) &&
+            joinsActiveRun(accepted)
+        ) {
+            // The run is unchanged: it is already announced, and its accepted IDs only bound the
+            // messages that opened it, so a long run of agent messages cannot outgrow them.
+            return { runId: previous.runId, joined: true };
+        }
         let run: ActiveRun;
         if (previous?.acceptedMessageIds.includes(accepted.id) === true) {
             run = previous;
@@ -298,7 +317,7 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
         afterCommit(ctx, () => {
             this.#runs.set(agentId, run);
         });
-        return run.runId;
+        return { runId: run.runId, joined: false };
     }
 
     /** The exact prior resource-event cursor, including inside the current event transaction. */
@@ -467,13 +486,19 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
             // The run this message steers may have been accepted earlier in this very transaction,
             // where the in-memory map has not been updated yet, so the transaction's own row is the
             // authority on what is running.
-            const runId = await this.runIdForAccepted(ctx, scope.agent.id, accepted);
+            const { runId, joined } = await this.#resolveAcceptedRun(ctx, scope.agent.id, accepted);
             await this.openLoop(ctx, scope.agent.id, runId);
             await this.recordInDatabase(ctx, ctx.db, {
                 agentId: scope.agent.id,
                 // Message content belongs to History and may carry tens of MiB of inline media.
-                // The journal records only the ordered acceptance fact needed to project runs.
-                payload: { id: accepted.id, kind: accepted.kind, runId },
+                // The journal records only the ordered acceptance fact needed to project runs;
+                // `joinedRun` says the message continued a run that was already announced.
+                payload: {
+                    id: accepted.id,
+                    kind: accepted.kind,
+                    runId,
+                    ...(joined ? { joinedRun: true } : {}),
+                },
                 type: "message.accepted",
             });
         },
@@ -969,6 +994,20 @@ export class EventsModule implements AgentModule<AnyAgentTool> {
         const position = this.#positions.get(id);
         return position === undefined ? -1 : position - this.#dropped;
     }
+}
+
+/**
+ * Whether an accepted message continues the run in progress rather than opening the next one.
+ *
+ * Only a person steering mid-run starts a new run. Steering from another agent or from the system
+ * reaches the model at the same point, but the work it feeds is still the same run.
+ */
+function joinsActiveRun(accepted: AgentBaseAcceptedMessage): boolean {
+    if (accepted.kind !== "steering") return false;
+    const fromPerson =
+        accepted.message.role !== "system" &&
+        (isUserOriginMetadata(accepted.metadata) || isGuestOriginMetadata(accepted.metadata));
+    return !fromPerson;
 }
 
 function emptyRun(runId: string): ActiveRun {

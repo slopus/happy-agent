@@ -192,6 +192,22 @@ describe("Happy message mapping", () => {
         expect(messages[0]?.content.ev).toMatchObject({ reason: "steering", status: "completed" });
     });
 
+    it("shows another agent's message that joined the run inside the current turn", () => {
+        const mapper = new HappyMessageMapper();
+        mapper.map(blockStart());
+        const joined = mapper.map(
+            accepted({ joinedRun: true, kind: "steering" }),
+            historyMessage("Message from agent helper:\n\nDone.", { role: "agent" }),
+        );
+        expect(joined.map((message) => message.content.ev.t)).toEqual(["service"]);
+        expect(joined[0]?.content.turn).toBeDefined();
+
+        // A person's steering still ends the turn.
+        const steered = mapper.map(accepted({ kind: "steering" }), historyMessage("Stop."));
+        expect(steered.map((message) => message.content.ev.t)).toEqual(["turn-end", "text"]);
+        expect(steered[0]?.content.turn).toBe(joined[0]?.content.turn);
+    });
+
     it("receipts only the sender's phone and shows the message to another participant", () => {
         const sender = new HappyMessageMapper("user-2");
         const reader = new HappyMessageMapper("user-1");

@@ -4,6 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EVENTS_CAPACITY, EventsModule } from "../../sources/events/EventsModule.js";
 import { EVENTS_PAYLOAD_BYTE_CAPACITY } from "../../sources/events/EventsDatabase.js";
+import {
+    AGENT_MESSAGE_ORIGIN_METADATA,
+    GUEST_MESSAGE_ORIGIN_METADATA,
+    USER_MESSAGE_ORIGIN_METADATA,
+} from "../../sources/impl/messageOrigin.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -1220,6 +1225,7 @@ describe("EventsModule", () => {
                 id: "message-steering",
                 kind: "steering",
                 message: { role: "user", content: [{ type: "text", text: "Adjust." }] },
+                metadata: USER_MESSAGE_ORIGIN_METADATA,
                 profile: null,
             });
 
@@ -1229,6 +1235,99 @@ describe("EventsModule", () => {
             expect(accepted?.map((event) => event.runId)).toEqual([
                 "message-first",
                 "message-steering",
+            ]);
+        } finally {
+            database.close();
+        }
+    });
+
+    it("keeps steering from another agent or the system inside the run already going", async () => {
+        const events = new EventsModule();
+        const database = moduleDatabase(events.migrations ?? [], "events-agent-steering-joins");
+        await database.ready;
+        try {
+            const hooks = await resolveModuleHooks(database.context, events);
+            const scope = scopeFor("agent-steering-joins");
+            const accept = async (
+                id: string,
+                kind: "send" | "steering",
+                role: "system" | "user",
+                metadata?: Record<string, string>,
+            ): Promise<void> => {
+                await hooks.messageAcceptedTransact?.(database.context, scope, {
+                    id,
+                    kind,
+                    message: { role, content: [{ type: "text", text: id }] },
+                    ...(metadata === undefined ? {} : { metadata }),
+                    profile: null,
+                });
+            };
+            await accept("person-start", "send", "user", USER_MESSAGE_ORIGIN_METADATA);
+            await hooks.onEvent?.(database.context, scope, { type: "text_start" });
+            await accept("agent-reply", "steering", "user", {
+                ...AGENT_MESSAGE_ORIGIN_METADATA,
+                senderAgentId: "agent-helper",
+            });
+            await accept("system-notice", "steering", "system");
+            await accept("person-steer", "steering", "user", USER_MESSAGE_ORIGIN_METADATA);
+            await hooks.onEvent?.(database.context, scope, { type: "text_start" });
+            await accept("guest-steer", "steering", "user", GUEST_MESSAGE_ORIGIN_METADATA);
+            await hooks.afterAgentSettledTransact?.(database.context, scope, {
+                loopId: "guest-steer",
+                settlementId: "settlement-agent-steering-joins",
+            } as never);
+            // An idle agent woken by another agent's message still starts a run of its own.
+            await accept("agent-wake", "steering", "user", {
+                ...AGENT_MESSAGE_ORIGIN_METADATA,
+                senderAgentId: "agent-helper",
+            });
+
+            const accepted = (await events.replay(database.context, events.originCursor()))?.events
+                .filter((event) => event.type === "message.accepted")
+                .map((event) => event.payload);
+            expect(accepted).toEqual([
+                { id: "person-start", kind: "send", runId: "person-start" },
+                { id: "agent-reply", kind: "steering", runId: "person-start", joinedRun: true },
+                { id: "system-notice", kind: "steering", runId: "person-start", joinedRun: true },
+                { id: "person-steer", kind: "steering", runId: "person-steer" },
+                { id: "guest-steer", kind: "steering", runId: "guest-steer" },
+                { id: "agent-wake", kind: "steering", runId: "agent-wake" },
+            ]);
+            expect(events.activeRunId("agent-steering-joins")).toBe("agent-wake");
+        } finally {
+            database.close();
+        }
+    });
+
+    it("lets steering from another agent join a run whose provider work has not begun", async () => {
+        const events = new EventsModule();
+        const database = moduleDatabase(events.migrations ?? [], "events-agent-steering-batch");
+        await database.ready;
+        try {
+            const hooks = await resolveModuleHooks(database.context, events);
+            const scope = scopeFor("agent-steering-batch");
+            await hooks.messageAcceptedTransact?.(database.context, scope, {
+                id: "person-first",
+                kind: "steering",
+                message: { role: "user", content: [{ type: "text", text: "Start." }] },
+                metadata: USER_MESSAGE_ORIGIN_METADATA,
+                profile: null,
+            });
+            await hooks.messageAcceptedTransact?.(database.context, scope, {
+                id: "agent-second",
+                kind: "steering",
+                message: { role: "user", content: [{ type: "text", text: "Reply." }] },
+                metadata: AGENT_MESSAGE_ORIGIN_METADATA,
+                profile: null,
+            });
+
+            const accepted = (await events.replay(database.context, events.originCursor()))?.events
+                .filter((event) => event.type === "message.accepted")
+                .map((event) => event.payload);
+            // Both open the same not-yet-announced run, so the API announces them together.
+            expect(accepted).toEqual([
+                { id: "person-first", kind: "steering", runId: "person-first" },
+                { id: "agent-second", kind: "steering", runId: "person-first" },
             ]);
         } finally {
             database.close();

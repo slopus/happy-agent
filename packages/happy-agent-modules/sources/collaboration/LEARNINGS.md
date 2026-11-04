@@ -77,6 +77,14 @@ Messages between a creator and collaborator are steering in both directions. Aft
 starts a collaborator, either recipient should incorporate a later message after its current
 response and complete tool batch rather than waiting for its active run to finish normally.
 
+Steering an agent message into a working recipient used to end the recipient's run as
+`aborted/steering` and open a new one, so a busy coordinator's conversation became a row of tiny
+turns, each with one reply and a "Steered after" footer. Steve asked that agent messages not create
+a new turn. The Events module now keeps steering that did not come from a person inside the active
+run; the model still receives it at the same point. A message that reaches an idle agent still
+starts a run, because a finished run cannot be reopened and the work needs its own status, abort,
+and usage; its first message is the agent's, which tells a client it was not a person's turn.
+
 An explicitly interrupted collaborator sends no automatic settlement report. Its creator already
 observed the interrupt result, and any earlier commentary is incomplete progress rather than a
 final answer. The interrupted agent remains durable and can still receive a later follow-up.
