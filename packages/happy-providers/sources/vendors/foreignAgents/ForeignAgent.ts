@@ -1,3 +1,4 @@
+import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import type { AcpConnect } from "@/protocol/acp/AcpConnection.js";
 import type { AcpAgentLaunch, AcpAgentProfile } from "@/protocol/acp/AcpProvider.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
@@ -46,6 +47,8 @@ export interface ForeignAgentStart {
     readonly args?: readonly string[];
     /** The credentials' environment and any configured extra variables. */
     readonly env: NodeJS.ProcessEnv;
+    /** Told the account limits the agent reports while it works, under its vendor's provider key. */
+    readonly onAccountUsage?: (usage: ProviderUsage) => void;
 }
 
 /** Everything that differs between foreign agents, around one shared session implementation. */
