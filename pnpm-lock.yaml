@@ -95,8 +95,8 @@ importers:
         specifier: workspace:*
         version: link:../happy-agent-modules
       '@slopus/happy-agent-supervisor':
-        specifier: 0.0.17
-        version: 0.0.17
+        specifier: 0.0.18
+        version: 0.0.18
       '@slopus/happy-providers':
         specifier: 0.0.52
         version: 0.0.52(ws@8.21.1)(zod@4.4.3)
@@ -188,8 +188,8 @@ importers:
         specifier: ^0.34.49
         version: 0.34.49
       '@slopus/happy-agent-supervisor':
-        specifier: 0.0.17
-        version: 0.0.17
+        specifier: 0.0.18
+        version: 0.0.18
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -214,20 +214,20 @@ importers:
         version: 3.2.6(@types/node@24.13.3)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0)
     optionalDependencies:
       '@slopus/happy-agent-supervisor-darwin-arm64':
-        specifier: npm:@slopus/happy-agent-supervisor@0.0.17-darwin-arm64
-        version: '@slopus/happy-agent-supervisor@0.0.17-darwin-arm64'
+        specifier: npm:@slopus/happy-agent-supervisor@0.0.18-darwin-arm64
+        version: '@slopus/happy-agent-supervisor@0.0.18-darwin-arm64'
       '@slopus/happy-agent-supervisor-darwin-x64':
-        specifier: npm:@slopus/happy-agent-supervisor@0.0.17-darwin-x64
-        version: '@slopus/happy-agent-supervisor@0.0.17-darwin-x64'
+        specifier: npm:@slopus/happy-agent-supervisor@0.0.18-darwin-x64
+        version: '@slopus/happy-agent-supervisor@0.0.18-darwin-x64'
       '@slopus/happy-agent-supervisor-linux-arm64':
-        specifier: npm:@slopus/happy-agent-supervisor@0.0.17-linux-arm64
-        version: '@slopus/happy-agent-supervisor@0.0.17-linux-arm64'
+        specifier: npm:@slopus/happy-agent-supervisor@0.0.18-linux-arm64
+        version: '@slopus/happy-agent-supervisor@0.0.18-linux-arm64'
       '@slopus/happy-agent-supervisor-linux-x64':
-        specifier: npm:@slopus/happy-agent-supervisor@0.0.17-linux-x64
-        version: '@slopus/happy-agent-supervisor@0.0.17-linux-x64'
+        specifier: npm:@slopus/happy-agent-supervisor@0.0.18-linux-x64
+        version: '@slopus/happy-agent-supervisor@0.0.18-linux-x64'
       '@slopus/happy-agent-supervisor-win32-x64':
-        specifier: npm:@slopus/happy-agent-supervisor@0.0.17-win32-x64
-        version: '@slopus/happy-agent-supervisor@0.0.17-win32-x64'
+        specifier: npm:@slopus/happy-agent-supervisor@0.0.18-win32-x64
+        version: '@slopus/happy-agent-supervisor@0.0.18-win32-x64'
 
   packages/happy-agent-gym:
     dependencies:
@@ -2001,40 +2001,40 @@ packages:
     os: [win32]
     hasBin: true
 
-  '@slopus/happy-agent-supervisor@0.0.17':
-    resolution: {integrity: sha512-45bVlXbfNN1efQIxajoWCZ3G+N0PZJs7jgv9VlyG+PfRFVQAcrEH43+L5ht7zpsjmSF8GQiD1XyOBR3yj1ktlQ==}
+  '@slopus/happy-agent-supervisor@0.0.18':
+    resolution: {integrity: sha512-Fb1f4CyQZrkj88JbQnWc9XgqsaoElbB7Ta7ZG6ri7D59roa7CUCYOb/DJHv6SNueP6YFVatsEIbUgI5iSNHz1g==}
     engines: {node: '>=22.19.0'}
 
-  '@slopus/happy-agent-supervisor@0.0.17-darwin-arm64':
-    resolution: {integrity: sha512-Llji/nEJfke96gw3vOri2Z9vhgLKdaHegCwz+jfDcXLK//NZKQgibFa0TaYmToyOAVnX96RlueXkxUCmg4mEYg==}
+  '@slopus/happy-agent-supervisor@0.0.18-darwin-arm64':
+    resolution: {integrity: sha512-gEpgsFR/yQA1ZhlzsaGflpF/8H4Z0An4HEic1UipD7RcpTOzBFEVPk1u+f4mbVJcmmBaBjfV8nKfl1faErMxsQ==}
     engines: {node: '>=22.19.0'}
     cpu: [arm64]
     os: [darwin]
     hasBin: true
 
-  '@slopus/happy-agent-supervisor@0.0.17-darwin-x64':
-    resolution: {integrity: sha512-odcWNhKl2Er1YfD0B/PW+rj76BrH64iGeXYtmYW/K2hAtbYg24BP9sA93bdchc5WR+Degj4YRbhy26doaLVQUg==}
+  '@slopus/happy-agent-supervisor@0.0.18-darwin-x64':
+    resolution: {integrity: sha512-WE1BOSHdkMOrVEuHiTxO0lPTr3CRY42OMyem86FR0iqDPJUHJZ4WuybhIiaghJ3/7aXq3usAxiZQDE17YpgOng==}
     engines: {node: '>=22.19.0'}
     cpu: [x64]
     os: [darwin]
     hasBin: true
 
-  '@slopus/happy-agent-supervisor@0.0.17-linux-arm64':
-    resolution: {integrity: sha512-Pl6EipOdG8RT0q17+seLqeWuIdz7hv4Ua6Uv3DwiYA5WZ1S4rLf1TyAYal8PxRUPC7uQysHLkXfz0G4xH9lt1Q==}
+  '@slopus/happy-agent-supervisor@0.0.18-linux-arm64':
+    resolution: {integrity: sha512-0SyrxNoSabyqQ9TfE1CaDvh2qxyS6iCE1V4NpYkAnKdUCkOjyZi3qB7z+iE8k3f3oKdOv8vS04Oz+L9Mn2r6lw==}
     engines: {node: '>=22.19.0'}
     cpu: [arm64]
     os: [linux]
     hasBin: true
 
-  '@slopus/happy-agent-supervisor@0.0.17-linux-x64':
-    resolution: {integrity: sha512-O2nzTnQpIkS9wS6Hu+HFzZ+wmGgydTbiQYG48sAuQH4tAk4Vn5HQB3hpwqQOoL8sD47JnGA+bjbsCSRsfwD/Dw==}
+  '@slopus/happy-agent-supervisor@0.0.18-linux-x64':
+    resolution: {integrity: sha512-9QWhwTYWRyA4Z2jM7EPB9yKkqeVCqn33aYUDohvELisxAWkB0ArAFqmx49LHuMPBl9wat5S6Qp9+fcsDFXmi9g==}
     engines: {node: '>=22.19.0'}
     cpu: [x64]
     os: [linux]
     hasBin: true
 
-  '@slopus/happy-agent-supervisor@0.0.17-win32-x64':
-    resolution: {integrity: sha512-dGJr1yTGmmGduDbdLdJpVtDxiLFANFe4sSRYHeDunHSZWxJOX8P/reVLlUppjRGWg+di11rOI2r1eq1koo/DPg==}
+  '@slopus/happy-agent-supervisor@0.0.18-win32-x64':
+    resolution: {integrity: sha512-HD675+HrOuQssBolJ7qZP2O+uDW4yQqkJttklv0L/Y7UjRlWEhsE0DKyXl2QhInJnuZtOwTVeBF7fBxDBjoSeg==}
     engines: {node: '>=22.19.0'}
     cpu: [x64]
     os: [win32]
@@ -5378,29 +5378,29 @@ snapshots:
   '@slopus/happy-agent-supervisor@0.0.16-win32-x64':
     optional: true
 
-  '@slopus/happy-agent-supervisor@0.0.17':
+  '@slopus/happy-agent-supervisor@0.0.18':
     dependencies:
       '@sinclair/typebox': 0.34.49
     optionalDependencies:
-      '@slopus/happy-agent-supervisor-darwin-arm64': '@slopus/happy-agent-supervisor@0.0.17-darwin-arm64'
-      '@slopus/happy-agent-supervisor-darwin-x64': '@slopus/happy-agent-supervisor@0.0.17-darwin-x64'
-      '@slopus/happy-agent-supervisor-linux-arm64': '@slopus/happy-agent-supervisor@0.0.17-linux-arm64'
-      '@slopus/happy-agent-supervisor-linux-x64': '@slopus/happy-agent-supervisor@0.0.17-linux-x64'
-      '@slopus/happy-agent-supervisor-win32-x64': '@slopus/happy-agent-supervisor@0.0.17-win32-x64'
+      '@slopus/happy-agent-supervisor-darwin-arm64': '@slopus/happy-agent-supervisor@0.0.18-darwin-arm64'
+      '@slopus/happy-agent-supervisor-darwin-x64': '@slopus/happy-agent-supervisor@0.0.18-darwin-x64'
+      '@slopus/happy-agent-supervisor-linux-arm64': '@slopus/happy-agent-supervisor@0.0.18-linux-arm64'
+      '@slopus/happy-agent-supervisor-linux-x64': '@slopus/happy-agent-supervisor@0.0.18-linux-x64'
+      '@slopus/happy-agent-supervisor-win32-x64': '@slopus/happy-agent-supervisor@0.0.18-win32-x64'
 
-  '@slopus/happy-agent-supervisor@0.0.17-darwin-arm64':
+  '@slopus/happy-agent-supervisor@0.0.18-darwin-arm64':
     optional: true
 
-  '@slopus/happy-agent-supervisor@0.0.17-darwin-x64':
+  '@slopus/happy-agent-supervisor@0.0.18-darwin-x64':
     optional: true
 
-  '@slopus/happy-agent-supervisor@0.0.17-linux-arm64':
+  '@slopus/happy-agent-supervisor@0.0.18-linux-arm64':
     optional: true
 
-  '@slopus/happy-agent-supervisor@0.0.17-linux-x64':
+  '@slopus/happy-agent-supervisor@0.0.18-linux-x64':
     optional: true
 
-  '@slopus/happy-agent-supervisor@0.0.17-win32-x64':
+  '@slopus/happy-agent-supervisor@0.0.18-win32-x64':
     optional: true
 
   '@slopus/happy-providers@0.0.52(ws@8.21.1)(zod@4.4.3)':
