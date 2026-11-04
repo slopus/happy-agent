@@ -409,6 +409,7 @@ describe("Foreign harness live transcript visibility", () => {
                             status: "running",
                             arguments: {
                                 title: "Editing src/app.ts",
+                                description: "Editing src/app.ts",
                                 paths: ["src/app.ts"],
                             },
                         },
@@ -422,6 +423,7 @@ describe("Foreign harness live transcript visibility", () => {
                         status: "completed",
                         arguments: {
                             title: "Editing src/app.ts",
+                            description: "Editing src/app.ts",
                             paths: ["src/app.ts"],
                         },
                         result: {
@@ -453,6 +455,7 @@ describe("Foreign harness live transcript visibility", () => {
                             status: "running",
                             arguments: {
                                 title: "pnpm test",
+                                description: "pnpm test",
                                 input: { command: "pnpm test" },
                             },
                         },
@@ -472,6 +475,7 @@ describe("Foreign harness live transcript visibility", () => {
                         status: "completed",
                         arguments: {
                             title: "pnpm test",
+                            description: "pnpm test",
                             input: { command: "pnpm test" },
                         },
                         result: {
@@ -508,6 +512,7 @@ describe("Foreign harness live transcript visibility", () => {
                             status: "running",
                             arguments: {
                                 title: "pnpm lint",
+                                description: "pnpm lint",
                                 input: { command: "pnpm lint" },
                             },
                         },
@@ -531,6 +536,7 @@ describe("Foreign harness live transcript visibility", () => {
                         status: "failed",
                         arguments: {
                             title: "pnpm lint",
+                            description: "pnpm lint",
                             input: { command: "pnpm lint" },
                         },
                         result: {
