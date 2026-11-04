@@ -230,6 +230,10 @@ jobs:
               # Cache downloads only; patched native addons must run their install scripts again.
               run: pnpm install --frozen-lockfile --config.side-effects-cache=false
 
+            - name: Install Linux status app build dependencies
+              if: runner.os == 'Linux'
+              run: sudo apt-get update && sudo apt-get install -y libglib2.0-dev libjson-glib-dev libcurl4-openssl-dev
+
             - name: Build Happy Agent JavaScript
               run: |
                   pnpm --filter @slopus/happy-agent-supervisor build

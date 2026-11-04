@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.Serialization;
@@ -81,6 +82,35 @@ internal sealed class DaemonClient
 
     public void Stop() { Request("POST", "/v0/shutdown", 202, false); }
 
+    // Desktop advertises a private, authenticated quit pipe beside this daemon's token.
+    // It holds the connection open until its process exits, after flushing window state.
+    public void QuitDesktop()
+    {
+        string directory = Path.Combine(Path.GetDirectoryName(tokenFile), "desktop-quit");
+        if (!Directory.Exists(directory)) return;
+        foreach (string file in Directory.GetFiles(directory, "*.json"))
+        {
+            DesktopQuitEndpoint endpoint = Read<DesktopQuitEndpoint>(File.ReadAllBytes(file));
+            if (endpoint.Pid <= 0 || endpoint.Token == null || endpoint.Token.Length != 64 ||
+                endpoint.SocketPath == null || !endpoint.SocketPath.StartsWith(@"\\.\pipe\happy-desktop-quit-", StringComparison.Ordinal))
+                throw new IOException("Happy Desktop's quit connection is unavailable.");
+            try { using (Process desktop = Process.GetProcessById(endpoint.Pid)) { if (desktop.HasExited) continue; } }
+            catch (ArgumentException) { continue; }
+            using (var pipe = new NamedPipeClientStream(".", endpoint.SocketPath.Substring(9), PipeDirection.InOut))
+            using (var timeout = new Timer(delegate { pipe.Dispose(); }, null, 15000, Timeout.Infinite))
+            {
+                pipe.Connect(2000);
+                byte[] request = Encoding.ASCII.GetBytes(endpoint.Token + "\n");
+                pipe.Write(request, 0, request.Length);
+                using (var reader = new StreamReader(pipe, Encoding.ASCII))
+                {
+                    if (reader.ReadLine() != "quitting") throw new IOException("Happy Desktop could not quit.");
+                    if (reader.Read() != -1) throw new IOException("Happy Desktop is still closing. Please try again.");
+                }
+            }
+        }
+    }
+
     private static T Read<T>(byte[] body)
     {
         using (var stream = new MemoryStream(body))
@@ -147,6 +177,13 @@ internal sealed class DaemonClient
             }
         }
     }
+}
+
+[DataContract] internal sealed class DesktopQuitEndpoint
+{
+    [DataMember(Name = "pid")] public int Pid { get; set; }
+    [DataMember(Name = "socketPath")] public string SocketPath { get; set; }
+    [DataMember(Name = "token")] public string Token { get; set; }
 }
 
 // Only the fields displayed by this client. Unrecognized additive fields remain the server's

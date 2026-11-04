@@ -21,6 +21,41 @@ const nativeRoot = join(packageRoot, "sources", "menuBar", "native");
 
 function main() {
     const requested = process.argv[2] ?? `${process.platform}-${process.arch}`;
+    if (requested === "linux-x64" || requested === "linux-arm64") {
+        // Source builds do not ship or start a status app. Only the binary build asks for one.
+        if (process.argv[2] === undefined) return;
+        if (process.platform !== "linux" || requested !== `linux-${process.arch}`)
+            throw new Error("Building the Linux tray requires a matching Linux host.");
+        const outputRoot = join(packageRoot, "dist", "menuBar", "bin");
+        mkdirSync(outputRoot, { recursive: true });
+        const flags = spawnSync(
+            "pkg-config",
+            ["--cflags", "--libs", "gio-unix-2.0", "json-glib-1.0", "libcurl"],
+            { encoding: "utf8" },
+        );
+        if (flags.status !== 0)
+            throw new Error(
+                "Building the Linux tray requires GLib, JSON-GLib, and libcurl development packages.",
+            );
+        const result = spawnSync(
+            "cc",
+            [
+                "-std=c11",
+                "-O2",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                join(nativeRoot, "linux", "LinuxTray.c"),
+                ...flags.stdout.trim().split(/\s+/),
+                "-o",
+                join(outputRoot, `happy-menu-bar-${requested}`),
+            ],
+            { stdio: "inherit" },
+        );
+        if (result.error) throw result.error;
+        if (result.status !== 0) throw new Error("The Linux tray build failed.");
+        return;
+    }
     if (requested === "win32-x64") {
         if (process.platform !== "win32")
             throw new Error("Building the Windows tray requires Windows.");

@@ -36,7 +36,7 @@ beforeEach(() => {
 
 describe("MenuBarModule", () => {
     it.skipIf(process.platform !== "win32")(
-        "keeps Stop available during graceful drain and closes the tray at finalization",
+        "keeps the Windows icon alive during graceful drain and closes it at finalization",
         async () => {
             const config = {
                 configuration: {

@@ -573,7 +573,8 @@ export const { getQuickJS } = QJS;
  * another macOS architecture embeds an app for that architecture.
  */
 function buildMenuBarApp(modulesRoot: string, target: BinaryTarget): string | undefined {
-    if (target.platform !== "darwin" && target.platform !== "win32") return undefined;
+    if (target.platform !== "darwin" && target.platform !== "win32" && target.platform !== "linux")
+        return undefined;
     if (process.platform !== target.platform) {
         throw new Error(`Compiling the ${target.platform} status app requires that platform.`);
     }
@@ -808,7 +809,7 @@ export function resolveBinaryForTarget(key, binaryPath) {
             name: "menu bar app resolver",
             required: true,
             adapt: () =>
-                `export const MENU_BAR_TARGETS = ["darwin-arm64", "darwin-x64", "win32-x64"];\nexport { getMenuBarApp as resolveMenuBarApp } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
+                `export const MENU_BAR_TARGETS = ["darwin-arm64", "darwin-x64", "win32-x64", "linux-arm64", "linux-x64"];\nexport { getMenuBarApp as resolveMenuBarApp } from ${JSON.stringify(VIRTUAL_ASSETS_MODULE)};\n`,
         });
     }
     addDocumentationAdapter(adapters);

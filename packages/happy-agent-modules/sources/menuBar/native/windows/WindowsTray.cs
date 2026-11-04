@@ -10,7 +10,7 @@ using System.Windows.Forms;
 
 // The Windows notification-area app. Its menu matches the macOS one where Windows allows it: a
 // headline, plan usage per account, then the few top-level tasks and bots working most recently,
-// followed by the daemon's resource use and the Stop controls. C# 5 and ASCII only; see
+// with a single Quit Happy action below the headline. C# 5 and ASCII only; see
 // DaemonClient.cs.
 internal sealed class WindowsTray : ApplicationContext
 {
@@ -20,12 +20,10 @@ internal sealed class WindowsTray : ApplicationContext
     private readonly ToolStripMenuItem status = new ToolStripMenuItem("Happy Agent is running");
     private readonly ToolStripMenuItem resources = new ToolStripMenuItem("Reading resource usage...");
     private readonly ToolStripSeparator controlsSeparator = new ToolStripSeparator();
-    private readonly ToolStripMenuItem stop = new ToolStripMenuItem("Stop Happy Agent");
-    private readonly ToolStripMenuItem force = new ToolStripMenuItem("Force stop Happy Agent");
+    private readonly ToolStripMenuItem quit = new ToolStripMenuItem("Quit Happy");
     private readonly Timer refreshTimer = new Timer { Interval = 5000 };
     // Only while the menu is open: the session times tick the way the desktop's clock does.
     private readonly Timer clockTimer = new Timer { Interval = 1000 };
-    private readonly Timer forceTimer = new Timer { Interval = 5000 };
     private readonly Process parent;
     private readonly DaemonClient client;
     private readonly PlanBook planBook = new PlanBook();
@@ -75,11 +73,10 @@ internal sealed class WindowsTray : ApplicationContext
         status.Enabled = false;
         status.Tag = new RowLook { Text = SystemColors.MenuText };
         resources.Enabled = false;
-        force.Visible = false;
         headerFont = new Font(menu.Font.FontFamily, menu.Font.Size * 0.85f, FontStyle.Bold);
         menu.Renderer = new TrayRenderer();
         menu.ShowItemToolTips = true;
-        menu.Items.AddRange(new ToolStripItem[] { status, resources, controlsSeparator, stop, force });
+        menu.Items.AddRange(new ToolStripItem[] { status, new ToolStripSeparator(), quit, controlsSeparator, resources });
         // The icon stays still: the menu reads the daemon only while it is open, so the tray has
         // nothing to animate from the rest of the time, and polling just to animate is not worth it.
         icon = new NotifyIcon { Icon = CreateIcon(), Text = "Happy Agent is running", ContextMenuStrip = menu, Visible = true };
@@ -94,9 +91,7 @@ internal sealed class WindowsTray : ApplicationContext
         menu.Closed += delegate { refreshTimer.Stop(); clockTimer.Stop(); };
         refreshTimer.Tick += delegate { Refresh(); };
         clockTimer.Tick += delegate { Tick(); };
-        stop.Click += async delegate { await Stop(); };
-        force.Click += async delegate { await ForceStop(); };
-        forceTimer.Tick += delegate { forceTimer.Stop(); if (!closed) force.Visible = true; };
+        quit.Click += async delegate { await Quit(); };
         parent.EnableRaisingEvents = true;
         parent.Exited += delegate { OnUi(ExitThread); };
         if (parent.HasExited) { ExitThread(); return; }
@@ -138,7 +133,7 @@ internal sealed class WindowsTray : ApplicationContext
         {
             if (!closed)
             {
-                status.Text = stopping ? "Stopping Happy Agent..." : "Happy Agent is not responding";
+                status.Text = stopping ? "Quitting Happy..." : "Happy Agent is not responding";
                 status.ShortcutKeyDisplayString = null;
             }
         }
@@ -270,43 +265,31 @@ internal sealed class WindowsTray : ApplicationContext
         return text.Length <= length ? text : text.Substring(0, length - 1).TrimEnd() + "\u2026";
     }
 
-    private async Task Stop()
+    private async Task Quit()
     {
         if (stopping || closed) return;
         stopping = true;
-        stop.Enabled = false;
-        status.Text = "Stopping Happy Agent...";
-        icon.Text = "Stopping Happy Agent";
-        forceTimer.Start();
-        try { await Task.Run(() => client.Stop()); }
-        catch (Exception)
-        {
-            if (!closed) { status.Text = "Happy Agent could not stop gracefully"; force.Visible = true; }
-        }
-    }
-
-    private async Task ForceStop()
-    {
+        quit.Enabled = false;
+        quit.Text = "Quitting Happy...";
+        status.Text = "Quitting Happy...";
+        icon.Text = "Quitting Happy";
         try
         {
-            // The retained Process handle identifies our parent. Never read an unrelated PID file.
-            if (parent.HasExited) { ExitThread(); return; }
-            var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "taskkill.exe"),
-                "/PID " + parent.Id + " /T /F") { UseShellExecute = false, CreateNoWindow = true };
-            force.Enabled = false;
-            icon.Visible = false;
             await Task.Run(delegate {
-                using (var killer = Process.Start(start))
-                    if (killer == null || !killer.WaitForExit(5000) || killer.ExitCode != 0)
-                        throw new IOException("Windows could not terminate the daemon process tree.");
+                client.QuitDesktop();
+                client.Stop();
             });
         }
         catch (Exception)
         {
             if (!closed) {
-                icon.Visible = true;
-                force.Enabled = true;
-                status.Text = "Windows could not stop Happy Agent";
+                stopping = false;
+                quit.Enabled = true;
+                quit.Text = "Quit Happy";
+                icon.Text = "Happy Agent is running";
+                MessageBox.Show("Happy could not quit. Close Happy Desktop and try again.",
+                    "Could not quit Happy", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Refresh();
             }
         }
     }
@@ -323,7 +306,6 @@ internal sealed class WindowsTray : ApplicationContext
         closed = true;
         refreshTimer.Dispose();
         clockTimer.Dispose();
-        forceTimer.Dispose();
         icon.Visible = false;
         icon.Icon.Dispose();
         icon.Dispose();

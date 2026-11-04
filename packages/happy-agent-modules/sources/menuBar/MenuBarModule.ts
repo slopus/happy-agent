@@ -17,8 +17,8 @@ import { resolveMenuBarApp } from "./impl/resolveMenuBarApp.js";
  * Only a released Happy Agent binary carries the app, so a daemon run from a checkout — during
  * development, or from a test — has no menu bar to start and says nothing about it.
  *
- * Both native apps read the ordinary private API. The Windows tray also lets the person stop
- * the daemon, and offers a force stop if graceful shutdown cannot finish.
+ * The native apps read the ordinary private API. Quit Happy closes Desktop and then requests
+ * graceful daemon shutdown; stopping only the helper would cause supervision to restart it.
  */
 export class MenuBarModule implements AgentModule {
     readonly name = "menuBar";
@@ -34,6 +34,7 @@ export class MenuBarModule implements AgentModule {
     readonly beforeStart = (ctx: Context): void => {
         if (this.#config.configuration.values.feature.team.enabled) return;
         if (!this.#config.configuration.values.settings.menuBar) return;
+        if (process.platform === "linux" && !process.env.DBUS_SESSION_BUS_ADDRESS) return;
         const executable = resolveMenuBarApp();
         if (executable === undefined) return;
         const paths = this.#config.configuration.paths;
@@ -56,9 +57,9 @@ export class MenuBarModule implements AgentModule {
         })();
     };
 
-    /** Starts status-app shutdown while preserving the Windows stop control until finalization. */
+    /** Starts status-app shutdown while preserving the Windows icon until finalization. */
     async beginShutdown(): Promise<void> {
-        // Windows keeps its Stop/Force stop control available until runtime finalization.
+        // Windows removes its notification icon cleanly at runtime finalization.
         if (process.platform !== "win32") await this.close();
     }
 

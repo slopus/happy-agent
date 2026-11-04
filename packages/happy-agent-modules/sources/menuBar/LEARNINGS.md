@@ -1,10 +1,15 @@
 # Menu bar learnings
 
-## Native status controls on macOS and Windows
+## Native status controls on macOS, Windows, and Linux
 
 macOS uses Swift AppKit. Windows now has a native notification-area app, requested to make a
 background daemon visible and stoppable. It uses Windows Forms from the system .NET Framework,
-with no Electron runtime. Linux still has no status app. The Windows icon is stationary and
+with no Electron runtime. Linux has a native StatusNotifierItem and DBusMenu on the desktop's
+session bus, so it works on Wayland and X11 wherever a status-notifier host is available. It
+shows the working count and one Quit Happy action. KDE provides a host; GNOME needs a tray
+extension. There is no status app on headless Linux: the module skips it without a session bus,
+and the helper exits cleanly without a status-notifier host. Its build needs GLib, JSON-GLib,
+and libcurl development packages; its runtime needs their shared libraries. The Windows icon is stationary and
 resource/usage refreshes run only while its menu is open; parent-exit and stdin EOF notifications
 end its lifetime without a process-table polling loop.
 
@@ -41,7 +46,7 @@ bar; build the binary and run that instead.
 
 ## It is on by default, and turned off in configuration
 
-Within a release the module starts the app whenever the daemon runs on macOS or Windows. There is no opt-in
+Within a release the module starts the app on macOS, Windows, or a Linux desktop session. There is no opt-in
 flag; `menu_bar = false` under `[settings]` is the way off. The app itself decides whether a machine
 actually has a menu bar, by checking for a login session, and exits cleanly when there is none — a
 daemon started over SSH must not look like a failure.
@@ -60,9 +65,16 @@ keeps the app alive after the daemon is gone.
 ## Quit Happy stops Desktop and the agent together
 
 The bar carries the glyph alone: no number, no badge. Quit Happy has its own section immediately
-below the working-agent headline. It requests normal termination of running stable, Nightly, and
-workspace development Desktop apps, waits for them to exit, then calls the existing private
-shutdown endpoint. Stopping only the helper would cause supervision to start it again. Desktop
+below the working-agent headline on all three platforms. Windows no longer has separate Stop and
+Force stop actions. macOS requests normal termination of running stable, Nightly, and workspace
+development Desktop apps. Windows and Linux contact the private quit endpoints advertised by
+Desktop beside this installation's token, in `desktop-quit/*.json`. Each registration contains
+`pid`, `socketPath`, and a random 64-character hex `token`; Windows uses a named pipe and Linux a
+Unix socket. The helper sends the token followed by a newline, expects `quitting` and a newline,
+then waits for EOF. Desktop keeps authenticated connections open until its process exits; closing
+the listening server must not close these connections early. The helper then calls the existing
+private shutdown endpoint. This requires a Desktop native build with quit endpoint support.
+Stopping only the helper would cause supervision to start it again. Desktop
 must exit first so it cannot reconnect during agent shutdown. A refused or stalled Desktop quit
 leaves the agent running and reports the failure; a rejected shutdown can be retried. The helper
 exits with its daemon through the existing parent and stdin watches.
@@ -190,10 +202,10 @@ snapshots on its existing open-menu timer.
 
 ## The existing private API is the boundary
 
-Both apps use the ordinary HTTP API over the daemon's private socket with its bearer token.
-macOS uses events as refresh hints and the existing shutdown endpoint for Quit Happy. Windows uses
-the existing shutdown endpoint for its explicit Stop action; if shutdown stalls, Force stop terminates the retained
-parent process and its tree. No new server endpoint, public listener, or token exposure is needed.
+All three apps use the ordinary HTTP API over the daemon's private socket with its bearer token.
+Quit Happy uses the existing shutdown endpoint; it never hard-kills the daemon. Desktop's quit
+connections are local, authenticated, and registered in the private agent directory. They expose
+only quitting Desktop, with no public listener and no change to the Happy Agent API.
 
 ## A new daemon stops the apps old ones left behind
 
