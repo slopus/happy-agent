@@ -444,9 +444,13 @@ export class ComputeModule implements AgentModule {
                     processContext: created.processContext,
                     processManager: created.processManager,
                 };
-                // The Windows supervisor has no host-list proxy, so a policy there would refuse
-                // every restricted command instead of granting anything.
-                if (!(here && process.platform === "win32")) this.#applyConfiguredNetwork(cached);
+                // Only machines this daemon's own compute sandboxes get the policy. A runner may run
+                // an older compute that would drop denied hosts and ports while keeping the grant,
+                // and its project file is on the runner. The Windows supervisor has no host-list
+                // proxy, so a policy there would refuse every restricted command.
+                if (!this.#runnerMachines.has(compute) && !(here && process.platform === "win32")) {
+                    this.#applyConfiguredNetwork(cached);
+                }
                 this.#guardSessionStarts(agentId, cached);
                 this.#computes.set(agentId, cached);
                 this.#processes.attach(agentId, compute);
