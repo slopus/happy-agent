@@ -632,7 +632,11 @@ export function agentProviders(
                     }
                     const concrete =
                         foreign !== undefined
-                            ? createForeignAgentProvider(foreign, configuration.paths.agentHome)
+                            ? createForeignAgentProvider(
+                                  foreign,
+                                  configuration.paths.agentHome,
+                                  onAccountUsage,
+                              )
                             : await createProvider(
                                   id,
                                   provider as Exclude<

@@ -562,3 +562,11 @@ now applies the same settings `env` as inference, unless the account isolates it
 reaches the gateway's base URL, measures the gateway token through the inference-header probe as
 it does for configured tokens, and probes with `ANTHROPIC_DEFAULT_HAIKU_MODEL` when set, because a
 gateway that routes by model name cannot route Anthropic's fixed probe model.
+
+## A harness account is measured by the work its agent does
+
+An account used only through the `claude_code` or `codex_cli` harness depended on the periodic
+poll, which cannot read every account, such as a Codex API key behind a gateway that sends
+`x-codex-*` headers. Claude Code and Codex report the account's limits on every response, as
+Happy's own loops do. A foreign agent provider now passes those readings to the same
+account-usage listeners as native providers, renamed for the account the agent ran on.
