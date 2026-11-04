@@ -36,6 +36,10 @@ on:
                 description: Windows runner image for the LSASS measurement
                 type: string
                 default: windows-2025
+            managed_network_only:
+                description: Prove only that configured network policy reaches Agent shell commands
+                type: boolean
+                default: false
 
 permissions:
     contents: read
@@ -46,7 +50,7 @@ concurrency:
 
 jobs:
     compute-services:
-        if: ${{ !inputs.lsass_only && (inputs.services_only || !inputs.windows_only && !inputs.windows_sandbox_only) }}
+        if: ${{ !inputs.lsass_only && !inputs.managed_network_only && (inputs.services_only || !inputs.windows_only && !inputs.windows_sandbox_only) }}
         name: Published service runtime on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 20
@@ -83,7 +87,7 @@ jobs:
         permissions:
             contents: read
             id-token: write
-        if: ${{ !inputs.services_only && !inputs.lsass_only && !inputs.windows_sandbox_only }}
+        if: ${{ !inputs.services_only && !inputs.lsass_only && !inputs.windows_sandbox_only && !inputs.managed_network_only }}
         uses: ./.github/workflows/build-windows.yml
         with:
             version: 0.4.48-windows-ci.${{ github.run_number }}
@@ -91,7 +95,7 @@ jobs:
     windows-sandbox:
         # The Agent build above exercises the published sandbox SDK. This builds the patched
         # sources in this checkout, so a sandbox change is proven before it is released.
-        if: ${{ !inputs.services_only && !inputs.windows_only && !inputs.lsass_only }}
+        if: ${{ !inputs.services_only && !inputs.windows_only && !inputs.lsass_only && !inputs.managed_network_only }}
         uses: ./.github/workflows/build-windows-sandbox.yml
 
     windows-lsass:
@@ -226,8 +230,50 @@ jobs:
             - name: Track idle repositories through a minute of ignored-file churn
               run: pnpm --filter @slopus/happy-agent-modules exec vitest run --config vitest.live.config.ts tests/git/windowsIdleGitTracking.live.test.ts
 
+    managed-network:
+        if: ${{ inputs.managed_network_only }}
+        name: Configured network policy reaches Agent shell commands on ${{ matrix.runner }}
+        runs-on: ${{ matrix.runner }}
+        timeout-minutes: 20
+        strategy:
+            fail-fast: false
+            matrix:
+                runner: [macos-15, macos-15-intel, ubuntu-24.04]
+        steps:
+            - uses: actions/checkout@v6
+            - uses: pnpm/action-setup@v6
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - run: pnpm install --frozen-lockfile
+            - name: Allow namespaces only for the supervisor the Agent modules install
+              if: runner.os == 'Linux'
+              run: |
+                  [[ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" == 1 ]]
+                  supervisor="$(node --input-type=module -e '
+                  import { createRequire } from "node:module";
+                  import { realpathSync } from "node:fs";
+                  import { resolve } from "node:path";
+                  const modules = createRequire(resolve("packages/happy-agent-modules/package.json"));
+                  const compute = createRequire(modules.resolve("@slopus/happy-agent-compute"));
+                  const { resolveSupervisorBinary } = await import(compute.resolve("@slopus/happy-agent-supervisor"));
+                  console.log(realpathSync(resolveSupervisorBinary()));
+                  ')"
+                  [[ "$supervisor" == "$GITHUB_WORKSPACE"/node_modules/*/happy-agent-supervisor && -x "$supervisor" ]]
+                  sudo tee /etc/apparmor.d/happy-managed-network-tests >/dev/null <<EOF
+                  abi <abi/4.0>,
+                  include <tunables/global>
+                  profile happy-managed-network-tests "$supervisor" flags=(unconfined) {
+                      userns,
+                  }
+                  EOF
+                  sudo apparmor_parser --replace /etc/apparmor.d/happy-managed-network-tests
+            - name: Run Auto, Workspace write, and Read only commands under the configured policy
+              run: pnpm --filter @slopus/happy-agent-modules exec vitest run --config vitest.live.config.ts tests/compute/managedNetworkPolicy.live.test.ts
+
     supervisor:
-        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only && !inputs.windows_sandbox_only }}
+        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only && !inputs.windows_sandbox_only && !inputs.managed_network_only }}
         name: ${{ matrix.name }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 30
@@ -308,7 +354,7 @@ jobs:
                   if-no-files-found: error
 
     package:
-        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only && !inputs.windows_sandbox_only }}
+        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only && !inputs.windows_sandbox_only && !inputs.managed_network_only }}
         name: TypeScript package
         runs-on: ubuntu-24.04
         timeout-minutes: 20
