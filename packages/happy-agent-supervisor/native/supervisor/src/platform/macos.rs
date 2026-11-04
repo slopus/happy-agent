@@ -188,6 +188,13 @@ fn create_profile(
                 .to_string(),
             "(allow mach-lookup\n  (global-name \"com.apple.dnssd.service\")\n  (global-name \"com.apple.SystemConfiguration.DNSConfiguration\")\n  (global-name \"com.apple.SystemConfiguration.configd\")\n  (global-name \"com.apple.nehelper\")\n  (global-name \"com.apple.nesessionmanager\")\n  (global-name \"com.apple.networkd\"))"
                 .to_string(),
+            // TLS clients verify certificates through the system trust store, like Codex's
+            // network policy. Apple's curl falls back to TrustEvaluationAgent when its CA
+            // bundle cannot anchor a chain; Go and Swift ask trustd directly.
+            // They stay out of proxied profiles: trustd fetches issuer and revocation URLs
+            // named by the certificate itself, which would reach hosts outside the allowlist.
+            "(allow mach-lookup\n  (global-name \"com.apple.SecurityServer\")\n  (global-name \"com.apple.ocspd\")\n  (global-name \"com.apple.TrustEvaluationAgent\")\n  (global-name \"com.apple.trustd.agent\"))"
+                .to_string(),
         ]);
     }
     if policy.network.local_binding {
@@ -296,6 +303,7 @@ mod tests {
             .unwrap_or_else(|error| panic!("profile should build: {error}"));
 
         assert!(profile.contains("(allow network-outbound (remote ip \"*:*\")"));
+        assert!(profile.contains("(global-name \"com.apple.trustd.agent\")"));
         assert!(!profile.contains("sh -"));
         assert!(profile.contains("\\\"quoted\\\""));
         assert!(profile.contains(r##"(regex #"^/workspace/"##));
@@ -321,6 +329,7 @@ mod tests {
 
         assert!(!profile.contains("(remote ip \"*:*\")"));
         assert!(!profile.contains("mDNSResponder"));
+        assert!(!profile.contains("trustd"));
         for port in ports {
             assert!(profile.contains(&format!(
                 "(allow network-outbound (remote ip \"localhost:{port}\"))"

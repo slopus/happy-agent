@@ -476,3 +476,58 @@ fn the_legacy_remount_fallback_enforces_the_same_boundary() {
         "the fallback permitted a write outside the workspace"
     );
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn granted_egress_verifies_tls_against_the_system_trust_store() {
+    // Certificate validation through Security.framework asks trustd, not the
+    // network; Go, Swift, nscurl, and Apple's curl fallbacks all depend on it.
+    let probes: [&[&str]; 2] = [
+        &[
+            "/usr/bin/curl",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            "20",
+            "--output",
+            "/dev/null",
+            "https://example.com/",
+        ],
+        &[
+            "/usr/bin/nscurl",
+            "--output",
+            "/dev/null",
+            "https://example.com/",
+        ],
+    ];
+    let boundary = TestBoundary::new(true, false);
+    for probe in probes {
+        let host = Command::new(probe[0])
+            .args(&probe[1..])
+            .output()
+            .unwrap_or_else(|error| panic!("run {} on the host: {error}", probe[0]));
+        assert!(
+            host.status.success(),
+            "{} fails outside the sandbox, so this runner cannot prove the boundary: {}",
+            probe[0],
+            String::from_utf8_lossy(&host.stderr)
+        );
+        let sandboxed = boundary.run(probe);
+        if !sandboxed.status.success() {
+            // Name the operations Seatbelt refused, so a failure says what to allow.
+            let denials = Command::new("/usr/bin/log")
+                .args(["show", "--last", "2m", "--style", "compact", "--predicate"])
+                .arg("sender == \"Sandbox\" AND eventMessage CONTAINS \"deny\"")
+                .output()
+                .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+                .unwrap_or_else(|error| format!("log show failed: {error}"));
+            panic!(
+                "{} verifies TLS on the host but not in the sandbox: {}\nSeatbelt denials:\n{denials}",
+                probe[0],
+                String::from_utf8_lossy(&sandboxed.stderr)
+            );
+        }
+    }
+    println!("tls=verified");
+}
