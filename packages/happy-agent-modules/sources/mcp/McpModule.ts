@@ -42,7 +42,6 @@ import {
     mcpToolPolicySchema,
     mcpToolPageQuerySchema,
     mcpToolPageSchema,
-    mcpToolSchema,
     mcpToolResultSchema,
     mcpAgentIdSchema,
     MAX_MCP_SERVER_NAME_LENGTH,
@@ -70,6 +69,7 @@ import {
     type McpUserInputResponse,
 } from "./Mcp.js";
 import { McpClientConnection } from "./McpClientConnection.js";
+import { collectMcpPages } from "./impl/collectMcpPages.js";
 import { createMcpConfigurationTools } from "./createMcpConfigurationTools.js";
 import { createMcpProtocolTools } from "./createMcpProtocolTools.js";
 import { createMcpTool } from "./createMcpTool.js";
@@ -456,6 +456,8 @@ export class McpModule implements AgentModule {
                     ),
                 ]),
             );
+            // A server that changes its tools without saying so shows them after a reload.
+            for (const pooled of this.#pool.values()) pooled.connection?.forgetTools();
         });
     }
 
@@ -467,7 +469,13 @@ export class McpModule implements AgentModule {
         await this.#ensureAgentWorkspace(ctx, agentId);
         await this.#reloadLock.runInLock(ctx, async () => {
             this.#assertOpen();
-            await this.#reconcileWorkspace(ctx, this.#attachedWorkspace(agentId));
+            const workspace = this.#attachedWorkspace(agentId);
+            await this.#reconcileWorkspace(ctx, workspace);
+            for (const connectionId of catalogConnectionIds(
+                this.#catalogs.get(workspaceCatalog(workspace)),
+            )) {
+                this.#pool.get(connectionId)?.connection?.forgetTools();
+            }
         });
     }
 
@@ -607,7 +615,7 @@ export class McpModule implements AgentModule {
                         };
                     }
                     try {
-                        const tools = await this.#allTools(ctx, connection);
+                        const tools = await connection.listTools(ctx);
                         const capabilities = connection.client.getServerCapabilities();
                         return {
                             name,
@@ -675,7 +683,7 @@ export class McpModule implements AgentModule {
             ),
         };
         const raw = pageFrom(
-            await this.#allTools(ctx, this.#connection(agentId, normalized.server)),
+            await this.#connection(agentId, normalized.server).listTools(ctx),
             normalized.cursor,
             normalized.limit,
             "tools",
@@ -1628,35 +1636,6 @@ export class McpModule implements AgentModule {
         };
     }
 
-    async #allTools(ctx: Context, connection: McpClientConnection): Promise<McpTool[]> {
-        const values = await collectMcpPages(
-            async (cursor) =>
-                await connection.client.listTools(
-                    cursor === undefined ? {} : { cursor },
-                    this.#requestOptions(ctx, connection.config.toolTimeoutMs),
-                ),
-            (page) => page.tools,
-        );
-        const tools: McpTool[] = [];
-        for (const tool of values) {
-            const candidate = {
-                name: tool.name,
-                ...(tool.description === undefined ? {} : { description: tool.description }),
-                inputSchema: structuredClone(tool.inputSchema),
-                ...(tool.title === undefined ? {} : { title: tool.title }),
-                ...(tool._meta === undefined ? {} : { _meta: structuredClone(tool._meta) }),
-            };
-            if (!Value.Check(mcpToolSchema, candidate)) {
-                ctx.log.warn(
-                    `The ${tool.name} tool from ${connection.name} is unavailable: its definition is invalid or exceeds the MCP limits.`,
-                );
-                continue;
-            }
-            tools.push(candidate);
-        }
-        return tools;
-    }
-
     async #allResources(ctx: Context, connection: McpClientConnection) {
         const values = await collectMcpPages(
             async (cursor) =>
@@ -1816,25 +1795,6 @@ function assertUnique(values: readonly string[], kind: string): void {
     if (new Set(values).size !== values.length) {
         throw new Error(`MCP server returned duplicate ${kind} identities.`);
     }
-}
-
-async function collectMcpPages<Page extends { readonly nextCursor?: string | undefined }, Item>(
-    fetchPage: (cursor: string | undefined) => Promise<Page>,
-    items: (page: Page) => readonly Item[],
-): Promise<Item[]> {
-    const collected: Item[] = [];
-    let cursor: string | undefined;
-    for (let count = 0; count < MAX_MCP_PAGE_SIZE; count += 1) {
-        const page = await fetchPage(cursor);
-        collected.push(...items(page));
-        if (collected.length > MAX_MCP_TOTAL_TOOLS) {
-            throw new Error("MCP catalog exceeded its configured bound.");
-        }
-        if (page.nextCursor === undefined) return collected;
-        if (page.nextCursor === cursor) throw new Error("MCP cursor did not advance.");
-        cursor = page.nextCursor;
-    }
-    throw new Error("MCP pagination exceeded its configured bound.");
 }
 
 function pageFrom<const Key extends string, Item>(

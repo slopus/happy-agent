@@ -45,7 +45,10 @@ withdraws its request, the connection ends, or the turn stops, the question is w
 
 Direct tools use `mcp__<server>__<tool>`. Protocol tools provide live tool, resource, template, and
 prompt discovery. The tools hook resolves the catalog for every provider request, so a successful
-online reload is visible on the next inference without restarting the daemon.
+online reload is visible on the next inference without restarting the daemon. Each connection asks
+its server for its tools once and shares that list with every session using it. It asks again only
+after the server sends `notifications/tools/list_changed` or a reload, so a server that changes its
+tools without saying so shows them after `reload_mcp_servers`.
 
 ## Runners
 

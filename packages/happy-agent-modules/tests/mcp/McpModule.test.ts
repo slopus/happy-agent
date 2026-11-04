@@ -104,6 +104,40 @@ describe("McpModule production discovery", () => {
         }
     });
 
+    it("lists a server's tools once until it reports a change or is reloaded", async () => {
+        const { module } = await configuredModule({ docs: stdio("docs") });
+        try {
+            const hooks = await resolveModuleHooks(ctx, module);
+            await Promise.all(
+                ["agent-a", "agent-a", "agent-b", "agent-b"].map(
+                    async (agentId) => await hooks.tools!(ctx, scope(agentId)),
+                ),
+            );
+            for (let request = 0; request < 10; request += 1) {
+                await hooks.tools!(ctx, scope(request % 2 === 0 ? "agent-a" : "agent-b"));
+            }
+            await module.listServerPage(ctx, "agent-a");
+            await module.listTools(ctx, "agent-b", "docs");
+            await expect(echo(module, "agent-a", "docs", "__tool_listings__")).resolves.toBe("1");
+
+            await expect(echo(module, "agent-a", "docs", "__add_tool__")).resolves.toBe("added");
+            await expect
+                .poll(async () =>
+                    (await hooks.tools!(ctx, scope("agent-b"))).map((tool) => tool.name),
+                )
+                .toContain("mcp__docs__added");
+            await hooks.tools!(ctx, scope("agent-a"));
+            await expect(echo(module, "agent-a", "docs", "__tool_listings__")).resolves.toBe("2");
+
+            await module.reload(ctx);
+            await hooks.tools!(ctx, scope("agent-a"));
+            await hooks.tools!(ctx, scope("agent-b"));
+            await expect(echo(module, "agent-a", "docs", "__tool_listings__")).resolves.toBe("3");
+        } finally {
+            await module.close();
+        }
+    });
+
     it("keeps healthy tools when one server tool exceeds the JSON depth bound", async () => {
         const { module } = await configuredModule({ mixed: stdio("mixed-tools") });
         try {

@@ -4,16 +4,19 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import {
     CancelledNotificationSchema,
     ElicitRequestSchema,
+    ToolListChangedNotificationSchema,
     type ElicitRequest,
     type RequestId,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Compute } from "@slopus/happy-agent-compute";
+import { Value } from "@sinclair/typebox/value";
 import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
 
 import type { HappyAgentConfigValues } from "../config/index.js";
-import type { McpElicitationResult } from "./Mcp.js";
+import { mcpToolSchema, type McpElicitationResult, type McpTool } from "./Mcp.js";
 import { MachineStdioTransport } from "./impl/MachineStdioTransport.js";
+import { collectMcpPages } from "./impl/collectMcpPages.js";
 import { McpToolDeadline } from "./impl/McpToolDeadline.js";
 
 type ServerConfig = HappyAgentConfigValues["mcpServers"][string];
@@ -37,6 +40,8 @@ export class McpClientConnection {
     #elicitation: ElicitationHandler | undefined;
     /** Elicitations still waiting on a person, by the server's request ID. */
     readonly #withdrawals = new Map<RequestId, AbortController>();
+    /** The server's tools, listed or being listed, until the server says they changed. */
+    #tools: Promise<readonly McpTool[]> | undefined;
 
     private constructor(name: string, config: ServerConfig, client: Client) {
         this.name = name;
@@ -68,6 +73,9 @@ export class McpClientConnection {
             const requestId = notification.params.requestId;
             if (requestId === undefined) return;
             this.#withdrawals.get(requestId)?.abort(notification.params.reason);
+        });
+        client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+            this.forgetTools();
         });
     }
 
@@ -163,8 +171,80 @@ export class McpClientConnection {
         });
     }
 
+    /**
+     * The server's tools, listed once and shared by every session using this connection. Every
+     * provider request and tool execution reads the catalog, so listing each time sent the server
+     * several `tools/list` requests a second while agents worked. The list is fetched again only
+     * after the server reports a change or a reload forgets it. A listing that fails is not kept.
+     */
+    async listTools(ctx: Context): Promise<readonly McpTool[]> {
+        if (this.#tools === undefined) {
+            const listing = this.#listTools(ctx);
+            this.#tools = listing;
+            listing.catch(() => {
+                if (this.#tools === listing) this.#tools = undefined;
+            });
+        }
+        return await untilAborted(ctx, this.#tools);
+    }
+
+    /** Lists the tools again on next use, for a reload that asks the server afresh. */
+    forgetTools(): void {
+        this.#tools = undefined;
+    }
+
+    /** Not bound to the caller's lifetime: other sessions may be waiting on the same listing. */
+    async #listTools(ctx: Context): Promise<readonly McpTool[]> {
+        const timeout = this.config.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+        const values = await collectMcpPages(
+            async (cursor) =>
+                await this.client.listTools(cursor === undefined ? {} : { cursor }, {
+                    timeout,
+                    maxTotalTimeout: timeout,
+                }),
+            (page) => page.tools,
+        );
+        const tools: McpTool[] = [];
+        for (const tool of values) {
+            const candidate = {
+                name: tool.name,
+                ...(tool.description === undefined ? {} : { description: tool.description }),
+                inputSchema: structuredClone(tool.inputSchema),
+                ...(tool.title === undefined ? {} : { title: tool.title }),
+                ...(tool._meta === undefined ? {} : { _meta: structuredClone(tool._meta) }),
+            };
+            if (!Value.Check(mcpToolSchema, candidate)) {
+                ctx.log.warn(
+                    `The ${tool.name} tool from ${this.name} is unavailable: its definition is invalid or exceeds the MCP limits.`,
+                );
+                continue;
+            }
+            tools.push(candidate);
+        }
+        return tools;
+    }
+
     async close(): Promise<void> {
         await this.client.close();
+    }
+}
+
+/** Waits for `work`, or stops waiting when the caller's lifetime ends. */
+async function untilAborted<Result>(ctx: Context, work: Promise<Result>): Promise<Result> {
+    const lifetime = ctx.lifetime;
+    if (lifetime === undefined) return await work;
+    lifetime.throwIfAborted();
+    let stop: (() => void) | undefined;
+    try {
+        return await Promise.race([
+            work,
+            new Promise<never>((_, reject) => {
+                stop = () => reject(lifetime.reason);
+                lifetime.addEventListener("abort", stop, { once: true });
+            }),
+        ]);
+    } finally {
+        if (stop !== undefined) lifetime.removeEventListener("abort", stop);
     }
 }
 

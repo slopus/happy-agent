@@ -30,31 +30,46 @@ if (startupMarker !== undefined && startupRelease !== undefined) {
 }
 const server = new Server(
     { name: `${label}-server`, version: "1.0.0" },
-    { capabilities: { prompts: {}, resources: {}, tools: {} } },
+    { capabilities: { prompts: {}, resources: {}, tools: { listChanged: true } } },
 );
+let toolListings = 0;
+let addedTool = false;
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools:
-        label === "mixed-tools"
-            ? [
-                  echoTool(),
-                  {
-                      name: "nested",
-                      description: "A valid tool whose schema reaches the supported JSON depth.",
-                      inputSchema: nestedObjectInputSchema(6),
-                  },
-                  {
-                      name: "too_deep",
-                      description: "A broken tool whose schema exceeds the supported JSON depth.",
-                      inputSchema: nestedObjectInputSchema(7),
-                  },
-              ]
-            : label === "elicitation"
-              ? [echoTool(), elicitTool()]
-              : [echoTool()],
-}));
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+    toolListings += 1;
+    return { tools: addedTool ? [...listedTools(), addedEchoTool()] : listedTools() };
+});
+
+function listedTools() {
+    return label === "mixed-tools"
+        ? [
+              echoTool(),
+              {
+                  name: "nested",
+                  description: "A valid tool whose schema reaches the supported JSON depth.",
+                  inputSchema: nestedObjectInputSchema(6),
+              },
+              {
+                  name: "too_deep",
+                  description: "A broken tool whose schema exceeds the supported JSON depth.",
+                  inputSchema: nestedObjectInputSchema(7),
+              },
+          ]
+        : label === "elicitation"
+          ? [echoTool(), elicitTool()]
+          : [echoTool()];
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (request.params.name === "elicit") return await elicit(request.params.arguments ?? {});
+    if (request.params.arguments?.text === "__tool_listings__") {
+        return { content: [{ type: "text", text: String(toolListings) }] };
+    }
+    if (request.params.arguments?.text === "__add_tool__") {
+        addedTool = true;
+        await server.sendToolListChanged();
+        return { content: [{ type: "text", text: "added" }] };
+    }
     return {
         content: [
             {
@@ -100,6 +115,10 @@ function echoTool() {
             required: ["text"],
         },
     };
+}
+
+function addedEchoTool() {
+    return { ...echoTool(), name: "added" };
 }
 
 function elicitTool() {

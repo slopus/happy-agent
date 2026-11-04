@@ -65,6 +65,19 @@ gigabytes. Each level now serializes as a flat description of its collections, s
 serialized form no longer grows with depth, while TypeBox validation still walks the real levels
 and enforces the bound.
 
+## Each connection lists its tools once
+
+An outside report (slopus/happy-desktop#78) found every MCP server receiving `tools/list` every
+second or two while a few agents worked. The server operator saw it in their request logs. The tools
+hook runs for every provider request and every tool execution, and each run listed every server
+twice over: once for the server summary's tool count, and once more per page of tools. One agent
+running shell commands sent each server 594 listings a minute. Each listing was also bound to its
+caller's lifetime, so a stopped turn cancelled it on the server. `McpClientConnection` now keeps the
+validated list. Concurrent readers share one request, and a caller that stops only stops waiting.
+The list is dropped when the server sends `notifications/tools/list_changed`, when a reload
+reconciles the connection's catalog, and when a listing fails. A new connection starts empty. The
+same agent now sends one listing per server for the connection's life.
+
 ## Configuration edits reload through the same bounded path
 
 Model-driven global changes update one named server so unrelated records are preserved, then use
