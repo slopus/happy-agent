@@ -90,6 +90,14 @@ with Happy Agent too:
   narrower than the column simply sits inside it. A dashboard, wide table, canvas, or other
   full-width app opts out with `<meta name="happy-page-width" content="full">` in its `<head>`,
   and only such a page may use `width: 100vw`. `../DESIGN.md` §1.7 has the details.
+- A game, canvas, drawing pad, or other single-screen app that page scrolling would fight opts into
+  app mode with `<meta name="happy-page-mode" content="app">` in its `<head>`: the host shows it
+  full screen and edge to edge, with no scrolling or zoom, opens it from a card instead of running
+  it inline, and owns the close control. The page fills the viewport, handles resize and rotation,
+  keeps its controls clear of `env(safe-area-inset-*)` and `--happy-app-inset-*`, takes touch and
+  mouse and keyboard, and never builds its own exit. A document or dashboard meant to be read is
+  not an app; use `happy-page-width: full` for it. `../DESIGN.md` §1.8 has the details, and
+  [An app-mode game](#an-app-mode-game) below is a skeleton.
 - `/api/v1/components.js`, last. It defines five elements that read what they show from the page.
   In Happy Desktop, diffs and code are drawn with the renderer and styling it uses for them;
   elsewhere they are plain numbered lines without highlighting:
@@ -379,6 +387,89 @@ and works offline. Create it with `create_artifact` as an `html` artifact and wr
 Open it in two windows, or on two devices, and add a to-do in one: it appears in the other at
 once. Turn the network off, add and tick items, and turn it back on: they sync without
 duplicates.
+
+## An app-mode game
+
+A full-screen page that does not scroll: a dot you steer by dragging or with the arrow keys. It
+sizes its canvas to the viewport on every resize and rotation, keeps its hint clear of the insets,
+and has no exit of its own, because the host provides one. Add the SDK as above if it should share
+data, such as a high score.
+
+```html
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="happy-page-mode" content="app" />
+        <link rel="stylesheet" href="/api/v1/style.css" />
+        <style>
+            body {
+                padding: 0;
+            }
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100%;
+                touch-action: none;
+            }
+            #hint {
+                position: fixed;
+                top: max(env(safe-area-inset-top), var(--happy-app-inset-top, 0px));
+                right: max(env(safe-area-inset-right), var(--happy-app-inset-right, 0px));
+                padding: 8px 16px;
+                color: var(--happy-muted);
+            }
+        </style>
+    </head>
+    <body>
+        <canvas id="game"></canvas>
+        <div id="hint">Drag, or use the arrow keys</div>
+        <script>
+            const canvas = document.getElementById("game");
+            const context = canvas.getContext("2d");
+            const dot = { x: 0.5, y: 0.5 };
+            const keys = new Set();
+
+            function resize() {
+                const ratio = window.devicePixelRatio || 1;
+                canvas.width = Math.round(canvas.clientWidth * ratio);
+                canvas.height = Math.round(canvas.clientHeight * ratio);
+                context.setTransform(ratio, 0, 0, ratio, 0, 0);
+            }
+            new ResizeObserver(resize).observe(canvas);
+
+            canvas.addEventListener("pointermove", (event) => {
+                if (event.buttons === 0 && event.pointerType === "mouse") return;
+                dot.x = event.offsetX / canvas.clientWidth;
+                dot.y = event.offsetY / canvas.clientHeight;
+            });
+            addEventListener("keydown", (event) => keys.add(event.key));
+            addEventListener("keyup", (event) => keys.delete(event.key));
+
+            function frame() {
+                const step = 0.01;
+                if (keys.has("ArrowLeft")) dot.x -= step;
+                if (keys.has("ArrowRight")) dot.x += step;
+                if (keys.has("ArrowUp")) dot.y -= step;
+                if (keys.has("ArrowDown")) dot.y += step;
+                dot.x = Math.min(1, Math.max(0, dot.x));
+                dot.y = Math.min(1, Math.max(0, dot.y));
+
+                const width = canvas.clientWidth;
+                const height = canvas.clientHeight;
+                const style = getComputedStyle(document.documentElement);
+                context.clearRect(0, 0, width, height);
+                context.fillStyle = style.getPropertyValue("--happy-accent");
+                context.beginPath();
+                context.arc(dot.x * width, dot.y * height, 16, 0, Math.PI * 2);
+                context.fill();
+                requestAnimationFrame(frame);
+            }
+            requestAnimationFrame(frame);
+        </script>
+    </body>
+</html>
+```
 
 ## Other patterns
 

@@ -110,6 +110,18 @@ with root `padding-inline`, and leaves inline pages to the chat column. The writ
 only narrow the page, and to opt a full-width app out with
 `<meta name="happy-page-width" content="full">` before reaching for `100vw`.
 
+## Games and canvases opt into app mode; the host owns the exit
+
+Steve asked for an opt-in that makes an HTML artifact full screen and app-like, for games, canvases,
+and other pages where scrolling fights the input. A page declares
+`<meta name="happy-page-mode" content="app">`; the clients then open it full screen from a card
+rather than inline, edge to edge with no scrolling or zoom, pass the safe-area insets also as
+`--happy-app-inset-*`, and draw their own close control (a "×" top-start on mobile, back on Android,
+Full screen and Esc on desktop). The writing tools and `docs/DESIGN.md` §1.8 reserve it for such
+apps, not documents or dashboards, which use `happy-page-width: full`, and tell agents to fill the
+viewport, keep clear of the insets, take touch and keyboard, and never build an exit of their own,
+because one the page draws can be missing or broken while the host's always works.
+
 ## Agents write artifacts with artifact tools, straight in the catalog
 
 Kirill's master plan for inline artifacts replaced sending whole files through `create_artifact`

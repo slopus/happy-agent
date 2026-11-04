@@ -214,6 +214,82 @@ page can read the value as `--happy-host-page-measure`, which is `none` inline.
 - Do not size anything with `width: 100vw` unless the page has opted out; it
   ignores the column and overflows it.
 
+### 1.8 App mode: a full-screen page that does not scroll
+
+A game, a canvas, a drawing pad or whiteboard, anything driven by dragging or
+touch where page scrolling would fight the input, or a kiosk-style tool that is
+one screen, opts into app mode with
+`<meta name="happy-page-mode" content="app">` in its `<head>`. The host reads
+it before the content arrives, so nothing jumps; any other value, or no tag,
+is an ordinary scrolling page. App mode is only for such pages. A document, a
+report, or a dashboard meant to be read stays an ordinary page, and one that
+needs the full width uses `happy-page-width: full` (§1.7) and still scrolls.
+
+What the host does:
+
+- App mode implies `happy-page-width: full`: no content column and no host
+  inset. The page is drawn edge to edge.
+- It adds `html, body { height: 100%; margin: 0; overflow: hidden }` with
+  `overscroll-behavior: none`, and turns off the web view's own scrolling and
+  bounce. On mobile it also turns off pinch and double-tap zoom, the text
+  selection callout, and long-press link previews.
+- It gives the page the safe-area insets as `env(safe-area-inset-*)`, and the
+  same values as `--happy-app-inset-top`, `--happy-app-inset-right`,
+  `--happy-app-inset-bottom`, and `--happy-app-inset-left`, which also cover
+  the area the host's close button takes.
+- It sets `data-happy-page-mode="app"` on the root element, for page CSS that
+  wants to react.
+- Inline in the chat, an app-mode page is not run: it shows as a card that
+  opens it. On iOS and Android it opens full screen over everything, with the
+  system bars hidden. Happy Desktop shows it filling the artifact viewer below
+  its header, and that header gains a Full screen action; Esc leaves full
+  screen.
+
+The host owns the way out. On iOS and Android a round "×" sits in the
+top-start corner inside the safe area, fading after a few seconds and coming
+back when touched near it; on Android, system back closes the page too. On
+Happy Desktop the viewer's header and Esc do it.
+
+What the page must do:
+
+- Fill the viewport: size the root to `height: 100%` (or `100dvh`), never to
+  fixed pixels, and lay it out edge to edge with `body { padding: 0 }`.
+- Handle `resize` and orientation changes: redraw a canvas at the new size and
+  `devicePixelRatio`, and reflow its controls.
+- Keep important controls and text clear of the insets, padding each side by
+  `max(env(safe-area-inset-top), var(--happy-app-inset-top, 0px))` and its
+  equivalent. The top-start corner is where the close button sits.
+- Accept touch and mouse and keyboard alike: pointer events for input, with
+  `touch-action: none` on the surface that takes drags, and keys for a game.
+- Never rely on page scrolling. A long list inside the app scrolls in a region
+  of its own (§4.4).
+- Never build a close, exit, or back control of its own, and never trap Esc or
+  the back gesture.
+
+```html
+<head>
+    <meta name="happy-page-mode" content="app" />
+    <link rel="stylesheet" href="/api/v1/style.css" />
+    <style>
+        body {
+            padding: 0;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+        .hud {
+            position: fixed;
+            top: max(env(safe-area-inset-top), var(--happy-app-inset-top, 0px));
+            right: max(env(safe-area-inset-right), var(--happy-app-inset-right, 0px));
+            padding: 8px 16px;
+        }
+    </style>
+</head>
+```
+
 ---
 
 ## 2. Surfaces, dimensions, and gutters
@@ -2189,13 +2265,20 @@ in **both** light and dark, at **three** container widths: **400**, **640**, and
 - [ ] Every flex `gap`, every container padding, and every margin between elements
       is 0, 4, 8, 12, 16, 24, 32, or 48 px. (Padding _inside_ a control is exempt —
       it comes from §9 verbatim.)
-- [ ] No rule anywhere uses `vh` units.
+- [ ] No rule anywhere uses `vh` units. (An app-mode page may use `100dvh`,
+      §1.8.)
 - [ ] On an inline artifact page, `document.documentElement.scrollHeight` is
       the same after every tab, toggle, filter, and load as at first render,
       and no state leaves a blank area where content used to be (§1.6).
 - [ ] An artifact page sets no `max-width` with `margin: auto` on `body` or a
       page wrapper, and uses `width: 100vw` only when it opts out with
       `<meta name="happy-page-width" content="full">` (§1.7).
+- [ ] A page with `<meta name="happy-page-mode" content="app">` is a game,
+      canvas, or other single-screen app, not a document; it fills the
+      viewport after a resize and a rotation with no page scrollbar, keeps
+      its controls clear of `env(safe-area-inset-*)` and
+      `--happy-app-inset-*`, works by touch and by mouse and keyboard, and
+      has no close or exit control of its own (§1.8).
 - [ ] At 400 px wide nothing overflows horizontally
       (`document.documentElement.scrollWidth <= clientWidth`).
 - [ ] A row with a 200-character title ellipsizes and its trailing controls stay
