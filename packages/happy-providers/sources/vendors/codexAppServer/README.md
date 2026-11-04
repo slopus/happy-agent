@@ -7,6 +7,7 @@ Drives Codex through `codex app-server` (JSON-RPC over stdio) and presents it to
   selected model, effort and sandbox policy.
 - `steer` is `turn/steer` against the running turn; `cancel` is `turn/interrupt`.
 - Models and efforts come from `model/list`.
+- `account/rateLimits/updated` carries no thread; its account limits go to `onAccountUsage`.
 - Happy tools are an `mcp_servers` entry in the thread config, pre-approved; command and file
   approvals go to the client's `requestPermission`.
 

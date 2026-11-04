@@ -14,6 +14,7 @@ as an `AcpAgentConnection`, so the `claude` ACP agent needs no adapter process.
   it every turn past the window fails with "Prompt is too long".
 - A turn's usage is its last main-thread API call, cached prompt included, so input is the context
   the conversation fills. The SDK result sums the turn's calls and counts only uncached input.
+- `rate_limit_event` reports go to `onAccountUsage`, as Happy's own Claude loop reports them.
 
 ## Files
 

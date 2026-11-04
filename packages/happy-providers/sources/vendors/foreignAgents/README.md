@@ -23,6 +23,9 @@ lists here are only assumed until the agent reports its own through `modelsFromS
 and the generic `acp` agent assume none. Codex CLI runs the pinned `@openai/codex` this package
 depends on, else a `codex` on PATH, else the pinned release through `npx`.
 
+The account limits Claude Code and Codex report while they work reach `start.onAccountUsage`,
+named after the vendor's provider key; the caller renames them for the account that ran them.
+
 Antigravity's adapter ignores ACP `mcpServers`, but `agy` reads `.agents/mcp_config.json` from
 every workspace root, so the bridge is written into a private directory under the provider's
 state and passed as an additional directory. Nothing is ever written into the user's project.

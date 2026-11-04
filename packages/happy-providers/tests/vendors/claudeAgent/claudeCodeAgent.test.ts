@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import type { SessionMessage } from "@/core/SessionContext.js";
 import type { SessionUsage } from "@/core/SessionUsage.js";
 import { AcpProvider } from "@/protocol/acp/AcpProvider.js";
@@ -35,7 +36,10 @@ interface FakeRequest {
  * says; past a 200k window it is refused as the real API refuses it, otherwise it gets a short
  * reply, or the summary when Claude Code asks for one.
  */
-async function fakeMessagesApi(measure: (request: FakeRequest) => PromptUsage): Promise<{
+async function fakeMessagesApi(
+    measure: (request: FakeRequest) => PromptUsage,
+    headers: Record<string, string> = {},
+): Promise<{
     readonly url: string;
     readonly summaries: () => number;
 }> {
@@ -95,7 +99,7 @@ async function fakeMessagesApi(measure: (request: FakeRequest) => PromptUsage): 
                 );
                 return;
             }
-            response.writeHead(200, { "content-type": "text/event-stream" });
+            response.writeHead(200, { "content-type": "text/event-stream", ...headers });
             const send = (data: Record<string, unknown> & { type: string }) =>
                 response.write(`event: ${data.type}\ndata: ${JSON.stringify(data)}\n\n`);
             send({ type: "message_start", message });
@@ -141,15 +145,27 @@ afterEach(async () => {
 });
 
 /** Unmodified Claude Code through Happy's Claude Code agent, pointed at the fake API. */
-async function claudeCode(url: string) {
+async function claudeCode(
+    url: string,
+    options: {
+        /** A Claude subscription login instead of an API key, which has no account limits. */
+        readonly subscription?: boolean;
+        readonly onAccountUsage?: (usage: ProviderUsage) => void;
+    } = {},
+) {
     const directory = mkdtempSync(join(tmpdir(), "claude-code-agent-"));
     const provider = new AcpProvider({
         connect: claudeCodeAgent.connect({
             env: {
                 ANTHROPIC_BASE_URL: url,
-                ANTHROPIC_API_KEY: "sk-ant-test",
+                ...(options.subscription === true
+                    ? { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-test" }
+                    : { ANTHROPIC_API_KEY: "sk-ant-test" }),
                 CLAUDE_CONFIG_DIR: join(directory, "config"),
             },
+            ...(options.onAccountUsage === undefined
+                ? {}
+                : { onAccountUsage: options.onAccountUsage }),
         }),
         stateDirectory: join(directory, "state"),
         environment: () => ({ cwd: directory, permissionMode: "full_access" }),
@@ -218,4 +234,56 @@ describe("Claude Code agent", () => {
             summaries: 1,
         });
     }, 120_000);
+
+    it("passes on the account's limits Claude reports with each response", async () => {
+        const fiveHourReset = 1_900_000_000;
+        const weeklyReset = 1_900_300_000;
+        const api = await fakeMessagesApi(
+            () => ({
+                input_tokens: 10,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+            }),
+            {
+                "anthropic-ratelimit-unified-status": "allowed",
+                "anthropic-ratelimit-unified-5h-status": "allowed",
+                "anthropic-ratelimit-unified-5h-utilization": "0.25",
+                "anthropic-ratelimit-unified-5h-reset": String(fiveHourReset),
+                "anthropic-ratelimit-unified-7d-status": "allowed",
+                "anthropic-ratelimit-unified-7d-utilization": "0.5",
+                "anthropic-ratelimit-unified-7d-reset": String(weeklyReset),
+                "anthropic-ratelimit-unified-representative-claim": "five_hour",
+                "anthropic-ratelimit-unified-reset": String(fiveHourReset),
+            },
+        );
+        const usages: ProviderUsage[] = [];
+        const agent = await claudeCode(api.url, {
+            subscription: true,
+            onAccountUsage: (usage) => usages.push(usage),
+        });
+
+        await agent.turn("hello");
+
+        expect(usages.map((usage) => ({ ...usage, capturedAt: 0 }))).toEqual([
+            {
+                providerId: "claude",
+                vendor: "claude",
+                capturedAt: 0,
+                planName: null,
+                exhausted: false,
+                windows: {
+                    fiveHour: null,
+                    weekly: {
+                        usedPercent: 50,
+                        resetsAt: weeklyReset * 1_000,
+                        startsAt: weeklyReset * 1_000 - 7 * 24 * 60 * 60 * 1_000,
+                        durationMs: 7 * 24 * 60 * 60 * 1_000,
+                    },
+                    monthly: null,
+                    fableWeekly: null,
+                },
+                credits: null,
+            },
+        ]);
+    }, 60_000);
 });

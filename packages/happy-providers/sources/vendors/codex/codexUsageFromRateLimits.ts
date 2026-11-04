@@ -67,6 +67,55 @@ export function codexUsageFromRateLimitEvent(
 }
 
 /**
+ * The account limits `codex app-server` reports in `account/rateLimits/updated`. It reads them
+ * from the same headers and events as above and sends them as a sparse rolling update: a field
+ * left null was not measured this time and clears nothing.
+ */
+const appServerWindowSchema = Type.Object({
+    usedPercent: Type.Number(),
+    windowDurationMins: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+    resetsAt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+});
+
+const appServerCreditsSchema = Type.Object({
+    hasCredits: Type.Boolean(),
+    unlimited: Type.Boolean(),
+    balance: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+});
+
+const appServerRateLimitsSchema = Type.Object({
+    limitId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    primary: Type.Optional(Type.Unknown()),
+    secondary: Type.Optional(Type.Unknown()),
+    credits: Type.Optional(Type.Unknown()),
+    planType: Type.Optional(Type.Unknown()),
+});
+
+/**
+ * Reads the account windows `codex app-server` reports. Returns null for a report about a
+ * different metered limit and for one that measured nothing.
+ */
+export function codexUsageFromAppServerRateLimits(
+    rateLimits: unknown,
+    context: { capturedAt: number; providerId: string },
+): ProviderUsage | null {
+    if (!Value.Check(appServerRateLimitsSchema, rateLimits)) return null;
+    if ((rateLimits.limitId ?? CODEX_LIMIT_NAME).toLowerCase() !== CODEX_LIMIT_NAME) return null;
+    const windows = parseCodexWindows([
+        appServerWindow(rateLimits.primary),
+        appServerWindow(rateLimits.secondary),
+    ]);
+    const credits = Value.Check(appServerCreditsSchema, rateLimits.credits)
+        ? parseCodexCredits({
+              has_credits: rateLimits.credits.hasCredits,
+              unlimited: rateLimits.credits.unlimited,
+              balance: rateLimits.credits.balance ?? undefined,
+          })
+        : null;
+    return codexUsage(windows, credits, providerPlanName(rateLimits.planType), context);
+}
+
+/**
  * Reads the same account windows from the `x-codex-*` headers the backend attaches to an SSE
  * response. Returns null when the response carries none, as API-key and Bedrock traffic does.
  */
@@ -116,6 +165,11 @@ function codexUsage(
 function eventWindow(value: unknown): CodexWindowPayload | null {
     if (!Value.Check(rateLimitWindowSchema, value)) return null;
     return windowPayload(value.used_percent, value.window_minutes, value.reset_at);
+}
+
+function appServerWindow(value: unknown): CodexWindowPayload | null {
+    if (!Value.Check(appServerWindowSchema, value)) return null;
+    return windowPayload(value.usedPercent, value.windowDurationMins, value.resetsAt);
 }
 
 function headerWindow(headers: Headers, name: "primary" | "secondary"): CodexWindowPayload | null {

@@ -1,5 +1,7 @@
 // A stand-in for `codex app-server`: answers the driver's requests and, for each turn, sends an
 // agent message delta followed immediately by turn/completed with the status the prompt names.
+// A prompt naming "limits" is also told the account's limits, in the payload Codex 0.160.1 sends
+// for a gateway's x-codex-* headers.
 import { createInterface } from "node:readline";
 
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -21,6 +23,33 @@ createInterface({ input: process.stdin }).on("line", (line) => {
                 method: "item/agentMessage/delta",
                 params: { threadId: "t1", turnId: "turn1", itemId: "i1", delta: "partial" },
             });
+            if (text.includes("limits")) {
+                send({
+                    method: "account/rateLimits/updated",
+                    params: {
+                        rateLimits: {
+                            limitId: "codex",
+                            limitName: null,
+                            normalModelSlug: null,
+                            primary: {
+                                usedPercent: 42,
+                                windowDurationMins: 300,
+                                resetsAt: 1793791365,
+                            },
+                            secondary: {
+                                usedPercent: 7,
+                                windowDurationMins: 10080,
+                                resetsAt: 1793874165,
+                            },
+                            credits: null,
+                            individualLimit: null,
+                            spendControlReached: null,
+                            planType: null,
+                            rateLimitReachedType: null,
+                        },
+                    },
+                });
+            }
             send({
                 method: "turn/completed",
                 params: {

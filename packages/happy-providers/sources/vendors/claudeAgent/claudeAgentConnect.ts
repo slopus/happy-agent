@@ -8,9 +8,11 @@ import {
     type PermissionMode,
     type Query,
     type SDKMessage,
+    type SDKRateLimitInfo,
     type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import type {
     AcpAgentConnection,
     AcpConnect,
@@ -18,6 +20,7 @@ import type {
 } from "@/protocol/acp/AcpConnection.js";
 import { processTreeGroups, terminateProcessTree } from "@/protocol/acp/impl/processTree.js";
 import { CLAUDE_SDK_PRIVACY_ENVIRONMENT } from "@/vendors/claude/claudeSdkPrivacyEnvironment.js";
+import { claudeUsageFromRateLimitInfo } from "@/vendors/claude/claudeUsageFromRateLimitInfo.js";
 import { resolveClaudeCodeExecutablePath } from "@/vendors/claude/resolveClaudeCodeExecutablePath.js";
 import { AsyncInputQueue } from "@/vendors/claudeAgent/impl/AsyncInputQueue.js";
 import { claudeAgentUpdates } from "@/vendors/claudeAgent/impl/claudeAgentUpdates.js";
@@ -45,9 +48,12 @@ const MODES: readonly PermissionMode[] = [
  * settings and compaction, with Happy's tools reached over the MCP bridge. Its loop takes input
  * mid-turn, so steering joins the running turn instead of interrupting it.
  */
-export function claudeAgentConnect(environment: NodeJS.ProcessEnv): AcpConnect {
+export function claudeAgentConnect(
+    environment: NodeJS.ProcessEnv,
+    onAccountUsage?: (usage: ProviderUsage) => void,
+): AcpConnect {
     return async (_cwd, client) => {
-        const connection = new ClaudeAgentConnection(environment, client);
+        const connection = new ClaudeAgentConnection(environment, client, onAccountUsage);
         return {
             conn: connection,
             init: {
@@ -87,6 +93,7 @@ interface ClaudeThread {
 class ClaudeAgentConnection implements AcpAgentConnection {
     readonly #environment: NodeJS.ProcessEnv;
     readonly #client: acp.Client;
+    readonly #onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
     readonly #threads = new Map<string, ClaudeThread>();
     readonly #children = new Set<ChildProcess>();
     #stderr = "";
@@ -96,9 +103,14 @@ class ClaudeAgentConnection implements AcpAgentConnection {
         this.#exit = resolve;
     });
 
-    constructor(environment: NodeJS.ProcessEnv, client: acp.Client) {
+    constructor(
+        environment: NodeJS.ProcessEnv,
+        client: acp.Client,
+        onAccountUsage: ((usage: ProviderUsage) => void) | undefined,
+    ) {
         this.#environment = environment;
         this.#client = client;
+        this.#onAccountUsage = onAccountUsage;
     }
 
     async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
@@ -269,6 +281,9 @@ class ClaudeAgentConnection implements AcpAgentConnection {
         try {
             for await (const message of thread.query as AsyncIterable<SDKMessage>) {
                 usage.observe(message);
+                if (message.type === "rate_limit_event") {
+                    this.#reportAccountUsage(message.rate_limit_info);
+                }
                 for (const update of updates.translate(message)) {
                     await this.#client.sessionUpdate({ sessionId, update });
                 }
@@ -302,6 +317,21 @@ class ClaudeAgentConnection implements AcpAgentConnection {
         if (this.#threads.get(sessionId) === thread && !this.#closed) {
             this.#threads.delete(sessionId);
             this.#exit(new Error(`Claude Code ended the session.\n${this.#stderr.trim()}`));
+        }
+    }
+
+    /** Pass on what Claude's limiter said about the account, as Happy's own Claude loop does. */
+    #reportAccountUsage(info: SDKRateLimitInfo): void {
+        if (this.#onAccountUsage === undefined) return;
+        const usage = claudeUsageFromRateLimitInfo(info, {
+            capturedAt: Date.now(),
+            providerId: "claude",
+        });
+        if (usage === null) return;
+        try {
+            this.#onAccountUsage(usage);
+        } catch {
+            // A usage listener never decides whether the turn continues.
         }
     }
 
