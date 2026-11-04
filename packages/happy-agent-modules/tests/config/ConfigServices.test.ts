@@ -29,7 +29,7 @@ describe("configuration-owned service authority", () => {
         },
     );
 
-    it("uses the selected workspace's current root policy and gives generated runtime policy precedence", async () => {
+    it("rereads the workspace's root policy, keeps global denials, and gives generated runtime policy precedence", async () => {
         const directory = await mkdtemp(join(tmpdir(), "svc-net-"));
         try {
             let config = await ConfigModule.load(join(directory, "private"));
@@ -54,19 +54,34 @@ describe("configuration-owned service authority", () => {
                 '[network]\nallowed_domains = ["obsolete.example"]\n',
                 "utf8",
             );
-            expect(await config.serviceNetworkPolicy(first)).toMatchObject({
-                allowedDomains: [{ domain: "first.example", ports: [8443] }],
+            expect(await config.networkPolicy(first)).toEqual({
+                allowedDomains: ["first.example"],
+                allowedPorts: [8443],
             });
-            expect(await config.serviceNetworkPolicy(second)).toMatchObject({
-                allowedDomains: [{ domain: "global.example", ports: [443] }],
+            expect(await config.networkPolicy(second)).toEqual({
+                allowedDomains: ["global.example"],
             });
             await writeFile(
                 join(first, "happy.toml"),
                 '[network]\nallowed_domains = ["changed.example"]\n',
                 "utf8",
             );
-            expect(await config.serviceNetworkPolicy(first)).toMatchObject({
-                allowedDomains: [{ domain: "changed.example", ports: [443] }],
+            expect(await config.networkPolicy(first)).toEqual({
+                allowedDomains: ["changed.example"],
+            });
+            await writeFile(
+                paths.globalConfigPath,
+                '[network]\nallowed_domains = ["*.global.example"]\ndenied_domains = ["uploads.global.example"]\n',
+                "utf8",
+            );
+            await writeFile(
+                join(first, "happy.toml"),
+                '[network]\nallowed_domains = ["*.global.example"]\ndenied_domains = ["first.global.example"]\n',
+                "utf8",
+            );
+            expect(await config.networkPolicy(first)).toEqual({
+                allowedDomains: ["*.global.example"],
+                deniedDomains: ["uploads.global.example", "first.global.example"],
             });
             await mkdir(dirname(paths.runtimeConfigPath), { recursive: true });
             await writeFile(
@@ -75,8 +90,8 @@ describe("configuration-owned service authority", () => {
                 "utf8",
             );
             config = await ConfigModule.load(join(directory, "private"));
-            expect(await config.serviceNetworkPolicy(first)).toMatchObject({
-                allowedDomains: [{ domain: "runtime.example", ports: [443] }],
+            expect(await config.networkPolicy(first)).toMatchObject({
+                allowedDomains: ["runtime.example"],
             });
         } finally {
             await rm(directory, { recursive: true, force: true });

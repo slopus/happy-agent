@@ -30,6 +30,19 @@ Bounded edits also cap occurrence collection and check replacement expansion bef
 the resulting string, so a short repeated token cannot multiply an 8 MiB source into an unbounded
 output before the byte check runs.
 
+## Configured network policy reaches every restricted command
+
+A `[network]` policy in `happy.toml` used to reach no command at all: permissions came from the
+mode alone, so Auto and Workspace write commands had no egress and no proxy whatever the person
+configured (slopus/happy#1930). Compute now wraps each agent machine's `run` and `startSession`
+and, for Auto and Workspace write, rereads `ConfigModule.networkPolicy(cwd)` before every command.
+Allowed domains become `allowedHosts`, `allowed_ports` (default `[443]`) becomes `allowedPorts`,
+and `denied_domains` (global and project combined) becomes `deniedHosts`; the supervisor's egress
+proxy enforces all three. Read only and Full access are unchanged. The native Windows host is
+skipped because its supervisor has no host-list proxy and would refuse every command.
+`allowed_loopback_ports` is not applied, because the proxy refuses loopback destinations it was
+not given literally and has no per-port loopback forwarding.
+
 ## Shell descriptions follow the execution environment
 
 Claude's Bash tool used to promise a Bash interpreter on native Windows while Compute ran

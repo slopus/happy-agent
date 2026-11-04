@@ -66,6 +66,7 @@ import {
     resolveComputePath,
 } from "./impl/resolveComputePath.js";
 import { shouldReviewComputePath } from "./impl/shouldReviewComputePath.js";
+import { withConfiguredNetwork } from "./impl/withConfiguredNetwork.js";
 import { assembleComputeTools } from "./tools/assembleComputeTools.js";
 import { presentFilesTool } from "./tools/present_files.js";
 import { assembleReviewerTools } from "./tools/assembleReviewerTools.js";
@@ -421,12 +422,13 @@ export class ComputeModule implements AgentModule {
                     effective.runnerId === undefined
                         ? await this.#runners?.userFor(lockCtx, agentId)
                         : undefined;
-                const created =
+                const here =
                     effective.runnerId === undefined &&
                     effective.docker === undefined &&
-                    user === undefined
-                        ? await this.#createHere(lockCtx, effective, agentId)
-                        : await this.#createElsewhere(lockCtx, effective, agentId, user);
+                    user === undefined;
+                const created = here
+                    ? await this.#createHere(lockCtx, effective, agentId)
+                    : await this.#createElsewhere(lockCtx, effective, agentId, user);
                 const { compute } = created;
                 if (this.#closed) {
                     await compute.dispose(lockCtx);
@@ -442,6 +444,9 @@ export class ComputeModule implements AgentModule {
                     processContext: created.processContext,
                     processManager: created.processManager,
                 };
+                // The Windows supervisor has no host-list proxy, so a policy there would refuse
+                // every restricted command instead of granting anything.
+                if (!(here && process.platform === "win32")) this.#applyConfiguredNetwork(cached);
                 this.#guardSessionStarts(agentId, cached);
                 this.#computes.set(agentId, cached);
                 this.#processes.attach(agentId, compute);
@@ -1245,6 +1250,30 @@ export class ComputeModule implements AgentModule {
             },
         };
         return { compute: hostCompute, processContext, processManager };
+    }
+
+    /**
+     * Gives every restricted command on this machine the person's configured network policy,
+     * reread before each command so a change reaches the next one without a restart.
+     */
+    #applyConfiguredNetwork(cached: CachedCompute): void {
+        const shell = cached.compute.shell;
+        const originalRun = shell.run;
+        const originalStart = shell.startSession;
+        const configured = async (permissions: ComputePermissions) =>
+            permissions.mode === "auto" || permissions.mode === "workspace_write"
+                ? withConfiguredNetwork(permissions, await this.#config.networkPolicy(cached.cwd))
+                : permissions;
+        shell.run = async (options) =>
+            await originalRun.call(shell, {
+                ...options,
+                permissions: await configured(options.permissions),
+            });
+        shell.startSession = async (options) =>
+            await originalStart.call(shell, {
+                ...options,
+                permissions: await configured(options.permissions),
+            });
     }
 
     /** A process whose spawn crosses an abort boundary is part of that abort, not the next turn. */
