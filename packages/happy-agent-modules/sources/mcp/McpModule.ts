@@ -1,3 +1,4 @@
+import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { sql } from "drizzle-orm";
 import {
     agentDatabaseRun,
@@ -195,6 +196,8 @@ export class McpModule implements AgentModule {
     readonly #reloadLock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #catalogs = new Map<string, McpCatalog>();
     readonly #pool = new Map<string, McpPooledConnection>();
+    /** Each connection's tools, listed once until the server reports a change or a reload. */
+    #toolLists = new WeakMap<McpClientConnection, Promise<McpTool[]>>();
     readonly #retries = new Map<string, McpRetry>();
     readonly #agentWorkspaces = new Map<string, string>();
     readonly #workspaceAgents = new Map<string, Set<string>>();
@@ -442,6 +445,8 @@ export class McpModule implements AgentModule {
                     }
                 }),
             );
+            // A server that changes its tools without saying so shows them after a reload.
+            this.#toolLists = new WeakMap();
             await this.#reconcileCatalogs(
                 ctx,
                 new Map([
@@ -467,6 +472,7 @@ export class McpModule implements AgentModule {
         await this.#ensureAgentWorkspace(ctx, agentId);
         await this.#reloadLock.runInLock(ctx, async () => {
             this.#assertOpen();
+            this.#toolLists = new WeakMap();
             await this.#reconcileWorkspace(ctx, this.#attachedWorkspace(agentId));
         });
     }
@@ -1474,6 +1480,9 @@ export class McpModule implements AgentModule {
         connection: McpClientConnection,
     ): void {
         this.#pool.set(connectionId, { references, input, connection });
+        connection.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+            this.#toolLists.delete(connection);
+        });
         connection.client.onclose = () =>
             this.#recordStopped(connectionId, connection, "The MCP server stopped.");
     }
@@ -1628,7 +1637,36 @@ export class McpModule implements AgentModule {
         };
     }
 
+    /**
+     * Every provider request and tool execution reads the tools, so one listing is shared by every
+     * session on the connection. It is not bound to the caller, who only stops waiting for it.
+     */
     async #allTools(ctx: Context, connection: McpClientConnection): Promise<McpTool[]> {
+        let listing = this.#toolLists.get(connection);
+        if (listing === undefined) {
+            const started = this.#listTools(this.#serversLifetime(ctx), connection);
+            this.#toolLists.set(connection, started);
+            started.catch(() => {
+                if (this.#toolLists.get(connection) === started) this.#toolLists.delete(connection);
+            });
+            listing = started;
+        }
+        const lifetime = ctx.lifetime;
+        if (lifetime === undefined) return await listing;
+        lifetime.throwIfAborted();
+        let stop = (): void => {};
+        const stopped = new Promise<never>((_, reject) => {
+            stop = () => reject(lifetime.reason);
+            lifetime.addEventListener("abort", stop, { once: true });
+        });
+        try {
+            return await Promise.race([listing, stopped]);
+        } finally {
+            lifetime.removeEventListener("abort", stop);
+        }
+    }
+
+    async #listTools(ctx: Context, connection: McpClientConnection): Promise<McpTool[]> {
         const values = await collectMcpPages(
             async (cursor) =>
                 await connection.client.listTools(
