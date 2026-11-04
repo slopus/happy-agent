@@ -4,11 +4,18 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const RELEASE_NOTES_SECTIONS = ["Features", "Fixes"] as const;
+export const RELEASE_NOTES_SECTIONS = ["Features", "Fixes", "Thanks"] as const;
 export const RELEASE_NOTES_MAX_BULLETS_PER_SECTION = 3;
 export const RELEASE_NOTES_MAX_WORDS_PER_BULLET = 6;
+export const RELEASE_NOTES_MAX_THANKS = 8;
 
 const MARKDOWN_CHARACTERS = /[`*_[\]<>#~|\\]/u;
+/**
+ * One person the release thanks: `@login` and the issues or pull requests in Happy's own
+ * repositories they are credited for. Happy Desktop's update card reads exactly this shape.
+ */
+const THANKS_BULLET =
+    /^@([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})(?: slopus\/(?:happy|happy-agent|happy-desktop)#[1-9]\d{0,6})+$/u;
 
 export function releaseNotesPath(tag: string): string {
     return `release-notes/${tag}.md`;
@@ -18,6 +25,7 @@ export function releaseNotesPath(tag: string): string {
 export function validateReleaseNotes(markdown: string): string[] {
     const problems: string[] = [];
     const counts = new Map<string, number>();
+    const thanked = new Set<string>();
     let section: string | undefined;
 
     for (const [index, rawLine] of markdown.replace(/\r\n/gu, "\n").split("\n").entries()) {
@@ -29,7 +37,9 @@ export function validateReleaseNotes(markdown: string): string[] {
         const heading = /^## (.+)$/u.exec(line)?.[1]?.trim();
         if (heading !== undefined) {
             if (!RELEASE_NOTES_SECTIONS.some((name) => name === heading)) {
-                problems.push(`${where}: only "## Features" and "## Fixes" sections are allowed.`);
+                problems.push(
+                    `${where}: only "## Features", "## Fixes", and "## Thanks" sections are allowed.`,
+                );
                 section = undefined;
             } else if (counts.has(heading)) {
                 problems.push(`${where}: "## ${heading}" appears more than once.`);
@@ -54,6 +64,24 @@ export function validateReleaseNotes(markdown: string): string[] {
         const bullet = (match[1] ?? "").trim();
         const count = (counts.get(section) ?? 0) + 1;
         counts.set(section, count);
+        if (section === "Thanks") {
+            if (count === RELEASE_NOTES_MAX_THANKS + 1) {
+                problems.push(
+                    `${where}: "## Thanks" has more than ${RELEASE_NOTES_MAX_THANKS} people.`,
+                );
+            }
+            const login = THANKS_BULLET.exec(bullet)?.[1];
+            if (login === undefined) {
+                problems.push(
+                    `${where}: thank someone as "- @login slopus/happy-agent#73", with one or more issues or pull requests in slopus/happy, happy-agent, or happy-desktop.`,
+                );
+            } else if (thanked.has(login.toLowerCase())) {
+                problems.push(`${where}: @${login} is thanked more than once.`);
+            } else {
+                thanked.add(login.toLowerCase());
+            }
+            continue;
+        }
         if (count === RELEASE_NOTES_MAX_BULLETS_PER_SECTION + 1) {
             problems.push(
                 `${where}: "## ${section}" has more than ${RELEASE_NOTES_MAX_BULLETS_PER_SECTION} bullets.`,

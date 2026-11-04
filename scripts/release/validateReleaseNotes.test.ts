@@ -37,7 +37,7 @@ test("accepts a missing or empty section and an empty file", () => {
 
 test("rejects anything but the two sections and their bullets", () => {
     for (const [markdown, problem] of [
-        ["## Changes\n- Something new\n", /only "## Features" and "## Fixes"/u],
+        ["## Changes\n- Something new\n", /only "## Features", "## Fixes", and "## Thanks"/u],
         ["# Features\n- Something new\n", /expected a "## Features" or "## Fixes" heading/u],
         ["## Features\nSomething new\n", /expected a "## Features" or "## Fixes" heading/u],
         ["## Features\n* Something new\n", /expected a "## Features" or "## Fixes" heading/u],
@@ -76,6 +76,51 @@ test("keeps each bullet to six plain words and each section to three bullets", (
     assert.match(
         validateReleaseNotes("## Fixes\n- One\n- Two\n- Three\n- Four\n").join(""),
         /more than 3 bullets/u,
+    );
+});
+
+test("thanks people by GitHub login and the issues they are credited for", () => {
+    assert.deepEqual(
+        validateReleaseNotes(
+            [
+                "## Fixes",
+                "- Windows sandbox commands run again",
+                "",
+                "## Thanks",
+                "",
+                "- @shellus slopus/happy-agent#73",
+                "- @chegoapp1-bit slopus/happy-agent#75",
+                "- @acidsatan slopus/happy-agent#74 slopus/happy#1941",
+                "",
+            ].join("\n"),
+        ),
+        [],
+    );
+    for (const bullet of [
+        "shellus slopus/happy-agent#73",
+        "@shellus",
+        "@shellus #73",
+        "@shellus other/repo#73",
+        "@shellus slopus/happy-agent#73 and more",
+        "@-shellus slopus/happy-agent#73",
+        "[@shellus](https://github.com/shellus) slopus/happy-agent#73",
+    ]) {
+        assert.match(
+            validateReleaseNotes(`## Thanks\n- ${bullet}\n`).join(""),
+            /thank someone as/u,
+            bullet,
+        );
+    }
+    assert.match(
+        validateReleaseNotes(
+            "## Thanks\n- @shellus slopus/happy-agent#73\n- @Shellus slopus/happy-agent#75\n",
+        ).join(""),
+        /@Shellus is thanked more than once/u,
+    );
+    const nine = Array.from({ length: 9 }, (_, i) => `- @person${i} slopus/happy#${i + 1}`);
+    assert.match(
+        validateReleaseNotes(`## Thanks\n${nine.join("\n")}\n`).join(""),
+        /more than 8 people/u,
     );
 });
 

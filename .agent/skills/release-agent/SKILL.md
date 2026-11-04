@@ -151,6 +151,37 @@ rewriting them. It is an extra artifact; keep writing the full notes above for t
 - New capabilities go under `## Features`; things that stopped going wrong go under `## Fixes`.
   The card shows features first and fixes behind a tab. Omit a section with nothing in it.
 
+### Thanking the people behind a fix
+
+When a fix in the release came from someone outside the team, such as an issue whose logs,
+repro, or root cause led to it, thank them in a `## Thanks` section after the others. Each
+bullet is `@login` and the issues or pull requests they are credited for, in slopus/happy,
+happy-agent, or happy-desktop; at most eight people:
+
+```md
+## Thanks
+
+- @shellus slopus/happy-agent#73
+- @acidsatan slopus/happy-agent#74 slopus/happy#1941
+```
+
+Happy Desktop's update card lists them behind a collapsed Happy contributors row with their
+avatars and links. Find candidates in the commit bodies of the range (`git log --format='%h%n%b'`)
+by the issues they cite, and read each issue before crediting its author. Thank people for
+reports and changes that shaped a fix in this release, not for every issue they filed, and
+never thank a team member here. Production files repeat the people their previews thanked.
+
+End the full GitHub notes with the same people, linked, and one line on what each one gave:
+
+```md
+## Thanks
+
+- [@shellus](https://github.com/shellus) found why Windows sandbox commands exited 125 ([happy-agent#73](https://github.com/slopus/happy-agent/issues/73))
+```
+
+GitHub notifies everyone a release mentions, so a Thanks section is a message to those people.
+Include one only when the person who asked for the release has approved those names.
+
 Check it, then commit it on its own and push that commit to `main` as part of the requested
 release — the workflow only runs from the current `origin/main`, and it fails before building
 when the file is missing or invalid:
