@@ -38,8 +38,11 @@ configured (slopus/happy#1930). Compute now wraps each agent machine's `run` and
 and, for Auto and Workspace write, rereads `ConfigModule.networkPolicy(cwd)` before every command.
 Allowed domains become `allowedHosts`, `allowed_ports` (default `[443]`) becomes `allowedPorts`,
 and `denied_domains` (global and project combined) becomes `deniedHosts`; the supervisor's egress
-proxy enforces all three. Read only and Full access are unchanged. The native Windows host is
-skipped because its supervisor has no host-list proxy and would refuse every command.
+proxy enforces all three. Read only and Full access are unchanged. Runner machines are skipped:
+an older runner's compute accepts the extra network fields but drops denied hosts and ports, and a
+remote runner's project `happy.toml` is not on this machine, so applying it there would need
+runner protocol negotiation first. The native Windows host is skipped because its supervisor has
+no host-list proxy and would refuse every command.
 `allowed_loopback_ports` is not applied, because the proxy refuses loopback destinations it was
 not given literally and has no per-port loopback forwarding.
 
