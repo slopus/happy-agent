@@ -17,13 +17,14 @@ const models: readonly ForeignAgentModel[] = [
 /**
  * Unmodified Claude Code through the Claude Agent SDK: Claude's own prompt, tools, settings,
  * subagents and compaction, with Happy's tools bridged over MCP, real mid-turn steering, and the
- * models the signed-in account serves. The SDK starts the Claude Code build Happy ships with.
+ * models the signed-in account serves. The SDK starts the configured Claude Code build, or the one
+ * Happy ships with.
  */
 export const claudeCodeAgent: ForeignAgent = {
     type: "claude-code",
     modelPrefix: "claude-code",
     label: "Claude Code",
-    connect: (start) => claudeAgentConnect(start.env, start.onAccountUsage),
+    connect: (start) => claudeAgentConnect(start.env, start.onAccountUsage, start.command),
     models,
     modelsFromSelector: (values) =>
         foreignModelsWithEfforts("claude-code", values, (value, name) => ({

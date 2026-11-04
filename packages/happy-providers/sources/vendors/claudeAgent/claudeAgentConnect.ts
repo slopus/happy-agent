@@ -42,14 +42,21 @@ const MODES: readonly PermissionMode[] = [
  *
  * Each ACP session is one streaming SDK query: Claude Code's own prompt, tools, subagents,
  * settings and compaction, with Happy's tools reached over the MCP bridge. Its loop takes input
- * mid-turn, so steering joins the running turn instead of interrupting it.
+ * mid-turn, so steering joins the running turn instead of interrupting it. `executable` is the
+ * Claude Code build to run; without it the SDK runs the one Happy ships with.
  */
 export function claudeAgentConnect(
     environment: NodeJS.ProcessEnv,
     onAccountUsage?: (usage: ProviderUsage) => void,
+    executable?: string,
 ): AcpConnect {
     return async (_cwd, client) => {
-        const connection = new ClaudeAgentConnection(environment, client, onAccountUsage);
+        const connection = new ClaudeAgentConnection(
+            environment,
+            client,
+            onAccountUsage,
+            executable,
+        );
         return {
             conn: connection,
             init: {
@@ -88,6 +95,7 @@ interface ClaudeThread {
 
 class ClaudeAgentConnection implements AcpAgentConnection {
     readonly #environment: NodeJS.ProcessEnv;
+    readonly #executable: string | undefined;
     readonly #client: acp.Client;
     readonly #onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
     readonly #threads = new Map<string, ClaudeThread>();
@@ -103,8 +111,10 @@ class ClaudeAgentConnection implements AcpAgentConnection {
         environment: NodeJS.ProcessEnv,
         client: acp.Client,
         onAccountUsage: ((usage: ProviderUsage) => void) | undefined,
+        executable?: string,
     ) {
         this.#environment = environment;
+        this.#executable = executable;
         this.#client = client;
         this.#onAccountUsage = onAccountUsage;
     }
@@ -214,7 +224,7 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                 // Claude Code as its user configured it: their settings, CLAUDE.md and skills.
                 settingSources: ["user", "project", "local"],
                 systemPrompt: { type: "preset", preset: "claude_code" },
-                pathToClaudeCodeExecutable: resolveClaudeCodeExecutablePath(),
+                pathToClaudeCodeExecutable: this.#executable ?? resolveClaudeCodeExecutablePath(),
                 env: {
                     ...process.env,
                     ...this.#environment,

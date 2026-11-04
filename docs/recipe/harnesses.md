@@ -75,7 +75,10 @@ env = { GOOSE_PROVIDER = "openai" }
 those accounts, or `enabled = false` to leave only foreign agents.
 
 Claude Code uses the account's `oauth_token`, `api_key`, `auth_token`, or `config_dir`, or the
-machine's Claude Code login for the built-in `claude`. Codex CLI uses the account's `api_key`, or
+machine's Claude Code login for the built-in `claude`. It runs the account's `executable`, or the
+harness's `command`, which wins; without either it runs the Claude Code Happy ships. An
+installed Claude Code offers the models its own login serves, including ones a bundled build
+does not list yet. Codex CLI uses the account's `api_key`, or
 the folder holding its `auth_file` (which must be named `auth.json`) as `CODEX_HOME`, or
 `~/.codex` for the built-in `codex`. Antigravity and OpenCode use their own logins; set `api_key`
 on their harness to use a key instead. A generic `acp` agent gets credentials only through `env`
