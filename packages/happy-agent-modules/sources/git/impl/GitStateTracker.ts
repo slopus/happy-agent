@@ -36,6 +36,13 @@ const BACKOFF_LIMIT_MS = 30_000;
 const FULL_SCAN_LIMIT_MS = 30 * 60 * 1000;
 /** Each unchanged stale check doubles the wait, up to this many times the starting interval. */
 const IDLE_RECONCILE_FACTOR = 10;
+/** Paths Git reported ignored are remembered this long, and at most this many per repository. */
+const IGNORED_PATHS_TTL_MS = 10 * 60 * 1000;
+const IGNORED_PATH_LIMIT = 4_096;
+/** A changed path Git saw nothing in waits this long before it may be checked again, doubling. */
+const QUIET_PATH_START_MS = 1_000;
+const QUIET_PATH_LIMIT_MS = 30_000;
+const QUIET_PATH_COUNT_LIMIT = 4_096;
 
 /** The stale deadline of a repository whose working tree is not delivering events. */
 export const GIT_RECONCILE_STALE_AFTER_MS = POLLING_STALE_MS;
@@ -95,10 +102,20 @@ interface RepositoryTracker {
     fullScanAt: number;
     generation: number;
     gitDirectory: string | undefined;
+    /**
+     * Paths Git reported ignored, a directory with a trailing `/`. Their events are dropped without
+     * asking Git again, because every question is a sandboxed process.
+     */
+    readonly ignoredPaths: Set<string>;
+    ignoredPathsSince: number;
     inFlight: Promise<void> | undefined;
     key: string;
     lastActiveAt: number;
     readonly pendingWorktreePaths: Set<string>;
+    /** Where the watched folder sits in its repository, as Git's `--show-prefix` names it. */
+    prefix: string;
+    /** Changed paths Git last saw nothing in, with when each may be checked again and its wait. */
+    readonly quietPaths: Map<string, { delayMs: number; until: number }>;
     reconcileAt: number | undefined;
     /**
      * Whether the folder is known to be a repository and has its working-tree and Git directory
@@ -266,10 +283,14 @@ export class GitStateTracker {
             fullScanAt: 0,
             generation: 0,
             gitDirectory: undefined,
+            ignoredPaths: new Set(),
+            ignoredPathsSince: Date.now(),
             inFlight: undefined,
             key,
             lastActiveAt: Date.now(),
             pendingWorktreePaths: new Set(),
+            prefix: "",
+            quietPaths: new Map(),
             reconcileAt: undefined,
             reconcileAfterScan: false,
             reconcileDelayMs: GIT_RECONCILE_STALE_AFTER_MS,
@@ -337,6 +358,10 @@ export class GitStateTracker {
         // Windows worktree watch also sees pack files, locks and reflogs; classifying those
         // with another sandboxed Git process creates work for changes outside the worktree.
         if (normalized.toLowerCase().startsWith(".git/")) return;
+        // Asking Git about a path costs a sandboxed process; on Windows that is a logon through
+        // LSASS. A log, cache, or build file rewritten every second must not ask each time.
+        if (normalized.split("/").at(-1) === ".gitignore") forgetIgnoredPaths(tracker);
+        else if (isKnownIgnored(tracker, normalized)) return;
         if (!tracker.unclassifiedDirty) {
             if (
                 tracker.pendingWorktreePaths.size >= WORKTREE_PATH_LIMIT &&
@@ -355,7 +380,13 @@ export class GitStateTracker {
         tracker.firstDirtyAt ??= Date.now();
         if (tracker.scanning || tracker.classificationInFlight) return;
         const waited = Date.now() - tracker.firstDirtyAt;
-        const delay = Math.max(0, Math.min(DEBOUNCE_MS, MAXIMUM_DEBOUNCE_MS - waited));
+        this.#scheduleFlush(
+            tracker,
+            Math.max(0, Math.min(DEBOUNCE_MS, MAXIMUM_DEBOUNCE_MS - waited)),
+        );
+    }
+
+    #scheduleFlush(tracker: RepositoryTracker, delay: number): void {
         if (tracker.debounceTimer !== undefined) clearTimeout(tracker.debounceTimer);
         tracker.debounceTimer = setTimeout(() => {
             tracker.debounceTimer = undefined;
@@ -376,19 +407,29 @@ export class GitStateTracker {
         tracker.firstDirtyAt = undefined;
         const unclassified = tracker.unclassifiedDirty;
         tracker.unclassifiedDirty = false;
-        const paths = Array.from(tracker.pendingWorktreePaths);
+        // A path that changed while Git was being asked about it may have been learned since.
+        const paths = Array.from(tracker.pendingWorktreePaths).filter(
+            (path) => !isKnownIgnored(tracker, path),
+        );
         tracker.pendingWorktreePaths.clear();
         if (unclassified) {
             this.#enqueue(tracker.key);
             return;
         }
         if (paths.length === 0) return;
+        // Only paths Git just saw nothing in, changing again and again: wait them out together.
+        const quietUntil = quietPathsUntil(tracker, paths, Date.now());
+        if (quietUntil !== undefined) {
+            for (const path of paths) tracker.pendingWorktreePaths.add(path);
+            this.#scheduleFlush(tracker, quietUntil - Date.now());
+            return;
+        }
 
         const generation = tracker.generation;
         tracker.classificationInFlight = true;
         let relevant = true;
         try {
-            relevant = await this.#hasRelevantWorktreeChanges(tracker.entity, paths);
+            relevant = await this.#hasRelevantWorktreeChanges(tracker, paths);
         } catch {
             // Classification is only an optimization. A failure must conservatively rescan.
         } finally {
@@ -414,25 +455,41 @@ export class GitStateTracker {
     }
 
     async #hasRelevantWorktreeChanges(
-        entity: GitTrackedEntity,
+        tracker: RepositoryTracker,
         paths: readonly string[],
     ): Promise<boolean> {
-        const { path } = entity;
-        const scan = this.#machine(entity).scan;
+        const { path } = tracker.entity;
+        const scan = this.#machine(tracker.entity).scan;
+        const generation = tracker.generation;
         for (let offset = 0; offset < paths.length; offset += WORKTREE_PATH_BATCH) {
+            const batch = paths.slice(offset, offset + WORKTREE_PATH_BATCH);
             const result = await scan({
                 args: [
                     "status",
                     "--porcelain=v2",
                     "-z",
                     "--untracked-files=all",
+                    "--ignored=matching",
                     "--",
-                    ...paths.slice(offset, offset + WORKTREE_PATH_BATCH),
+                    ...batch,
                 ],
                 cwd: path,
                 maximumBytes: PATH_STATUS_OUTPUT_LIMIT,
             });
-            if (result.truncated || result.stdout.length > 0) return true;
+            if (result.truncated) return true;
+            const status = splitPathStatus(result.stdout);
+            if (tracker.generation === generation) {
+                for (const ignored of status.ignored) rememberIgnoredPath(tracker, ignored);
+            }
+            if (status.visible) {
+                for (const changed of batch) tracker.quietPaths.delete(changed);
+                return true;
+            }
+            const now = Date.now();
+            for (const quiet of batch) {
+                if (isKnownIgnored(tracker, quiet)) continue;
+                rememberQuietPath(tracker, quiet, now);
+            }
         }
         return false;
     }
@@ -509,9 +566,10 @@ export class GitStateTracker {
     #watchRepository(
         tracker: RepositoryTracker,
         machine: GitRepositoryMachine,
-        directories: { commonDirectory: string; gitDirectory: string },
+        directories: { commonDirectory: string; gitDirectory: string; prefix: string },
     ): void {
         tracker.repository = true;
+        tracker.prefix = directories.prefix;
         tracker.unwatchEntries?.();
         tracker.unwatchEntries = undefined;
         tracker.gitDirectory = directories.gitDirectory;
@@ -570,25 +628,36 @@ export class GitStateTracker {
         ) {
             return;
         }
+        // A new index, HEAD, or config can make an ignored path tracked or change the rules.
+        if (change.kind !== "refs") forgetIgnoredPaths(tracker);
         this.markChanged(tracker.entity);
     }
 
     async #resolveGitDirectories(
         machine: GitRepositoryMachine,
         path: string,
-    ): Promise<{ commonDirectory: string; gitDirectory: string } | undefined> {
+    ): Promise<{ commonDirectory: string; gitDirectory: string; prefix: string } | undefined> {
         try {
             const result = await machine.scan({
-                args: ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+                args: [
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-dir",
+                    "--git-common-dir",
+                    "--show-prefix",
+                ],
                 cwd: path,
             });
-            const [gitDirectory, commonDirectory] = result.stdout
+            const [gitDirectory, commonDirectory, prefix] = result.stdout
                 .split("\n")
-                .map((line) => line.trim())
-                .filter(Boolean);
-            return gitDirectory === undefined
+                .map((line) => line.trim());
+            return !gitDirectory
                 ? undefined
-                : { commonDirectory: commonDirectory ?? gitDirectory, gitDirectory };
+                : {
+                      commonDirectory: commonDirectory || gitDirectory,
+                      gitDirectory,
+                      prefix: prefix ?? "",
+                  };
         } catch {
             return undefined;
         }
@@ -910,6 +979,90 @@ function normalizeWorktreeEventPath(path: string): string | undefined {
         return undefined;
     }
     return normalized;
+}
+
+/** Splits scoped porcelain v2 status into whether anything is visible and the ignored paths. */
+function splitPathStatus(stdout: string): { ignored: string[]; visible: boolean } {
+    const fields = stdout.split("\0");
+    const ignored: string[] = [];
+    let visible = false;
+    for (let index = 0; index < fields.length; index += 1) {
+        const field = fields[index]!;
+        if (field.length === 0) continue;
+        if (field.startsWith("! ")) {
+            ignored.push(field.slice(2));
+            continue;
+        }
+        visible = true;
+        // A rename or copy carries its original path as the next field.
+        if (field.startsWith("2 ")) index += 1;
+    }
+    return { ignored, visible };
+}
+
+/** Remembers one ignored path Git named from the repository root, relative to the watched folder. */
+function rememberIgnoredPath(tracker: RepositoryTracker, fromRoot: string): void {
+    if (!fromRoot.startsWith(tracker.prefix)) return;
+    const path = fromRoot.slice(tracker.prefix.length);
+    if (path.length === 0) return;
+    if (tracker.ignoredPaths.size >= IGNORED_PATH_LIMIT) forgetIgnoredPaths(tracker);
+    if (tracker.ignoredPaths.size === 0) tracker.ignoredPathsSince = Date.now();
+    tracker.ignoredPaths.add(path);
+}
+
+function forgetIgnoredPaths(tracker: RepositoryTracker): void {
+    tracker.ignoredPaths.clear();
+    tracker.ignoredPathsSince = Date.now();
+}
+
+/** Whether Git already reported this path, or a directory holding it, as ignored. */
+function isKnownIgnored(tracker: RepositoryTracker, path: string): boolean {
+    if (tracker.ignoredPaths.size === 0) return false;
+    if (Date.now() - tracker.ignoredPathsSince >= IGNORED_PATHS_TTL_MS) {
+        forgetIgnoredPaths(tracker);
+        return false;
+    }
+    if (tracker.ignoredPaths.has(path) || tracker.ignoredPaths.has(`${path}/`)) return true;
+    for (let slash = path.indexOf("/"); slash >= 0; slash = path.indexOf("/", slash + 1)) {
+        if (tracker.ignoredPaths.has(path.slice(0, slash + 1))) return true;
+    }
+    return false;
+}
+
+function rememberQuietPath(tracker: RepositoryTracker, path: string, now: number): void {
+    const previous = tracker.quietPaths.get(path);
+    if (previous === undefined && tracker.quietPaths.size >= QUIET_PATH_COUNT_LIMIT) {
+        tracker.quietPaths.clear();
+    }
+    const delayMs =
+        previous === undefined
+            ? QUIET_PATH_START_MS
+            : Math.min(QUIET_PATH_LIMIT_MS, previous.delayMs * 2);
+    tracker.quietPaths.set(path, { delayMs, until: now + delayMs });
+}
+
+/**
+ * When every changed path is one Git just saw nothing in and is still waiting, the time the first
+ * of them may be checked again; otherwise undefined, and the batch is checked now. A path waiting
+ * this way is a file rewritten with the same contents, or one created and removed again, over and
+ * over. A path that has not changed for a whole wait starts again from the shortest one.
+ */
+function quietPathsUntil(
+    tracker: RepositoryTracker,
+    paths: readonly string[],
+    now: number,
+): number | undefined {
+    let until = Number.POSITIVE_INFINITY;
+    for (const path of paths) {
+        const quiet = tracker.quietPaths.get(path);
+        if (quiet === undefined) return undefined;
+        if (quiet.until <= now) {
+            if (now - quiet.until > quiet.delayMs) tracker.quietPaths.delete(path);
+            return undefined;
+        }
+        until = Math.min(until, quiet.until);
+    }
+    return until;
 }
 
 function hasPendingDirty(tracker: RepositoryTracker): boolean {

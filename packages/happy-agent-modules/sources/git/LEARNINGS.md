@@ -21,6 +21,25 @@ Classifying each event launched an unnecessary sandboxed PowerShell/Git command.
 now stay with the dedicated metadata watchers; ordinary source changes still reach Git status.
 Direct Git operations and clones explicitly hide their background console windows.
 
+## Ignored-file churn must not launch a scan per write
+
+On Windows every read-only Git question is a sandboxed process, and every sandboxed process logs a
+sandbox account on through LSASS. Windows watches recursively in the kernel and lists no ignored
+directories (above), so each write to a log, cache, or build file inside a tracked project became
+a scoped `git status` launch. A user with about 15 PHP projects open saw roughly 30,000 launches a
+day, back to back, while nothing was happening in Happy. The only limit was how long a launch took,
+and LSASS grew until the machine froze (slopus/happy#1950). On a hosted Windows runner, four idle
+repositories with a log and a cache written five times a second cost 338 launches a minute.
+
+Scoped classification now asks with `--ignored=matching`. The tracker remembers each path or
+directory Git reports ignored, translated from repository-root paths through `--show-prefix`.
+Later events under a remembered path never reach Git. The memory is cleared when a `.gitignore`
+changes or the index, HEAD, or config moves. It also expires after ten minutes, which covers
+`info/exclude`, the one rule source nothing watches. A changed path Git sees nothing in, such as a
+tracked file rewritten with the same bytes or a temporary file already gone, waits before it is
+asked about again: one second, doubling to thirty. Any batch with a path not waiting this way is
+asked about immediately, so real edits elsewhere are never delayed.
+
 ## Every repository has a comparison base
 
 Comparison used to require a merge base with a literal `origin/main`, and an unborn branch had

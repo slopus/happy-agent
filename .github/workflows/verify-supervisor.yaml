@@ -20,17 +20,29 @@ on:
                 description: Build and validate only the standalone Windows Agent
                 type: boolean
                 default: false
+            lsass_only:
+                description: Measure only whether repeated Windows sandbox launches grow LSASS
+                type: boolean
+                default: false
+            lsass_supervisor:
+                description: Windows supervisor to measure, "source" or a published version such as 0.0.16
+                type: string
+                default: source
+            lsass_runner:
+                description: Windows runner image for the LSASS measurement
+                type: string
+                default: windows-2025
 
 permissions:
     contents: read
 
 concurrency:
-    group: verify-supervisor-${{ github.ref }}
+    group: verify-supervisor-${{ github.ref }}-${{ inputs.lsass_only && format('{0}-{1}', inputs.lsass_supervisor, inputs.lsass_runner) || 'all' }}
     cancel-in-progress: true
 
 jobs:
     compute-services:
-        if: ${{ inputs.services_only || !inputs.windows_only }}
+        if: ${{ !inputs.lsass_only && (inputs.services_only || !inputs.windows_only) }}
         name: Published service runtime on ${{ matrix.runner }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 20
@@ -67,13 +79,145 @@ jobs:
         permissions:
             contents: read
             id-token: write
-        if: ${{ !inputs.services_only }}
+        if: ${{ !inputs.services_only && !inputs.lsass_only }}
         uses: ./.github/workflows/build-windows.yml
         with:
             version: 0.4.48-windows-ci.${{ github.run_number }}
 
+    windows-lsass:
+        if: ${{ inputs.lsass_only }}
+        name: Windows sandbox launches do not grow LSASS (${{ inputs.lsass_supervisor }})
+        runs-on: ${{ inputs.lsass_runner }}
+        timeout-minutes: 90
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - name: Download the published supervisor
+              if: ${{ inputs.lsass_supervisor != 'source' }}
+              env:
+                  SUPERVISOR_VERSION: ${{ inputs.lsass_supervisor }}
+              run: |
+                  $url = "https://registry.npmjs.org/@slopus/happy-agent-supervisor/-/happy-agent-supervisor-$env:SUPERVISOR_VERSION-win32-x64.tgz"
+                  Invoke-WebRequest -Uri $url -OutFile supervisor.tgz
+                  New-Item -ItemType Directory -Force supervisor-package | Out-Null
+                  tar -xzf supervisor.tgz -C supervisor-package
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  $destination = 'packages/happy-agent-supervisor/native/target/release'
+                  New-Item -ItemType Directory -Force $destination | Out-Null
+                  Copy-Item supervisor-package/package/vendor/x86_64-pc-windows-gnu/bin/*.exe $destination
+            - name: Restore matching native build
+              if: ${{ inputs.lsass_supervisor == 'source' }}
+              id: native-cache
+              uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+              with:
+                  path: packages/happy-agent-supervisor/native/target/release
+                  key: windows-sandbox-gnu195-v1-${{ hashFiles('.gitattributes', 'packages/happy-agent-supervisor/native/windows/**', 'packages/happy-agent-supervisor/scripts/build-native-windows.mjs') }}
+            - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2
+              if: ${{ inputs.lsass_supervisor == 'source' && steps.native-cache.outputs.cache-hit != 'true' }}
+              id: msys2
+              with:
+                  msystem: MINGW64
+                  install: mingw-w64-x86_64-gcc
+            - name: Build supervisor and matching helpers from source
+              if: ${{ inputs.lsass_supervisor == 'source' && steps.native-cache.outputs.cache-hit != 'true' }}
+              env:
+                  MSYS2_LOCATION: ${{ steps.msys2.outputs.msys2-location }}
+                  CARGO_BUILD_JOBS: "2"
+              run: |
+                  $env:PATH = "$env:MSYS2_LOCATION\mingw64\bin;$env:PATH"
+                  rustup toolchain install 1.95.0-x86_64-pc-windows-gnu --profile minimal
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  node packages/happy-agent-supervisor/scripts/build-native-windows.mjs
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            - name: Save the completed native build
+              if: ${{ inputs.lsass_supervisor == 'source' && steps.native-cache.outputs.cache-hit != 'true' }}
+              uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+              with:
+                  path: packages/happy-agent-supervisor/native/target/release
+                  key: ${{ steps.native-cache.outputs.cache-primary-key }}
+            - name: Set up once on disposable runner
+              run: |
+                  if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Hosted CI only' }
+                  & packages/happy-agent-supervisor/native/target/release/happy-agent-supervisor.exe --setup
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  $status = & packages/happy-agent-supervisor/native/target/release/happy-agent-supervisor.exe --setup-status | ConvertFrom-Json
+                  if ($LASTEXITCODE -ne 0 -or -not $status.ready) { throw 'Sandbox setup did not complete' }
+                  "HAPPY_WINDOWS_SANDBOX_HOME=$($status.stateDirectory)" >> $env:GITHUB_ENV
+                  'HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1' >> $env:GITHUB_ENV
+            - name: Measure LSASS across repeated sandbox launches
+              run: node packages/happy-agent-supervisor/scripts/verify-native-windows-lsass.mjs
+            - name: "Diagnostic: LSASS across bare CreateProcessWithLogonW launches"
+              if: ${{ always() }}
+              continue-on-error: true
+              run: |
+                  $users = Get-Content -Raw "$env:HAPPY_WINDOWS_SANDBOX_HOME\.sandbox-secrets\sandbox_users.json" | ConvertFrom-Json
+                  Add-Type -AssemblyName System.Security
+                  $blob = [Convert]::FromBase64String($users.offline.password)
+                  $password = [Text.Encoding]::UTF8.GetString([Security.Cryptography.ProtectedData]::Unprotect($blob, $null, 'LocalMachine'))
+                  $secure = ConvertTo-SecureString $password -AsPlainText -Force
+                  $before = (Get-Process lsass).HandleCount
+                  $sessionsBefore = @(Get-CimInstance Win32_LogonSession).Count
+                  for ($i = 0; $i -lt 150; $i++) {
+                      $info = [Diagnostics.ProcessStartInfo]::new('C:\Windows\System32\cmd.exe', '/d /c exit 0')
+                      $info.UserName = $users.offline.username
+                      $info.Domain = '.'
+                      $info.Password = $secure
+                      $info.UseShellExecute = $false
+                      $info.LoadUserProfile = $false
+                      $info.WorkingDirectory = 'C:\Windows\Temp'
+                      $process = [Diagnostics.Process]::Start($info)
+                      $process.WaitForExit()
+                      $process.Dispose()
+                  }
+                  $after = (Get-Process lsass).HandleCount
+                  Start-Sleep -Seconds 30
+                  $settled = (Get-Process lsass).HandleCount
+                  $sessionsSettled = @(Get-CimInstance Win32_LogonSession).Count
+                  @{ phase = 'bare-logon'; launches = 150; lsassBefore = $before; lsassAfter = $after; lsassSettled = $settled; logonSessionsBefore = $sessionsBefore; logonSessionsSettled = $sessionsSettled } | ConvertTo-Json -Compress
+            - name: "Diagnostic: sandbox logs"
+              if: ${{ always() }}
+              continue-on-error: true
+              run: Get-ChildItem -Recurse "$env:HAPPY_WINDOWS_SANDBOX_HOME" -Filter *.log | ForEach-Object { "== $($_.FullName)"; Get-Content $_.FullName -Tail 60 }
+
+    windows-idle-git:
+        if: ${{ inputs.lsass_only }}
+        name: Idle Windows Git tracking does not storm the sandbox or grow LSASS
+        runs-on: windows-2025
+        timeout-minutes: 45
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+            - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+            - name: Provision the published sandbox once on this disposable runner
+              run: |
+                  if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Hosted CI only' }
+                  $supervisor = @'
+                  const { createRequire } = require('node:module');
+                  const { dirname, join, resolve } = require('node:path');
+                  const modules = createRequire(resolve('packages/happy-agent-modules/package.json'));
+                  const compute = createRequire(modules.resolve('@slopus/happy-agent-compute'));
+                  const platform = dirname(compute.resolve('@slopus/happy-agent-supervisor-win32-x64/package.json'));
+                  process.stdout.write(join(platform, 'vendor/x86_64-pc-windows-gnu/bin/happy-agent-supervisor.exe'));
+                  '@ | node
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  & $supervisor --setup
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  $status = & $supervisor --setup-status | ConvertFrom-Json
+                  if ($LASTEXITCODE -ne 0 -or -not $status.ready) { throw 'Sandbox setup did not complete' }
+                  "HAPPY_WINDOWS_SANDBOX_HOME=$($status.stateDirectory)" >> $env:GITHUB_ENV
+            - name: Track idle repositories through a minute of ignored-file churn
+              run: pnpm --filter @slopus/happy-agent-modules exec vitest run --config vitest.live.config.ts tests/git/windowsIdleGitTracking.live.test.ts
+
     supervisor:
-        if: ${{ !inputs.windows_only && !inputs.services_only }}
+        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only }}
         name: ${{ matrix.name }}
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 30
@@ -154,7 +298,7 @@ jobs:
                   if-no-files-found: error
 
     package:
-        if: ${{ !inputs.windows_only && !inputs.services_only }}
+        if: ${{ !inputs.windows_only && !inputs.services_only && !inputs.lsass_only }}
         name: TypeScript package
         runs-on: ubuntu-24.04
         timeout-minutes: 20
