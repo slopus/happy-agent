@@ -21,8 +21,15 @@ import { CLAUDE_SDK_PRIVACY_ENVIRONMENT } from "@/vendors/claude/claudeSdkPrivac
 import { resolveClaudeCodeExecutablePath } from "@/vendors/claude/resolveClaudeCodeExecutablePath.js";
 import { AsyncInputQueue } from "@/vendors/claudeAgent/impl/AsyncInputQueue.js";
 import { claudeAgentUpdates } from "@/vendors/claudeAgent/impl/claudeAgentUpdates.js";
+import { claudeAgentUsage } from "@/vendors/claudeAgent/impl/claudeAgentUsage.js";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+// Happy's own Claude loop compacts for Claude Code and turns its auto-compaction off. Here Claude
+// Code runs its own loop and nothing else compacts it, so it keeps its auto-compaction.
+const { DISABLE_AUTO_COMPACT: _, ...CLAUDE_CODE_PRIVACY_ENVIRONMENT } =
+    CLAUDE_SDK_PRIVACY_ENVIRONMENT;
+
 const MODES: readonly PermissionMode[] = [
     "default",
     "acceptEdits",
@@ -203,7 +210,7 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                 env: {
                     ...process.env,
                     ...this.#environment,
-                    ...CLAUDE_SDK_PRIVACY_ENVIRONMENT,
+                    ...CLAUDE_CODE_PRIVACY_ENVIRONMENT,
                 },
                 canUseTool: async (toolName, toolInput, { toolUseID }) => {
                     const answer = await this.#client.requestPermission({
@@ -258,14 +265,17 @@ class ClaudeAgentConnection implements AcpAgentConnection {
     /** Translate one query's messages into ACP updates and end each prompt at its result. */
     async #pump(sessionId: string, thread: ClaudeThread): Promise<void> {
         const updates = claudeAgentUpdates();
+        const usage = claudeAgentUsage();
         try {
             for await (const message of thread.query as AsyncIterable<SDKMessage>) {
+                usage.observe(message);
                 for (const update of updates.translate(message)) {
                     await this.#client.sessionUpdate({ sessionId, update });
                 }
                 if (message.type !== "result") continue;
                 const turn = thread.turn;
                 thread.turn = undefined;
+                const turnUsage = usage.settle(message);
                 const failure = claudeTurnFailure(message);
                 if (failure !== undefined && turn?.cancelled === false) {
                     // A turn the API refused would otherwise read as one with nothing to say.
@@ -278,13 +288,7 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                         : message.subtype === "error_max_turns"
                           ? "max_turn_requests"
                           : "end_turn",
-                    usage: {
-                        inputTokens: message.usage.input_tokens,
-                        outputTokens: message.usage.output_tokens,
-                        cachedReadTokens: message.usage.cache_read_input_tokens ?? 0,
-                        cachedWriteTokens: message.usage.cache_creation_input_tokens ?? 0,
-                        totalTokens: message.usage.input_tokens + message.usage.output_tokens,
-                    },
+                    usage: turnUsage,
                 });
             }
         } catch (error) {
