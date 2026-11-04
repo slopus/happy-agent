@@ -55,6 +55,8 @@ export function createSupervisorPolicy(options: {
         egress: network.egress,
         localBinding: network.localBinding,
         ...(allowedHosts.length === 0 ? {} : { allowedHosts }),
+        ...(network.deniedHosts?.length ? { deniedHosts: [...network.deniedHosts] } : {}),
+        ...(network.allowedPorts === undefined ? {} : { allowedPorts: [...network.allowedPorts] }),
         ...(network.egress && (options.networkProxy === true || allowedHosts.length > 0)
             ? { outgoingProxy: { frontEnds: ["http", "socks5"] as const } }
             : {}),

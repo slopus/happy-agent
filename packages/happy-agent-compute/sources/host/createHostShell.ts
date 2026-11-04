@@ -716,6 +716,12 @@ function snapshotPermissions(permissions: ComputePermissions): ComputePermission
             ...(permissions.network.allowedHosts === undefined
                 ? {}
                 : { allowedHosts: [...permissions.network.allowedHosts] }),
+            ...(permissions.network.deniedHosts === undefined
+                ? {}
+                : { deniedHosts: [...permissions.network.deniedHosts] }),
+            ...(permissions.network.allowedPorts === undefined
+                ? {}
+                : { allowedPorts: [...permissions.network.allowedPorts] }),
         },
         ...(permissions.allowedReadPaths === undefined
             ? {}
