@@ -16,6 +16,7 @@ export function terminateProcessTree(
             try {
                 execFileSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
                     stdio: "ignore",
+                    windowsHide: true,
                 });
             } catch {
                 // Already gone.

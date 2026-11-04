@@ -24,6 +24,7 @@ export async function acpConnectionSpawn(
         detached: process.platform !== "win32",
         env: { ...process.env, ...launch.env },
         stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
     });
     // Agents leave a running command alive when their turn is cancelled, and some start each
     // command in a process group of its own, so stopping ends every group in the agent's tree.

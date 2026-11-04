@@ -27,7 +27,12 @@ export async function readAntigravityUsage(
         const child = execFile(
             binary,
             ["-p", "/usage"],
-            { env: environment, timeout: USAGE_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+            {
+                env: environment,
+                timeout: USAGE_TIMEOUT_MS,
+                maxBuffer: 1024 * 1024,
+                windowsHide: true,
+            },
             (error, out) => (error === null ? resolve(out) : reject(error)),
         );
         child.stdin?.end();

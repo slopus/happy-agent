@@ -230,6 +230,7 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                         detached: process.platform !== "win32",
                         stdio: ["pipe", "pipe", "pipe"],
                         signal: options.signal,
+                        windowsHide: true,
                     });
                     child.stderr?.on("data", (chunk: Buffer) => {
                         this.#stderr = (this.#stderr + chunk.toString("utf8")).slice(-4000);
