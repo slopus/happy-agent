@@ -66,6 +66,19 @@ describe("convertGuardianReview", () => {
         });
     });
 
+    it("allows a high-risk export to an untrusted destination after informed user approval", () => {
+        const decision = convertGuardianReview({
+            text: guardian("allow", {
+                risk_level: "high",
+                user_authorization: "high",
+                rationale:
+                    "The user approved sending these excerpts to their Cloudflare account after seeing the risk.",
+            }),
+            userEvidenceOmitted: false,
+        });
+        expect(decision.outcome).toBe("allowed");
+    });
+
     it("treats a completed but unreadable answer as a denial, not an error", () => {
         const decision = convertGuardianReview({
             text: "the reviewer rambled without a verdict",

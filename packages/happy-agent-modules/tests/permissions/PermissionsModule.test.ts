@@ -285,6 +285,9 @@ describe("PermissionsModule", () => {
         expect(results).toContain("submit the exact action once for a fresh Auto review");
         expect(results).toContain("Do not bypass review or retry again if it is denied");
         expect(results).toContain("a vague request to continue are not new authorization");
+        expect(results).toContain(
+            "If the refusal is because an external destination is not trusted, tell the user they can resolve it either way",
+        );
         expect(events[0]).toMatchObject({
             type: "permission_action_denied",
             callId: generatedCallId(),
@@ -962,6 +965,67 @@ describe("PermissionsModule", () => {
 
         expect(events).toMatchObject([{ type: "permission_action_reviewed", elevated: true }]);
         expect(ran).toEqual([{ tool: "publish", mode: "full_access" }]);
+        await system.close(ctx);
+        await auto.close(lifetime);
+        await installation.compute.dispose(lifetime);
+    });
+
+    it("tells the agent where the user's global SECURITY.md lives when the real reviewer refuses", async () => {
+        ran.length = 0;
+        const installation = await autoWorld([
+            [
+                { type: "text_start" },
+                {
+                    type: "text_delta",
+                    delta:
+                        "<review>\n<risk_level>high</risk_level>\n" +
+                        "<user_authorization>medium</user_authorization>\n" +
+                        "<outcome>deny</outcome>\n" +
+                        "<rationale>The upload destination is not trusted under the built-in policy." +
+                        "</rationale>\n</review>",
+                },
+                { type: "text_end" },
+                { type: "done", state: "normal", tokens: { input: 1, output: 1 } },
+            ],
+        ]);
+        const lifetime = createRootContext().named("permissions-refused-by-real-auto");
+        const auto = new AutoModule(
+            installation.config,
+            installation.compute,
+            installation.systemPrompt,
+            installation.history,
+            installation.storage,
+        );
+        const permissions = new PermissionsModule(installation.compute, auto);
+        const world = await agentWorld();
+        const provider = new ScriptedProvider([
+            toolCallTurn("call-1", "publish", JSON.stringify({ target: "https://example.com" })),
+            textTurn("understood"),
+        ]);
+        const system = await AgentSystemLocal.create(ctx, world.storage, {
+            providers: providersOf(provider),
+            provider: "scripted",
+            models: [...AUTO_TEST_MODELS],
+            modules: [auto, permissions],
+        });
+        const agent = await system.create(ctx, {});
+        agent.state.tools = [routineTool, escalatingTool];
+
+        await agent.send(ctx, user("publish it"), {
+            provider: "scripted",
+            model: "scripted/model",
+            effort: "low",
+        });
+        await agent.waitForIdle();
+
+        expect(ran).toEqual([]);
+        const results = toolResults(provider).join("\n");
+        expect(results).toContain(
+            "The upload destination is not trusted under the built-in policy.",
+        );
+        expect(results).toContain(
+            `add the destination as trusted to their global SECURITY.md at ${installation.config.configuration.paths.securityPath}.`,
+        );
         await system.close(ctx);
         await auto.close(lifetime);
         await installation.compute.dispose(lifetime);

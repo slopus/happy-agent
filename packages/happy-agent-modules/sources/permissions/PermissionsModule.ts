@@ -447,7 +447,11 @@ export class PermissionsModule implements AgentModule {
                 userAuthorization: decision.userAuthorization ?? "unknown",
                 ...(decision.transcript === undefined ? {} : { transcript: decision.transcript }),
             });
-            return await this.#refuseReview(ctx, agentId, deniedRefusal(action, decision.reason));
+            return await this.#refuseReview(
+                ctx,
+                agentId,
+                deniedRefusal(action, decision.reason, this.#auto?.globalSecurityPath),
+            );
         }
         if (decision.outcome === "unproven") {
             await this.#announce(ctx, {
@@ -474,7 +478,11 @@ export class PermissionsModule implements AgentModule {
                 userAuthorization: decision.userAuthorization,
                 ...(decision.transcript === undefined ? {} : { transcript: decision.transcript }),
             });
-            return await this.#refuseReview(ctx, agentId, deniedRefusal(action, reason));
+            return await this.#refuseReview(
+                ctx,
+                agentId,
+                deniedRefusal(action, reason, this.#auto?.globalSecurityPath),
+            );
         }
         await this.#announce(ctx, {
             type: "permission_action_reviewed",

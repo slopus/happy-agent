@@ -137,3 +137,17 @@ history: HistoryModule, storage: AgentStorage)`. The accounts, the catalog and t
   or configuration exposing `paths.autoDatabasePath` / `paths.autoAgentLockPath` — which it already
   does — and this module opening its own store from them, which trades one deviation for a
   different one. Until the user decides, `storage` stays, and `SPEC.md` is not edited.
+
+- The reviewer prompt tracks Codex's bundled Guardian prompts as literally as possible. A user
+  approved sending excerpts to their own Cloudflare account, in their own words and after hearing
+  the risk, and v1's policy still refused it: its exfiltration rule denied "even when
+  user_authorization is high", contradicting its own post-denial approval rule, and the rationale
+  cited a "tenant policy" the user could not find. Codex had already replaced that rule with
+  "allow egress where the user has specifically authorized that payload for the end destination",
+  kept secret exfiltration `critical`, and made post-denial approval unable to lift `critical`.
+  A hand-written precedence list fixed the incident but drifted from Codex, so by the user's
+  decision both prompt files are now Codex's text at openai/codex f2b94ef (2026-11-04), assembled
+  through the same `{{ tenant_policy_config }}` and `{{ extra_policy }}` slots, with only the
+  differences listed in `createPermissionReviewInstructions.ts`. Keep that diff minimal, and
+  update the recorded commit and differences whenever the prompts are re-compared. Alignment
+  outweighs prompt size: the aligned prompt is about 19,900 characters.

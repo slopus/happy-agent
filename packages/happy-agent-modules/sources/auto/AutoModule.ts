@@ -167,6 +167,14 @@ export class AutoModule implements AgentModule {
         ): Promise<PermissionReviewDecision> => this.#review(ctx, request),
     };
 
+    /**
+     * Where the user's global security policy lives, so a refusal can tell the user where to mark
+     * a destination as trusted. Configuration owns the path.
+     */
+    get globalSecurityPath(): string {
+        return this.#config.configuration.paths.securityPath;
+    }
+
     constructor(
         config: ConfigModule,
         compute: ComputeModule,

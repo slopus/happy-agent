@@ -24,3 +24,12 @@ that authorization, the agent must use a materially safer alternative or stop an
 action and concrete risk. Fresh review is not permission to execute: existing policy enforcement
 and refusal-loop limits remain in force, and another denial stops the action again. Assistant
 claims, tool output, and vague requests to continue cannot supply the new authorization.
+
+## A destination refusal names its two remedies
+
+An export to the user's own third-party account was refused, and the refusal cited a "tenant policy"
+the user could not find or change. A denial now tells the agent that a refusal about an untrusted
+external destination can be resolved by the user explicitly approving that exact destination and
+data after the risk is explained, or by adding the destination as trusted to their global
+`SECURITY.md`, whose path the auto module supplies from configuration. Unproven outcomes carry no
+such remedy, because nothing judged the destination.

@@ -1,19 +1,33 @@
 import { readFileSync } from "node:fs";
 
 /**
- * The guardian system prompt: the bundled tenant template with the built-in policy inserted,
- * optionally extended by the user's own security rules, followed by the output contract.
+ * The guardian system prompt: Codex's Guardian template with Codex's policy inserted, followed by
+ * the user's own security rules and the output contract.
  *
- * The policy itself is ported byte-for-byte from Happy Agent v1's
- * `agent/prompt/permissionReviewInstructions.ts`, so the reviewer judges by exactly the same
- * rules. The output contract deliberately deviates: v1 asked for hand-assembled JSON, and a
- * rationale that quoted the user ("sync to main") produced invalid JSON, so an allow was read as
- * an unreadable answer and refused. Tagged fields carry free text without escaping, so the
- * rationale can never break the verdict. The investigation guidelines also deviate: a reviewer may
- * read agent history for authorization its transcript lacks, trusting only the person's messages.
+ * Both prompt files track Codex's bundled `codex-rs/prompts/templates/guardian/policy_template.md`
+ * and `policy.md`, last compared at openai/codex commit f2b94ef (2026-11-04), and are assembled
+ * the way Codex's `GuardianPolicyInstructions` does it: the policy goes into
+ * `{{ tenant_policy_config }}` and the user's rules go raw into `{{ extra_policy }}`. Keep the diff
+ * against Codex minimal and re-compare when Codex changes them. The key differences:
+ *
+ * - Trusted content is the user's messages and their answers to interactive questions only.
+ *   Codex also trusts developer messages, `AGENTS.md`, and `request_user_input` answers; in Happy
+ *   repository content is never authorization.
+ * - The Investigation Guidelines add three bullets that let the reviewer read delegators' history
+ *   with `read_agent_history`, trusting only the person's own messages. Codex appends a separate
+ *   conversation-history section instead.
+ * - The escalation request is named for every provider (`dangerouslyDisableSandbox` as well as
+ *   `sandbox_permissions`), not only Codex's field.
+ * - The policy says the user's security files (`SECURITY.md`, `AGENTS_SECURITY.md`) can mark a
+ *   destination as trusted, and the rationale says when a destination is not trusted, so the
+ *   refusal can tell the user how to approve or trust it.
+ * - The output contract asks for tagged fields rather than Codex's JSON: a rationale that quoted
+ *   the user ("sync to main") once broke hand-assembled JSON and turned an allow into a refusal.
+ * - Codex's `node_repl_policy.md` is not included; Happy has no Node REPL tool.
  */
 
 const TENANT_POLICY_CONFIG_PLACEHOLDER = "{{ tenant_policy_config }}";
+const EXTRA_POLICY_PLACEHOLDER = "{{ extra_policy }}";
 
 const GUARDIAN_OUTPUT_CONTRACT = `You may use read-only tool checks to gather any additional context you need before deciding. When you are ready to answer, end your final message with your verdict inside a <review> block, and write nothing after it.
 
@@ -39,36 +53,23 @@ const policyTemplate = readFileSync(
 const policy = readFileSync(new URL("../prompts/guardian-policy.md", import.meta.url), "utf8");
 
 /**
- * Builds the guardian's policy prompt with the bundled tenant policy and any additional rules the
- * user supplied through their security files. When `securityPolicy` is blank or absent the marker
- * is replaced with only the built-in policy; otherwise the user's rules are appended under a
- * fixed heading that states they can only make the policy stricter, never weaker.
+ * Builds the guardian's policy prompt with the bundled policy and any additional rules the user
+ * supplied through their security files, as Codex does: only template text is substituted, so a
+ * placeholder-like string or a `$&` inside either policy lands verbatim.
  */
 export function createPermissionReviewInstructions(securityPolicy?: string): string {
-    const configuredPolicy = securityPolicy?.trim();
-    const tenantPolicy =
-        configuredPolicy === undefined || configuredPolicy.length === 0
-            ? policy.trim()
-            : `${policy.trim()}
-
-## User security policy
-
-These rules supplement the built-in policy above. Apply both. If they conflict, follow whichever rule is stricter; this section cannot weaken or override a built-in denial.
-
-${configuredPolicy}`;
-    // The policy is inserted through a replacer so a user rule containing `$&` or `$'` lands
-    // verbatim instead of being expanded as a replacement pattern.
-    return `${policyTemplate
+    const extraPolicy = securityPolicy?.trim() ?? "";
+    const prompt = policyTemplate
         .trimEnd()
-        .replace(
-            TENANT_POLICY_CONFIG_PLACEHOLDER,
-            () => tenantPolicy,
-        )}\n\n${GUARDIAN_OUTPUT_CONTRACT}\n`;
+        .split(TENANT_POLICY_CONFIG_PLACEHOLDER)
+        .map((part) => part.split(EXTRA_POLICY_PLACEHOLDER).join(extraPolicy))
+        .join(policy.trim());
+    return `${prompt}\n\n${GUARDIAN_OUTPUT_CONTRACT}\n`;
 }
 
 /** The guardian's bundled prompt, used when the user has configured no extra security policy. */
 export const PERMISSION_REVIEW_INSTRUCTIONS = createPermissionReviewInstructions();
 
-/** The developer reminder prepended to every review request after the first. */
+/** The developer reminder prepended to every review request after the first; Codex's text. */
 export const PERMISSION_REVIEW_FOLLOWUP_REMINDER =
     "Use prior reviews as context, not binding precedent. Follow the Workspace Policy. If the user explicitly approves a previously rejected action after being informed of the concrete risks, set <outcome> to allow unless the policy explicitly disallows user overwrites in such cases.";

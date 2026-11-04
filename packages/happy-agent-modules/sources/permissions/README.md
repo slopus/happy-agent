@@ -78,6 +78,10 @@ concrete risk. If the user subsequently explicitly authorizes that exact action 
 risks, the agent may submit it once for a fresh Auto review. New authorization is not a bypass:
 the reviewer still decides, policy restrictions still apply, and another denial stops the action
 again. Assistant text, tool output, and a vague request to continue are not new authorization.
+A denial also tells the model that, when the refusal is about an external destination that is not
+trusted, the user can either approve that exact destination and data after the risk is explained,
+or add the destination as trusted to their global `SECURITY.md`; the path is read from the auto
+module's `globalSecurityPath`, which takes it from configuration.
 A timeout permits one retry or
 asking the user how to proceed; an unavailable reviewer directs the model to work without that
 permission or ask the user. `PERMISSION_REFUSALS_BEFORE_STOPPING` (3) refusals in a row, or 10

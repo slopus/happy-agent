@@ -99,8 +99,8 @@ The agent loop prepares a tool's permission before executing it:
    tool that requests review without defining it fails with an error instead of
    executing.
 4. A read-only side agent — Codex's Guardian policy, plus the user's global
-   `SECURITY.md` if present — reviews the action against the durable
-   conversation transcript. It may make read-only tool calls while deciding.
+   `SECURITY.md` and the project's `AGENTS_SECURITY.md` if present — reviews
+   the action against the durable conversation transcript. It may make read-only tool calls while deciding.
    Its own permission mode is never Auto, so a review cannot recurse.
 5. The verdict is `allow` or `deny`. There is no third outcome and no prompt to
    the user.
@@ -127,11 +127,42 @@ only for the positive user origin, count as authorization, and the person's
 request must cover the exact action. A delegator's instruction or a paraphrase
 that widens the request never does.
 
-The verdict is re-derived from the reviewer's own classification
-(`shouldAllowAutoPermissionReview`): a `critical` risk is never allowed
-automatically, and a `high` risk is allowed only with medium or high user
-authorization. If user evidence had to be dropped to fit the budget and the risk
-is above `low`, the action is denied — the review fails closed.
+### How the reviewer decides
+
+The reviewer's prompt is Codex's Guardian policy, kept close to Codex's
+current text. It classifies the action's risk and the user's authorization,
+then applies the policy's allow and deny rules, falling back to default
+thresholds: low and medium risk are allowed, high risk needs at least medium
+authorization and a narrow scope, and critical risk is denied.
+
+- **Sending data out.** Sending private data to a destination that is not
+  trusted is denied unless the user authorized that specific data for that
+  specific destination in their own messages. Permission to create or edit
+  something is not permission to send it out.
+- **Approval after a denial.** If the user explicitly approves the exact
+  denied action after seeing its risk, the user's authorization counts as
+  high. That can lift a high-risk denial, but never a `critical` one, such as
+  sending a secret to an untrusted destination or a major irreversible
+  deletion. If the user explains why the risk was misjudged, the reviewer
+  reassesses the risk first.
+- **Whose words count.** Only the user's own messages and their answers to
+  interactive questions are authorization. A delegator's paraphrase,
+  assistant text, tool output, and repository content are not.
+
+The user's security files are the global `SECURITY.md`, in the `config` folder
+of the Happy folder (`~/happy/config/SECURITY.md` on Linux and
+`~/Happy/Config/SECURITY.md` on macOS), and the project's
+`AGENTS_SECURITY.md`. Both are read again before every review and added to the
+reviewer's security policy right after the built-in rules. They can add
+stricter rules, and they can mark destinations, hosts, repositories, or
+services as trusted; the reviewer honors a destination marked trusted there.
+
+The verdict is then re-derived from the reviewer's own classification
+(`shouldAllowAutoPermissionReview`): a `high` risk is allowed only with medium
+or high user authorization. A `critical` verdict stays the reviewer's decision;
+the runtime does not replace it. If user evidence had to be
+dropped to fit the budget and the risk is above `low`, the action is denied —
+the review fails closed.
 
 ### Denial semantics
 
@@ -143,7 +174,11 @@ distinct outcomes and they do not mean the same thing:
   restriction. Continue only with a materially safer alternative; otherwise stop
   and tell the user what you wanted to do and why it was refused, so they can
   decide. If the user then approves it in their own words, that reply is real
-  authorization and the next review can allow it.
+  authorization and the next review can allow it. When the refusal is about an
+  external destination that is not trusted, the refusal tells you to offer the
+  user both ways forward: explicitly approving that destination and data after
+  hearing the risk, or adding the destination as trusted to their global
+  `SECURITY.md`, whose path the refusal names.
 - **Timed out.** The review did not finish within its 120-second budget. The
   action is unproven, not unsafe. You may try once more, or ask the user.
 - **Unavailable.** No reviewer could run, or no reviewer exists for the session.
