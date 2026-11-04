@@ -955,7 +955,11 @@ describe("TasksModule", () => {
             });
             expect(again.joined).toBe(false);
             expect(again.membership.orderKey).toBe(looped.membership.orderKey);
-            expect(again.membership.unread?.note).toBe("The migration needs a second look.");
+            expect(again.membership.unread).toMatchObject({
+                note: "The migration needs a second look.",
+                // It stays unread from when it first became unread.
+                since: looped.membership.unread?.since,
+            });
 
             const read = await fixture.tasks.markRead(ctx, task.id, OTHER_OWNER);
             expect(read).toEqual({ ...looped.membership, unread: undefined });
@@ -988,6 +992,62 @@ describe("TasksModule", () => {
                     note: "Too late.",
                 }),
             ).rejects.toBeInstanceOf(TaskConflictError);
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("joins mentioned members and marks new activity for everyone but its author", async () => {
+        const fixture = await started("tasks-mentions-activity", { team: true });
+        try {
+            const ctx = fixture.database.context;
+            const task = await fixture.tasks.create(ctx, { name: "Shared", ownerUserId: OWNER });
+            await fixture.tasks.join(ctx, task.id, OTHER_OWNER);
+            await fixture.tasks.leave(ctx, task.id, OTHER_OWNER);
+            fixture.events.length = 0;
+
+            // A mention is the same join as an agent's loop-in, explicit leave included.
+            const mentioned = await fixture.tasks.loopIn(ctx, task.id, OTHER_OWNER, {
+                mentionedBy: OWNER,
+                at: 1_000,
+            });
+            expect(mentioned).toMatchObject({
+                joined: true,
+                membership: { unread: { reason: "mentioned", since: 1_000, userId: OWNER } },
+            });
+
+            // The author is left alone; an unread member keeps their mark and hears again.
+            await fixture.tasks.markNewMessages(ctx, task.id, {
+                since: 2_000,
+                exceptMemberId: OWNER,
+            });
+            await expect(fixture.tasks.membership(ctx, task.id, OWNER)).resolves.not.toHaveProperty(
+                "unread",
+            );
+            await expect(
+                fixture.tasks.membership(ctx, task.id, OTHER_OWNER),
+            ).resolves.toMatchObject({ unread: { reason: "mentioned", since: 1_000 } });
+
+            // A finished run marks everyone who has read the task, from when it finished.
+            await fixture.tasks.markNewMessages(ctx, task.id, { since: 3_000 });
+            await expect(fixture.tasks.membership(ctx, task.id, OWNER)).resolves.toMatchObject({
+                unread: { reason: "new_messages", since: 3_000 },
+            });
+            expect(fixture.events.map((event) => event.type)).toEqual([
+                "task_joined",
+                "task_membership_updated",
+                "task_membership_updated",
+                "task_membership_updated",
+            ]);
+
+            // Archived tasks take no new marks.
+            const current = (await fixture.tasks.get(ctx, task.id))!;
+            await fixture.tasks.markRead(ctx, task.id, OWNER);
+            await fixture.tasks.archive(ctx, task.id, current.version);
+            await fixture.tasks.markNewMessages(ctx, task.id, { since: 4_000 });
+            await expect(fixture.tasks.membership(ctx, task.id, OWNER)).resolves.not.toHaveProperty(
+                "unread",
+            );
         } finally {
             await fixture.close();
         }

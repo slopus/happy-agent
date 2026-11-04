@@ -81,19 +81,38 @@ export const taskLoopInReasonSchema = Type.String({
 });
 
 /**
- * What a member has not looked at yet in a task. Today the only reason is that an agent looped
- * them in; the reason set may grow.
+ * What a member has not looked at yet in a task: an agent looped them in, a teammate's message
+ * mentioned them, or there was new activity. `since` is when it was first marked; how much is
+ * unread since then is derived from the conversation when read, never stored here.
  */
-export const taskMembershipUnreadSchema = Type.Object(
-    {
-        reason: Type.Literal("looped_in"),
-        since: taskTimestampSchema,
-        /** The agent that looped the member in. */
-        agentId: cuid2Schema,
-        note: taskLoopInReasonSchema,
-    },
-    { additionalProperties: false },
-);
+export const taskMembershipUnreadSchema = Type.Union([
+    Type.Object(
+        {
+            reason: Type.Literal("looped_in"),
+            since: taskTimestampSchema,
+            /** The agent that looped the member in. */
+            agentId: cuid2Schema,
+            note: taskLoopInReasonSchema,
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            reason: Type.Literal("mentioned"),
+            since: taskTimestampSchema,
+            /** The teammate whose message mentioned the member. */
+            userId: cuid2Schema,
+        },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        {
+            reason: Type.Literal("new_messages"),
+            since: taskTimestampSchema,
+        },
+        { additionalProperties: false },
+    ),
+]);
 
 /**
  * One person's place in one task. Joining puts a task in that person's list; the order key

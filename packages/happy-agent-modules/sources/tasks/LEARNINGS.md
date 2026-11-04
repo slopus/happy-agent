@@ -187,3 +187,16 @@ Read only agent could start Auto work through a task, and a mode a person chose 
 ignored. Both now use the mode chosen at creation, or else Auto, narrowed to the creating or
 sending agent's mode. A task is a person's own root rather than the agent's child, so a Full
 access agent does not pass Full access on; the person picks the mode once they open it.
+
+## Mentions join people; unread is counted, never stored
+
+Kirill asked for @mentions that bring a person into the conversation, and for sidebar counts in
+place of the unread dot. A person's message to a task's agent that names a member with a
+`happy://users/<userId>` link now loops them in atomically with the send, as `loop_in_teammate`
+does, with reason `mentioned`. No new leave control was added: the existing close already leaves.
+
+He asked that unread counts cost no latency and not be stored separately. A membership keeps only
+its mark and the first moment it became unread; the count (finished runs plus other people's
+messages since then, capped at 100) is derived from History when a resource is built. The
+teammate directory rides in the bootstrap so the composer's @ list opens with no request; the API
+specification notes that a larger team may later get predicted mentions with lazy lookup.

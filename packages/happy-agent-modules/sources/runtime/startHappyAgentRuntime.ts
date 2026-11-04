@@ -840,6 +840,7 @@ export async function startHappyAgentRuntime(
             stories,
             feed,
             nodeSearch,
+            teammates,
         );
         api = apiModule;
 

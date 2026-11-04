@@ -4,6 +4,7 @@ import type {
     AgentModuleScope,
     AnyAgentTool,
 } from "@slopus/happy-agent-base";
+import { parseHappyLinks } from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 
 import { TasksModule, type TaskMembership } from "../tasks/index.js";
@@ -29,7 +30,7 @@ export class TeammateNotFoundError extends Error {
 const TEAMMATES_INSTRUCTIONS = [
     "# Teammates",
     "",
-    "Other people on the team can join this task. list_teammates shows each one's user ID, name, role, and what they follow. When this work clearly concerns what a teammate follows or does, loop them in with loop_in_teammate and say why in one sentence; it adds the task to their list and highlights it for them. Do not loop in someone already working with you here, and do not loop people in for work they would not care about.",
+    "Other people on the team can join this task. list_teammates shows each one's user ID, name, role, and what they follow. When this work clearly concerns what a teammate follows or does, or project instructions say to involve someone, loop them in with loop_in_teammate and say why in one sentence; it adds the task to their list and highlights it for them. Do not loop in someone already working with you here, and do not loop people in for work they would not care about.",
     "When you mention a person in a reply, link them as [their name](happy://users/<userId>); people see their current name as the link text. list_teammates and loop_in_teammate give you the exact link.",
 ].join("\n");
 
@@ -101,6 +102,47 @@ export class TeammatesModule implements AgentModule {
                 note: input.reason,
             });
             return { teammate: teammate(user), ...result };
+        });
+    }
+
+    /**
+     * A team member wrote `text` in the task: every other member it links as
+     * `happy://users/<userId>` is looped in through the same join as an agent's, marked as
+     * mentioned by the writer from `at`. Guests and unknown people are left out, and an archived
+     * task takes nobody. Runs inside the caller's transaction, the one storing the message.
+     */
+    async mention(
+        ctx: Context,
+        input: {
+            readonly taskId: string;
+            readonly senderUserId: string;
+            readonly text: string;
+            readonly at: number;
+        },
+    ): Promise<readonly Teammate[]> {
+        if (!this.#team.enabled) return [];
+        const ids = new Set<string>();
+        for (const segment of parseHappyLinks(input.text)) {
+            if (segment.type !== "link" || segment.image) continue;
+            const link = segment.link;
+            if (link?.type !== "reference" || link.reference.kind !== "user") continue;
+            if (link.reference.id !== input.senderUserId) ids.add(link.reference.id);
+        }
+        if (ids.size === 0) return [];
+        return await ctx.inTx(async (txCtx) => {
+            const task = await this.#tasks.get(txCtx, input.taskId);
+            if (task === undefined || task.status !== "active") return [];
+            const mentioned: Teammate[] = [];
+            for (const id of ids) {
+                const user = await this.#team.getUser(txCtx, id);
+                if (user === undefined || user.authentication === "guest") continue;
+                await this.#tasks.loopIn(txCtx, task.id, user.id, {
+                    mentionedBy: input.senderUserId,
+                    at: input.at,
+                });
+                mentioned.push(teammate(user));
+            }
+            return mentioned;
         });
     }
 

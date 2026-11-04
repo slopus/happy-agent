@@ -145,6 +145,19 @@ export async function readMemberships(
     return rows.map(membershipFromRow);
 }
 
+/** Every membership of one task, whoever holds it. */
+export async function readTaskMemberships(
+    ctx: Context,
+    taskId: string,
+): Promise<readonly TaskMembership[]> {
+    const rows = await agentDatabaseRows<MembershipRow>(
+        ctx.db,
+        sql`SELECT * FROM ${sql.raw(TASK_MEMBERS_TABLE)}
+            WHERE task_id = ${taskId} ORDER BY member_id`,
+    );
+    return rows.map(membershipFromRow);
+}
+
 export async function insertMembership(ctx: Context, membership: TaskMembership): Promise<void> {
     assertMembership(membership);
     await agentDatabaseRun(

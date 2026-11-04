@@ -10,6 +10,10 @@ The people on a team, as a task's agent sees them, and looping one of them into 
   cleared, and their membership is marked `unread` with `reason: "looped_in"` and the agent's
   one-sentence reason. Someone already in the task keeps their place and is marked again. The tool
   returns the `[name](happy://users/<userId>)` mention link.
+- `mention` loops in every member a person's message to a task's agent names with a
+  `happy://users/<userId>` reference link, in the send's own transaction. The mark's reason is
+  `mentioned` with the sender's `userId`. Links in code, image links, the sender, guests, and
+  unknown users are ignored. The API calls it from the send route, so a mention needs no tool.
 - The mark is the member's own: it travels on their membership in task reads, the desktop
   bootstrap, and `task.joined` / `task.membership.updated` events, and clears with
   `POST /v0/tasks/:taskId/read` or the task agent's `POST /v0/agents/:agentId/read`.

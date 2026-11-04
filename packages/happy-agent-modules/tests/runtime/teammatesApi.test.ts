@@ -168,7 +168,8 @@ describe("looping in a teammate", () => {
                         ?.unread,
                 }));
         expect(await events(steveClient, before.steve)).toEqual([
-            { type: "task.joined", unread },
+            // Nothing has happened in the task since, so the derived count is zero.
+            { type: "task.joined", unread: { ...unread, count: 0 } },
             { type: "task.membership.updated", unread: null },
         ]);
         expect((await events(aliceClient, before.alice)).map((event) => event.type)).not.toContain(
@@ -212,6 +213,106 @@ describe("looping in a teammate", () => {
         ).rejects.toMatchObject({ name: "TaskConflictError" });
     }, 60_000);
 });
+
+describe("mentioning a teammate and counting what is unread", () => {
+    it("joins whom a member's task message mentions and derives each person's unread count", async () => {
+        const { runtime, endpoint, token } = await start();
+        const ctx = withAgentDatabase(
+            runtime.ctx.named("test.teammates-mention"),
+            runtime.database,
+        );
+        const { tasks, teammates, team } = runtime.modules;
+        const [alice, steve] = await teammates.list(ctx);
+        const aliceClient = new HappyAgentClient({ endpoint, token: await token("user_alice") });
+        const steveClient = new HappyAgentClient({ endpoint, token: await token("user_steve") });
+        const guest = await team.createGuest(ctx, { name: "Exported bot guest" });
+        const task = await tasks.create(ctx, { name: "Refund flow", ownerUserId: alice!.id });
+        // Steve starts opted out of automatic joining, so only the mention can add him.
+        expect((await steveClient.getTask(task.id)).membership).toBeNull();
+
+        // The bootstrap carries the whole directory, so the composer needs no request.
+        expect((await aliceClient.getDesktopBootstrap()).teammates).toMatchObject([
+            { id: alice!.id, name: "Alice Owner", kind: "member", role: "Founder" },
+            { id: steve!.id, name: "Steve", kind: "member", role: "Billing engineer" },
+        ]);
+
+        const mode = {
+            providerId: "gym",
+            modelId: "gym/model",
+            effort: "medium",
+            serviceTier: null,
+            permissionMode: "auto",
+        } as const;
+        await aliceClient.sendMessage(task.agentId, {
+            text: `Can [Steve](happy://users/${steve!.id}) check this? Also [guest](happy://users/${guest.id}) and \`[x](happy://users/${steve!.id})\`.`,
+            mode,
+        });
+        // The join commits with the message: it is there as soon as the send answers.
+        const joined = (await steveClient.getTask(task.id)).membership;
+        expect(joined).toMatchObject({
+            unread: { reason: "mentioned", userId: alice!.id, since: expect.any(Number) },
+        });
+        expect(await tasks.membership(ctx, task.id, guest.id)).toBeUndefined();
+
+        // Steve has Alice's message and the agent's finished run unread; Alice wrote the message,
+        // so only the run counts for her, and the agent's own mark counts runs alone.
+        await eventually(async () => {
+            expect((await steveClient.getTask(task.id)).membership?.unread?.count).toBe(2);
+            expect((await aliceClient.getTask(task.id)).membership?.unread).toMatchObject({
+                reason: "new_messages",
+                count: 1,
+            });
+            expect((await aliceClient.getAgent(task.agentId)).agent.unread).toMatchObject({
+                reason: "turn_finished",
+                count: 1,
+            });
+        });
+        const first = (await steveClient.getTask(task.id)).membership!.unread!.since;
+
+        // Steve answers: Alice sees his message and the next run; his own count holds still
+        // until the run finishes, and his mark keeps when it began.
+        await steveClient.sendMessage(task.agentId, { text: "On it.", mode });
+        await eventually(async () => {
+            expect((await aliceClient.getTask(task.id)).membership?.unread?.count).toBe(3);
+            expect((await steveClient.getTask(task.id)).membership?.unread).toMatchObject({
+                since: first,
+                count: 3,
+            });
+            expect((await aliceClient.getAgent(task.agentId)).agent.unread?.count).toBe(2);
+        });
+        expect(
+            (await steveClient.getDesktopBootstrap()).taskMemberships?.find(
+                (membership) => membership.taskId === task.id,
+            )?.unread?.count,
+        ).toBe(3);
+
+        // Reading is per person.
+        expect(
+            (await post(endpoint, await token("user_steve"), `/v0/tasks/${task.id}/read`)).status,
+        ).toBe(200);
+        expect((await steveClient.getTask(task.id)).membership?.unread).toBeNull();
+        expect((await aliceClient.getTask(task.id)).membership?.unread?.count).toBe(3);
+
+        // A mentioned person leaves the ordinary way.
+        expect(
+            (await post(endpoint, await token("user_steve"), `/v0/tasks/${task.id}/leave`)).status,
+        ).toBe(200);
+        expect((await steveClient.getTask(task.id)).membership).toBeNull();
+    }, 60_000);
+});
+
+async function eventually(check: () => Promise<void>): Promise<void> {
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+        try {
+            await check();
+            return;
+        } catch (error) {
+            if (Date.now() > deadline) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+    }
+}
 
 async function post(endpoint: string, token: string, path: string): Promise<Response> {
     return await fetch(`${endpoint}${path}`, {

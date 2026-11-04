@@ -67,6 +67,12 @@ never reverses one, across restarts or preference changes; an explicit join clea
 existing order untouched. Startup catch-up invokes it in bounded transactions, while live task,
 profile, and preference mutations compose participation inside their originating transaction.
 
+A team membership may carry an `unread` mark: `looped_in` (an agent's `loopIn`), `mentioned` (a
+`loopIn` for a person named in a message), or `new_messages` (`markNewMessages`, raised for every
+member but the author when a person sends or a run finishes). An existing mark is kept, and its
+`since` only moves earlier, so it stays the first moment the task became unread for that person.
+How much is unread is never stored; the API derives the count from History.
+
 ## Tools
 
 Offered to every root agent that is not a task, which means bots and human-owned roots. Tasks and
@@ -107,6 +113,7 @@ workspace-bound subtasks.
 
 `list`, `listForMember`, `get`, `membership`, `memberFor`, `forAgent`, `forWorkspace`,
 `hasIdentity`, `create`, `createWithResult`, `sendMessage`, `rename`, `join`, `joinAutomatically`, `leave`, `reorder`,
+`loopIn`, `markNewMessages`, `markRead`,
 `archive`, `archiveForAgent`, `unarchive`, `purge`, and `onEvent`. Task mutations take an expected version
 and raise `TaskConflictError` when the row moved; memberships are unversioned because each list
 has one writer. `task_created`, `task_updated`, `task_joined`, `task_reordered`, and `task_left`

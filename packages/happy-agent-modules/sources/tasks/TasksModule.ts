@@ -75,6 +75,7 @@ import {
     readMembership,
     readMemberships,
     readTask,
+    readTaskMemberships,
     readTaskByAgent,
     readTaskByFolderName,
     readTaskByWorkspace,
@@ -410,23 +411,29 @@ export class TasksModule implements AgentModule {
     }
 
     /**
-     * An agent looped this member into an active task: they join it, whatever their automatic
-     * joining says, and it is marked unread for them with the agent's reason. A member already in
-     * the task keeps their place and is marked unread again.
+     * Someone looped this member into an active task: a task's agent with its reason, or a
+     * teammate whose message mentioned them. They join it, whatever their automatic joining says,
+     * and it is marked unread for them. A member already in the task keeps their place and is
+     * marked again, keeping when it first became unread.
      */
     async loopIn(
         ctx: Context,
         taskId: string,
         memberId: TaskMemberId,
-        input: { readonly agentId: string; readonly note: string },
+        input:
+            | { readonly agentId: string; readonly note: string }
+            | { readonly mentionedBy: string; readonly at: number },
     ): Promise<{ readonly membership: TaskMembership; readonly joined: boolean }> {
         this.#assertMember(memberId);
-        const unread: TaskMembershipUnread = {
-            reason: "looped_in",
-            since: Date.now(),
-            agentId: input.agentId,
-            note: input.note,
-        };
+        const unread: TaskMembershipUnread =
+            "mentionedBy" in input
+                ? { reason: "mentioned", since: input.at, userId: input.mentionedBy }
+                : {
+                      reason: "looped_in",
+                      since: Date.now(),
+                      agentId: input.agentId,
+                      note: input.note,
+                  };
         if (!Value.Check(taskMembershipUnreadSchema, unread)) {
             throw new TaskInputError("The reason for looping someone in is invalid.");
         }
@@ -443,7 +450,42 @@ export class TasksModule implements AgentModule {
                     joined: true,
                 };
             }
-            return { membership: await this.#updateUnread(txCtx, existing, unread), joined: false };
+            const since = Math.min(existing.unread?.since ?? unread.since, unread.since);
+            return {
+                membership: await this.#updateUnread(txCtx, existing, { ...unread, since }),
+                joined: false,
+            };
+        });
+    }
+
+    /**
+     * Something new happened in an active task: its agent finished a run, or a person wrote in
+     * it. Every team member in it except `exceptMemberId`, the person who wrote, is marked
+     * unread from `since` unless already unread, which keeps its mark. Each of them hears about it
+     * again, since how much is unread is derived when the membership is read. Standalone
+     * installations keep their one person's unread on the agent alone.
+     */
+    async markNewMessages(
+        ctx: Context,
+        taskId: string,
+        input: { readonly since: number; readonly exceptMemberId?: TaskMemberId },
+    ): Promise<void> {
+        await ctx.inTx(async (txCtx) => {
+            const task = await readTask(txCtx, taskId);
+            if (task === undefined || task.status !== "active") return;
+            for (const membership of await readTaskMemberships(txCtx, taskId)) {
+                if (
+                    membership.memberId === STANDALONE_TASK_MEMBER ||
+                    membership.memberId === input.exceptMemberId
+                ) {
+                    continue;
+                }
+                await this.#updateUnread(
+                    txCtx,
+                    membership,
+                    membership.unread ?? { reason: "new_messages", since: input.since },
+                );
+            }
         });
     }
 
@@ -471,7 +513,8 @@ export class TasksModule implements AgentModule {
     ): Promise<TaskMembership> {
         const { unread: _previous, ...rest } = membership;
         const updated: TaskMembership = unread === undefined ? rest : { ...rest, unread };
-        await updateMembershipUnread(ctx, updated);
+        // A mark kept as it was is not written again; it is only announced, for its new count.
+        if (unread !== membership.unread) await updateMembershipUnread(ctx, updated);
         await this.#publish(ctx, {
             eventId: globalThis.crypto.randomUUID(),
             at: Date.now(),

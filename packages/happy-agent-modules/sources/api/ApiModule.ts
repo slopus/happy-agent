@@ -210,8 +210,10 @@ import {
     TasksModule,
     type TaskEvent,
     type TaskMemberId,
+    type TaskMembership,
     type TaskRecord,
 } from "../tasks/index.js";
+import type { TeammatesModule } from "../teammates/index.js";
 import {
     CompactionAgentBusyError,
     CompactionAlreadyRunningError,
@@ -680,6 +682,7 @@ export class ApiModule implements AgentModule {
     readonly #stories: StoriesModule | undefined;
     readonly #feed: FeedModule | undefined;
     readonly #nodeSearch: NodeSearchModule | undefined;
+    readonly #teammates: TeammatesModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -854,7 +857,9 @@ export class ApiModule implements AgentModule {
         stories?: StoriesModule,
         feed?: FeedModule,
         nodeSearch?: NodeSearchModule,
+        teammates?: TeammatesModule,
     ) {
+        this.#teammates = teammates;
         this.#abort = abort;
         this.#config = config;
         this.#events = events;
@@ -1338,22 +1343,7 @@ export class ApiModule implements AgentModule {
                 const users = (await this.#team.getUsers(ctx, ids)).filter(
                     (user) => this.#team.enabled || isTeamGuest(user),
                 );
-                sendJson(response, 200, {
-                    users: users.map((user) => ({
-                        id: user.id,
-                        name:
-                            user.lastName === null
-                                ? user.firstName
-                                : `${user.firstName} ${user.lastName}`,
-                        photo: user.photo === null ? null : { thumbhash: user.photo.thumbhash },
-                        version: user.version,
-                        updatedAt: user.updatedAt,
-                        kind: isTeamGuest(user) ? "guest" : "member",
-                        canLogIn: !isTeamGuest(user),
-                        role: user.role ?? null,
-                        follows: user.follows ?? null,
-                    })),
-                });
+                sendJson(response, 200, { users: users.map(teamUserResource) });
                 return;
             }
             const userPhoto = /^\/v0\/users\/([^/]+)\/photo$/.exec(url.pathname);
@@ -3672,7 +3662,7 @@ export class ApiModule implements AgentModule {
             const memberId = event.membership.memberId;
             this.#journal.append(
                 type,
-                { membership: taskMembershipResource(event.membership) },
+                { membership: await this.#taskMembershipResource(ctx, event.membership) },
                 event.at,
                 memberId === STANDALONE_TASK_MEMBER ? undefined : memberId,
             );
@@ -4056,7 +4046,7 @@ export class ApiModule implements AgentModule {
                 status: "idle",
                 updatedAt: event.occurredAt,
             });
-            this.#scheduleUnreadUpdate(ctx, agentId, event.occurredAt);
+            this.#scheduleUnreadUpdate(ctx, agentId, run.endedAt ?? event.occurredAt);
             await this.#refreshParentSubagents(ctx, agentId);
             return;
         }
@@ -4094,8 +4084,12 @@ export class ApiModule implements AgentModule {
                               0,
                       )
                     : undefined;
+            const unread = Object.hasOwn(update, "unread")
+                ? await this.#agentUnread(ctx, agentId, update["unread"])
+                : undefined;
             await this.#appendAgentUpdate(ctx, event, {
                 ...agentMetadataChanges(update, event.occurredAt, canSendMessages),
+                ...(unread === undefined ? {} : { unread }),
                 ...(lastActivityAt === undefined ? {} : { lastActivityAt }),
                 ...(subtasks === undefined ? {} : { subtasks }),
             });
@@ -5597,6 +5591,24 @@ export class ApiModule implements AgentModule {
                 await ctx.inTx(async (txCtx) => {
                     await this.#assertUserControlledAgent(txCtx, agentId);
                     await this.#history.queuePending(txCtx, pending);
+                    // A person writing in a task joins the teammates they mention and marks the
+                    // task unread for everyone else in it, atomically with the message.
+                    const task =
+                        userId === undefined
+                            ? undefined
+                            : await this.#tasks?.forAgent(txCtx, agentId);
+                    if (task !== undefined && userId !== undefined) {
+                        await this.#teammates?.mention(txCtx, {
+                            taskId: task.id,
+                            senderUserId: userId,
+                            text: body.text,
+                            at: createdAt,
+                        });
+                        await this.#tasks?.markNewMessages(txCtx, task.id, {
+                            since: createdAt,
+                            exceptMemberId: userId,
+                        });
+                    }
                     if (delivery === "steer") {
                         await agents.steer(txCtx, agentId, { role: "user", content }, options);
                     } else {
@@ -6045,22 +6057,33 @@ export class ApiModule implements AgentModule {
             activeRunId === undefined
                 ? null
                 : ((await this.#scheduling?.readActiveWait(ctx, agentId)) ?? null);
-        return await agentResource(ctx, this.#agentSystem(), this.#events, agentId, workspaceId, {
-            config,
-            children,
-            latestEvent,
-            ...(orderKey === undefined ? {} : { orderKey }),
-            userVisible,
-            subtask: this.#subtasks?.isSubtask(config) ?? false,
-            subtasks,
-            subtaskOrderKey: this.#subtasks?.siblingOrderKey(config) ?? null,
-            pendingQuestionId: questions.requests[0]?.id ?? null,
-            runningProcesses: processes.filter((process) => process.status === "running").length,
-            runningSubagents,
-            working: activeRunId !== undefined,
-            wait,
-            retrying: activeRunId === undefined ? null : (this.#liveRetries.get(agentId) ?? null),
-        });
+        const resource = await agentResource(
+            ctx,
+            this.#agentSystem(),
+            this.#events,
+            agentId,
+            workspaceId,
+            {
+                config,
+                children,
+                latestEvent,
+                ...(orderKey === undefined ? {} : { orderKey }),
+                userVisible,
+                subtask: this.#subtasks?.isSubtask(config) ?? false,
+                subtasks,
+                subtaskOrderKey: this.#subtasks?.siblingOrderKey(config) ?? null,
+                pendingQuestionId: questions.requests[0]?.id ?? null,
+                runningProcesses: processes.filter((process) => process.status === "running")
+                    .length,
+                runningSubagents,
+                working: activeRunId !== undefined,
+                wait,
+                retrying:
+                    activeRunId === undefined ? null : (this.#liveRetries.get(agentId) ?? null),
+            },
+        );
+        if (resource?.["unread"] == null) return resource;
+        return { ...resource, unread: await this.#agentUnread(ctx, agentId, resource["unread"]) };
     }
 
     async #subtaskResources(
@@ -6230,15 +6253,39 @@ export class ApiModule implements AgentModule {
         void task.finally(() => this.#backgroundMetadataUpdates.delete(task));
     }
 
-    #scheduleUnreadUpdate(ctx: Context, agentId: string, since: number): void {
+    /**
+     * A finished run marks the agent unread from when it first became unread, and a task's agent
+     * marks each team member in the task too. Every finished run republishes the mark, because
+     * how much is unread is derived from the conversation when it is read.
+     */
+    #scheduleUnreadUpdate(ctx: Context, agentId: string, finishedAt: number): void {
         const task = (async () => {
             for (let attempt = 0; attempt < 8; attempt += 1) {
                 await new Promise<void>((resolve) => setImmediate(resolve));
                 if (this.#closed) return;
                 try {
+                    // Not one transaction: the metadata write runs through the agent's own
+                    // operation, which must not wait behind a transaction held open here.
+                    const current = recordValue(
+                        (await this.#agentSystem().config(ctx, agentId))?.metadata?.["unread"],
+                    );
                     await this.#updateAgentMetadata(ctx, agentId, {
-                        unread: { reason: "turn_finished", since },
+                        unread: {
+                            reason: stringValue(current?.["reason"]) ?? "turn_finished",
+                            since:
+                                typeof current?.["since"] === "number"
+                                    ? current["since"]
+                                    : finishedAt,
+                        },
                     });
+                    const taskRecord = this.#team.enabled
+                        ? await this.#tasks?.forAgent(ctx, agentId)
+                        : undefined;
+                    if (taskRecord !== undefined) {
+                        await this.#tasks?.markNewMessages(ctx, taskRecord.id, {
+                            since: finishedAt,
+                        });
+                    }
                     return;
                 } catch (error: unknown) {
                     if (attempt === 7) {
@@ -7954,7 +8001,12 @@ export class ApiModule implements AgentModule {
                 tasks: await Promise.all(
                     listed.map(async (task) => await this.#taskResource(ctx, task)),
                 ),
-                memberships: joined.map(({ membership }) => taskMembershipResource(membership)),
+                memberships: await Promise.all(
+                    joined.map(
+                        async ({ task, membership }) =>
+                            await this.#taskMembershipResource(ctx, membership, task.agentId),
+                    ),
+                ),
             });
             return true;
         }
@@ -8435,11 +8487,42 @@ export class ApiModule implements AgentModule {
         return taskResource(task, agent, this.#canArchiveTask(ctx, task));
     }
 
+    /** A membership as its member sees it, with how much is unread derived from the task. */
+    async #taskMembershipResource(
+        ctx: Context,
+        membership: TaskMembership,
+        taskAgentId?: string,
+    ): Promise<Record<string, unknown>> {
+        const resource = taskMembershipResource(membership);
+        const unread = membership.unread;
+        if (unread === undefined) return resource;
+        const agentId = taskAgentId ?? (await this.#tasks?.get(ctx, membership.taskId))?.agentId;
+        if (agentId === undefined) return resource;
+        const count = await this.#history.unreadCount(ctx, agentId, {
+            since: unread.since,
+            ...(membership.memberId === STANDALONE_TASK_MEMBER
+                ? {}
+                : { readerUserId: membership.memberId }),
+        });
+        return { ...resource, unread: { ...unread, count } };
+    }
+
+    /** An agent's `unread` with how much is unread derived from its conversation. */
+    async #agentUnread(ctx: Context, agentId: string, value: unknown): Promise<unknown> {
+        const unread = recordValue(value);
+        if (unread === undefined || typeof unread["since"] !== "number") return value ?? null;
+        const count = await this.#history.unreadCount(ctx, agentId, { since: unread["since"] });
+        return { ...unread, count };
+    }
+
     async #taskResponse(ctx: Context, task: TaskRecord): Promise<Record<string, unknown>> {
         const membership = await this.#tasks?.membership(ctx, task.id, this.#taskMember(ctx));
         return {
             task: await this.#taskResource(ctx, task),
-            membership: membership === undefined ? null : taskMembershipResource(membership),
+            membership:
+                membership === undefined
+                    ? null
+                    : await this.#taskMembershipResource(ctx, membership, task.agentId),
         };
     }
 
@@ -10206,6 +10289,7 @@ export class ApiModule implements AgentModule {
             ],
             archivedAgents: await this.#archivedAgentResources(ctx, archived),
             ...(await this.#taskBootstrap(ctx)),
+            ...(await this.#teammatesBootstrap(ctx)),
             ...(this.#surfaces === undefined ? {} : { surfaces: await this.#surfaces.list(ctx) }),
             ...(this.#userSettings === undefined
                 ? {}
@@ -10214,6 +10298,18 @@ export class ApiModule implements AgentModule {
             ...feed,
             cursor,
         };
+    }
+
+    /** Whom the person can `@`-mention: every member who signs in, in name order. */
+    async #teammatesBootstrap(ctx: Context): Promise<Record<string, unknown>> {
+        if (!this.#team.enabled) return {};
+        const members = (await this.#team.listMembers(ctx)).map(teamUserResource);
+        members.sort(
+            (left, right) =>
+                String(left["name"]).localeCompare(String(right["name"])) ||
+                String(left["id"]).localeCompare(String(right["id"])),
+        );
+        return { teammates: members };
     }
 
     /** The caller's count of open Feed entries, for the badge. */
@@ -10241,7 +10337,12 @@ export class ApiModule implements AgentModule {
         ]);
         return {
             tasks: await Promise.all(all.map(async (task) => await this.#taskResource(ctx, task))),
-            taskMemberships: joined.map(({ membership }) => taskMembershipResource(membership)),
+            taskMemberships: await Promise.all(
+                joined.map(
+                    async ({ task, membership }) =>
+                        await this.#taskMembershipResource(ctx, membership, task.agentId),
+                ),
+            ),
         };
     }
 
@@ -11881,6 +11982,21 @@ function pendingMessageResource(pending: HistoryPendingMessage): Record<string, 
         }),
         status: "pending",
         runId: null,
+    };
+}
+
+/** One person as `GET /v0/users` and the bootstrap's `teammates` describe them. */
+function teamUserResource(user: TeamUser): Record<string, unknown> {
+    return {
+        id: user.id,
+        name: user.lastName === null ? user.firstName : `${user.firstName} ${user.lastName}`,
+        photo: user.photo === null ? null : { thumbhash: user.photo.thumbhash },
+        version: user.version,
+        updatedAt: user.updatedAt,
+        kind: isTeamGuest(user) ? "guest" : "member",
+        canLogIn: !isTeamGuest(user),
+        role: user.role ?? null,
+        follows: user.follows ?? null,
     };
 }
 

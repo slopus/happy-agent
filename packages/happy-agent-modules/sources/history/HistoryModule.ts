@@ -204,6 +204,8 @@ const positiveIntegerSchema = Type.Integer({ minimum: 1 });
 const EXCERPT_END_PAGE_SIZE = 100;
 /** The most characters one excerpt may be asked to render into. */
 export const MAX_HISTORY_EXCERPT_CHARACTERS = 200_000;
+/** Where a derived unread count stops; clients show it as "99+". */
+export const MAX_HISTORY_UNREAD_COUNT = 100;
 const excerptBudgetSchema = Type.Integer({
     minimum: 1,
     maximum: MAX_HISTORY_EXCERPT_CHARACTERS,
@@ -1111,6 +1113,89 @@ export class HistoryModule implements AgentModule {
             throw new Error("The history module found multiple running runs for one agent.");
         }
         return rows[0] === undefined ? undefined : runStateFromRow(rows[0]);
+    }
+
+    /**
+     * How much of a conversation is unread since `since`: the runs that finished at or after it,
+     * plus, when a reader is named, the messages other people wrote at or after it, accepted or
+     * still pending. Derived from the run and message rows on every read, never stored, and
+     * bounded: it reads at most the latest {@link MAX_HISTORY_UNREAD_COUNT} runs, never a whole
+     * archive, and stops counting at that cap.
+     */
+    async unreadCount(
+        ctx: Context,
+        agentId: string,
+        input: { readonly since: number; readonly readerUserId?: string },
+    ): Promise<number> {
+        if (!Value.Check(historyAgentIdSchema, agentId)) {
+            throw new Error("The history module received an invalid unread-count agent ID.");
+        }
+        return await this.#direct(ctx, async (txCtx) => {
+            const runs = await agentDatabaseRows<{
+                run_id: string;
+                ended_at: number | string | bigint | null;
+            }>(
+                txCtx.db,
+                sql`SELECT run_id, ended_at FROM ${sql.raw(HISTORY_RUNS_TABLE)}
+                    WHERE agent_id = ${agentId}
+                    ORDER BY sequence DESC
+                    LIMIT ${MAX_HISTORY_UNREAD_COUNT}`,
+            );
+            const recent = runs.filter(
+                (run) =>
+                    run.ended_at === null ||
+                    toSafeInteger(run.ended_at, "history run end") >= input.since,
+            );
+            let count = recent.filter((run) => run.ended_at !== null).length;
+            if (input.readerUserId === undefined || count >= MAX_HISTORY_UNREAD_COUNT) {
+                return Math.min(count, MAX_HISTORY_UNREAD_COUNT);
+            }
+            const reader = input.readerUserId;
+            const people = (
+                rows: readonly {
+                    user_id: string | null;
+                    at: number | string | bigint | null;
+                }[],
+            ) =>
+                rows.filter(
+                    (row) =>
+                        row.user_id !== null &&
+                        row.user_id !== reader &&
+                        row.at !== null &&
+                        toSafeInteger(row.at, "history message time") >= input.since,
+                ).length;
+            if (recent.length > 0) {
+                count += people(
+                    await agentDatabaseRows<{
+                        user_id: string | null;
+                        at: number | string | bigint | null;
+                    }>(
+                        txCtx.db,
+                        sql`SELECT json_extract(message_json, '$.userId') AS user_id,
+                                   json_extract(message_json, '$.at') AS at
+                            FROM ${sql.raw(HISTORY_TABLE)}
+                            WHERE agent_id = ${agentId} AND role = 'user' AND run_id IN (${sql.join(
+                                recent.map((run) => sql`${run.run_id}`),
+                                sql`, `,
+                            )})`,
+                    ),
+                );
+            }
+            count += people(
+                await agentDatabaseRows<{
+                    user_id: string | null;
+                    at: number | string | bigint | null;
+                }>(
+                    txCtx.db,
+                    sql`SELECT json_extract(message_json, '$.userId') AS user_id,
+                               json_extract(message_json, '$.createdAt') AS at
+                        FROM ${sql.raw(HISTORY_PENDING_TABLE)}
+                        WHERE agent_id = ${agentId}
+                        LIMIT ${MAX_HISTORY_PENDING_MESSAGES}`,
+                ),
+            );
+            return Math.min(count, MAX_HISTORY_UNREAD_COUNT);
+        });
     }
 
     /**
