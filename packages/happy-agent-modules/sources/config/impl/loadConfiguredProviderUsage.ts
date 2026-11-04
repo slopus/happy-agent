@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import {
     fetchClaudeProviderUsage,
     type ClaudeUsageEndpointRefusal,
@@ -7,6 +10,7 @@ import {
 } from "@slopus/happy-providers";
 
 import type { HappyAgentConfigValues } from "../ConfigModule.js";
+import { readClaudeSettingsEnvironment } from "./readClaudeSettingsEnvironment.js";
 
 export interface LoadConfiguredProviderUsageOptions {
     readonly environment: NodeJS.ProcessEnv;
@@ -48,22 +52,22 @@ export function hasConfiguredProviderUsageSource(
 }
 
 /** Ask one configured account through the usage API its vendor actually supplies. */
-export function loadConfiguredProviderUsage(
+export async function loadConfiguredProviderUsage(
     options: LoadConfiguredProviderUsageOptions,
 ): Promise<ProviderUsage | null> {
     const provider = options.providers[options.providerId];
     if (provider === undefined || (provider.enabled === false && options.ignoreEnabled !== true)) {
-        return Promise.resolve(null);
+        return null;
     }
     // A smart provider spends through its concrete members, whose own entries carry usage.
-    if (provider.type === "smart") return Promise.resolve(null);
+    if (provider.type === "smart") return null;
     const env = providerEnvironment(provider.credentialIsolation === true, options.environment);
     const providerFetch = options.signal === undefined ? {} : { fetch: until(options.signal) };
 
     if (provider.type === "codex") {
         // An API key is billed independently from a ChatGPT subscription. Never attribute an
         // ambient Codex login's account usage to an explicitly configured API-key provider.
-        if (provider.apiKey !== undefined) return Promise.resolve(null);
+        if (provider.apiKey !== undefined) return null;
         return fetchCodexProviderUsage({
             ...(provider.authFile === undefined ? {} : { authPath: provider.authFile }),
             env,
@@ -74,8 +78,23 @@ export function loadConfiguredProviderUsage(
     if (provider.type === "claude") {
         // Anthropic API keys have no account-usage endpoint. OAuth and setup tokens use the
         // account-facing bearer flow, with rate-limit headers as the scoped-token fallback.
-        if (provider.apiKey !== undefined) return Promise.resolve(null);
-        const configuredToken = provider.oauthToken ?? provider.authToken;
+        if (provider.apiKey !== undefined) return null;
+        // Inference applies the `env` block of Claude Code's settings, where a gateway's base URL
+        // and token live, so the account is measured at the same endpoint with the same token.
+        const settings =
+            provider.credentialIsolation === true
+                ? {}
+                : (
+                      await readClaudeSettingsEnvironment(
+                          provider.configDir ??
+                              (env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude")),
+                      )
+                  ).env;
+        const claudeEnv = { ...env, ...settings };
+        const configuredToken =
+            provider.oauthToken ??
+            provider.authToken ??
+            (settings.ANTHROPIC_AUTH_TOKEN?.trim() || undefined);
         // A configured token is a `claude setup-token` or a gateway token: inference only, so the
         // OAuth usage endpoint would only refuse it. A stored login decides from its own scopes.
         const skipUsageEndpoint =
@@ -88,10 +107,16 @@ export function loadConfiguredProviderUsage(
             ...(options.method?.onUsageEndpointRefused === undefined
                 ? {}
                 : { onUsageEndpointRefused: options.method.onUsageEndpointRefused }),
-            ...(env.ANTHROPIC_BASE_URL === undefined ? {} : { baseUrl: env.ANTHROPIC_BASE_URL }),
+            ...(claudeEnv.ANTHROPIC_BASE_URL === undefined
+                ? {}
+                : { baseUrl: claudeEnv.ANTHROPIC_BASE_URL }),
+            // A gateway that routes by model name knows the account's own models, not Anthropic's.
+            ...(claudeEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL === undefined
+                ? {}
+                : { probeModel: claudeEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL }),
             ...(provider.configDir === undefined ? {} : { configDir: provider.configDir }),
             ...(configuredToken === undefined ? {} : { oauthToken: configuredToken }),
-            env,
+            env: claudeEnv,
             providerId: options.providerId,
             ...providerFetch,
         });
@@ -99,7 +124,7 @@ export function loadConfiguredProviderUsage(
     if (provider.type === "grok") {
         // An explicit API key does not identify the CLI subscription account whose billing API
         // this reads, so do not silently fall back to an unrelated ambient login.
-        if (provider.apiKey !== undefined) return Promise.resolve(null);
+        if (provider.apiKey !== undefined) return null;
         return fetchGrokProviderUsage({
             ...(provider.authFile === undefined ? {} : { authFile: provider.authFile }),
             env,
@@ -109,7 +134,7 @@ export function loadConfiguredProviderUsage(
     }
 
     // Bedrock usage belongs to AWS billing; Bedrock exposes no coding-account quota endpoint.
-    return Promise.resolve(null);
+    return null;
 }
 
 /** Combine a vendor request's own timeout with the runtime lifetime that owns the poll. */

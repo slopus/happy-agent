@@ -152,6 +152,12 @@ Model names are unchanged: a custom endpoint is often a pass-through proxy servi
 models. Claude Code's `ANTHROPIC_DEFAULT_*_MODEL` overrides only remap the family aliases. Rig
 sends full model IDs, so the CLI itself would not remap them either.
 
+The usage poll reads the same settings `env` as inference. It used to look only for a stored login,
+so a `config_dir` account whose settings name a gateway reported no usage. It now measures the
+gateway's token at that base URL through the inference-header probe, and probes with
+`ANTHROPIC_DEFAULT_HAIKU_MODEL` when set, since a gateway that routes by model name cannot route
+Anthropic's fixed probe model.
+
 ## Native Codex account history uses the execution credential and a private local identity
 
 Native accounts previously always appeared unknown, so signing into another account behind the same
