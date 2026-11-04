@@ -8,6 +8,7 @@ import {
     type AcpTurnEnvironment,
     type ForeignAgent,
     type ForeignAgentStart,
+    type ProviderUsage,
 } from "@slopus/happy-providers";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -117,10 +118,15 @@ export function happyHarnessAccepts(
 export function createForeignAgentProvider(
     route: ForeignAgentRoute,
     agentHome: string,
+    onAccountUsage?: (usage: ProviderUsage) => void,
 ): AcpProvider {
     const directory = foreignAgentDirectory(agentHome, route);
     return new AcpProvider({
-        connect: route.agent.connect(foreignAgentStart(route)),
+        connect: route.agent.connect({
+            ...foreignAgentStart(route),
+            // The agent names a reading after its vendor; it belongs to the account it ran on.
+            onAccountUsage: (usage) => onAccountUsage?.({ ...usage, providerId: route.providerId }),
+        }),
         stateDirectory: directory,
         environment: (ctx) => foreignAgentTurnEnvironment(ctx, directory),
         profile: route.agent.profile,

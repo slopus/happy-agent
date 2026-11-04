@@ -558,3 +558,11 @@ CLI; custom accounts without a name use a readable ID. Names are trimmed and val
 displayed verbatim. Configuration owns the defaults. Names never change credentials, provider
 types, enabled or hidden flags, pool membership, defaults, or routing. Email shortening belongs
 only to recipe guidance when choosing a name, never to a runtime formatter.
+
+## A harness account is measured by the work its agent does
+
+An account used only through the `claude_code` or `codex_cli` harness showed no usage, because the
+periodic poll cannot read every account, such as a Codex API key behind a gateway that sends
+`x-codex-*` headers. Claude Code and Codex report the account's limits while they work. A foreign
+agent provider now passes those readings to the same account-usage listeners as native providers,
+renamed for the account the agent ran on.
