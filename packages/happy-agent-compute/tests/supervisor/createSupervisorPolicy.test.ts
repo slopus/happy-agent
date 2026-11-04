@@ -32,6 +32,30 @@ describe("createSupervisorPolicy", () => {
         });
     });
 
+    it("narrows the proxy's host list with denied hosts and allowed ports", () => {
+        expect(
+            createSupervisorPolicy({
+                cwd: "/workspace",
+                permissions: computePermissions("auto", {
+                    network: {
+                        egress: true,
+                        allowedHosts: ["*.example.com"],
+                        deniedHosts: ["uploads.example.com"],
+                        allowedPorts: [443],
+                        localBinding: false,
+                    },
+                }),
+            }).network,
+        ).toEqual({
+            egress: true,
+            allowedHosts: ["*.example.com"],
+            deniedHosts: ["uploads.example.com"],
+            allowedPorts: [443],
+            localBinding: false,
+            outgoingProxy: { frontEnds: ["http", "socks5"] },
+        });
+    });
+
     it("can represent an explicit deny-all egress proxy", () => {
         expect(
             createSupervisorPolicy({

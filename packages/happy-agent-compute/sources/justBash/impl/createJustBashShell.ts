@@ -384,6 +384,9 @@ function createPermissionBash(
 
 function toJustBashNetworkConfig(permissions: ComputePermissions): NetworkConfig | undefined {
     if (!permissions.network.egress) return undefined;
+    if (permissions.network.deniedHosts?.length || permissions.network.allowedPorts !== undefined) {
+        throw new Error("The emulated shell cannot enforce denied hosts or allowed ports.");
+    }
     const allowedHosts = permissions.network.allowedHosts ?? [];
     if (allowedHosts.length === 0) {
         return { dangerouslyAllowFullInternetAccess: true };

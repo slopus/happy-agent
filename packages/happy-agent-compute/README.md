@@ -44,7 +44,13 @@ interface ComputePermissions {
     deniedReadPaths?: readonly string[];
     allowedWritePaths?: readonly string[];
     deniedWritePaths?: readonly string[];
-    network: { egress: boolean; allowedHosts?: readonly string[]; localBinding: boolean };
+    network: {
+        egress: boolean;
+        allowedHosts?: readonly string[];
+        deniedHosts?: readonly string[];
+        allowedPorts?: readonly number[];
+        localBinding: boolean;
+    };
 }
 ```
 
@@ -56,7 +62,9 @@ making the next call with a narrower value.
 
 The mode is the coarse policy and the path lists refine it; a denial always beats a grant. Egress
 and the ability to bind a listening socket are asked separately, because a build that fetches
-dependencies and a dev server need opposite halves of "network access".
+dependencies and a dev server need opposite halves of "network access". A non-empty `allowedHosts`
+sends egress through the supervisor's proxy; `deniedHosts` refuses names it would otherwise allow,
+and `allowedPorts` limits the destination ports. Both only narrow a non-empty `allowedHosts`.
 
 Build a value from a mode rather than spelling the lists out at every call site:
 

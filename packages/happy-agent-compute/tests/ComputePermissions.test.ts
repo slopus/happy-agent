@@ -32,6 +32,17 @@ describe("full access cannot be narrowed", () => {
             "a host allow list",
             { network: { egress: true, allowedHosts: ["example.com"], localBinding: true } },
         ],
+        [
+            "a host deny list",
+            {
+                network: {
+                    egress: true,
+                    allowedHosts: ["*.example.com"],
+                    deniedHosts: ["uploads.example.com"],
+                    localBinding: true,
+                },
+            },
+        ],
         ["withheld egress", { network: { egress: false, localBinding: true } }],
         ["withheld local binding", { network: { egress: true, localBinding: false } }],
     ];
@@ -89,6 +100,28 @@ describe("restricted modes carry restrictions freely", () => {
             expect(() => assertComputePermissions(permissions)).not.toThrow();
         });
     }
+
+    it("refuses denied hosts or allowed ports without a host list to narrow", () => {
+        for (const network of [
+            { egress: true, deniedHosts: ["uploads.example.com"], localBinding: false },
+            { egress: true, allowedHosts: [], allowedPorts: [443], localBinding: false },
+        ]) {
+            expect(() => computePermissions("auto", { network })).toThrow(
+                /need a non-empty allowedHosts/u,
+            );
+        }
+        expect(() =>
+            computePermissions("auto", {
+                network: {
+                    egress: true,
+                    allowedHosts: ["*.example.com"],
+                    deniedHosts: ["uploads.example.com"],
+                    allowedPorts: [443],
+                    localBinding: false,
+                },
+            }),
+        ).not.toThrow();
+    });
 
     it("gives a mode its own network defaults when the caller says nothing", () => {
         expect(computePermissions("workspace_write").network).toEqual({

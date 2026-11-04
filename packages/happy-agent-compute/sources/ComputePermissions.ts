@@ -39,6 +39,18 @@ export const computeNetworkPermissionsSchema = Type.Object({
      */
     allowedHosts: Type.Optional(Type.Array(Type.String())),
     /**
+     * Hosts refused even when `allowedHosts` names them, in the same syntax. Only narrows a
+     * non-empty `allowedHosts`.
+     */
+    deniedHosts: Type.Optional(Type.Array(Type.String())),
+    /**
+     * The only destination ports the allowed hosts may be reached on. Absent means any port. Only
+     * narrows a non-empty `allowedHosts`, and cannot be empty.
+     */
+    allowedPorts: Type.Optional(
+        Type.Array(Type.Integer({ minimum: 1, maximum: 65_535 }), { minItems: 1 }),
+    ),
+    /**
      * Whether the command may bind a local listening socket. This is off by default even where
      * egress is allowed, because a listener is reachable by things the agent did not start.
      */
@@ -112,11 +124,22 @@ function defaultNetworkFor(mode: ComputePermissionMode): ComputeNetworkPermissio
  * to decide for itself which half of a contradiction to believe.
  */
 export function assertComputePermissions(permissions: ComputePermissions): void {
-    if (permissions.mode !== "full_access") return;
+    const { allowedHosts, allowedPorts, deniedHosts } = permissions.network;
+    if (permissions.mode !== "full_access") {
+        // An empty host list means any host, which no denial or port list can narrow.
+        if ((deniedHosts?.length || allowedPorts !== undefined) && !allowedHosts?.length) {
+            throw new Error(
+                "Network deniedHosts and allowedPorts narrow allowedHosts, so they need a non-empty allowedHosts.",
+            );
+        }
+        return;
+    }
     const restrictions: string[] = [];
     if (permissions.deniedReadPaths?.length) restrictions.push("deniedReadPaths");
     if (permissions.deniedWritePaths?.length) restrictions.push("deniedWritePaths");
-    if (permissions.network.allowedHosts?.length) restrictions.push("network.allowedHosts");
+    if (allowedHosts?.length) restrictions.push("network.allowedHosts");
+    if (deniedHosts?.length) restrictions.push("network.deniedHosts");
+    if (allowedPorts !== undefined) restrictions.push("network.allowedPorts");
     if (!permissions.network.egress) restrictions.push("network.egress: false");
     if (!permissions.network.localBinding) restrictions.push("network.localBinding: false");
     if (restrictions.length === 0) return;
