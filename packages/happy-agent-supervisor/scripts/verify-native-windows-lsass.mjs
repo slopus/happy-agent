@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -56,8 +56,44 @@ function sleep(ms) {
 
 const cwd = await mkdtemp(join(tmpdir(), "happy-lsass-"));
 
+const sandboxedArguments = () => [
+    "--no-provision",
+    "--state-dir",
+    state,
+    "--cwd",
+    cwd,
+    "--policy",
+    JSON.stringify({ mode: "read_only", network: { egress: false, localBinding: false } }),
+    "--",
+    "C:\\Windows\\System32\\cmd.exe",
+    "/d",
+    "/c",
+    "exit 0",
+];
+
+/** Several projects scanning at once, as Git tracking does across open projects. */
+async function sandboxedConcurrently(count, parallel) {
+    let next = 0;
+    async function worker() {
+        while (next < count) {
+            next += 1;
+            await new Promise((resolve, reject) => {
+                const child = spawn(supervisor, sandboxedArguments(), {
+                    cwd,
+                    windowsHide: true,
+                    stdio: "ignore",
+                });
+                child.on("error", reject);
+                child.on("exit", (code) =>
+                    code === 0 ? resolve() : reject(new Error(`Sandboxed command exited ${code}`)),
+                );
+            });
+        }
+    }
+    await Promise.all(Array.from({ length: parallel }, worker));
+}
+
 function sandboxed() {
-    const policy = { mode: "read_only", network: { egress: false, localBinding: false } };
     const result = spawnSync(
         supervisor,
         [
@@ -96,10 +132,11 @@ function setupStatus() {
     assert.equal(result.status, 0, result.stderr);
 }
 
-async function phase(name, run) {
+async function phase(name, run, all) {
     const before = sample();
     const started = Date.now();
-    for (let index = 0; index < launches; index++) run();
+    if (all !== undefined) await all();
+    else for (let index = 0; index < launches; index++) run();
     const elapsedMs = Date.now() - started;
     const after = sample();
     await sleep(settleMs);
@@ -140,6 +177,9 @@ try {
     for (const report of [
         await phase("setup-status", setupStatus),
         await phase("sandboxed-command", sandboxed),
+        await phase("sandboxed-command-8-parallel", undefined, () =>
+            sandboxedConcurrently(launches, 8),
+        ),
     ]) {
         if (report.lsassGrowthPerLaunch > allowedPerLaunch) {
             failures.push(

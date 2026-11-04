@@ -28,6 +28,10 @@ on:
                 description: Windows supervisor to measure, "source" or a published version such as 0.0.16
                 type: string
                 default: source
+            lsass_runner:
+                description: Windows runner image for the LSASS measurement
+                type: string
+                default: windows-2025
 
 permissions:
     contents: read
@@ -83,7 +87,7 @@ jobs:
     windows-lsass:
         if: ${{ inputs.lsass_only }}
         name: Windows sandbox launches do not grow LSASS (${{ inputs.lsass_supervisor }})
-        runs-on: windows-2025
+        runs-on: ${{ inputs.lsass_runner }}
         timeout-minutes: 90
         steps:
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
