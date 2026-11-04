@@ -17,6 +17,7 @@ import {
     Nullable,
     resourceVersionSchema,
     timestampSchema,
+    unreadCountSchema,
 } from "./common.js";
 import type { BackgroundProcess } from "./processes.js";
 import type { CompactionMessage, Run, ServiceMessage } from "./messages.js";
@@ -86,7 +87,10 @@ export type AgentRetrying = Static<typeof agentRetryingSchema>;
 /** Why the agent has something the person has not looked at. */
 export const agentUnreadSchema = Type.Object({
     reason: Type.String(),
+    /** When it first became unread; later finished runs keep it. */
     since: timestampSchema,
+    /** Runs finished at or after `since`, derived and capped at 100. Older daemons omit it. */
+    count: Type.Optional(unreadCountSchema),
 });
 export type AgentUnread = Static<typeof agentUnreadSchema>;
 

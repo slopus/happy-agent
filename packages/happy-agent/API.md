@@ -6097,7 +6097,7 @@ guarding the whole row. The version exists for event chaining and newer-copy com
     "subagents": { "total": 2, "running": 0 },
     "processes": { "running": 1 },
     "pendingQuestionId": null,
-    "unread": { "reason": "turn_finished", "since": 1755400000000 },
+    "unread": { "reason": "turn_finished", "since": 1755400000000, "count": 2 },
     "lastActivityAt": 1755390000000,
     "orderKey": "5",
     "lastCursor": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
@@ -6199,6 +6199,11 @@ Fields:
   `null`. See "Questions" below.
 - `unread` — set when the agent finished work the user has not looked at: why (`reason`) and
   since when. `null` when there is nothing unread. Cleared by `POST /v0/agents/:agentId/read`.
+  `since` is when it first became unread: a later finished run keeps it. `count` is optional and
+  additive: how many runs have finished at or after `since`, at most 100. It is derived when the
+  agent is read, never stored, and every finished run while unread publishes it again with
+  `agent.updated`. Clients show `100` as "99+". When `count` is missing or `0` they show a plain
+  unread mark. Older daemons omit it.
 - `statusLine` — deprecated optional object-or-null field, always `null` in current daemon
   projections. Older daemons and historical events may carry
   `{ "text": "Testing with a few friends", "updatedAt": 1755400000000 }`; `text` is 1–120 characters
@@ -7972,7 +7977,9 @@ Request:
   client already keys by. Omitted, the daemon generates one. Sending again with an `id` the
   agent already has creates nothing and returns the message as it now stands, which makes
   retrying a send whose response was lost safe.
-- `text` — the message text. Required, 1–1,000,000 characters.
+- `text` — the message text. Required, 1–1,000,000 characters. In team mode, when a member sends
+  it to a task's agent, the members it links as `happy://users/<userId>` join the task (see Tasks,
+  "Mentioning from a message").
 - `clientMetadata` — optional freeform JSON object owned by the sending client. It is persisted
   and echoed unchanged on every complete representation of this message, but is not interpreted
   by the daemon or sent to the model.
@@ -10548,12 +10555,27 @@ joins them to the task. Such a join ignores `tasks.autoJoin`, clears an explicit
 manual join, and marks the membership `unread` with the agent's reason; looping in a member already
 in the task keeps its place and marks it unread again. Agents write a person as `[Name](happy://users/<userId>)` (see "Happy links").
 
-**Unread.** A membership's `unread` says what its member has not looked at yet, today only that
-a teammate's agent looped them into the task. It is the
+**Mentioning from a message.** In team mode, a team member's `POST /v0/agents/:agentId/send` to a
+task's agent loops in every other member its `text` links as `happy://users/<userId>`, through the
+same join as `loop_in_teammate`. That join ignores `tasks.autoJoin`, clears an explicit leave, and
+keeps the place of a member already in the task. The membership is marked `unread` with
+`reason: "mentioned"` and the sender's `userId`. This happens in the transaction that stores the
+message, so the message's response and events come after the join. Guests, unknown IDs, and the
+sender are ignored, and so is an archived task. A mentioned person leaves through
+`POST /v0/tasks/:taskId/leave` like anyone else. Mentions in messages to bots, workspaces, and
+other agents join nobody.
+
+**Unread.** A membership's `unread` says what its member has not looked at yet. A teammate's
+agent may have looped them in, or a teammate may have mentioned them. In team mode there is also
+new activity: a finished run of the task's agent marks every member, and a person's message marks
+every member except its sender. An already-unread membership keeps its mark and `since`. It gets
+a new `task.membership.updated` with its derived `count`. It is the
 member's own: it travels on their membership in task responses, `GET /v0/tasks`, the desktop
 bootstrap's `taskMemberships`, and their `task.joined` and `task.membership.updated` events, on
 every connection that member uses, a paired phone included. `POST /v0/tasks/:taskId/read` clears
-it, and so does `POST /v0/agents/:agentId/read` on the task's agent.
+it, and so does `POST /v0/agents/:agentId/read` on the task's agent. A client shows a task's
+unread mark and count from the caller's membership when it is set, and otherwise from the task
+agent's `unread`.
 
 **Archival permission.** In standalone mode the installation's one person may archive and
 unarchive every task. In team mode the task's owner and the team owner may; any other member
@@ -10663,11 +10685,17 @@ Fields:
 - `orderKey` — an opaque sort key within this member's list; clients order the member's tasks by
   comparing these strings.
 - `joinedAt` — when the member joined.
-- `unread` — `null`, or what the member has not looked at yet: `reason` (`"looped_in"` today; the
-  set may grow, and clients treat an unknown reason as plain unread), `since` (when it was marked),
-  and optionally `agentId` (the agent that marked it, the task's agent) and `note` (its
-  one-sentence reason, 1–500 characters, shown to the member). Additive: older daemons omit it, and
-  clients treat a missing value as `null`.
+- `unread` — `null`, or what the member has not looked at yet: `reason`, `since` (when it was
+  first marked; later activity keeps it), and optional fields. `reason` is `"looped_in"` (a task's
+  agent looped the member in, with `agentId` and the agent's one-sentence `note`, 1–500
+  characters, shown to the member), `"mentioned"` (a teammate's message mentioned them, with that
+  teammate's `userId`), or `"new_messages"` (the task's agent finished a run, or another person
+  wrote in the task). The set may grow; clients treat an unknown reason as plain unread. `count`
+  is optional: how many runs of the task's agent finished, and how many messages people other
+  than this member wrote in the task, at or after `since`, at most 100. It is derived when the
+  membership is read, never stored. Clients show `100` as "99+". When `count` is missing or `0`
+  they show a plain unread mark. Additive: older daemons omit `unread` and `count`, and clients
+  treat a missing `unread` as `null`.
 
 Every task route answers only with the caller's own memberships. In team mode one member never
 sees another member's memberships.
@@ -13205,9 +13233,9 @@ event is idempotent by attachment ID.
     - `membership` (full membership object with its new `orderKey`).
 - `task.left` — the member left a task. In team mode it reaches only that member's connections.
     - `membership` (the removed membership object).
-- `task.membership.updated` — the member's membership changed in place: marked `unread` again, or
-  read. In team mode it reaches only that member's connections. Additive; older daemons never
-  emit it.
+- `task.membership.updated` — the member's membership changed in place: marked `unread` again,
+  its derived unread `count` moved, or read. In team mode it reaches only that member's
+  connections. Additive; older daemons never emit it.
     - `membership` (full membership object).
 
 **Artifacts**
@@ -13801,6 +13829,9 @@ Response — `200`:
         /* exactly the stories array from GET /v0/stories for this reader */
     ],
     "feedUnread": 3,
+    "teammates": [
+        /* every team member who signs in, as GET /v0/users describes each one */
+    ],
     "archivedAgents": [
         /* the most recently archived agents of those projects and workspaces, newest first */
     ],
@@ -13853,6 +13884,14 @@ Response — `200`:
 - `feedUnread` — the caller's count of open Feed entries, exactly `unread` from `GET /v0/feed`, so
   a client can show the Feed's badge before reading the Feed itself. Follow `feed.unread.updated`
   from the bootstrap `cursor`. Optional; absent on daemons without the Feed and for guests.
+- `teammates` — in team mode, every member who signs in, the caller included, guests left out, in
+  name order. Each entry has exactly the user shape of `GET /v0/users`. It is the directory a
+  client offers when the person types `@` to mention someone, so mentioning needs no request.
+  Follow `profile.updated` from the bootstrap `cursor` and re-read a changed member through
+  `GET /v0/users?ids=`. A member who signs in for the first time appears in the next bootstrap.
+  Optional: absent in standalone mode and on older daemons. Teams are small today. A later
+  revision may send only the members the daemon predicts a person is most likely to mention,
+  with clients looking up anyone else on demand.
 - `archivedAgents` — the archived agents that would otherwise belong to the included projects'
   and workspaces' `agents` series, as full agent objects, newest `archivedAt` first with the
   agent ID as the tie-breaker. Each carries the `workspaceId` of its owner, which is the

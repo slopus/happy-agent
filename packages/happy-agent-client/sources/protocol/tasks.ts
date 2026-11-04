@@ -10,6 +10,7 @@ import {
     Nullable,
     resourceVersionSchema,
     timestampSchema,
+    unreadCountSchema,
 } from "./common.js";
 import { userIdSchema } from "./userId.js";
 
@@ -64,16 +65,25 @@ export const taskSchema = Type.Object({
 export type Task = Static<typeof taskSchema>;
 
 /**
- * What the member has not looked at in a task: today only that an agent looped them in. The
- * reason set may grow; clients treat an unknown reason as plain unread.
+ * What the member has not looked at in a task: `looped_in` by an agent, `mentioned` by a
+ * teammate's message, or `new_messages`. The reason set may grow; clients treat an unknown reason
+ * as plain unread.
  */
 export const taskMembershipUnreadSchema = Type.Object({
     reason: Type.String({ minLength: 1, maxLength: 64 }),
+    /** When it was first marked; later activity keeps it. */
     since: timestampSchema,
     /** The agent that looped the member in. */
     agentId: Type.Optional(cuid2Schema),
     /** The agent's one-sentence reason, shown to the member. */
     note: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+    /** The teammate whose message mentioned the member. */
+    userId: Type.Optional(userIdSchema),
+    /**
+     * Finished runs and other people's messages at or after `since`, derived and capped at 100.
+     * Older daemons omit it.
+     */
+    count: Type.Optional(unreadCountSchema),
 });
 export type TaskMembershipUnread = Static<typeof taskMembershipUnreadSchema>;
 

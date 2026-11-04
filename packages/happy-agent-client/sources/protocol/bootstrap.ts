@@ -23,6 +23,7 @@ import { surfaceSchema } from "./surfaces.js";
 import { storySchema } from "./stories.js";
 import type { AgentUsageResponse } from "./usage.js";
 import { storedUserSettingSchema } from "./userSettings.js";
+import { userSchema } from "./users.js";
 import { workspaceSchema } from "./workspaces.js";
 
 /**
@@ -93,6 +94,11 @@ export const desktopBootstrapResponseSchema = Type.Object({
      * on daemons without the Feed and for guests.
      */
     feedUnread: Type.Optional(Type.Integer({ minimum: 0 })),
+    /**
+     * Every team member who signs in, the caller included, in name order: whom `@` can mention.
+     * Absent in standalone mode and on older daemons.
+     */
+    teammates: Type.Optional(Type.Array(userSchema)),
     /**
      * The caller's own user settings, exactly as `GET /v0/user-settings` lists them. Absent on
      * daemons without user settings; keep those preferences on the device there.

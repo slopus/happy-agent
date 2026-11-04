@@ -39,6 +39,10 @@ export type ResourceVersion = Static<typeof resourceVersionSchema>;
 export const timestampSchema = Type.Integer();
 export type Timestamp = Static<typeof timestampSchema>;
 
+/** A derived unread count; the daemon stops counting at 100, which clients show as "99+". */
+export const unreadCountSchema = Type.Integer({ minimum: 0, maximum: 100 });
+export type UnreadCount = Static<typeof unreadCountSchema>;
+
 /** The opaque echo a client attaches to a mutation to recognize its own change. */
 export const mutationIdSchema = Type.String();
 export type MutationId = Static<typeof mutationIdSchema>;

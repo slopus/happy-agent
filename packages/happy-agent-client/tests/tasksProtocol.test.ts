@@ -104,6 +104,45 @@ describe("tasks protocol", () => {
         ).toBe(true);
     });
 
+    it("carries derived unread counts, mention marks, and the teammate directory", () => {
+        const mentioned = {
+            ...membership,
+            unread: { reason: "mentioned", since: updatedAt, userId: "owner2", count: 3 },
+        };
+        expect(Value.Check(taskResponseSchema, { task, membership: mentioned })).toBe(true);
+        // Counts stop at 100, which clients show as "99+"; older daemons omit them.
+        expect(
+            Value.Check(taskResponseSchema, {
+                task,
+                membership: { ...mentioned, unread: { ...mentioned.unread, count: 101 } },
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(taskSchema, {
+                ...task,
+                agent: {
+                    ...task.agent,
+                    unread: { reason: "turn_finished", since: updatedAt, count: 100 },
+                },
+            }),
+        ).toBe(true);
+        expect(desktopBootstrapResponseSchema.required ?? []).not.toContain("teammates");
+        expect(
+            Value.Check(desktopBootstrapResponseSchema.properties.teammates, [
+                {
+                    id: "owner2",
+                    name: "Kirill",
+                    photo: null,
+                    updatedAt,
+                    version,
+                    kind: "member",
+                    role: "Designer",
+                    follows: null,
+                },
+            ]),
+        ).toBe(true);
+    });
+
     it("validates task and membership events", () => {
         const events: HappyAgentEvent[] = [
             {

@@ -431,8 +431,13 @@ through `getUsers()` and `getUserPhoto()`. `createTask()` creates a task the cal
 left to name itself from its first message, and `renameTask()` renames it. A task's
 `workspaceId` works with every workspace route, files, terminals, and Git included. Follow `task.created` and `task.updated` for the tasks, and `task.joined`,
 `task.reordered`, `task.left`, and `task.membership.updated` for the caller's memberships. A
-membership's `unread` is set when a teammate's agent looped the caller into the task;
+membership's `unread` is set when a teammate's agent looped the caller into the task, a
+teammate's message mentioned them as `happy://users/<userId>` (`"mentioned"`), or, in team mode,
+the task's agent finished a run or another person wrote there (`"new_messages"`);
 `markTaskRead()`, or `markAgentRead()` on the task's agent, clears it. Older daemons omit `unread`.
+Its optional `count`, like an agent's `unread.count`, is derived by the daemon and capped at 100;
+show `100` as "99+" and a missing or zero count as a plain mark. Desktop bootstrap's optional
+`teammates` lists every member who signs in, so a composer offers `@` mentions without a request.
 
 Artifacts are additive without a protocol bump. Detect support through `listArtifacts()`: `404`
 means the daemon has no artifacts. The catalog is global and pages newest-created first; filter it by
