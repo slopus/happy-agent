@@ -37,7 +37,7 @@ export function postStoryTool(
         name: "post_story",
         defer: true,
         capabilities: [
-            "Stories: when you ship a change that is mostly visual or has a major UX part, post a screenshot or short video of it with post_story; skip stories for everything else.",
+            "Stories: before your final reply on any turn where you shipped (pushed, merged, released or deployed) a change people will see, such as UI, layout, styling, a screen or a UX flow, post a screenshot or short video of the shipped result with post_story. Reuse one from this conversation, or take one first if you have none. This applies even when the person only asked you to sync, push or check status. Skip stories for backend, prompt, docs and test changes, and everything else.",
         ],
         searchKeywords: [
             "story",
@@ -54,7 +54,7 @@ export function postStoryTool(
             "Each call posts one frame. For an update with several parts, outline it first and post one frame per part, in order, rather than combining the parts into one image or video.",
             "Keep the ring fresh: an old story left in the ring is noise. When an update makes earlier frames stale, pass their ids as replaces on the first new frame (up to twenty); they and their reposts leave as it is posted. Never replace frames of the update you are posting. If you do not know what is live, call list_stories first. Use delete_story to remove a frame without posting a new one.",
             "Show, don't tell. Pick the image or video that shows the result best, final over intermediate. When nothing worth showing has been shown yet, make something first: a screenshot or video of it working. A caption alone is not a story.",
-            "The viewer is 9:16 (1080×1920). Its top 384 px are covered by the progress bar and poster, the bottom 576 px by the caption and reply field, and 48 px at each side. Content that must be fully seen should be scaled and placed inside x 48–1032, y 384–1344; prefer a vertical frame.",
+            "The viewer is 9:16 (1080×1920). Its top 384 px are covered by the progress bar and poster, the bottom 576 px by the caption and reply field, and 48 px at each side. Content that must be fully seen should be scaled and placed inside x 48–1032, y 384–1344; prefer a phone-sized or cropped vertical shot over a full landscape screen.",
             'Write the caption for someone who is not reading the code: what changed for them, in a few plain words, such as "Stories now play on your phone" or "New test build is on your phone". No commit hashes, versions, test counts, file or branch names, or scores like "14/14" unless the person asked for them. Never invent results.',
         ].join("\n\n"),
         parameters: postStoryInputSchema,

@@ -100,15 +100,22 @@ the agent machine's `ffmpeg` decodes once at `post_story`, because the daemon ha
 Reposts carry the original's still. Stored stills and image ThumbHashes never reach the served
 story object.
 
-## Story tools are deferred behind one visual-change line
+## Story tools are deferred behind one shipped-visual trigger
 
-Making post_story eager on Oct 29 raised shipped-moment posts on gpt-6.1-sol from 0/3 to 7/9. It
-also put three schemas and three capability lines in every request, and its trigger, anything
-people can see or try, covered nearly every change. Kirill asked for stories only when a change is
-mostly visual or has a major UX part. post_story, list_stories and delete_story are deferred again
-with search keywords, and only post_story contributes a capability line: post a screenshot or
-short video when a mostly visual or major UX change ships, and skip stories for everything else.
-There is no Stories skill or turn-end reminder. Deferring saves about 1,100 input tokens per
-request on Opus 5.5. Replaying nine real final turns on Opus 5.5 at medium effort, eager and
-deferred matched: neither posted, and every final reply arrived. Those visual turns were subtasks
-answering a parent agent, so whether top-level visual turns still post is checked separately.
+Making post_story eager on Oct 29 raised shipped-moment posts on gpt-6.1-sol from 0/3 to 7/9, but
+it put three schemas and three capability lines in every request, and its trigger, anything
+people can see or try, covered nearly every change. Kirill asked for stories only for visual or
+UX changes. The three tools are deferred again with search keywords, and only post_story
+contributes a capability line. Deferring saves about 1,100 input tokens per request on Opus 5.5
+and about 700 on GPT-6.1 Sol.
+
+A line that only described when stories fit ("when you ship a mostly visual change, post one")
+was ignored: replaying four real top-level turns that shipped visual work, eager and deferred
+alike posted 0–1 of 8. Agents report the push and stop, and most turns had no picture at hand.
+The line now names the moment (before the final reply), the trigger (pushed, merged, released or
+deployed a change people will see), what to do without media (take one first), that it applies
+when the person only asked to sync or check status, and what to skip (backend, prompt, docs,
+tests). With it, deferred posting reached 4/4 on Sol and 2/4 on Opus, with no story on three
+non-visual shipped turns on either model; a version that did not name the skip list made Sol post
+for a title-prompt change. The description asks for a phone-sized or cropped vertical shot, since
+a full landscape screen fills only a band of the 9:16 viewer.
