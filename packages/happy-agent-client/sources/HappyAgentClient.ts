@@ -1205,6 +1205,14 @@ export class HappyAgentClient {
         return endpointUrl(this.#endpoint, `v0/stories/${encodeURIComponent(storyId)}/round`);
     }
 
+    /** The URL of `GET /v0/agents/:agentId/messages/:messageId/story-frame`, a quote's still. */
+    storyQuoteFrameUrl(agentId: Cuid2, messageId: Cuid2): string {
+        return endpointUrl(
+            this.#endpoint,
+            `v0/agents/${encodeURIComponent(agentId)}/messages/${encodeURIComponent(messageId)}/story-frame`,
+        );
+    }
+
     /** `GET /v0/stories/:storyId/replies` — every reply, oldest first. */
     async listStoryReplies(
         storyId: Cuid2,

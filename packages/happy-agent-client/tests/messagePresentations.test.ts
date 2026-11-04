@@ -1,7 +1,12 @@
 import { Value } from "@sinclair/typebox/value";
 import { describe, expect, it } from "vitest";
 
-import { messageMetadataSchema, toolPresentationSchema } from "../sources/protocol/messages.js";
+import { HappyAgentClient } from "../sources/HappyAgentClient.js";
+import {
+    messageMetadataSchema,
+    storyQuoteSchema,
+    toolPresentationSchema,
+} from "../sources/protocol/messages.js";
 
 describe("additive conversation presentations", () => {
     it("accepts answered choices and free text in the tool presentation union", () => {
@@ -40,5 +45,25 @@ describe("additive conversation presentations", () => {
         expect(
             Value.Check(messageMetadataSchema, { senderAgentExplanation: "x".repeat(121) }),
         ).toBe(false);
+    });
+
+    it("quotes a replied story with an optional still frame", () => {
+        const quote = {
+            kind: "story",
+            storyId: "q2v7m4wfx0e8c1hg9kz3b6np",
+            agentId: "k8d2s0vqzj4m7ly1c5xh3rwe",
+            userId: null,
+            caption: "New onboarding is ready to try",
+            expiresAt: 1755486400000,
+            frame: { mimeType: "image/jpeg", thumbhash: "1QcSHQRnh493V4dIh4eXh1h4kJUI" },
+        };
+        expect(Value.Check(storyQuoteSchema, quote)).toBe(true);
+        expect(Value.Check(storyQuoteSchema, { ...quote, caption: null, frame: null })).toBe(true);
+        const { expiresAt: _, ...partial } = quote;
+        expect(Value.Check(storyQuoteSchema, partial)).toBe(false);
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t" });
+        expect(client.storyQuoteFrameUrl("agent1", "message1")).toBe(
+            "http://agent.local/v0/agents/agent1/messages/message1/story-frame",
+        );
     });
 });

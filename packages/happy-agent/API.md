@@ -6587,6 +6587,30 @@ bootstrap state, `message.created` and any later full-message event, and accepte
 including after daemon restart. When omitted, the field is absent. Re-sending an existing message
 ID returns the originally stored object and never replaces it with metadata from the retry.
 
+A user message may also carry `quote`, what it replies to, set by the daemon and never by the
+sending client. Its `content` holds only what the person wrote; clients show the quote above it.
+The one kind today is a person's reply to a story:
+
+```json
+{
+    "kind": "story",
+    "storyId": "q2v7m4wfx0e8c1hg9kz3b6np",
+    "agentId": "k8d2s0vqzj4m7ly1c5xh3rwe",
+    "userId": null,
+    "caption": "New onboarding is ready to try",
+    "expiresAt": 1755486400000,
+    "frame": { "mimeType": "image/png", "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI" }
+}
+```
+
+`agentId` is the story's agent, also this conversation's. `userId` is the person who reposted it
+when the story is a repost, and its author; otherwise it is `null` and the agent is the author.
+`caption` is the story's, or `null`. After `expiresAt` the story cannot be opened, but the quote
+stays. `frame` is `null` or a still of the story's first frame, with an optional base64 ThumbHash
+placeholder, served by `GET /v0/agents/:agentId/messages/:messageId/story-frame`: an image story's
+own image, or for a video, a still taken when the agent posted it. Clients ignore a quote kind
+they do not recognize. The field is additive and does not increment the protocol version.
+
 `profile` is separate from both mode and metadata. On the wire it is `null` or an opaque string of
 at most 512 characters. An internal request-profile codec decides which strings are currently
 meaningful; it accepts only `null` today. A string that does not match the current codec is
@@ -8170,6 +8194,13 @@ presentation, or when the daemon no longer holds the copy. Errors are JSON and
 including through `/v0/connections/:id/api/*`. A client that renders media through an element
 rather than `fetch` points it at this URL through a transport that adds the token, as with
 artifact files.
+
+### `GET /v0/agents/:agentId/messages/:messageId/story-frame`
+
+The still frame a user message's story `quote` shows, served exactly as a tool call's media item, including its
+immutable caching. An image story's frame is its image; a video story's is a still of its first
+frame, taken when the agent posted it. The frame outlives the story. `404` when the agent or
+message does not exist, or the message's `quote.frame` is `null`.
 
 ### Questions
 
@@ -10929,8 +10960,11 @@ text and round positions separate from the base media (see below).
 
 **Replies.** Anyone who sees a story may reply to it with 1–2000 characters of text. The reply is
 kept with the story, readable by everyone who sees the story, and is also sent to the story's agent
-as the replier's own message in that agent's chat, quoting the story:
-`> Replying to your story “<caption>” (story <id>)`, a blank line, then the text. It is delivered
+as the replier's own message in that agent's chat. Its `content` is exactly the text they wrote,
+and its `quote` names the story; see Message content. Just before it, the model receives a private
+system notification naming the story, such as
+`The person's next message replies to your story “<caption>” (story <id>). Its first frame follows.`,
+with the quote's frame as an image when there is one. It is delivered
 like a message the person typed, so the agent answers it in its ordinary turn. A reply to a repost
 reaches the original's agent the same way. Replies to a person's original story stay with that
 story only; there is no agent chat.

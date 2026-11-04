@@ -437,6 +437,31 @@ export const messageMetadataSchema = Type.Object({
 });
 export type MessageMetadata = Static<typeof messageMetadataSchema>;
 
+/**
+ * A story a person's message replies to, kept with the message after the story ends. The author
+ * is `userId` when the story is that person's repost, and otherwise the story's agent.
+ */
+export const storyQuoteSchema = Type.Object({
+    kind: Type.Literal("story"),
+    storyId: cuid2Schema,
+    /** The story's agent, which is also the agent of this conversation. */
+    agentId: cuid2Schema,
+    /** The person who reposted it, when the story is a repost; otherwise `null`. */
+    userId: Type.Union([userIdSchema, Type.Null()]),
+    caption: Type.Union([Type.String({ minLength: 1, maxLength: 200 }), Type.Null()]),
+    /** When the story ends, in epoch milliseconds; afterwards it cannot be opened. */
+    expiresAt: Type.Integer(),
+    /** A still of its first frame, from `storyQuoteFrameUrl`, or `null` when there is none. */
+    frame: Type.Union([
+        Type.Object({ mimeType: Type.String(), thumbhash: Type.Optional(Type.String()) }),
+        Type.Null(),
+    ]),
+});
+export type StoryQuote = Static<typeof storyQuoteSchema>;
+
+/** What a user message quotes. Clients ignore kinds they do not recognize. */
+export type MessageQuote = StoryQuote;
+
 /** One JSON value inside opaque client-owned message metadata. */
 export const clientMetadataValueSchema = Type.Recursive((value) =>
     Type.Union([
@@ -935,6 +960,8 @@ export interface UserMessage {
     metadata: MessageMetadata;
     /** Opaque client-owned JSON, when the sender supplied it. */
     clientMetadata?: ClientMetadata;
+    /** What this message replies to, shown above its content; `content` is only what was written. */
+    quote?: MessageQuote;
     /** Opaque request profile; a change resets the model's private conversation context. */
     profile?: string | null;
     /** `"pending"` until inference takes the message up. */
