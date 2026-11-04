@@ -552,3 +552,13 @@ CLI; custom accounts without a name use a readable ID. Names are trimmed and val
 displayed verbatim. Configuration owns the defaults. Names never change credentials, provider
 types, enabled or hidden flags, pool membership, defaults, or routing. Email shortening belongs
 only to recipe guidance when choosing a name, never to a runtime formatter.
+
+## A Claude account is measured where its inference goes
+
+A `config_dir` account whose `settings.json` `env` names a gateway (`ANTHROPIC_BASE_URL`,
+`ANTHROPIC_AUTH_TOKEN`) ran inference through that gateway, but the usage poll never read the
+file: it looked for a stored login in the directory, found none, and reported nothing. The poll
+now applies the same settings `env` as inference, unless the account isolates its credentials. It
+reaches the gateway's base URL, measures the gateway token through the inference-header probe as
+it does for configured tokens, and probes with `ANTHROPIC_DEFAULT_HAIKU_MODEL` when set, because a
+gateway that routes by model name cannot route Anthropic's fixed probe model.

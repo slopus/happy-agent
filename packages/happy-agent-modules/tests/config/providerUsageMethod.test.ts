@@ -81,6 +81,57 @@ describe("provider usage method", () => {
         expect(paths).toEqual(["/api/oauth/usage", "/api/oauth/profile", "/v1/messages"]);
     });
 
+    it("measures a config_dir account through the gateway its Claude Code settings name", async () => {
+        const claudeHome = await directory();
+        await writeFile(
+            join(claudeHome, "settings.json"),
+            JSON.stringify({
+                env: {
+                    ANTHROPIC_BASE_URL: "https://gateway.example/anthropic",
+                    ANTHROPIC_AUTH_TOKEN: "gateway-token",
+                    ANTHROPIC_DEFAULT_HAIKU_MODEL: "gateway-haiku",
+                },
+            }),
+        );
+        const config = await testConfigRootedAt(
+            await directory(),
+            [
+                "[providers.gateway]",
+                'type = "claude"',
+                "enabled = true",
+                `config_dir = ${JSON.stringify(claudeHome)}`,
+            ].join("\n"),
+        );
+        const requests: unknown[] = [];
+        vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
+            requests.push({
+                url: String(input),
+                authorization: new Headers(init?.headers).get("authorization"),
+                model: (JSON.parse(String(init?.body)) as { model: string }).model,
+            });
+            return Response.json(
+                {},
+                {
+                    headers: {
+                        "anthropic-ratelimit-unified-status": "allowed",
+                        "anthropic-ratelimit-unified-5h-utilization": "0.25",
+                    },
+                },
+            );
+        });
+
+        const usage = await config.readProviderUsage(createRootContext(), "gateway");
+
+        expect(requests).toEqual([
+            {
+                url: "https://gateway.example/anthropic/v1/messages",
+                authorization: "Bearer gateway-token",
+                model: "gateway-haiku",
+            },
+        ]);
+        expect(usage?.windows.fiveHour?.usedPercent).toBe(25);
+    });
+
     it("knows which accounts have any usage source to ask", async () => {
         const config = await testConfigRootedAt(
             await directory(),
