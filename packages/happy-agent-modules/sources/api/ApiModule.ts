@@ -8512,8 +8512,10 @@ export class ApiModule implements AgentModule {
             readonly workspaceId: string;
         }[] = [];
         for (const workspaceId of body.workspaceIds) {
+            // A workspace still being built is watched at the folder it is being built in, so
+            // one new workspace does not fail the whole set and its checkout is seen landing.
             const { projectId, childWorkspaceId, root, runnerId } =
-                await this.#resolveWorkspaceScope(ctx, workspaceId);
+                await this.#resolveWorkspaceScope(ctx, workspaceId, { initializing: true });
             // A folder on a runner, or a workload user's, is watched and scanned on its machine.
             const entity = {
                 path: root,
@@ -8534,6 +8536,7 @@ export class ApiModule implements AgentModule {
     async #resolveWorkspaceScope(
         ctx: Context,
         workspaceId: string,
+        options: { readonly initializing?: boolean } = {},
     ): Promise<{
         readonly botId?: string;
         readonly taskId?: string;
@@ -8602,9 +8605,10 @@ export class ApiModule implements AgentModule {
         const workspace = await this.#workspaces.get(ctx, workspaceId);
         if (workspace === undefined) throw notFound("The workspace was not found.");
         if (workspace.status === "initializing") {
-            throw new ApiError(409, "not_initialized", "The workspace is still initializing.");
-        }
-        if (workspace.status !== "ready") {
+            if (options.initializing !== true) {
+                throw new ApiError(409, "not_initialized", "The workspace is still initializing.");
+            }
+        } else if (workspace.status !== "ready") {
             throw new ApiError(409, "conflict", "The workspace is not available.");
         }
         return {

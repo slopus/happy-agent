@@ -1363,6 +1363,14 @@ export class WorkspacesModule implements AgentModule {
                     async () => await this.#createContentsLocked(ctx, reservedWorkspace, project),
                 );
             });
+            // A client watches the workspace as soon as it is announced, so its live Git may
+            // already be tracking a folder that did not exist yet and has no watch to notice it.
+            this.#git.markChanged({
+                path: reservedWorkspace.path,
+                projectId: reservedWorkspace.projectRef,
+                ...this.#gitOptions(reservedWorkspace.runnerId),
+                workspaceId: reservedWorkspace.id,
+            });
             ctx.lifetime?.throwIfAborted();
             workspace = await this.get(ctx, workspaceId);
             if (workspace?.status === "ready") return { outcome: "ready" };

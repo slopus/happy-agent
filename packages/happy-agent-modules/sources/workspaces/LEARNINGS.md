@@ -155,3 +155,13 @@ only on an archived workspace, after archival has stopped its agents, and remove
 when keep-on-archive settings kept it, then deletes the worktree's branch. Those settings describe
 archival, which is reversible in spirit; deletion is not. A branch Git refuses to delete because
 another worktree has it checked out stays, and the purge retries rather than forcing it.
+
+## A new workspace has live Git from its first edit
+
+Clients watch a workspace the moment it is announced, while it is still initializing. `git/watch`
+refused an initializing workspace with `409 not_initialized`, which failed the whole watch set, so
+the new workspace got no tracker and its line counts appeared only after the client's next renewal,
+up to two minutes later. A tracker armed before the checkout existed also had nothing to watch,
+and it waited for the 30-second stale poll. `git/watch` now registers an initializing workspace at
+its reserved folder. Provisioning tells Git the workspace changed once its contents exist, and that
+scan upgrades the tracker to the full working-tree and Git directory watches.
