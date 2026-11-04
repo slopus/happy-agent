@@ -374,7 +374,7 @@ describe("Happy Agent onboarding and usage matrix", () => {
                     { id: "anthropic/sonnet-5", enabled: false },
                     { id: "anthropic/fable-5", enabled: false },
                     { id: "anthropic/opus-4-8", enabled: false },
-                ].map((model) => ({ ...model, serviceTierOptions: regularTier })),
+                ].map((model) => ({ ...model, hidden: false, serviceTierOptions: regularTier })),
             );
             expect(providers.find((provider) => provider.providerId === "codex")?.models).toEqual(
                 [
@@ -383,13 +383,17 @@ describe("Happy Agent onboarding and usage matrix", () => {
                     { id: "openai/gpt-6-astra", enabled: false },
                     { id: "openai/gpt-6-sol", enabled: false },
                     { id: "openai/gpt-6-luna", enabled: false },
-                ].map((model) => ({ ...model, serviceTierOptions: regularAndFastTiers })),
+                ].map((model) => ({
+                    ...model,
+                    hidden: model.id === "openai/gpt-6-sol",
+                    serviceTierOptions: regularAndFastTiers,
+                })),
             );
             expect(providers.find((provider) => provider.providerId === "gym")?.models).toEqual(
                 [
                     { id: "gym/model", enabled: true },
                     { id: "gym/model-2", enabled: true },
-                ].map((model) => ({ ...model, serviceTierOptions: regularTier })),
+                ].map((model) => ({ ...model, hidden: false, serviceTierOptions: regularTier })),
             );
             expect(claude).toMatchObject({
                 type: "claude",

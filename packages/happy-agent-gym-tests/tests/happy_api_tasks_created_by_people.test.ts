@@ -92,7 +92,9 @@ describe("tasks people create", () => {
         ]);
         const naming = gym.inference.requests.filter((r) => r.sessionId.startsWith("naming:"));
         expect(naming).toHaveLength(1);
-        expect(JSON.stringify(naming[0])).toContain("within 13 characters");
+        expect(JSON.stringify(naming[0])).toContain(
+            "one or two capitalized words, at most 10 characters",
+        );
 
         // A rename is a person's decision and is checked against the current version.
         const renamed = await gym.client.renameTask(
