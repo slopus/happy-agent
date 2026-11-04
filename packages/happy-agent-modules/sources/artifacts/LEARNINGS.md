@@ -100,6 +100,16 @@ content: an older version keeps the canvas it was made for, and like unchanged f
 over to the next version until a change clears it with `null`. The tools describe it as something
 to leave out unless the content needs one fixed canvas.
 
+## The host centres pages; pages do not centre themselves
+
+Generated pages were often left-aligned, or centred each in a width of their own. Steve asked for
+one content width across Happy, artifacts included, so Happy Desktop now centres every artifact
+page beside the chat and on its own in a 912px column (the 880px content column plus 16px gutters)
+with root `padding-inline`, and leaves inline pages to the chat column. The writing tools and
+`docs/DESIGN.md` §1.7 tell agents not to add their own `max-width` and `margin: auto`, which would
+only narrow the page, and to opt a full-width app out with
+`<meta name="happy-page-width" content="full">` before reaching for `100vw`.
+
 ## Agents write artifacts with artifact tools, straight in the catalog
 
 Kirill's master plan for inline artifacts replaced sending whole files through `create_artifact`

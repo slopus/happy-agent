@@ -191,6 +191,29 @@ states are similar in size — show both together, or give the smaller one
 useful content. If that is impossible, let the page shrink;
 a shift is better than an unexplained empty gap.
 
+### 1.7 The host centres the page in Happy's content column
+
+Happy uses one content width everywhere, and artifact pages share it. Beside
+the chat and on a page of its own, Happy Desktop centres every artifact page in
+a 912 px column — the 880 px content column plus a 16 px gutter on each side —
+by adding `padding-inline: max(0px, (100% - 912px) / 2) !important` to the
+page's root element. After the standard 32 px inline inset
+(`--happy-page-inset`), the text column is 848 px.
+Inline, the chat column already limits the page, so the host adds nothing. The
+page can read the value as `--happy-host-page-measure`, which is `none` inline.
+
+- Do not centre the page yourself: no `max-width` with `margin: auto` on `body`
+  or a page wrapper. The host already does it, and a second cap only narrows
+  the page further.
+- Content narrower than the column is fine; it sits inside the column.
+- Because the host uses padding, not `max-width`, a background colour or
+  gradient a page does paint (rare; see §7.1) still covers the whole frame.
+- A dashboard, a wide table, a canvas, or another app that needs the full
+  width opts out with `<meta name="happy-page-width" content="full">` in its
+  `<head>`. The host reads it before the content arrives, so nothing jumps.
+- Do not size anything with `width: 100vw` unless the page has opted out; it
+  ignores the column and overflows it.
+
 ---
 
 ## 2. Surfaces, dimensions, and gutters
@@ -262,16 +285,9 @@ The document supplies its own gutter:
 Never use an outer gutter larger than 24 px. Never use 0 — content must not
 touch the frame edge.
 
-If your content has a natural reading width, cap the _inner_ measure and centre
-it; keep the scroll container full-bleed (§4).
-
-```css
-.page-measure {
-    width: 100%;
-    max-width: 720px;
-    margin-inline: auto;
-}
-```
+An artifact page does not cap or centre its own width: the host centres it in
+Happy's content column (§1.7). Content narrower than that column is fine and
+sits inside it.
 
 ---
 
@@ -2177,6 +2193,9 @@ in **both** light and dark, at **three** container widths: **400**, **640**, and
 - [ ] On an inline artifact page, `document.documentElement.scrollHeight` is
       the same after every tab, toggle, filter, and load as at first render,
       and no state leaves a blank area where content used to be (§1.6).
+- [ ] An artifact page sets no `max-width` with `margin: auto` on `body` or a
+      page wrapper, and uses `width: 100vw` only when it opts out with
+      `<meta name="happy-page-width" content="full">` (§1.7).
 - [ ] At 400 px wide nothing overflows horizontally
       (`document.documentElement.scrollWidth <= clientWidth`).
 - [ ] A row with a 200-character title ellipsizes and its trailing controls stay

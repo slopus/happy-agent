@@ -82,6 +82,14 @@ with Happy Agent too:
 - The body is inset by `--happy-page-inset`: the app's content inset beside the chat or on a page
   of its own, and nothing inline, where the page lines up with the reply. So one page fits all
   three; give it no outer margin of its own.
+- Happy Desktop centres the page in Happy's content column beside the chat and on a page of its
+  own: a 912 px column, the 880 px content column plus a 16 px gutter on each side, added as
+  `padding-inline` on the root element, so the text column is 848 px after the inset. Inline, the
+  chat column already limits the page. The value is `--happy-host-page-measure`, and `none` inline.
+  So do not centre the page yourself with a `max-width` and `margin: auto` on `body`; content
+  narrower than the column simply sits inside it. A dashboard, wide table, canvas, or other
+  full-width app opts out with `<meta name="happy-page-width" content="full">` in its `<head>`,
+  and only such a page may use `width: 100vw`. `../DESIGN.md` §1.7 has the details.
 - `/api/v1/components.js`, last. It defines five elements that read what they show from the page.
   In Happy Desktop, diffs and code are drawn with the renderer and styling it uses for them;
   elsewhere they are plain numbered lines without highlighting:
@@ -194,9 +202,7 @@ and works offline. Create it with `create_artifact` as an `html` artifact and wr
                 font:
                     15px/1.4 system-ui,
                     sans-serif;
-                max-width: 34rem;
-                margin: 2rem auto;
-                padding: 0 1rem;
+                margin: 2rem 1rem;
             }
             header {
                 display: flex;
