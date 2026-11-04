@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 
 import type * as acp from "@agentclientprotocol/sdk";
 
+import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import type {
     AcpAgentConnection,
     AcpConnect,
@@ -10,6 +11,7 @@ import type {
 } from "@/protocol/acp/AcpConnection.js";
 import type { AcpAgentLaunch } from "@/protocol/acp/AcpProvider.js";
 import { processTreeGroups, terminateProcessTree } from "@/protocol/acp/impl/processTree.js";
+import { codexUsageFromAppServerRateLimits } from "@/vendors/codex/codexUsageFromRateLimits.js";
 import { codexItemUpdates } from "@/vendors/codexAppServer/impl/codexItemUpdates.js";
 
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -47,9 +49,12 @@ interface CodexThread {
  * compaction, with Happy's tools reached over the MCP bridge. Its turns take input mid-turn
  * (`turn/steer`), so steering joins the running turn instead of interrupting it.
  */
-export function codexAppServerConnect(launch: AcpAgentLaunch): AcpConnect {
+export function codexAppServerConnect(
+    launch: AcpAgentLaunch,
+    onAccountUsage?: (usage: ProviderUsage) => void,
+): AcpConnect {
     return async (cwd, client) => {
-        const server = new CodexAppServer(launch, cwd, client);
+        const server = new CodexAppServer(launch, cwd, client, onAccountUsage);
         await server.initialize();
         return {
             conn: server,
@@ -72,6 +77,7 @@ export function codexAppServerConnect(launch: AcpAgentLaunch): AcpConnect {
 
 class CodexAppServer implements AcpAgentConnection {
     readonly #client: acp.Client;
+    readonly #onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
     readonly #child;
     readonly #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
     readonly #threads = new Map<string, CodexThread>();
@@ -82,8 +88,14 @@ class CodexAppServer implements AcpAgentConnection {
     #models: Promise<readonly CodexModel[]> | undefined;
     readonly exited: Promise<Error>;
 
-    constructor(launch: AcpAgentLaunch, cwd: string, client: acp.Client) {
+    constructor(
+        launch: AcpAgentLaunch,
+        cwd: string,
+        client: acp.Client,
+        onAccountUsage: ((usage: ProviderUsage) => void) | undefined,
+    ) {
         this.#client = client;
+        this.#onAccountUsage = onAccountUsage;
         this.#child = spawn(launch.command, [...(launch.args ?? [])], {
             cwd,
             // A process group of its own, so stopping it reaches the commands it runs.
@@ -339,6 +351,15 @@ class CodexAppServer implements AcpAgentConnection {
     }
 
     async #notify(method: string, params: Record<string, unknown>): Promise<void> {
+        // The account's limits, read from every response Codex gets, belong to no thread.
+        if (method === "account/rateLimits/updated") {
+            const usage = codexUsageFromAppServerRateLimits(params["rateLimits"], {
+                capturedAt: Date.now(),
+                providerId: "codex",
+            });
+            if (usage !== null) this.#onAccountUsage?.(usage);
+            return;
+        }
         const threadId = params["threadId"];
         if (typeof threadId !== "string") return;
         const thread = this.#threads.get(threadId);

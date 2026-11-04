@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
 import type { ProviderUsage, ProviderUsageCredits } from "@/core/ProviderUsage.js";
@@ -64,6 +64,62 @@ export function codexUsageFromRateLimitEvent(
             : null,
     );
     return codexUsage(windows, credits, providerPlanName(event.plan_type), context);
+}
+
+const appServerWindowSchema = Type.Union([
+    Type.Object({
+        usedPercent: Type.Number(),
+        windowDurationMins: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+        resetsAt: Type.Optional(Type.Union([Type.Number(), Type.Null()])),
+    }),
+    Type.Null(),
+]);
+
+/** The rate-limit snapshot `codex app-server` sends in `account/rateLimits/updated`. */
+const appServerRateLimitsSchema = Type.Object({
+    limitId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    primary: Type.Optional(appServerWindowSchema),
+    secondary: Type.Optional(appServerWindowSchema),
+    credits: Type.Optional(
+        Type.Union([
+            Type.Object({
+                hasCredits: Type.Boolean(),
+                unlimited: Type.Boolean(),
+                balance: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+            }),
+            Type.Null(),
+        ]),
+    ),
+    planType: Type.Optional(Type.Unknown()),
+});
+
+/**
+ * Reads the same account windows from the snapshot `codex app-server` reports. Returns null for a
+ * report about a different metered limit and for one that measured nothing.
+ */
+export function codexUsageFromAppServerRateLimits(
+    rateLimits: unknown,
+    context: { capturedAt: number; providerId: string },
+): ProviderUsage | null {
+    if (!Value.Check(appServerRateLimitsSchema, rateLimits)) return null;
+    if ((rateLimits.limitId ?? CODEX_LIMIT_NAME).toLowerCase() !== CODEX_LIMIT_NAME) return null;
+    const window = (value: Static<typeof appServerWindowSchema> | undefined) =>
+        value == null
+            ? null
+            : windowPayload(value.usedPercent, value.windowDurationMins, value.resetsAt);
+    const credits = rateLimits.credits;
+    return codexUsage(
+        parseCodexWindows([window(rateLimits.primary), window(rateLimits.secondary)]),
+        credits == null
+            ? null
+            : parseCodexCredits({
+                  has_credits: credits.hasCredits,
+                  unlimited: credits.unlimited,
+                  balance: credits.balance ?? undefined,
+              }),
+        providerPlanName(rateLimits.planType),
+        context,
+    );
 }
 
 /**

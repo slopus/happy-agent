@@ -34,6 +34,7 @@ export const codexCliAgent: ForeignAgent = {
             start.command === undefined
                 ? codexAppServerLaunch(start.env)
                 : foreignAgentLaunch(start, undefined),
+            start.onAccountUsage,
         ),
     models,
     modelsFromSelector: (values) =>
