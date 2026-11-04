@@ -33,7 +33,7 @@ permissions:
     contents: read
 
 concurrency:
-    group: verify-supervisor-${{ github.ref }}
+    group: verify-supervisor-${{ github.ref }}-${{ inputs.lsass_only && inputs.lsass_supervisor || 'all' }}
     cancel-in-progress: true
 
 jobs:
