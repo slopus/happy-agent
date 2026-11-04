@@ -283,7 +283,7 @@ describe("ProviderScanModule", () => {
     it("logs why an inference verification failed without returning the provider error", async () => {
         const installationRoot = await root();
         const providers = new AgentProviders();
-        providers.add("gateway", new EmptyResponseProvider(), "gateway");
+        providers.add("gateway", new EmptyResponseProvider(), "openai_compatible");
         const model = { ...MODEL, id: "gateway/model", name: "Gateway", providerId: "gateway" };
         const config = await ConfigModule.load(join(installationRoot, "happy"), {
             inference: { models: [model], providers },
