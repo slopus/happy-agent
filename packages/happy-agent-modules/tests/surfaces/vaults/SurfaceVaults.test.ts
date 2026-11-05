@@ -8,6 +8,7 @@ import {
     type AgentModuleScope,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
+import type { VaultFile, VaultItem } from "@slopus/happy-agent-client";
 import { unzipSync, zipSync } from "fflate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -89,22 +90,24 @@ async function fixture() {
         return created.id;
     };
     const file = async (parentId: string | null, name: string, text: string) =>
-        (
-            await vaults.createEntry(
-                ctx,
-                vault.id,
-                {
-                    parentId,
-                    name,
-                    kind: "file",
-                    content: {
-                        type: "upload",
-                        uploadId: await upload(new TextEncoder().encode(text)),
+        asFile(
+            (
+                await vaults.createEntry(
+                    ctx,
+                    vault.id,
+                    {
+                        parentId,
+                        name,
+                        kind: "file",
+                        content: {
+                            type: "upload",
+                            uploadId: await upload(new TextEncoder().encode(text)),
+                        },
                     },
-                },
-                person,
-            )
-        ).entry;
+                    person,
+                )
+            ).entry,
+        );
     const folder = async (parentId: string | null, name: string) =>
         (await vaults.createEntry(ctx, vault.id, { parentId, name, kind: "folder" }, person)).entry;
     const contentFiles = async () =>
@@ -130,6 +133,25 @@ async function fixture() {
 }
 
 const enc = (text: string) => new TextEncoder().encode(text);
+const asFile = (item: VaultItem): VaultFile => {
+    if (item.kind === "folder") throw new Error("Expected a file.");
+    return item;
+};
+const manifest = (fields: Record<string, unknown> = {}) =>
+    enc(
+        JSON.stringify({
+            format: "happy.artifact",
+            formatVersion: 1,
+            type: "html",
+            entry: "index.html",
+            ...fields,
+        }),
+    );
+const unzipped = async (items: Parameters<typeof writeZip>[0]) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of writeZip(items)) chunks.push(chunk);
+    return new Uint8Array(Buffer.concat(chunks));
+};
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 describe("vault Surfaces", () => {
@@ -174,11 +196,11 @@ describe("vault Surfaces", () => {
         expect(resolved.path).toBe("/Reports/Q3/Summary.md");
         expect(resolved.ancestors.map((item) => item.name)).toEqual(["Reports", "Q3"]);
         const root = await f.vaults.list(f.ctx, f.vault.id, {});
-        expect(root.entries.map((entry) => entry.name)).toEqual(["Reports"]);
+        expect(root.items.map((item) => item.name)).toEqual(["Reports"]);
         const tree = await f.vaults.tree(f.ctx, f.vault.id, { limit: 2 });
-        expect(tree.entries).toHaveLength(2);
+        expect(tree.items).toHaveLength(2);
         const rest = await f.vaults.tree(f.ctx, f.vault.id, { pageCursor: tree.nextPageCursor! });
-        expect(rest.entries).toHaveLength(1);
+        expect(rest.items).toHaveLength(1);
         await expect(
             f.vaults.moveEntry(
                 f.ctx,
@@ -197,7 +219,7 @@ describe("vault Surfaces", () => {
             { name: "summary.txt", parentId: reports.id },
             person,
         );
-        expect(renamed.mediaType).toBe("text/plain");
+        expect(asFile(renamed).mediaType).toBe("text/plain");
         await expect(
             f.vaults.moveEntry(
                 f.ctx,
@@ -262,7 +284,7 @@ describe("vault Surfaces", () => {
             person,
         );
         expect(second.version?.number).toBe(2);
-        entry = second.entry;
+        entry = asFile(second.entry);
         const same = await f.vaults.createVersion(
             f.ctx,
             f.vault.id,
@@ -335,53 +357,203 @@ describe("vault Surfaces", () => {
         expect((await f.vaults.search(f.ctx, f.vault.id, { q: "november" })).results).toEqual([]);
     });
 
-    it("reads artifact zips, serves their files, and zips folders back", async () => {
+    it("round-trips .artifact files and nests them in folder zips", async () => {
         const f = await fixture();
+        // A zipped launch.artifact/ folder works: its top folder is removed.
         const zip = zipSync({
-            "site/index.html": enc("<h1>Launch</h1>"),
-            "site/img/hero.svg": enc("<svg/>"),
-            "site/.DS_Store": enc("x"),
-            "__MACOSX/site/._index.html": enc("x"),
+            "launch.artifact/artifact.json": manifest({ extra: "ignored" }),
+            "launch.artifact/index.html": enc("<h1>Launch</h1>"),
+            "launch.artifact/img/hero.svg": enc("<svg/>"),
+            "launch.artifact/.DS_Store": enc("x"),
+            "__MACOSX/launch.artifact/._index.html": enc("x"),
         });
         const uploadId = await f.upload(zip);
         const prepared = await f.vaults.prepareArtifactUpload(f.ctx, uploadId);
-        const { entry } = await f.vaults.createEntry(
-            f.ctx,
-            f.vault.id,
-            {
-                parentId: null,
-                name: "launch",
-                kind: "artifact",
-                content: { type: "upload", uploadId, prepared },
-            },
-            person,
+        const artifact = asFile(
+            (
+                await f.vaults.createEntry(
+                    f.ctx,
+                    f.vault.id,
+                    {
+                        parentId: null,
+                        name: "launch.artifact",
+                        kind: "artifact",
+                        content: { type: "upload", uploadId, prepared },
+                    },
+                    person,
+                )
+            ).entry,
         );
-        expect(entry.artifact).toEqual({ type: "html", entry: "index.html", fileCount: 2 });
-        const file = await f.vaults.artifactFile(f.ctx, f.vault.id, entry.id, 1, "img/hero.svg");
+        expect(artifact.artifact).toEqual({ type: "html", entry: "index.html", fileCount: 2 });
+        const file = await f.vaults.artifactFile(f.ctx, f.vault.id, artifact.id, 1, "img/hero.svg");
         expect(file.mimeType).toBe("image/svg+xml");
-        const resolved = await f.vaults.resolve(f.ctx, f.vault.id, "/launch/img/hero.svg");
+        const resolved = await f.vaults.resolve(f.ctx, f.vault.id, "/launch.artifact/img/hero.svg");
         expect(resolved.innerPath).toBe("img/hero.svg");
         // The upload was used.
         await expect(f.vaults.uploads.get(f.ctx, uploadId)).rejects.toMatchObject({
             code: "not_found",
         });
+
+        // A version downloads as its .artifact file, the manifest first, the same bytes each time.
+        const target = { type: "version", fileId: artifact.id, selector: 1 } as const;
+        const download = await f.vaults.zip(f.ctx, f.vault.id, target);
+        expect(download.name).toBe("launch.artifact");
+        const bytes = await unzipped(download.items);
+        expect(await unzipped((await f.vaults.zip(f.ctx, f.vault.id, target)).items)).toEqual(
+            bytes,
+        );
+        const entries = unzipSync(bytes);
+        expect(Object.keys(entries)).toEqual(["artifact.json", "img/hero.svg", "index.html"]);
+        expect(JSON.parse(new TextDecoder().decode(entries["artifact.json"]))).toEqual({
+            format: "happy.artifact",
+            formatVersion: 1,
+            type: "html",
+            entry: "index.html",
+        });
+        // Uploading the download again is the same content: no new version.
+        const again = await f.vaults.createVersion(
+            f.ctx,
+            f.vault.id,
+            artifact.id,
+            artifact.version,
+            {
+                type: "upload",
+                uploadId: await f.upload(bytes),
+                prepared: await f.vaults.prepareArtifactUpload(f.ctx, await f.upload(bytes)),
+            },
+            person,
+        );
+        expect(again.version).toBeNull();
+
+        // A folder zip holds every folder, empty ones included, and each artifact nested whole.
         await f.file(null, "readme.txt", "hi");
-        await f.folder(null, "empty");
-        const download = await f.vaults.zip(f.ctx, f.vault.id, { type: "vault" });
-        const chunks: Buffer[] = [];
-        for await (const chunk of writeZip(download.items)) chunks.push(chunk);
-        const unpacked = unzipSync(new Uint8Array(Buffer.concat(chunks)));
-        expect(Object.keys(unpacked).sort()).toEqual([
-            "empty/",
-            "launch/img/hero.svg",
-            "launch/index.html",
-            "readme.txt",
+        const empty = await f.folder(null, "empty");
+        await f.vaults.maintain(f.ctx, Date.now() + 2 * DAY);
+        expect((await f.vaults.location(f.ctx, f.vault.id, empty.id)).entry.deletedAt).toBeNull();
+        const vaultZip = await f.vaults.zip(f.ctx, f.vault.id, { type: "vault" });
+        expect(vaultZip.name).toBe("Studio.zip");
+        const whole = unzipSync(await unzipped(vaultZip.items));
+        expect(Object.keys(whole).sort()).toEqual(["empty/", "launch.artifact", "readme.txt"]);
+        expect(Object.keys(unzipSync(whole["launch.artifact"]!))).toEqual([
+            "artifact.json",
+            "img/hero.svg",
+            "index.html",
         ]);
-        expect(new TextDecoder().decode(unpacked["launch/index.html"])).toBe("<h1>Launch</h1>");
-        const refused = await f.upload(zipSync({ "page.html": enc("x") }));
-        await expect(f.vaults.prepareArtifactUpload(f.ctx, refused)).rejects.toThrow(/index\.html/);
-        const unsafe = await f.upload(zipSync({ "index.html": enc("x"), "../escape": enc("y") }));
-        await expect(f.vaults.prepareArtifactUpload(f.ctx, unsafe)).rejects.toThrow(/unsafe/);
+    });
+
+    it("refuses bad .artifact files and names that disagree with their kind", async () => {
+        const f = await fixture();
+        const refusals = [
+            [zipSync({ "index.html": enc("x") }), /no "artifact\.json" manifest/],
+            [enc("not a zip at all"), /not a zip/],
+            [
+                zipSync({ "artifact.json": enc("{"), "index.html": enc("x") }),
+                /not valid UTF-8 JSON/,
+            ],
+            [
+                zipSync({
+                    "artifact.json": manifest({ formatVersion: 2 }),
+                    "index.html": enc("x"),
+                }),
+                /newer Happy/,
+            ],
+            [
+                zipSync({
+                    "artifact.json": manifest({ entry: "index.md" }),
+                    "index.html": enc("x"),
+                }),
+                /entry must be "index\.html"/,
+            ],
+            [zipSync({ "artifact.json": manifest(), "index.md": enc("x") }), /no "index\.html"/],
+            [
+                zipSync({
+                    "artifact.json": manifest(),
+                    "index.html": enc("x"),
+                    "../escape": enc("y"),
+                }),
+                /unsafe/,
+            ],
+        ] as const;
+        for (const [bytes, message] of refusals)
+            await expect(
+                f.vaults.prepareArtifactUpload(f.ctx, await f.upload(bytes)),
+            ).rejects.toMatchObject({
+                code: "invalid_request",
+                message: expect.stringMatching(message),
+            });
+        // A Markdown manifest makes a Markdown site even beside an index.html.
+        const markdown = await f.vaults.prepareArtifactUpload(
+            f.ctx,
+            await f.upload(
+                zipSync({
+                    "artifact.json": manifest({ type: "markdown", entry: "index.md" }),
+                    "index.md": enc("# Notes"),
+                    "index.html": enc("<p>also</p>"),
+                }),
+            ),
+        );
+        expect(markdown).toMatchObject({ summary: { type: "markdown", entry: "index.md" } });
+
+        await expect(f.file(null, "notes.artifact", "x")).rejects.toMatchObject({
+            code: "invalid_request",
+        });
+        await expect(f.folder(null, "Site.ARTIFACT")).rejects.toMatchObject({
+            code: "invalid_request",
+        });
+        await expect(
+            f.vaults.createEntry(
+                f.ctx,
+                f.vault.id,
+                {
+                    parentId: null,
+                    name: "notes",
+                    kind: "artifact",
+                    content: { type: "stored", content: markdown },
+                },
+                person,
+            ),
+        ).rejects.toThrow(/ends in "\.artifact"/);
+        const site = (
+            await f.vaults.createEntry(
+                f.ctx,
+                f.vault.id,
+                {
+                    parentId: null,
+                    name: "notes.artifact",
+                    kind: "artifact",
+                    content: { type: "stored", content: markdown },
+                },
+                person,
+            )
+        ).entry;
+        await expect(
+            f.vaults.moveEntry(f.ctx, f.vault.id, site.id, site.version, { name: "notes" }, person),
+        ).rejects.toMatchObject({ code: "invalid_request" });
+        const plain = await f.file(null, "plain.txt", "x");
+        await expect(
+            f.vaults.moveEntry(
+                f.ctx,
+                f.vault.id,
+                plain.id,
+                plain.version,
+                { name: "plain.artifact" },
+                person,
+            ),
+        ).rejects.toMatchObject({ code: "invalid_request" });
+        // An artifact copies only to a .artifact name, and a plain file never to one.
+        await expect(
+            f.vaults.createEntry(
+                f.ctx,
+                f.vault.id,
+                {
+                    parentId: null,
+                    name: "copy.txt",
+                    kind: "file",
+                    content: { type: "copy", fileId: site.id, version: "latest" },
+                },
+                person,
+            ),
+        ).rejects.toThrow(/ending in \.artifact/);
     });
 
     it("receives resumable uploads in order and checks their digest", async () => {
@@ -447,11 +619,11 @@ describe("vault Surfaces", () => {
                 parentId: null,
                 name: "copy.bin",
                 kind: "file",
-                content: { type: "copy", entryId: original.id, version: "latest" },
+                content: { type: "copy", fileId: original.id, version: "latest" },
             },
             person,
         );
-        expect(copy.entry.sha256).toBe(original.sha256);
+        expect(asFile(copy.entry).sha256).toBe(original.sha256);
         expect(await f.contentFiles()).toBe(before);
         expect(
             (await f.vaults.activity(f.ctx, other.id, copy.entry.id, {})).activity[0],
@@ -459,14 +631,28 @@ describe("vault Surfaces", () => {
             kind: "created",
             copiedFrom: original.id,
         });
-        // A repeated ID returns the entry unchanged.
+        // A repeated ID returns the file unchanged, and a folder cannot take it.
         const again = await f.vaults.createEntry(
             f.ctx,
             other.id,
-            { id: copy.entry.id, parentId: null, name: "ignored", kind: "folder" },
+            {
+                id: copy.entry.id,
+                parentId: null,
+                name: "ignored",
+                kind: "file",
+                content: { type: "copy", fileId: original.id, version: "latest" },
+            },
             person,
         );
         expect(again).toEqual({ entry: copy.entry, created: false });
+        await expect(
+            f.vaults.createEntry(
+                f.ctx,
+                other.id,
+                { id: copy.entry.id, parentId: null, name: "ignored", kind: "folder" },
+                person,
+            ),
+        ).rejects.toMatchObject({ code: "conflict", current: { file: copy.entry } });
     });
 
     it("lets an agent copy files and artifacts within and between vaults by digest", async () => {
@@ -475,7 +661,7 @@ describe("vault Surfaces", () => {
             agent: { id: "writer" },
             kv: f.kv.scoped("writer"),
         } as AgentModuleScope);
-        const copy = tools.find((tool) => tool.name === "copy_vault_entry")!;
+        const copy = tools.find((tool) => tool.name === "copy_vault_file")!;
         const committed: unknown[] = [];
         const call = (id: string) =>
             ({
@@ -511,7 +697,7 @@ describe("vault Surfaces", () => {
             ),
         ).toEqual({
             path: "/Backup/old/big.bin",
-            entryId: expect.any(String),
+            fileId: expect.any(String),
             kind: "file",
             version: 1,
             created: true,
@@ -533,8 +719,8 @@ describe("vault Surfaces", () => {
                 toSurfaceId: other.id,
             },
             call("c2"),
-        )) as { entryId: string };
-        const copied = (await f.vaults.location(f.ctx, other.id, across.entryId)).entry;
+        )) as { fileId: string };
+        const copied = (await f.vaults.location(f.ctx, other.id, across.fileId)).entry;
         expect(copied).toMatchObject({ latestVersion: 1, sha256: sha(enc("second bytes")) });
         expect((await f.vaults.activity(f.ctx, other.id, copied.id, {})).activity[0]).toMatchObject(
             {
@@ -552,7 +738,7 @@ describe("vault Surfaces", () => {
                 f.ctx,
                 {
                     surfaceId: f.vault.id,
-                    path: "/Sites/launch",
+                    path: "/Sites/launch.artifact",
                     files: [{ path: "index.html", content: "<h1>Launch</h1>" }],
                 },
                 call("a1"),
@@ -563,15 +749,15 @@ describe("vault Surfaces", () => {
             f.ctx,
             {
                 surfaceId: f.vault.id,
-                path: "/Sites/launch",
-                toPath: "/launch",
+                path: "/Sites/launch.artifact",
+                toPath: "/launch.artifact",
                 toSurfaceId: other.id,
             },
             call("c3"),
         );
-        expect((await f.vaults.resolve(f.ctx, other.id, "/launch/index.html")).innerPath).toBe(
-            "index.html",
-        );
+        expect(
+            (await f.vaults.resolve(f.ctx, other.id, "/launch.artifact/index.html")).innerPath,
+        ).toBe("index.html");
         expect(await f.contentFiles()).toBe(withSite);
 
         for (const [input, message] of [
@@ -579,11 +765,93 @@ describe("vault Surfaces", () => {
             [{ path: "/Docs/big.bin", toPath: "/Backup/old/big.bin" }, /already at/],
             [{ path: "/Docs/big.bin", toPath: "/Docs/big.bin/inside" }, /not a folder/],
             [{ path: "/Docs/missing.bin", toPath: "/x.bin" }, /Nothing is at/],
+            [{ path: "/Sites/launch.artifact", toPath: "/launch" }, /ending in \.artifact/],
+            [{ path: "/Docs/big.bin", toPath: "/big.artifact" }, /ending in \.artifact/],
         ] as const)
             await expect(
                 copy.execute(f.ctx, { surfaceId: f.vault.id, ...input }, call("bad")),
             ).rejects.toThrow(message);
         expect(committed).toHaveLength(4);
+    });
+
+    it("gives agents separate tools for folders and files, empty folders included", async () => {
+        const f = await fixture();
+        const tools = await f.hooks.tools!(f.ctx, {
+            agent: { id: "writer" },
+            kv: f.kv.scoped("writer"),
+        } as AgentModuleScope);
+        const tool = (name: string) => tools.find((candidate) => candidate.name === name)!;
+        const call = (id: string) =>
+            ({
+                id,
+                kv: f.kv.scoped(id),
+                commit: async (_ctx: unknown, result: unknown) => result,
+            }) as never;
+        const run = (name: string, input: Record<string, unknown>) =>
+            tool(name).execute(f.ctx, { surfaceId: f.vault.id, ...input } as never, call(name));
+
+        expect(await run("create_vault_folder", { path: "/Reports/Q3" })).toMatchObject({
+            created: true,
+            folders: ["/Reports", "/Reports/Q3"],
+        });
+        expect(await run("create_vault_folder", { path: "/reports/q3" })).toMatchObject({
+            path: "/Reports/Q3",
+            created: false,
+            folders: [],
+        });
+        const created = f.events.filter((event) => event.type === "vault.folder.created");
+        expect(created).toHaveLength(2);
+        await run("write_vault_file", { path: "/Reports/notes.md", content: "# Notes" });
+        await expect(
+            run("move_vault_file", { path: "/Reports/Q3", toPath: "/Q3" }),
+        ).rejects.toThrow(/move_vault_folder/);
+        await expect(run("delete_vault_folder", { path: "/Reports/notes.md" })).rejects.toThrow(
+            /delete_vault_file/,
+        );
+        await expect(
+            run("write_vault_file", { path: "/Reports/site.artifact", content: "x" }),
+        ).rejects.toThrow(/write_vault_artifact/);
+        await expect(
+            run("write_vault_artifact", {
+                path: "/Reports/site",
+                files: [{ path: "index.md", content: "# Site" }],
+            }),
+        ).rejects.toThrow(/ends in "\.artifact"/);
+        await expect(
+            run("write_vault_artifact", {
+                path: "/Reports/site.artifact",
+                files: [
+                    { path: "index.md", content: "# Site" },
+                    { path: "artifact.json", content: "{}" },
+                ],
+            }),
+        ).rejects.toThrow(/reserved/);
+        await run("move_vault_folder", { path: "/Reports/Q3", toPath: "/Q3" });
+        const deleted = (await run("delete_vault_folder", { path: "/Q3" })) as {
+            item: VaultItem;
+        };
+        expect(deleted.item).toMatchObject({ kind: "folder", name: "Q3" });
+        const trash = (await tool("list_vault_trash").execute(
+            f.ctx,
+            { surfaceId: f.vault.id } as never,
+            call("trash"),
+        )) as { text: string };
+        expect(trash.text).toMatch(new RegExp(`^folder  ${deleted.item.id}  /Q3/`));
+        await expect(run("restore_vault_file", { fileId: deleted.item.id })).rejects.toThrow(
+            /restore_vault_folder/,
+        );
+        expect(await run("restore_vault_folder", { folderId: deleted.item.id })).toMatchObject({
+            path: "/Q3",
+        });
+        expect(
+            f.events
+                .filter((event) => event.type === "vault.folder.updated")
+                .map((event) => Object.keys((event.payload as { changes: object }).changes).sort()),
+        ).toEqual([
+            ["parentId", "updatedAt", "updatedBy"],
+            ["deletedAt", "updatedAt", "updatedBy"],
+            ["deletedAt", "updatedAt", "updatedBy"],
+        ]);
     });
 
     it("removes Trash items past their time with their versions and content", async () => {
@@ -595,8 +863,12 @@ describe("vault Surfaces", () => {
         await expect(f.vaults.location(f.ctx, f.vault.id, inner.id)).rejects.toMatchObject({
             code: "not_found",
         });
-        expect(f.events.filter((event) => event.type === "vault.entry.removed")).toEqual([
-            { type: "vault.entry.removed", payload: { surfaceId: f.vault.id, entryId: docs.id } },
+        expect(
+            f.events.filter(
+                (event) => event.type.startsWith("vault.") && event.type.endsWith(".removed"),
+            ),
+        ).toEqual([
+            { type: "vault.folder.removed", payload: { surfaceId: f.vault.id, folderId: docs.id } },
         ]);
         await expect(stat(f.vaults.contentPath(sha(enc("to be purged"))))).rejects.toThrow();
     });

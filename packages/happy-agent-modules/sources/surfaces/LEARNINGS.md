@@ -264,7 +264,7 @@ read from the Surface on every request, so renaming the document is reflected wi
 
 ## Vault writes are reversible, so they are not Auto-reviewed
 
-Every vault write makes a new version, and deletion goes to a Trash that keeps the entry for the
+Every vault write makes a new version, and deletion goes to a Trash that keeps the item for the
 retention's `trashDays`, so an agent's change is always recoverable from the vault itself. Agent
 writes therefore skip Auto review. Only `import_vault_file`, `export_vault_file`, and
 `write_vault_artifact` with `fromPath` read or write the agent's machine, so they go through
@@ -275,14 +275,38 @@ the history.
 ## Vault content is addressed by digest and collected later, never in the writing transaction
 
 Content files are named by their SHA-256 and shared across vaults, so a copy or restore records a
-new version row pointing at the same digest instead of moving bytes. Agents copy the same way through
-`copy_vault_entry`, so copying a large file never sends its bytes through the agent's machine. Deletion happens only in the
+new version row pointing at the same digest instead of moving bytes. Agents copy the same way
+through `copy_vault_file`, so copying a large file never sends its bytes through the agent's
+machine. Deletion happens only in the
 collector: a digest whose last reference goes away is queued with a not-before time an hour out,
 and the collector deletes the file only if nothing names it when that time passes. Bytes written
 before their version commits are queued the same way, so a failed transaction leaves no orphan.
 Post-commit background work must not start from the commit callback, because that callback runs
 inside the committing operation and a new transaction there collides with it; the collector is a
 durable function invoked inside the transaction instead.
+
+## Folders and files are two kinds, not one "entry"
+
+The first vault API spoke of "entries" with a `kind`, which Steve rejected: people think in
+folders and files, and must be able to make an empty folder. The API, events, and tools now name
+the two kinds apart (`/folders` and `/files`, `vault.folder.*` and `vault.file.*`,
+`move_vault_folder` beside `move_vault_file`), listings return both as items with folders first,
+and `create_vault_folder` makes empty folders that stay until deleted. The tables keep their
+internal entry naming; only what crosses the API changed.
+
+## An artifact is recognizable by its `.artifact` name and file
+
+Steve asked that artifacts be detectable on sight. Only an artifact's name ends in `.artifact`,
+and every create, rename, restore, and copy refuses a name that disagrees with its kind, so the
+suffix alone tells people, clients, and agents what an item is, and the name decides the kind of
+a new file. An artifact travels as a `.artifact` file: a zip with `artifact.json`
+(`format: "happy.artifact"`, `formatVersion: 1`, `type`, `entry`) beside its files. The manifest
+is never stored as a site file; the daemon keeps type and entry on the version and writes the
+manifest again on download, with every record at the version's creation time, so a downloaded
+`.artifact` file uploads back as identical content and makes no new version. Uploads must carry a
+manifest; a higher format version is refused as made by a newer Happy. Agent bundles from a
+folder or plain zip may leave it out and take their type from `index.html` or `index.md`, and a
+file written into an artifact keeps the artifact's type.
 
 ## The default vault retention is Time Machine
 

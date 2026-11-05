@@ -1,9 +1,12 @@
 import { defineAgentTool, cuid2Schema, type AgentModuleScope } from "@slopus/happy-agent-base";
 import {
+    isVaultArtifactName,
     surfaceIdSchema,
-    vaultEntrySchema,
+    VAULT_ARTIFACT_MANIFEST_PATH,
+    vaultItemSchema,
     vaultPathSchema,
-    type VaultEntry,
+    type VaultArtifactManifest,
+    type VaultItem,
 } from "@slopus/happy-agent-client";
 import type { SessionOutputBlock } from "@slopus/happy-providers";
 import { Type, type Static } from "@sinclair/typebox";
@@ -16,8 +19,10 @@ import { quoteVisibleExact } from "../../../impl/quoteVisibleExact.js";
 import { SurfaceError } from "../../SurfaceError.js";
 import type { SurfacesModule } from "../../SurfacesModule.js";
 import type { VaultChange, VaultContent } from "../SurfaceVaults.js";
+import { MAX_MANIFEST_BYTES, parseArtifactManifest } from "../vaultBundle.js";
 import { readContent } from "../vaultContentFiles.js";
 import { vaultPath, vaultPathSegments } from "../vaultNames.js";
+import { writeZip } from "../zip/writeZip.js";
 import { vaultGlob } from "./vaultGlob.js";
 import {
     describeVaultWrite,
@@ -49,8 +54,8 @@ const RASTER_IMAGE_MIME_TYPES: ReadonlySet<string> = new Set([
 ]);
 const MAX_LIST_LINES = 1_000;
 const MAX_GLOB_RESULTS = 200;
-/** How many entries glob and grep look at below one folder. */
-const MAX_SCANNED_ENTRIES = 20_000;
+/** How many items glob and grep look at below one folder. */
+const MAX_SCANNED_ITEMS = 20_000;
 
 const surfaceId = Type.String({
     ...surfaceIdSchema,
@@ -63,14 +68,20 @@ const machinePath = (description: string) =>
 
 const writeResultSchema = Type.Object({
     path: Type.String(),
-    entryId: Type.String(),
+    fileId: Type.String(),
     kind: Type.Union([Type.Literal("file"), Type.Literal("artifact")]),
     version: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
     created: Type.Boolean(),
     folders: Type.Array(Type.String()),
 });
 const textOutputSchema = Type.Object({ text: Type.String() });
-const entryResultSchema = Type.Object({ entry: vaultEntrySchema, path: Type.String() });
+const itemResultSchema = Type.Object({ item: vaultItemSchema, path: Type.String() });
+const folderResultSchema = Type.Object({
+    path: Type.String(),
+    folderId: Type.String(),
+    created: Type.Boolean(),
+    folders: Type.Array(Type.String()),
+});
 
 const fileReadSchema = Type.Object({
     path: Type.String(),
@@ -87,8 +98,8 @@ const fileReadSchema = Type.Object({
 });
 type FileRead = Static<typeof fileReadSchema>;
 
-/** How a vault tool describes the entries it lists. */
-function describeEntry(entry: VaultEntry): string {
+/** How a vault tool describes the folders and files it lists. */
+function describeItem(entry: VaultItem): string {
     const changed = new Date(entry.updatedAt).toISOString().replace(/\.\d{3}Z$/, "Z");
     if (entry.kind === "folder") return `${entry.name}/  folder, changed ${changed}`;
     const size = formatSize(entry.size);
@@ -160,7 +171,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             capabilities: [CAPABILITY],
             searchKeywords: ["list vault", "vault folder", "browse vault", "vault ls"],
             description:
-                "Lists a vault folder like ls: its live entries with their kinds, sizes, newest version numbers, and change times, folders first. depth (1–10, default 1) also lists what is inside the folders below. Listing an artifact, a small web site kept as one entry, lists the files of its newest version. At most 1,000 lines. Paths start with / at the vault's root and match names case-insensitively.",
+                'Lists a vault folder like ls: its live folders, first and ending in /, then its files with their kinds, sizes, newest version numbers, and change times. depth (1–10, default 1) also lists what is inside the folders below. An artifact is a small web site kept as one file whose name ends in ".artifact"; listing one lists the files of its newest version. At most 1,000 lines. Paths start with / at the vault\'s root and match names case-insensitively.',
             parameters: Type.Object(
                 {
                     surfaceId,
@@ -185,13 +196,13 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 const entry = found.entry;
                 if (entry !== undefined && found.rest.length > 0)
                     throw new SurfaceError("not_found", `Nothing is at ${JSON.stringify(path)}.`);
-                if (entry?.kind === "file") return { text: `${path}: ${describeEntry(entry)}` };
+                if (entry?.kind === "file") return { text: `${path}: ${describeItem(entry)}` };
                 if (entry?.kind === "artifact") {
                     const latest = await vaults.version(ctx, input.surfaceId, entry.id, "latest");
                     const files = latest.artifact?.files ?? [];
                     return {
                         text: [
-                            `${path}: ${describeEntry(entry)}. Its files:`,
+                            `${path}: ${describeItem(entry)}. Its files:`,
                             ...files.map(
                                 (file) =>
                                     `  ${file.path}  ${file.mimeType}, ${formatSize(file.size)}`,
@@ -206,7 +217,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     input.depth ?? 1,
                     MAX_LIST_LINES,
                 );
-                const children = new Map<string | null, VaultEntry[]>();
+                const children = new Map<string | null, VaultItem[]>();
                 for (const { entry: child } of entries) {
                     const list = children.get(child.parentId) ?? [];
                     list.push(child);
@@ -221,7 +232,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     );
                     for (const child of list) {
                         if (lines.length >= MAX_LIST_LINES) return;
-                        lines.push(`${indent}${describeEntry(child)}`);
+                        lines.push(`${indent}${describeItem(child)}`);
                         if (child.kind === "folder") walk(child.id, `${indent}  `);
                     }
                 };
@@ -234,7 +245,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                         header,
                         ...lines,
                         ...(more || lines.length >= MAX_LIST_LINES
-                            ? ["[More entries were left out; list a folder below this one.]"]
+                            ? ["[More items were left out; list a folder below this one.]"]
                             : []),
                     ].join("\n"),
                 };
@@ -251,7 +262,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 "vault image",
                 "vault version",
             ],
-            description: `Reads a vault file by its path, or a file inside an artifact, such as "/Sites/launch/index.html" where launch is an artifact. Text comes back as numbered lines: a line number, then a tab, then the line, numbered from 1, up to ${String(MAX_LINES_TO_READ)} lines from offset. Raster images are shown to you; other binary files are described without their bytes. version reads an earlier version of the file, or of the artifact holding it; list them with list_vault_versions.`,
+            description: `Reads a vault file by its path, or a file inside an artifact, such as "/Sites/launch.artifact/index.html" where launch.artifact is an artifact. Text comes back as numbered lines: a line number, then a tab, then the line, numbered from 1, up to ${String(MAX_LINES_TO_READ)} lines from offset. Raster images are shown to you; other binary files are described without their bytes. version reads an earlier version of the file, or of the artifact holding it; list them with list_vault_versions.`,
             parameters: Type.Object(
                 {
                     surfaceId,
@@ -379,8 +390,8 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 "Writes a whole text file in a vault, creating it and any missing folders above it, or making the next version of the file already there. Every earlier version is kept.",
                 "Usage:",
                 "- Pass exactly one of content, the file's whole UTF-8 text, and fromVersion, which restores an earlier version of the file or artifact at path as its newest version.",
-                '- A path that runs into an artifact, such as "/Sites/launch/style.css", adds or replaces that file in the artifact\'s next version.',
-                "- Prefer edit_vault_file to change part of an existing file. Copy binary files in with import_vault_file.",
+                '- A path that runs into an artifact, such as "/Sites/launch.artifact/style.css", adds or replaces that file in the artifact\'s next version. Make a new artifact with write_vault_artifact.',
+                "- Prefer edit_vault_file to change part of an existing file. Copy binary files in with import_vault_file. Make an empty folder with create_vault_folder.",
                 "- Writing content identical to the newest version makes no version.",
             ].join("\n"),
             parameters: Type.Object(
@@ -414,7 +425,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     )
                         throw new SurfaceError(
                             "not_found",
-                            `No file or artifact is at ${JSON.stringify(input.path)}.`,
+                            `No file is at ${JSON.stringify(input.path)}.`,
                         );
                     const entry = found.entry;
                     const fromVersion = input.fromVersion;
@@ -521,7 +532,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             capabilities: [CAPABILITY],
             searchKeywords: ["find vault files", "vault glob", "vault file pattern"],
             description:
-                'Finds vault entries whose paths match a glob, relative to path (default "/"): * and ? within one name, ** across folders, [abc] for one of several characters, and {a,b} for alternatives, such as "**/*.pdf". Matching ignores case. Returns at most 200 paths, most recently changed first. Files inside artifacts are not matched; list an artifact with list_vault.',
+                'Finds vault folders and files whose paths match a glob, relative to path (default "/"): * and ? within one name, ** across folders, [abc] for one of several characters, and {a,b} for alternatives, such as "**/*.pdf". Matching ignores case. Returns at most 200 paths, most recently changed first, folders ending in /. Files inside artifacts are not matched; list an artifact with list_vault.',
             parameters: Type.Object(
                 {
                     surfaceId,
@@ -543,7 +554,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     input.surfaceId,
                     root.id,
                     64,
-                    MAX_SCANNED_ENTRIES,
+                    MAX_SCANNED_ITEMS,
                 );
                 const matcher = vaultGlob(input.pattern);
                 const matches = entries
@@ -551,7 +562,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     .sort((left, right) => right.entry.updatedAt - left.entry.updatedAt);
                 if (matches.length === 0)
                     return {
-                        text: `No entries below ${root.path} match ${JSON.stringify(input.pattern)}.`,
+                        text: `Nothing below ${root.path} matches ${JSON.stringify(input.pattern)}.`,
                     };
                 return {
                     text: [
@@ -563,7 +574,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                                     (item.entry.kind === "folder" ? "/" : ""),
                             ),
                         ...(matches.length > MAX_GLOB_RESULTS || more
-                            ? [`[More entries matched; narrow the pattern or the folder.]`]
+                            ? [`[More paths matched; narrow the pattern or the folder.]`]
                             : []),
                     ].join("\n"),
                 };
@@ -625,7 +636,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     input.surfaceId,
                     root.id,
                     64,
-                    MAX_SCANNED_ENTRIES,
+                    MAX_SCANNED_ITEMS,
                 );
                 const files = entries.filter((item) => item.entry.kind !== "folder");
                 const relativeOf = new Map(files.map((item) => [item.entry.id, item.relative]));
@@ -671,7 +682,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                         ? [`[More matches; raise head_limit or narrow the search.]`]
                         : []),
                     ...(more
-                        ? ["[The folder holds more entries than one search covers; narrow path.]"]
+                        ? ["[The folder holds more items than one search covers; narrow path.]"]
                         : []),
                     ...(skipped > 0
                         ? [
@@ -686,63 +697,81 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             toLLM: (result) => text(result.text),
         }),
         defineAgentTool({
-            name: "move_vault_entry",
+            name: "create_vault_folder",
             defer: true,
             capabilities: [CAPABILITY],
-            searchKeywords: ["move vault file", "rename vault file", "rename vault folder"],
+            searchKeywords: ["create vault folder", "new vault folder", "vault mkdir"],
             description:
-                "Renames or moves a vault file, folder, or artifact from path to toPath. The folder above toPath must already exist, and nothing may be at toPath; the move never replaces anything. Moving keeps the entry's versions and history.",
+                "Creates an empty folder in a vault at path, with any missing folders above it, like mkdir -p. A folder already at path is reported and left as it is. Folders stay until they are deleted, even when empty.",
             parameters: Type.Object(
                 {
                     surfaceId,
-                    path: vaultPathParameter("The entry to move"),
-                    toPath: vaultPathParameter("Its new path, including its name"),
+                    path: vaultPathParameter('The folder\'s path, such as "/Reports/Q3"'),
                 },
                 { additionalProperties: false },
             ),
-            returnType: entryResultSchema,
+            returnType: folderResultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input, call) => {
                 requireVaultWrites(ctx);
-                const entry = await entryAt(ctx, input.surfaceId, input.path);
-                const names = vaultPathSegments(input.toPath);
-                if (names.length === 0)
-                    throw new SurfaceError("invalid_request", "toPath must name the entry.");
-                const parent =
-                    names.length === 1
-                        ? null
-                        : await vaults.walk(ctx, input.surfaceId, vaultPath(names.slice(0, -1)));
-                if (
-                    parent !== null &&
-                    (parent.entry === undefined ||
-                        parent.rest.length > 0 ||
-                        parent.entry.kind !== "folder")
-                )
+                const found = await vaults.walk(ctx, input.surfaceId, input.path);
+                if (found.entry === undefined && found.rest.length === 0)
                     throw new SurfaceError(
-                        "not_found",
-                        `No folder is at ${JSON.stringify(vaultPath(names.slice(0, -1)))}; create it first.`,
+                        "invalid_request",
+                        "The vault's root is always there; name a folder inside it.",
                     );
-                const parentId = parent?.entry?.id ?? null;
+                if (found.entry !== undefined && found.entry.kind !== "folder")
+                    throw new SurfaceError(
+                        "invalid_request",
+                        found.rest.length === 0
+                            ? `${JSON.stringify(input.path)} is a file, not a folder.`
+                            : `${JSON.stringify(found.entry.name)} is a file, so no folder can be inside it.`,
+                    );
+                const existing = found.entry;
+                if (existing !== undefined)
+                    return ctx.inTx(async (tx) =>
+                        call.commit(tx, {
+                            path: (await vaults.location(tx, input.surfaceId, existing.id)).path,
+                            folderId: existing.id,
+                            created: false,
+                            folders: [],
+                        }),
+                    );
+                const base = vaultPathSegments(input.path).slice(
+                    0,
+                    vaultPathSegments(input.path).length - found.rest.length,
+                );
+                const actor = await change(ctx);
                 return ctx.inTx(async (tx) => {
-                    const moved = await vaults.moveEntry(
+                    const folderId = await vaults.ensureFolders(
                         tx,
                         input.surfaceId,
-                        entry.id,
-                        entry.version,
-                        { name: names.at(-1)!, parentId },
-                        await change(tx),
+                        found.parentId,
+                        found.rest,
+                        actor,
                     );
                     return call.commit(tx, {
-                        entry: moved,
-                        path: (await vaults.location(tx, input.surfaceId, moved.id)).path,
+                        path: (await vaults.location(tx, input.surfaceId, folderId!)).path,
+                        folderId: folderId!,
+                        created: true,
+                        folders: found.rest.map((_, index) =>
+                            vaultPath([...base, ...found.rest.slice(0, index + 1)]),
+                        ),
                     });
                 });
             },
-            toLLM: (result) => text(`Moved it; it is now at ${JSON.stringify(result.path)}.`),
+            toLLM: (result) =>
+                text(
+                    result.created
+                        ? `Created ${result.folders.map((folder) => JSON.stringify(folder)).join(", ")}.`
+                        : `The folder ${JSON.stringify(result.path)} already exists; nothing changed.`,
+                ),
         }),
+        moveTool("file"),
+        moveTool("folder"),
         defineAgentTool({
-            name: "copy_vault_entry",
+            name: "copy_vault_file",
             defer: true,
             capabilities: [CAPABILITY],
             searchKeywords: [
@@ -752,7 +781,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 "copy vault artifact",
             ],
             description:
-                "Copies a vault file or artifact, any size, to toPath as a new entry whose history starts at version 1 with the copied version's content; no bytes are uploaded or rewritten. toSurfaceId copies into another vault (default this one); version copies an earlier version (default the newest). Folders and files inside an artifact cannot be copied. Missing folders above toPath are created, and nothing may be at toPath.",
+                "Copies a vault file or artifact, any size, to toPath as a new file whose history starts at version 1 with the copied version's content; no bytes are uploaded or rewritten. toSurfaceId copies into another vault (default this one); version copies an earlier version (default the newest). An artifact's copy keeps a name ending in \".artifact\", and a plain file's copy may not take one. Folders and files inside an artifact cannot be copied. Missing folders above toPath are created, and nothing may be at toPath.",
             parameters: Type.Object(
                 {
                     surfaceId,
@@ -773,7 +802,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input, call) => {
                 requireVaultWrites(ctx);
-                const source = await entryAt(ctx, input.surfaceId, input.path);
+                const source = await itemAt(ctx, input.surfaceId, input.path);
                 if (source.kind === "folder")
                     throw new SurfaceError(
                         "invalid_request",
@@ -803,10 +832,9 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                             targetId,
                             found.parentId,
                             found.rest,
-                            source.kind === "artifact" ? "artifact" : "file",
                             {
                                 type: "copy",
-                                entryId: source.id,
+                                fileId: source.id,
                                 version: input.version ?? "latest",
                             },
                             actor,
@@ -817,51 +845,18 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             },
             toLLM: (result) =>
                 text(
-                    `Copied it to ${JSON.stringify(result.path)}, a new ${result.kind} at version 1.${result.folders.length === 0 ? "" : ` Created ${result.folders.map((folder) => JSON.stringify(folder)).join(", ")}.`}`,
+                    `Copied it to ${JSON.stringify(result.path)}, a new ${result.kind === "artifact" ? "artifact" : "file"} at version 1.${result.folders.length === 0 ? "" : ` Created ${result.folders.map((folder) => JSON.stringify(folder)).join(", ")}.`}`,
                 ),
         }),
-        defineAgentTool({
-            name: "delete_vault_entry",
-            defer: true,
-            capabilities: [CAPABILITY],
-            searchKeywords: ["delete vault file", "trash vault entry", "remove vault folder"],
-            description:
-                "Moves a vault file, folder, or artifact to the vault's Trash, with everything inside a folder. It can be restored with restore_vault_entry until the vault's Trash time runs out.",
-            parameters: Type.Object(
-                { surfaceId, path: vaultPathParameter("The entry to delete") },
-                { additionalProperties: false },
-            ),
-            returnType: entryResultSchema,
-            durable: true,
-            shouldReviewInAutoMode: () => false,
-            execute: async (ctx, input, call) => {
-                requireVaultWrites(ctx);
-                const entry = await entryAt(ctx, input.surfaceId, input.path);
-                return ctx.inTx(async (tx) =>
-                    call.commit(tx, {
-                        entry: await vaults.deleteEntry(
-                            tx,
-                            input.surfaceId,
-                            entry.id,
-                            entry.version,
-                            await change(tx),
-                        ),
-                        path: input.path,
-                    }),
-                );
-            },
-            toLLM: (result) =>
-                text(
-                    `Moved ${JSON.stringify(result.path)} to the Trash; its entry ID is ${result.entry.id}.`,
-                ),
-        }),
+        deleteTool("file"),
+        deleteTool("folder"),
         defineAgentTool({
             name: "list_vault_trash",
             defer: true,
             capabilities: [CAPABILITY],
             searchKeywords: ["vault trash", "deleted vault files", "recover vault file"],
             description:
-                "Lists a vault's Trash: each deleted entry's ID, where it was, and when it was deleted, most recent first. Restore one with restore_vault_entry.",
+                "Lists a vault's Trash, most recent first: each deleted folder or file, marked as which it is, with its ID, where it was, and when it was deleted. Restore a file with restore_vault_file and a folder with restore_vault_folder.",
             parameters: Type.Object({ surfaceId }, { additionalProperties: false }),
             returnType: textOutputSchema,
             durable: false,
@@ -875,8 +870,8 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 return {
                     text: [
                         ...items.map(
-                            ({ entry, path }) =>
-                                `${entry.id}  ${path}${entry.kind === "folder" ? "/" : ""}  deleted ${new Date(entry.deletedAt ?? 0).toISOString()}`,
+                            ({ item, path }) =>
+                                `${item.kind === "folder" ? "folder" : "file"}  ${item.id}  ${path}${item.kind === "folder" ? "/" : ""}  deleted ${new Date(item.deletedAt ?? 0).toISOString()}`,
                         ),
                         ...(nextPageCursor === null ? [] : ["[Older Trash items were left out.]"]),
                     ].join("\n"),
@@ -884,71 +879,8 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             },
             toLLM: (result) => text(result.text),
         }),
-        defineAgentTool({
-            name: "restore_vault_entry",
-            defer: true,
-            capabilities: [CAPABILITY],
-            searchKeywords: ["restore vault entry", "undelete vault file", "vault trash restore"],
-            description:
-                "Restores a Trash item, by its entry ID from list_vault_trash, to where it was, or to toPath, whose folder must exist. Everything inside a restored folder comes back with it.",
-            parameters: Type.Object(
-                {
-                    surfaceId,
-                    entryId: cuid2Schema,
-                    toPath: Type.Optional(
-                        vaultPathParameter("Where to restore it, including its name"),
-                    ),
-                },
-                { additionalProperties: false },
-            ),
-            returnType: entryResultSchema,
-            durable: true,
-            shouldReviewInAutoMode: () => false,
-            execute: async (ctx, input, call) => {
-                requireVaultWrites(ctx);
-                const { entry } = await vaults.location(ctx, input.surfaceId, input.entryId);
-                let target: { name?: string; parentId?: string | null } = {};
-                if (input.toPath !== undefined) {
-                    const names = vaultPathSegments(input.toPath);
-                    if (names.length === 0)
-                        throw new SurfaceError("invalid_request", "toPath must name the entry.");
-                    const parent =
-                        names.length === 1
-                            ? null
-                            : await vaults.walk(
-                                  ctx,
-                                  input.surfaceId,
-                                  vaultPath(names.slice(0, -1)),
-                              );
-                    if (
-                        parent !== null &&
-                        (parent.entry === undefined ||
-                            parent.rest.length > 0 ||
-                            parent.entry.kind !== "folder")
-                    )
-                        throw new SurfaceError(
-                            "not_found",
-                            `No folder is at ${JSON.stringify(vaultPath(names.slice(0, -1)))}.`,
-                        );
-                    target = { name: names.at(-1)!, parentId: parent?.entry?.id ?? null };
-                }
-                return ctx.inTx(async (tx) => {
-                    const restored = await vaults.restoreEntry(
-                        tx,
-                        input.surfaceId,
-                        entry.id,
-                        entry.version,
-                        target,
-                        await change(tx),
-                    );
-                    return call.commit(tx, {
-                        entry: restored,
-                        path: (await vaults.location(tx, input.surfaceId, restored.id)).path,
-                    });
-                });
-            },
-            toLLM: (result) => text(`Restored it to ${JSON.stringify(result.path)}.`),
-        }),
+        restoreTool("file"),
+        restoreTool("folder"),
         defineAgentTool({
             name: "list_vault_versions",
             defer: true,
@@ -970,7 +902,12 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             reloadable: true,
             shouldReviewInAutoMode: () => false,
             execute: async (ctx, input) => {
-                const entry = await entryAt(ctx, input.surfaceId, input.path);
+                const entry = await itemAt(ctx, input.surfaceId, input.path);
+                if (entry.kind === "folder")
+                    throw new SurfaceError(
+                        "invalid_request",
+                        `${JSON.stringify(input.path)} is a folder, and folders have no versions.`,
+                    );
                 const page = await vaults.versions(ctx, input.surfaceId, entry.id, {
                     limit: input.limit ?? 20,
                     pageCursor: input.pageCursor,
@@ -1017,7 +954,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 "save binary to vault",
             ],
             description:
-                "Copies a file on your machine into a vault exactly as it is, binary files included, creating missing folders: a new file, the next version of the file at path, or a file added to the artifact path runs into. A zip stays a zip file; make an artifact from one with write_vault_artifact. Files up to 512 MiB. To copy within or between vaults, use copy_vault_entry.",
+                'Copies a file on your machine into a vault exactly as it is, binary files included, creating missing folders: a new file, the next version of the file at path, or a file added to the artifact path runs into. When path ends in ".artifact", the file must be a .artifact file and makes that artifact or its next version. A zip stays a zip file; make an artifact from one with write_vault_artifact. Files up to 512 MiB. To copy within or between vaults, use copy_vault_file.',
             parameters: Type.Object(
                 {
                     surfaceId,
@@ -1035,6 +972,45 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             execute: async (ctx, input, call) => {
                 requireVaultWrites(ctx);
                 const bytes = await readMachineFile(ctx, input.fromPath);
+                const found = await vaults.walk(ctx, input.surfaceId, input.path);
+                const names = vaultPathSegments(input.path);
+                if (
+                    names.length > 0 &&
+                    isVaultArtifactName(names.at(-1)!) &&
+                    (found.rest.length === 0
+                        ? found.entry !== undefined
+                        : found.entry === undefined)
+                ) {
+                    const content = await vaults.zipBundle(ctx, bytes, true);
+                    const actor = await change(ctx);
+                    const existing = found.entry;
+                    return ctx.inTx(async (tx) =>
+                        call.commit(
+                            tx,
+                            existing === undefined
+                                ? await placeNew(
+                                      tx,
+                                      vaults,
+                                      input.surfaceId,
+                                      found.parentId,
+                                      found.rest,
+                                      { type: "stored", content },
+                                      actor,
+                                      input.path,
+                                  )
+                                : await placeVersion(
+                                      tx,
+                                      vaults,
+                                      input.surfaceId,
+                                      existing,
+                                      input.path,
+                                      content,
+                                      actor,
+                                      existing.version,
+                                  ),
+                        ),
+                    );
+                }
                 return writeVaultPath(
                     ctx,
                     vaults,
@@ -1053,13 +1029,19 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             capabilities: [CAPABILITY],
             searchKeywords: ["copy file out of vault", "export from vault", "download vault file"],
             description:
-                "Copies a vault file, or an earlier version of it, to toPath on your machine, replacing a file there. An artifact is written as a folder of its files at toPath, which must not exist yet or be an empty folder. Files up to 512 MiB.",
+                "Copies a vault file, or an earlier version of it, to toPath on your machine, replacing a file there. An artifact is written as its .artifact file, a zip holding its files and manifest that uploads back as the same artifact; with unpack it is written as a folder of its files at toPath instead, which must not exist yet or be an empty folder. Files up to 512 MiB.",
             parameters: Type.Object(
                 {
                     surfaceId,
                     path: vaultPathParameter("The file or artifact in the vault"),
                     toPath: machinePath("Where to write it on your machine"),
                     version: Type.Optional(Type.Integer({ minimum: 1 })),
+                    unpack: Type.Optional(
+                        Type.Boolean({
+                            description:
+                                "Write an artifact as a folder of its files rather than its .artifact file",
+                        }),
+                    ),
                 },
                 { additionalProperties: false },
             ),
@@ -1068,12 +1050,12 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             shouldReviewInAutoMode: (input, ctx) => crosses(ctx, input.toPath, true),
             shouldRunInFullAccessInAutoMode: (input, ctx) => crosses(ctx, input.toPath, true),
             describeAutoPermissionAction: (input) =>
-                `writing vault ${JSON.stringify(input.surfaceId)} entry ${JSON.stringify(input.path)} to ${quoteVisibleExact(input.toPath)} on this machine. Access: filesystem write of that path`,
+                `writing vault ${JSON.stringify(input.surfaceId)} file ${JSON.stringify(input.path)} to ${quoteVisibleExact(input.toPath)} on this machine. Access: filesystem write of that path`,
             execute: async (ctx, input) => {
                 const host = await machine(ctx);
                 const permissions = compute.permissionsForContext(ctx);
                 const target = compute.resolvePath(host, input.toPath);
-                const entry = await entryAt(ctx, input.surfaceId, input.path);
+                const entry = await itemAt(ctx, input.surfaceId, input.path);
                 if (entry.kind === "folder")
                     throw new SurfaceError(
                         "invalid_request",
@@ -1106,6 +1088,20 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     entry.id,
                     input.version ?? "latest",
                 );
+                if (input.unpack !== true) {
+                    const zip = await vaults.zip(ctx, input.surfaceId, {
+                        type: "version",
+                        fileId: entry.id,
+                        selector: version.number,
+                    });
+                    const chunks: Buffer[] = [];
+                    for await (const chunk of writeZip(zip.items)) chunks.push(chunk);
+                    const bytes = Buffer.concat(chunks);
+                    await host.fs.writeFile(permissions, target, bytes);
+                    return {
+                        text: `Wrote version ${String(version.number)} of artifact ${JSON.stringify(input.path)} as a .artifact file (${formatSize(bytes.length)}) to ${quoteVisibleExact(input.toPath)}.`,
+                    };
+                }
                 const files = version.artifact?.files ?? [];
                 if (await host.fs.exists(permissions, target)) {
                     const facts = await host.fs.stat(permissions, target);
@@ -1146,11 +1142,13 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 "zip site to vault",
             ],
             description:
-                'Creates an artifact, a small static web site kept as one vault entry, at path, or makes the next version of the artifact there whose files are exactly those given. Pass files, a list of {"path", "content"} UTF-8 text files, or fromPath, a folder or a .zip on your machine. The bundle needs "index.html" (an html site) or "index.md" (a Markdown document) at its root; up to 256 files and 256 MiB, every file at least one byte. Missing folders above path are created.',
+                'Creates an artifact, a small static web site kept as one vault file, at path, which must end in ".artifact", or makes the next version of the artifact there whose files are exactly those given. Pass files, a list of {"path", "content"} UTF-8 text files, or fromPath, a folder, a .zip, or a .artifact file on your machine. The bundle needs "index.html" (an html site) or "index.md" (a Markdown document) at its root; up to 256 files and 256 MiB, every file at least one byte. "artifact.json" at the root is the manifest of a .artifact file: it is refused in files, and read as the manifest from a folder or zip. Missing folders above path are created.',
             parameters: Type.Object(
                 {
                     surfaceId,
-                    path: vaultPathParameter('The artifact\'s path, such as "/Sites/launch"'),
+                    path: vaultPathParameter(
+                        'The artifact\'s path, such as "/Sites/launch.artifact"',
+                    ),
                     files: Type.Optional(
                         Type.Array(
                             Type.Object(
@@ -1163,7 +1161,9 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                             { minItems: 1, maxItems: 256 },
                         ),
                     ),
-                    fromPath: Type.Optional(machinePath("A folder or a .zip file on your machine")),
+                    fromPath: Type.Optional(
+                        machinePath("A folder, a .zip, or a .artifact file on your machine"),
+                    ),
                 },
                 { additionalProperties: false },
             ),
@@ -1182,19 +1182,18 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                         "invalid_request",
                         "Pass exactly one of files and fromPath.",
                     );
+                const names = vaultPathSegments(input.path);
+                if (names.length === 0 || !isVaultArtifactName(names.at(-1)!))
+                    throw new SurfaceError(
+                        "invalid_request",
+                        'An artifact\'s path ends in ".artifact", such as "/Sites/launch.artifact".',
+                    );
                 const found = await vaults.walk(ctx, input.surfaceId, input.path);
                 if (found.rest.length > 0 && found.entry !== undefined)
                     throw new SurfaceError(
                         "invalid_request",
                         `${JSON.stringify(found.entry.name)} is not a folder.`,
                     );
-                if (found.entry !== undefined && found.entry.kind !== "artifact")
-                    throw new SurfaceError(
-                        "invalid_request",
-                        `${JSON.stringify(input.path)} is a ${found.entry.kind}, not an artifact.`,
-                    );
-                if (found.entry === undefined && found.rest.length === 0)
-                    throw new SurfaceError("invalid_request", "Name the artifact's path.");
                 const content =
                     input.files === undefined
                         ? await readMachineBundle(ctx, input.fromPath!)
@@ -1217,7 +1216,6 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                                   input.surfaceId,
                                   found.parentId,
                                   found.rest,
-                                  "artifact",
                                   { type: "stored", content },
                                   actor,
                                   input.path,
@@ -1239,11 +1237,205 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
         }),
     ];
 
-    async function entryAt(ctx: Context, vaultId: string, path: string): Promise<VaultEntry> {
+    async function itemAt(ctx: Context, vaultId: string, path: string): Promise<VaultItem> {
         const found = await vaults.walk(ctx, vaultId, path);
         if (found.entry === undefined || found.rest.length > 0)
             throw new SurfaceError("not_found", `Nothing is at ${JSON.stringify(path)}.`);
         return found.entry;
+    }
+
+    /** The folder or file at a path, refusing the other kind with a pointer to its own tool. */
+    async function kindAt(
+        ctx: Context,
+        vaultId: string,
+        path: string,
+        kind: "file" | "folder",
+        tool: string,
+    ): Promise<VaultItem> {
+        const item = await itemAt(ctx, vaultId, path);
+        if ((item.kind === "folder") !== (kind === "folder"))
+            throw new SurfaceError(
+                "invalid_request",
+                `${JSON.stringify(path)} is ${item.kind === "folder" ? "a folder" : "a file"}; use ${tool}_vault_${item.kind === "folder" ? "folder" : "file"}.`,
+            );
+        return item;
+    }
+
+    /** A live folder named by a path's parent, or the root; it must already exist. */
+    async function parentOf(
+        ctx: Context,
+        vaultId: string,
+        names: readonly string[],
+        hint: string,
+    ): Promise<string | null> {
+        if (names.length === 1) return null;
+        const parent = await vaults.walk(ctx, vaultId, vaultPath(names.slice(0, -1)));
+        if (parent.entry === undefined || parent.rest.length > 0 || parent.entry.kind !== "folder")
+            throw new SurfaceError(
+                "not_found",
+                `No folder is at ${JSON.stringify(vaultPath(names.slice(0, -1)))}${hint}.`,
+            );
+        return parent.entry.id;
+    }
+
+    function moveTool(kind: "file" | "folder") {
+        const noun = kind === "file" ? "file" : "folder";
+        return defineAgentTool({
+            name: `move_vault_${kind}`,
+            defer: true,
+            capabilities: [CAPABILITY],
+            searchKeywords: [`move vault ${noun}`, `rename vault ${noun}`],
+            description:
+                kind === "file"
+                    ? "Renames or moves a vault file or artifact from path to toPath. The folder above toPath must already exist, and nothing may be at toPath; the move never replaces anything. An artifact's name keeps ending in \".artifact\", and a plain file's may not. Moving keeps the file's versions and history. Move folders with move_vault_folder."
+                    : "Renames or moves a vault folder, with everything inside it, from path to toPath. The folder above toPath must already exist, and nothing may be at toPath; the move never replaces anything. Move files with move_vault_file.",
+            parameters: Type.Object(
+                {
+                    surfaceId,
+                    path: vaultPathParameter(`The ${noun} to move`),
+                    toPath: vaultPathParameter("Its new path, including its name"),
+                },
+                { additionalProperties: false },
+            ),
+            returnType: itemResultSchema,
+            durable: true,
+            shouldReviewInAutoMode: () => false,
+            execute: async (ctx, input, call) => {
+                requireVaultWrites(ctx);
+                const item = await kindAt(ctx, input.surfaceId, input.path, kind, "move");
+                const names = vaultPathSegments(input.toPath);
+                if (names.length === 0)
+                    throw new SurfaceError("invalid_request", `toPath must name the ${noun}.`);
+                const parentId = await parentOf(ctx, input.surfaceId, names, "; create it first");
+                return ctx.inTx(async (tx) => {
+                    const moved = await vaults.moveEntry(
+                        tx,
+                        input.surfaceId,
+                        item.id,
+                        item.version,
+                        { name: names.at(-1)!, parentId },
+                        await change(tx),
+                    );
+                    return call.commit(tx, {
+                        item: moved,
+                        path: (await vaults.location(tx, input.surfaceId, moved.id)).path,
+                    });
+                });
+            },
+            toLLM: (result) => text(`Moved it; it is now at ${JSON.stringify(result.path)}.`),
+        });
+    }
+
+    function deleteTool(kind: "file" | "folder") {
+        return defineAgentTool({
+            name: `delete_vault_${kind}`,
+            defer: true,
+            capabilities: [CAPABILITY],
+            searchKeywords:
+                kind === "file"
+                    ? ["delete vault file", "trash vault file", "delete vault artifact"]
+                    : ["delete vault folder", "trash vault folder", "remove vault folder"],
+            description:
+                kind === "file"
+                    ? "Moves a vault file or artifact to the vault's Trash. It can be restored with restore_vault_file until the vault's Trash time runs out. Delete folders with delete_vault_folder."
+                    : "Moves a vault folder, with everything inside it, to the vault's Trash. It can be restored with restore_vault_folder until the vault's Trash time runs out. Delete files with delete_vault_file.",
+            parameters: Type.Object(
+                { surfaceId, path: vaultPathParameter(`The ${kind} to delete`) },
+                { additionalProperties: false },
+            ),
+            returnType: itemResultSchema,
+            durable: true,
+            shouldReviewInAutoMode: () => false,
+            execute: async (ctx, input, call) => {
+                requireVaultWrites(ctx);
+                const item = await kindAt(ctx, input.surfaceId, input.path, kind, "delete");
+                return ctx.inTx(async (tx) =>
+                    call.commit(tx, {
+                        item: await vaults.deleteEntry(
+                            tx,
+                            input.surfaceId,
+                            item.id,
+                            item.version,
+                            await change(tx),
+                        ),
+                        path: input.path,
+                    }),
+                );
+            },
+            toLLM: (result) =>
+                text(
+                    `Moved ${JSON.stringify(result.path)} to the Trash; restore it with restore_vault_${kind} and ${kind}Id ${result.item.id}.`,
+                ),
+        });
+    }
+
+    function restoreTool(kind: "file" | "folder") {
+        const idKey = kind === "file" ? "fileId" : "folderId";
+        return defineAgentTool({
+            name: `restore_vault_${kind}`,
+            defer: true,
+            capabilities: [CAPABILITY],
+            searchKeywords: [
+                `restore vault ${kind}`,
+                `undelete vault ${kind}`,
+                "vault trash restore",
+            ],
+            description:
+                kind === "file"
+                    ? "Restores a file or artifact from the Trash, by its ID from list_vault_trash, to where it was, or to toPath, whose folder must exist. Restore folders with restore_vault_folder."
+                    : "Restores a folder from the Trash, by its ID from list_vault_trash, to where it was, or to toPath, whose folder must exist. Everything inside it comes back with it, except what was deleted on its own before. Restore files with restore_vault_file.",
+            parameters: Type.Object(
+                {
+                    surfaceId,
+                    [idKey]: cuid2Schema,
+                    toPath: Type.Optional(
+                        vaultPathParameter("Where to restore it, including its name"),
+                    ),
+                },
+                { additionalProperties: false },
+            ),
+            returnType: itemResultSchema,
+            durable: true,
+            shouldReviewInAutoMode: () => false,
+            execute: async (ctx, rawInput, call) => {
+                requireVaultWrites(ctx);
+                const input = rawInput as { surfaceId: string; toPath?: string } & Record<
+                    string,
+                    string
+                >;
+                const { entry } = await vaults.location(ctx, input.surfaceId, input[idKey]!);
+                if ((entry.kind === "folder") !== (kind === "folder"))
+                    throw new SurfaceError(
+                        "invalid_request",
+                        `That ID belongs to ${entry.kind === "folder" ? "a folder; use restore_vault_folder" : "a file; use restore_vault_file"}.`,
+                    );
+                let target: { name?: string; parentId?: string | null } = {};
+                if (input.toPath !== undefined) {
+                    const names = vaultPathSegments(input.toPath);
+                    if (names.length === 0)
+                        throw new SurfaceError("invalid_request", `toPath must name the ${kind}.`);
+                    target = {
+                        name: names.at(-1)!,
+                        parentId: await parentOf(ctx, input.surfaceId, names, ""),
+                    };
+                }
+                return ctx.inTx(async (tx) => {
+                    const restored = await vaults.restoreEntry(
+                        tx,
+                        input.surfaceId,
+                        entry.id,
+                        entry.version,
+                        target,
+                        await change(tx),
+                    );
+                    return call.commit(tx, {
+                        item: restored,
+                        path: (await vaults.location(tx, input.surfaceId, restored.id)).path,
+                    });
+                });
+            },
+            toLLM: (result) => text(`Restored it to ${JSON.stringify(result.path)}.`),
+        });
     }
 
     async function folderOf(
@@ -1261,19 +1453,23 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
         };
     }
 
-    /** A folder's files, or a zip's bundle, on the agent's machine, stored as artifact content. */
+    /**
+     * A folder's files, or a zip's bundle, on the agent's machine, stored as artifact content.
+     * `artifact.json` at the root of either is read as the manifest.
+     */
     async function readMachineBundle(ctx: Context, path: string): Promise<VaultContent> {
         const host = await machine(ctx);
         const permissions = compute.permissionsForContext(ctx);
         const root = compute.resolvePath(host, path);
         const facts = await host.fs.stat(permissions, root);
-        if (facts.isFile) return vaults.zipBundle(ctx, await readMachineFile(ctx, path));
+        if (facts.isFile) return vaults.zipBundle(ctx, await readMachineFile(ctx, path), false);
         if (!facts.isDirectory)
             throw new SurfaceError(
                 "invalid_request",
                 `${quoteVisibleExact(path)} is neither a folder nor a zip file.`,
             );
         const files: { path: string; bytes: Uint8Array }[] = [];
+        let manifest: VaultArtifactManifest | undefined;
         let total = 0;
         const visit = async (folder: string, prefix: string): Promise<void> => {
             for (const name of await host.fs.readdir(permissions, folder)) {
@@ -1286,7 +1482,18 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                         `${quoteVisibleExact(child)} is a symbolic link.`,
                     );
                 if (stat.isDirectory) await visit(child, `${prefix}${name}/`);
-                else if (stat.isFile && stat.size > 0) {
+                else if (stat.isFile && prefix === "" && name === VAULT_ARTIFACT_MANIFEST_PATH) {
+                    if (stat.size > MAX_MANIFEST_BYTES)
+                        throw new SurfaceError(
+                            "invalid_request",
+                            `${quoteVisibleExact(child)} is too large to be a manifest.`,
+                        );
+                    manifest = parseArtifactManifest(
+                        await host.fs.readFileBuffer(permissions, child, {
+                            maxBytes: MAX_MANIFEST_BYTES,
+                        }),
+                    );
+                } else if (stat.isFile && stat.size > 0) {
                     total += stat.size;
                     if (files.length >= 256 || total > 256 * 1024 * 1024)
                         throw new SurfaceError(
@@ -1303,7 +1510,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             }
         };
         await visit(root, "");
-        return vaults.storeBundle(ctx, files);
+        return vaults.storeBundle(ctx, files, [], manifest);
     }
 }
 

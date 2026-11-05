@@ -2,7 +2,7 @@ import { agentDatabaseRows, agentDatabaseRun } from "@slopus/happy-agent-base";
 import type {
     ArtifactFile,
     VaultActivity,
-    VaultEntry,
+    VaultItem,
     VaultSettings,
     VaultVersion,
 } from "@slopus/happy-agent-client";
@@ -15,7 +15,7 @@ import { vaultNameKey } from "../vaultNames.js";
 const rows = <Row>(ctx: Context, query: SQL) => agentDatabaseRows<Row>(ctx.db, query);
 const run = (ctx: Context, query: SQL) => agentDatabaseRun(ctx.db, query);
 const entries = (list: readonly { entry_json: string }[]) =>
-    list.map((row) => JSON.parse(row.entry_json) as VaultEntry);
+    list.map((row) => JSON.parse(row.entry_json) as VaultItem);
 
 /** The live entries of one vault, or of the subtree below `rootId`, as a recursive CTE. */
 function liveTree(surfaceId: string, rootId: string | null): SQL {
@@ -47,7 +47,7 @@ export async function writeVaultSettings(ctx: Context, settings: VaultSettings):
     );
 }
 
-export async function readVaultEntry(ctx: Context, id: string): Promise<VaultEntry | undefined> {
+export async function readVaultEntry(ctx: Context, id: string): Promise<VaultItem | undefined> {
     return entries(
         await rows<{ entry_json: string }>(
             ctx,
@@ -56,18 +56,23 @@ export async function readVaultEntry(ctx: Context, id: string): Promise<VaultEnt
     )[0];
 }
 
-export async function insertVaultEntry(ctx: Context, entry: VaultEntry): Promise<void> {
+export async function insertVaultEntry(ctx: Context, entry: VaultItem): Promise<void> {
     await run(
         ctx,
-        sql`INSERT INTO happy_agent_vault_entries (id, surface_id, parent_id, name_key, kind, size, updated_at, deleted_at, entry_json) VALUES (${entry.id}, ${entry.surfaceId}, ${entry.parentId}, ${vaultNameKey(entry.name)}, ${entry.kind}, ${entry.size}, ${entry.updatedAt}, ${entry.deletedAt}, ${JSON.stringify(entry)})`,
+        sql`INSERT INTO happy_agent_vault_entries (id, surface_id, parent_id, name_key, kind, size, updated_at, deleted_at, entry_json) VALUES (${entry.id}, ${entry.surfaceId}, ${entry.parentId}, ${vaultNameKey(entry.name)}, ${entry.kind}, ${sizeOf(entry)}, ${entry.updatedAt}, ${entry.deletedAt}, ${JSON.stringify(entry)})`,
     );
 }
 
-export async function updateVaultEntry(ctx: Context, entry: VaultEntry): Promise<void> {
+export async function updateVaultEntry(ctx: Context, entry: VaultItem): Promise<void> {
     await run(
         ctx,
-        sql`UPDATE happy_agent_vault_entries SET parent_id = ${entry.parentId}, name_key = ${vaultNameKey(entry.name)}, size = ${entry.size}, updated_at = ${entry.updatedAt}, deleted_at = ${entry.deletedAt}, entry_json = ${JSON.stringify(entry)} WHERE id = ${entry.id}`,
+        sql`UPDATE happy_agent_vault_entries SET parent_id = ${entry.parentId}, name_key = ${vaultNameKey(entry.name)}, size = ${sizeOf(entry)}, updated_at = ${entry.updatedAt}, deleted_at = ${entry.deletedAt}, entry_json = ${JSON.stringify(entry)} WHERE id = ${entry.id}`,
     );
+}
+
+/** A folder has no size; listings sorted by size keep folders first anyway. */
+function sizeOf(entry: VaultItem): number | null {
+    return entry.kind === "folder" ? null : entry.size;
 }
 
 /** The child of a folder (or the root) that is not itself deleted, matched by name key. */
@@ -76,7 +81,7 @@ export async function readVaultChild(
     surfaceId: string,
     parentId: string | null,
     name: string,
-): Promise<VaultEntry | undefined> {
+): Promise<VaultItem | undefined> {
     return entries(
         await rows<{ entry_json: string }>(
             ctx,
@@ -86,7 +91,7 @@ export async function readVaultChild(
 }
 
 /** An entry and its folders from the root down, as stored. */
-export async function readVaultLineage(ctx: Context, id: string): Promise<VaultEntry[]> {
+export async function readVaultLineage(ctx: Context, id: string): Promise<VaultItem[]> {
     return entries(
         await rows<{ entry_json: string }>(
             ctx,
@@ -110,7 +115,7 @@ export async function listVaultChildren(
     order: "asc" | "desc",
     after: VaultListPosition | undefined,
     limit: number,
-): Promise<{ entries: VaultEntry[]; positions: VaultListPosition[] }> {
+): Promise<{ entries: VaultItem[]; positions: VaultListPosition[] }> {
     const primary =
         sort === "name"
             ? sql.raw("name_key")
@@ -151,7 +156,7 @@ export async function listVaultTree(
     surfaceId: string,
     afterId: string | undefined,
     limit: number,
-): Promise<VaultEntry[]> {
+): Promise<VaultItem[]> {
     return entries(
         await rows<{ entry_json: string }>(
             ctx,
@@ -167,13 +172,13 @@ export async function listVaultSubtree(
     rootId: string | null,
     maxDepth: number,
     limit: number,
-): Promise<{ entry: VaultEntry; depth: number }[]> {
+): Promise<{ entry: VaultItem; depth: number }[]> {
     const found = await rows<{ entry_json: string; depth: number }>(
         ctx,
         sql`${liveTree(surfaceId, rootId)} SELECT e.entry_json, live.depth FROM live JOIN happy_agent_vault_entries e ON e.id = live.id WHERE live.depth <= ${maxDepth} LIMIT ${limit}`,
     );
     return found.map((row) => ({
-        entry: JSON.parse(row.entry_json) as VaultEntry,
+        entry: JSON.parse(row.entry_json) as VaultItem,
         depth: Number(row.depth),
     }));
 }
@@ -184,7 +189,7 @@ export async function listVaultTrash(
     surfaceId: string,
     after: readonly [number, string] | undefined,
     limit: number,
-): Promise<VaultEntry[]> {
+): Promise<VaultItem[]> {
     const keyset =
         after === undefined ? sql`` : sql`AND (e.deleted_at, e.id) < (${after[0]}, ${after[1]})`;
     return entries(
@@ -201,7 +206,7 @@ export async function listExpiredTrash(
     surfaceId: string,
     before: number,
     limit: number,
-): Promise<VaultEntry[]> {
+): Promise<VaultItem[]> {
     return entries(
         await rows<{ entry_json: string }>(
             ctx,
@@ -246,7 +251,7 @@ export async function searchVaultNames(
     rootId: string | null,
     key: string,
     limit: number,
-): Promise<VaultEntry[]> {
+): Promise<VaultItem[]> {
     const pattern = `%${escapeLike(key)}%`;
     return entries(
         await rows<{ entry_json: string }>(
@@ -337,19 +342,19 @@ export async function insertVaultVersion(
 ): Promise<void> {
     await run(
         ctx,
-        sql`INSERT INTO happy_agent_vault_versions (entry_id, number, surface_id, sha256, created_at, pinned, version_json) VALUES (${version.entryId}, ${version.number}, ${version.surfaceId}, ${version.sha256}, ${version.createdAt}, ${version.pinned ? 1 : 0}, ${JSON.stringify(version)})`,
+        sql`INSERT INTO happy_agent_vault_versions (entry_id, number, surface_id, sha256, created_at, pinned, version_json) VALUES (${version.fileId}, ${version.number}, ${version.surfaceId}, ${version.sha256}, ${version.createdAt}, ${version.pinned ? 1 : 0}, ${JSON.stringify(version)})`,
     );
     for (const file of files)
         await run(
             ctx,
-            sql`INSERT INTO happy_agent_vault_version_files (entry_id, number, path, mime_type, size, sha256) VALUES (${version.entryId}, ${version.number}, ${file.path}, ${file.mimeType}, ${file.size}, ${file.sha256})`,
+            sql`INSERT INTO happy_agent_vault_version_files (entry_id, number, path, mime_type, size, sha256) VALUES (${version.fileId}, ${version.number}, ${file.path}, ${file.mimeType}, ${file.size}, ${file.sha256})`,
         );
 }
 
 export async function updateVaultVersionPin(ctx: Context, version: VaultVersion): Promise<void> {
     await run(
         ctx,
-        sql`UPDATE happy_agent_vault_versions SET pinned = ${version.pinned ? 1 : 0}, version_json = ${JSON.stringify(version)} WHERE entry_id = ${version.entryId} AND number = ${version.number}`,
+        sql`UPDATE happy_agent_vault_versions SET pinned = ${version.pinned ? 1 : 0}, version_json = ${JSON.stringify(version)} WHERE entry_id = ${version.fileId} AND number = ${version.number}`,
     );
 }
 
@@ -475,7 +480,7 @@ export async function deleteVaultEntryRows(ctx: Context, id: string): Promise<vo
 export async function insertVaultActivity(ctx: Context, activity: VaultActivity): Promise<void> {
     await run(
         ctx,
-        sql`INSERT INTO happy_agent_vault_activity (id, entry_id, kind, agent_id, at, activity_json) VALUES (${activity.id}, ${activity.entryId}, ${activity.kind}, ${activity.actor.agentId}, ${activity.at}, ${JSON.stringify(activity)})`,
+        sql`INSERT INTO happy_agent_vault_activity (id, entry_id, kind, agent_id, at, activity_json) VALUES (${activity.id}, ${activity.itemId}, ${activity.kind}, ${activity.actor.agentId}, ${activity.at}, ${JSON.stringify(activity)})`,
     );
 }
 

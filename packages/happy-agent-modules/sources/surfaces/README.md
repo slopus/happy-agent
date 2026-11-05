@@ -52,22 +52,25 @@ from the event's own timing. Every change also appends an immutable full revisio
 earlier state is restored by sending its fields through ordinary update. Tools speak local ISO
 8601 date-times with an IANA zone, so models never convert instants or expand repeats.
 
-Vault Surfaces are shared trees of folders, files, and artifacts (small static sites kept as one
-entry). `vaults/` owns them in its own tables: entries with a live-name unique index, immutable
-numbered versions, artifact version manifests, an append-only activity log, and per-vault
-retention settings. Bytes live once under Configuration's `vaults/content/<2 hex>/<sha256>`,
-shared by every vault and version, so copying an entry, restoring a version, or uploading bytes
-already stored writes nothing. Resumable uploads accumulate in `vaults/uploads/<id>` with a
-running digest and are stored when the last byte arrives. A trigram FTS5 index holds the newest
-version's text of small UTF-8 files for search and `grep_vault`. The durable hourly
-`surfaces.vaults.maintain` pass expires uploads, prunes versions by each vault's retention,
-purges expired Trash, and runs the durable `surfaces.vaults.collect` collector, which deletes a
-content file only after its grace time once no version, artifact file, or upload names it.
-Artifacts serve their files under the artifact security model, and folders, vaults, and artifact
-versions stream as stored zips. Models get fifteen common path-based tools; `copy_vault_entry`
-copies by digest within or between vaults. Their writes make versions without Auto review, and
-only `import_vault_file`, `export_vault_file`, and `write_vault_artifact` from a machine path
-cross Compute's filesystem boundary.
+Vault Surfaces are shared trees of folders and files; some files are artifacts, small static
+sites kept as one file named `*.artifact`. `vaults/` owns them in its own tables: items with a
+live-name unique index, immutable numbered file versions, artifact version manifests, an
+append-only activity log, and per-vault retention settings. Folders and files are two kinds with
+their own routes, events, and tools; an empty folder is an ordinary folder that stays until it is
+deleted. Bytes live once under Configuration's `vaults/content/<2 hex>/<sha256>`, shared by every
+vault and version, so copying a file, restoring a version, or uploading bytes already stored
+writes nothing. Resumable uploads accumulate in `vaults/uploads/<id>` with a running digest and
+are stored when the last byte arrives. A trigram FTS5 index holds the newest version's text of
+small UTF-8 files for search and `grep_vault`. The durable hourly `surfaces.vaults.maintain` pass
+expires uploads, prunes versions by each vault's retention, purges expired Trash, and runs the
+durable `surfaces.vaults.collect` collector, which deletes a content file only after its grace
+time once no version, artifact file, or upload names it. Artifacts serve their files under the
+artifact security model. An artifact travels as a `.artifact` file, a zip of its files with an
+`artifact.json` manifest the daemon writes on download and reads on upload; folders and vaults
+stream as stored zips with artifacts nested as `.artifact` files. Models get nineteen common
+path-based tools; `copy_vault_file` copies by digest within or between vaults. Their writes make
+versions without Auto review, and only `import_vault_file`, `export_vault_file`, and
+`write_vault_artifact` from a machine path cross Compute's filesystem boundary.
 
 Reference Surfaces store only an immutable binding to their target beside the shared record.
 Every read resolves it against the owning Artifacts, Bots, or Tasks module, so the live name,

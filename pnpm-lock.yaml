@@ -295,6 +295,9 @@ importers:
       '@types/ws':
         specifier: 8.18.1
         version: 8.18.1
+      fflate:
+        specifier: 0.8.2
+        version: 0.8.2
       tweetnacl:
         specifier: 0.14.5
         version: 0.14.5

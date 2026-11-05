@@ -1,5 +1,9 @@
 import { agentPermissionMode } from "@slopus/happy-agent-base";
-import type { VaultEntry, VaultVersionSelector } from "@slopus/happy-agent-client";
+import {
+    isVaultArtifactName,
+    type VaultItem,
+    type VaultVersionSelector,
+} from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 
 import { SurfaceError } from "../../SurfaceError.js";
@@ -21,7 +25,7 @@ export const MAX_VAULT_TOOL_COPY_BYTES = 512 * 1024 * 1024;
 /** What one writing call did, as every result reports it. */
 export interface VaultToolWrite {
     readonly path: string;
-    readonly entryId: string;
+    readonly fileId: string;
     readonly kind: "file" | "artifact";
     /** The version the call made, or null when the content was already there. */
     readonly version: number | null;
@@ -30,9 +34,9 @@ export interface VaultToolWrite {
     readonly folders: string[];
 }
 
-/** One file a path names: a vault file, or a file inside an artifact entry. */
+/** One file a path names: a vault file, or a file inside an artifact. */
 export interface VaultToolFile {
-    readonly entry: VaultEntry;
+    readonly entry: VaultItem;
     readonly path: string;
     readonly innerPath: string | null;
     readonly version: number;
@@ -101,7 +105,7 @@ export async function vaultToolText(file: VaultToolFile): Promise<string | undef
  * Write bytes at a vault path inside the caller's transaction, after their content was stored:
  * a new version of the file there, a new version of the artifact the path runs into with that
  * file added or replaced, or a new file with any missing folders above it. `expectedVersion`,
- * when given, is the entry's resource version the call read; a change since refuses the write.
+ * when given, is the file's resource version the call read; a change since refuses the write.
  */
 export async function writeVaultPath(
     ctx: Context,
@@ -127,7 +131,20 @@ export async function writeVaultPath(
             latest.artifact === null
                 ? []
                 : latest.artifact.files.filter((file) => file.path !== innerPath);
-        const content = await vaults.storeBundle(ctx, [{ path: innerPath, bytes }], kept);
+        // The artifact keeps its type and entry; the new file only joins its bundle.
+        const content = await vaults.storeBundle(
+            ctx,
+            [{ path: innerPath, bytes }],
+            kept,
+            latest.artifact === null
+                ? undefined
+                : {
+                      format: "happy.artifact",
+                      formatVersion: 1,
+                      type: latest.artifact.type,
+                      entry: latest.artifact.entry,
+                  },
+        );
         return ctx.inTx(async (tx) =>
             commit(
                 tx,
@@ -155,6 +172,11 @@ export async function writeVaultPath(
         throw new SurfaceError(
             "invalid_request",
             `${JSON.stringify(path)} is an artifact. Write one of its files by its path inside it, or all of them with write_vault_artifact.`,
+        );
+    if (entry === undefined && isVaultArtifactName(found.rest.at(-1)!))
+        throw new SurfaceError(
+            "invalid_request",
+            `${JSON.stringify(path)} names an artifact, since it ends in ".artifact". Make it with write_vault_artifact, or choose another name for a plain file.`,
         );
     const stored = await vaults.storeBytes(ctx, bytes);
     const content: VaultContent = { kind: "file", size: stored.size, sha256: stored.sha256 };
@@ -188,7 +210,6 @@ export async function writeVaultPath(
                 surfaceId,
                 found.parentId,
                 found.rest,
-                "file",
                 { type: "stored", content },
                 change,
                 path,
@@ -197,12 +218,12 @@ export async function writeVaultPath(
     });
 }
 
-/** A new version of an entry, reported as a tool write. */
+/** A new version of a file, reported as a tool write. */
 export async function placeVersion(
     ctx: Context,
     vaults: SurfaceVaults,
     surfaceId: string,
-    entry: VaultEntry,
+    entry: VaultItem,
     path: string,
     content: VaultContent | { readonly fromVersion: number },
     change: VaultChange,
@@ -223,8 +244,8 @@ export async function placeVersion(
             const current = error instanceof SurfaceError ? error.current : undefined;
             if (
                 current !== undefined &&
-                "entry" in current &&
-                current.entry.version !== expectedVersion
+                "file" in current &&
+                current.file.version !== expectedVersion
             )
                 throw new SurfaceError(
                     "conflict",
@@ -234,7 +255,7 @@ export async function placeVersion(
         });
     return {
         path,
-        entryId: entry.id,
+        fileId: entry.id,
         kind: entry.kind === "artifact" ? "artifact" : "file",
         version: result.version?.number ?? null,
         created: false,
@@ -242,14 +263,16 @@ export async function placeVersion(
     };
 }
 
-/** A new file or artifact named by the last of `names`, creating the folders before it. */
+/**
+ * A new file named by the last of `names`, creating the folders before it; the name decides
+ * whether it is an artifact.
+ */
 export async function placeNew(
     ctx: Context,
     vaults: SurfaceVaults,
     surfaceId: string,
     parentId: string | null,
     names: readonly string[],
-    kind: "file" | "artifact",
     content: VaultContentSource,
     change: VaultChange,
     path: string,
@@ -261,13 +284,14 @@ export async function placeNew(
         parent = await vaults.ensureFolders(ctx, surfaceId, parent, [name], change);
         folders.push(vaultPath([...base, ...names.slice(0, index + 1)]));
     }
+    const kind = isVaultArtifactName(names.at(-1)!) ? "artifact" : "file";
     const { entry } = await vaults.createEntry(
         ctx,
         surfaceId,
         { parentId: parent, name: names.at(-1)!, kind, content },
         change,
     );
-    return { path, entryId: entry.id, kind, version: 1, created: true, folders };
+    return { path, fileId: entry.id, kind, version: 1, created: true, folders };
 }
 
 /** How a result reads to the model: what changed, where, and which version. */

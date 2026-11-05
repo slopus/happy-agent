@@ -1,4 +1,11 @@
-import type { CalendarEvent, Todo, VaultEntry, VaultUpload } from "@slopus/happy-agent-client";
+import type {
+    CalendarEvent,
+    Todo,
+    VaultFile,
+    VaultFolder,
+    VaultItem,
+    VaultUpload,
+} from "@slopus/happy-agent-client";
 
 export class SurfaceError extends Error {
     constructor(
@@ -16,7 +23,9 @@ export class SurfaceError extends Error {
         readonly current?:
             | { readonly todo: Todo }
             | { readonly event: CalendarEvent }
-            | { readonly entry: VaultEntry }
+            | { readonly folder: VaultFolder }
+            | { readonly file: VaultFile }
+            | { readonly item: VaultItem }
             | { readonly upload: VaultUpload },
     ) {
         super(message);

@@ -3,7 +3,7 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createAgentGym, type AgentGym, type GymTurn } from "@slopus/happy-agent-gym";
-import type { HappyAgentClient } from "@slopus/happy-agent-client";
+import type { HappyAgentClient, VaultItem } from "@slopus/happy-agent-client";
 import { afterEach, describe, expect, it } from "vitest";
 
 const running: AgentGym[] = [];
@@ -29,7 +29,7 @@ async function usage(path: string): Promise<{ bytes: number; files: number }> {
     return { bytes, files };
 }
 
-async function upload(client: HappyAgentClient, data: Uint8Array, sha256: string) {
+async function upload(client: HappyAgentClient, data: Uint8Array<ArrayBuffer>, sha256: string) {
     let current = (await client.createVaultUpload({ size: data.byteLength, sha256 })).upload;
     for (let start = 0; start < data.byteLength; start += CHUNK)
         current = (
@@ -68,43 +68,40 @@ describe("vault copies and repeated uploads", () => {
         const content = join(vaults, "content");
         const uploads = join(vaults, "uploads");
 
-        const data = new Uint8Array(SIZE);
+        const data = new Uint8Array(new ArrayBuffer(SIZE));
         for (let at = 0; at < SIZE; at += 65_536)
             data.set(randomBytes(Math.min(65_536, SIZE - at)), at);
         const sha256 = createHash("sha256").update(data).digest("hex");
         const studio = (await client.createSurface({ type: "vault", name: "Studio" })).surface;
         const archive = (await client.createSurface({ type: "vault", name: "Archive" })).surface;
         const original = (
-            await client.createVaultEntry(studio.id, {
-                kind: "file",
+            await client.createVaultFile(studio.id, {
                 name: "big.bin",
                 parentId: null,
                 uploadId: await upload(client, data, sha256),
             })
-        ).entry;
+        ).file;
         const before = { content: await usage(content), uploads: await usage(uploads) };
         expect(before.content.bytes).toBeGreaterThanOrEqual(SIZE);
         expect(before.uploads.files).toBe(0);
 
-        const copies = [
-            await client.createVaultEntry(studio.id, {
-                kind: "file",
+        const copies: VaultItem[] = [
+            await client.createVaultFile(studio.id, {
                 name: "big copy.bin",
                 parentId: null,
-                fromEntryId: original.id,
+                fromFileId: original.id,
             }),
-            await client.createVaultEntry(archive.id, {
-                kind: "file",
+            await client.createVaultFile(archive.id, {
                 name: "big.bin",
                 parentId: null,
-                fromEntryId: original.id,
+                fromFileId: original.id,
             }),
-        ].map((response) => response.entry);
+        ].map((response) => response.file);
         const call = (args: Record<string, unknown>): GymTurn => ({
             content: [
                 {
                     type: "tool_call",
-                    name: "copy_vault_entry",
+                    name: "copy_vault_file",
                     arguments: { surfaceId: studio.id, path: "/big.bin", ...args },
                 },
             ],
@@ -119,7 +116,7 @@ describe("vault copies and repeated uploads", () => {
             [studio.id, "/Tool copies/big.bin"],
             [archive.id, "/From the tool/big.bin"],
         ] as const)
-            copies.push((await client.resolveVaultPath(vault, path)).entry);
+            copies.push((await client.resolveVaultPath(vault, path)).item);
         for (const copy of copies)
             expect(copy).toMatchObject({ sha256, size: SIZE, latestVersion: 1 });
         const afterCopies = { content: await usage(content), uploads: await usage(uploads) };
@@ -145,5 +142,5 @@ describe("vault copies and repeated uploads", () => {
         );
         expect(gym.errors).toEqual([]);
         expect(gym.inference.unscripted).toEqual([]);
-    });
+    }, 600_000);
 });

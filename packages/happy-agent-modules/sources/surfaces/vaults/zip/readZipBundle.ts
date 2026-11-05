@@ -1,10 +1,19 @@
-import { open, rm } from "node:fs/promises";
+import { open, readFile, rm } from "node:fs/promises";
 import { crc32 } from "node:zlib";
 
+import {
+    VAULT_ARTIFACT_MANIFEST_PATH,
+    type VaultArtifactManifest,
+} from "@slopus/happy-agent-client";
 import { Inflate } from "fflate";
 
 import { ContentWriter } from "../vaultContentFiles.js";
-import { MAX_BUNDLE_BYTES, MAX_BUNDLE_FILES } from "../vaultBundle.js";
+import {
+    MAX_BUNDLE_BYTES,
+    MAX_BUNDLE_FILES,
+    MAX_MANIFEST_BYTES,
+    parseArtifactManifest,
+} from "../vaultBundle.js";
 import { readAt, readZipDirectory, refused, type ZipRecord } from "./readZipDirectory.js";
 
 /** One file read out of a zip into its own private file, not yet stored by digest. */
@@ -21,16 +30,18 @@ const CHUNK = 1024 * 1024;
 
 /**
  * Read an artifact bundle out of a zip: folder records, `__MACOSX/`, `.DS_Store`, and empty files
- * are left out, and a single top-level folder is removed when no entry page sits at the root.
- * Only stored and deflated records are read; encrypted records, symbolic links, unsafe or
- * duplicate paths, and files breaking the bundle limits as they are inflated are refused,
- * whatever the headers claim. Each file is written to `writtenPath()`; on failure every file
- * written so far is removed.
+ * are left out, and a single top-level folder is removed when no `artifact.json` sits at the
+ * root. `artifact.json` at the bundle's root is its manifest, read and checked rather than kept
+ * as a file; a `.artifact` file must have one. Only stored and deflated records are read;
+ * encrypted records, symbolic links, unsafe or duplicate paths, and files breaking the bundle
+ * limits as they are inflated are refused, whatever the headers claim. Each file is written to
+ * `writtenPath()`; on failure every file written so far is removed.
  */
 export async function readZipBundle(
     zipPath: string,
     writtenPath: () => string,
-): Promise<ExtractedFile[]> {
+    requireManifest: boolean,
+): Promise<{ manifest: VaultArtifactManifest | undefined; files: ExtractedFile[] }> {
     const file = await open(zipPath, "r");
     const extracted: ExtractedFile[] = [];
     try {
@@ -85,7 +96,18 @@ export async function readZipBundle(
                 throw error;
             }
         }
-        return extracted;
+        const at = extracted.findIndex((done) => done.path === VAULT_ARTIFACT_MANIFEST_PATH);
+        if (at < 0) {
+            if (requireManifest)
+                throw refused(
+                    `This is not a .artifact file: it has no "${VAULT_ARTIFACT_MANIFEST_PATH}" manifest at its root.`,
+                );
+            return { manifest: undefined, files: extracted };
+        }
+        const [found] = extracted.splice(at, 1);
+        const bytes = await readFile(found!.writtenPath);
+        await rm(found!.writtenPath, { force: true });
+        return { manifest: parseArtifactManifest(bytes), files: extracted };
     } catch (error) {
         await Promise.all(extracted.map((done) => rm(done.writtenPath, { force: true })));
         throw error;
@@ -121,16 +143,17 @@ function selectRecords(records: readonly ZipRecord[]): { record: ZipRecord; path
         if (record.size === 0) continue;
         kept.push(record);
     }
-    const atRoot = kept.some(
-        (record) => record.name === "index.html" || record.name === "index.md",
-    );
+    const atRoot = kept.some((record) => record.name === VAULT_ARTIFACT_MANIFEST_PATH);
     const tops = new Set(kept.map((record) => record.name.split("/")[0]));
     const strip =
         !atRoot && tops.size === 1 && kept.every((record) => record.name.includes("/"))
             ? `${[...tops][0]!}/`
             : "";
     const selected = kept.map((record) => ({ record, path: record.name.slice(strip.length) }));
-    if (selected.length > MAX_BUNDLE_FILES)
+    const manifest = selected.find(({ path }) => path === VAULT_ARTIFACT_MANIFEST_PATH);
+    if (manifest !== undefined && manifest.record.size > MAX_MANIFEST_BYTES)
+        throw refused(`"${VAULT_ARTIFACT_MANIFEST_PATH}" is too large to be a manifest.`);
+    if (selected.length - (manifest === undefined ? 0 : 1) > MAX_BUNDLE_FILES)
         throw refused(`An artifact holds at most ${String(MAX_BUNDLE_FILES)} files.`);
     const seen = new Set<string>();
     for (const { path } of selected) {

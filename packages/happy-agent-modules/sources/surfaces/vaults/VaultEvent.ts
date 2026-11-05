@@ -1,7 +1,10 @@
 import {
-    vaultEntryCreatedPayloadSchema,
-    vaultEntryRemovedPayloadSchema,
-    vaultEntryUpdatedPayloadSchema,
+    vaultFileCreatedPayloadSchema,
+    vaultFileRemovedPayloadSchema,
+    vaultFileUpdatedPayloadSchema,
+    vaultFolderCreatedPayloadSchema,
+    vaultFolderRemovedPayloadSchema,
+    vaultFolderUpdatedPayloadSchema,
     vaultSettingsUpdatedPayloadSchema,
     vaultVersionUpdatedPayloadSchema,
 } from "@slopus/happy-agent-client";
@@ -10,16 +13,28 @@ import { Type, type Static } from "@sinclair/typebox";
 /** Shared vault events, journaled after their transaction commits. */
 export const vaultEventSchemas = [
     Type.Object({
-        type: Type.Literal("vault.entry.created"),
-        payload: vaultEntryCreatedPayloadSchema,
+        type: Type.Literal("vault.folder.created"),
+        payload: vaultFolderCreatedPayloadSchema,
     }),
     Type.Object({
-        type: Type.Literal("vault.entry.updated"),
-        payload: vaultEntryUpdatedPayloadSchema,
+        type: Type.Literal("vault.folder.updated"),
+        payload: vaultFolderUpdatedPayloadSchema,
     }),
     Type.Object({
-        type: Type.Literal("vault.entry.removed"),
-        payload: vaultEntryRemovedPayloadSchema,
+        type: Type.Literal("vault.folder.removed"),
+        payload: vaultFolderRemovedPayloadSchema,
+    }),
+    Type.Object({
+        type: Type.Literal("vault.file.created"),
+        payload: vaultFileCreatedPayloadSchema,
+    }),
+    Type.Object({
+        type: Type.Literal("vault.file.updated"),
+        payload: vaultFileUpdatedPayloadSchema,
+    }),
+    Type.Object({
+        type: Type.Literal("vault.file.removed"),
+        payload: vaultFileRemovedPayloadSchema,
     }),
     Type.Object({
         type: Type.Literal("vault.version.updated"),

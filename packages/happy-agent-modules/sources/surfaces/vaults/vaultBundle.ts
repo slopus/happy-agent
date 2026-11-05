@@ -1,4 +1,10 @@
-import { artifactPathSchema, type VaultArtifactSummary } from "@slopus/happy-agent-client";
+import {
+    artifactPathSchema,
+    VAULT_ARTIFACT_MANIFEST_PATH,
+    vaultArtifactManifestSchema,
+    type VaultArtifactManifest,
+    type VaultArtifactSummary,
+} from "@slopus/happy-agent-client";
 import { Value } from "@sinclair/typebox/value";
 
 import { SurfaceError } from "../SurfaceError.js";
@@ -9,6 +15,10 @@ export const MAX_BUNDLE_FILES = 256;
 export const MAX_BUNDLE_BYTES = 256 * MIB;
 /** The largest entry page of each type. */
 const MAX_ENTRY_BYTES = { html: 16 * MIB, markdown: 4 * MIB } as const;
+/** The page each type opens. */
+const ENTRY_OF = { html: "index.html", markdown: "index.md" } as const;
+/** More than any manifest needs; a larger `artifact.json` is refused unread. */
+export const MAX_MANIFEST_BYTES = 64 * 1024;
 
 /** One file of an artifact entry's bundle, before it is stored. */
 export interface BundleFile {
@@ -19,12 +29,16 @@ export interface BundleFile {
 }
 
 /**
- * Check a bundle against the artifact entry rules and say what it is: `html` when `index.html`
- * sits at its root, otherwise `markdown` when `index.md` does. Every path follows the artifact
- * path rules, no path is also a folder of another, every file holds a byte, and the entry is
- * UTF-8 within its type's limit.
+ * Check a bundle against the artifact rules and say what it is. With a manifest the type and
+ * entry are the manifest's; without one the bundle is `html` when `index.html` sits at its root,
+ * otherwise `markdown` when `index.md` does. Every path follows the artifact path rules,
+ * `artifact.json` at the root is reserved for the manifest, no path is also a folder of another,
+ * every file holds a byte, and the entry is UTF-8 within its type's limit.
  */
-export function checkVaultBundle(files: readonly BundleFile[]): VaultArtifactSummary {
+export function checkVaultBundle(
+    files: readonly BundleFile[],
+    manifest?: VaultArtifactManifest,
+): VaultArtifactSummary {
     if (files.length === 0) throw refused("An artifact needs at least one file.");
     if (files.length > MAX_BUNDLE_FILES)
         throw refused(`An artifact holds at most ${String(MAX_BUNDLE_FILES)} files.`);
@@ -34,6 +48,10 @@ export function checkVaultBundle(files: readonly BundleFile[]): VaultArtifactSum
         if (!Value.Check(artifactPathSchema, file.path))
             throw refused(
                 `${JSON.stringify(file.path)} cannot name a file in an artifact: use relative paths without empty, ".", or ".." segments, backslashes, or control characters.`,
+            );
+        if (file.path === VAULT_ARTIFACT_MANIFEST_PATH)
+            throw refused(
+                `"${VAULT_ARTIFACT_MANIFEST_PATH}" at an artifact's root is reserved for its manifest and cannot be one of its files.`,
             );
         if (paths.has(file.path))
             throw refused(`${JSON.stringify(file.path)} appears more than once.`);
@@ -55,23 +73,67 @@ export function checkVaultBundle(files: readonly BundleFile[]): VaultArtifactSum
                 );
         }
     }
-    const html = files.find((file) => file.path === "index.html");
-    const markdown = files.find((file) => file.path === "index.md");
-    const entry = html ?? markdown;
-    if (entry === undefined)
+    const type =
+        manifest?.type ??
+        (paths.has(ENTRY_OF.html) ? "html" : paths.has(ENTRY_OF.markdown) ? "markdown" : undefined);
+    if (type === undefined)
         throw refused(
             'An artifact needs "index.html" or "index.md" at its root, the page it opens.',
         );
-    const type = entry === html ? "html" : "markdown";
+    const entry = files.find((file) => file.path === ENTRY_OF[type]);
+    if (entry === undefined)
+        throw refused(
+            `The manifest says the artifact is ${type === "html" ? "an HTML" : "a Markdown"} site, but it has no "${ENTRY_OF[type]}" at its root.`,
+        );
     const limit = MAX_ENTRY_BYTES[type];
     if (entry.size > limit)
         throw refused(`"${entry.path}" may be at most ${String(limit / MIB)} MiB.`);
     if (!entry.utf8) throw refused(`"${entry.path}" must be UTF-8 text.`);
-    return {
-        type,
-        entry: type === "html" ? "index.html" : "index.md",
-        fileCount: files.length,
+    return { type, entry: ENTRY_OF[type], fileCount: files.length };
+}
+
+/**
+ * Read `artifact.json`: UTF-8 JSON naming the `happy.artifact` format, version 1, and a type
+ * whose entry it names. Fields not described are ignored; a higher format version was made by
+ * a newer Happy.
+ */
+export function parseArtifactManifest(bytes: Uint8Array): VaultArtifactManifest {
+    let value: unknown;
+    try {
+        value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    } catch {
+        throw refused(`"${VAULT_ARTIFACT_MANIFEST_PATH}" is not valid UTF-8 JSON.`);
+    }
+    if (
+        typeof value === "object" &&
+        value !== null &&
+        "formatVersion" in value &&
+        typeof value.formatVersion === "number" &&
+        value.formatVersion > 1
+    )
+        throw refused(
+            `This .artifact file was made by a newer Happy (format version ${String(value.formatVersion)}). Update Happy to open it.`,
+        );
+    if (!Value.Check(vaultArtifactManifestSchema, value))
+        throw refused(
+            `"${VAULT_ARTIFACT_MANIFEST_PATH}" is not an artifact manifest: it needs "format": "happy.artifact", "formatVersion": 1, "type" of "html" or "markdown", and "entry".`,
+        );
+    if (value.entry !== ENTRY_OF[value.type])
+        throw refused(
+            `The manifest's entry must be "${ENTRY_OF[value.type]}" for ${value.type === "html" ? "an HTML" : "a Markdown"} site.`,
+        );
+    return value;
+}
+
+/** The manifest a download writes: the version's type and entry, the same bytes every time. */
+export function artifactManifestBytes(summary: VaultArtifactSummary): Uint8Array {
+    const manifest: VaultArtifactManifest = {
+        format: "happy.artifact",
+        formatVersion: 1,
+        type: summary.type,
+        entry: summary.entry,
     };
+    return new TextEncoder().encode(`${JSON.stringify(manifest, null, 4)}\n`);
 }
 
 function refused(message: string): SurfaceError {

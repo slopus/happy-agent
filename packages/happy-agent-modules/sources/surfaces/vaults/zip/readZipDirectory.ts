@@ -36,7 +36,7 @@ export async function readZipDirectory(file: FileHandle, fileSize: number): Prom
             break;
         }
     }
-    if (eocd < 0) throw refused("The upload is not a zip file.");
+    if (eocd < 0) throw refused("The file is not a zip, which a .artifact file is.");
     let count = tail.readUInt16LE(eocd + 10);
     let directorySize = tail.readUInt32LE(eocd + 12);
     let directoryOffset = tail.readUInt32LE(eocd + 16);

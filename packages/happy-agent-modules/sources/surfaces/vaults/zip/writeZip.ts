@@ -1,13 +1,28 @@
 import { createReadStream } from "node:fs";
 import { crc32 } from "node:zlib";
 
-/** One record of a zip being written: a stored file, or a folder record ending in `/`. */
+/**
+ * One record of a zip being written: a stored file, bytes held in memory, a zip of its own
+ * streamed as one stored file, or a folder record ending in `/`.
+ */
 export type ZipItem =
     | {
           readonly kind: "file";
           readonly name: string;
           readonly contentPath: string;
           readonly size: number;
+          readonly modifiedAt: number;
+      }
+    | {
+          readonly kind: "bytes";
+          readonly name: string;
+          readonly bytes: Uint8Array;
+          readonly modifiedAt: number;
+      }
+    | {
+          readonly kind: "zip";
+          readonly name: string;
+          readonly items: readonly ZipItem[];
           readonly modifiedAt: number;
       }
     | { readonly kind: "folder"; readonly name: string; readonly modifiedAt: number };
@@ -18,7 +33,8 @@ const MAX32 = 0xffffffff;
  * Stream a zip of stored (uncompressed) records with UTF-8 names. Sizes and checksums follow
  * each file in a data descriptor, so nothing is read twice, and ZIP64 records appear wherever a
  * size, offset, or count needs them. A file whose stored bytes differ in length from `size`
- * fails the stream rather than producing a corrupt archive.
+ * fails the stream rather than producing a corrupt archive. A nested zip is written as it is
+ * made, so it must stay under 4 GiB.
  */
 export async function* writeZip(items: Iterable<ZipItem>): AsyncGenerator<Buffer> {
     let offset = 0;
@@ -26,7 +42,8 @@ export async function* writeZip(items: Iterable<ZipItem>): AsyncGenerator<Buffer
     let count = 0;
     for (const item of items) {
         const name = Buffer.from(item.kind === "folder" ? `${item.name}/` : item.name, "utf8");
-        const size = item.kind === "file" ? item.size : 0;
+        const size =
+            item.kind === "file" ? item.size : item.kind === "bytes" ? item.bytes.length : 0;
         const zip64 = size >= MAX32;
         const local = Buffer.alloc(30);
         const { time, date } = dosTime(item.modifiedAt);
@@ -47,33 +64,39 @@ export async function* writeZip(items: Iterable<ZipItem>): AsyncGenerator<Buffer
         offset += 30 + name.length + localExtra.length;
         let checksum = 0;
         let written = 0;
-        if (item.kind === "file") {
-            for await (const chunk of createReadStream(item.contentPath, {
-                highWaterMark: 1024 * 1024,
-            })) {
-                const bytes = chunk as Buffer;
-                checksum = crc32(bytes, checksum);
-                written += bytes.length;
-                yield bytes;
-            }
-            if (written !== size) throw new Error("A vault file's stored content changed size.");
+        const chunks =
+            item.kind === "file"
+                ? createReadStream(item.contentPath, { highWaterMark: 1024 * 1024 })
+                : item.kind === "bytes"
+                  ? [Buffer.from(item.bytes)]
+                  : item.kind === "zip"
+                    ? writeZip(item.items)
+                    : [];
+        for await (const chunk of chunks) {
+            const bytes = chunk as Buffer;
+            checksum = crc32(bytes, checksum);
+            written += bytes.length;
+            yield bytes;
         }
+        if (item.kind === "zip") {
+            if (written >= MAX32) throw new Error("A zip inside a zip must stay under 4 GiB.");
+        } else if (written !== size) throw new Error("A vault file's stored content changed size.");
         offset += written;
         const descriptor = Buffer.alloc(zip64 ? 24 : 16);
         descriptor.writeUInt32LE(0x08074b50, 0);
         descriptor.writeUInt32LE(checksum >>> 0, 4);
         if (zip64) {
-            descriptor.writeBigUInt64LE(BigInt(size), 8);
-            descriptor.writeBigUInt64LE(BigInt(size), 16);
+            descriptor.writeBigUInt64LE(BigInt(written), 8);
+            descriptor.writeBigUInt64LE(BigInt(written), 16);
         } else {
-            descriptor.writeUInt32LE(size, 8);
-            descriptor.writeUInt32LE(size, 12);
+            descriptor.writeUInt32LE(written, 8);
+            descriptor.writeUInt32LE(written, 12);
         }
         yield descriptor;
         offset += descriptor.length;
 
         const wide = [
-            ...(zip64 ? [size, size] : []),
+            ...(zip64 ? [written, written] : []),
             ...(headerOffset >= MAX32 ? [headerOffset] : []),
         ];
         const extra = wide.length === 0 ? Buffer.alloc(0) : zip64Extra(wide);
@@ -86,8 +109,8 @@ export async function* writeZip(items: Iterable<ZipItem>): AsyncGenerator<Buffer
         record.writeUInt16LE(time, 12);
         record.writeUInt16LE(date, 14);
         record.writeUInt32LE(checksum >>> 0, 16);
-        record.writeUInt32LE(zip64 ? MAX32 : size, 20);
-        record.writeUInt32LE(zip64 ? MAX32 : size, 24);
+        record.writeUInt32LE(zip64 ? MAX32 : written, 20);
+        record.writeUInt32LE(zip64 ? MAX32 : written, 24);
         record.writeUInt16LE(name.length, 28);
         record.writeUInt16LE(extra.length, 30);
         record.writeUInt16LE(0, 32);
