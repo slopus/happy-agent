@@ -64,7 +64,8 @@ when health reports `capabilities.vaults`. Folders and files are separate resour
 `kind`: `createVaultFolder()` makes an empty folder, and a file is a plain file or an artifact, a
 vault app (a small web app) whose name ends in `.artifact` (`isVaultArtifactName()`). `listVaultItems()` pages
 one folder, folders first; `listVaultTree()` pages every live item for a client that keeps the
-whole tree, and `resolveVaultPath()` and `searchVault()` find items by path, name, or text. Bytes
+whole tree, and `resolveVaultPath()` and `searchVault()` find items by path, name, or text;
+`searchVaults()` searches every vault at once when health reports `capabilities.vaultSearch`. Bytes
 arrive as resumable uploads: `createVaultUpload({ size })`, then `uploadVaultChunk()` from the
 upload's `received` until it is complete; a `conflict` error carries the current upload to resume
 from. Place an upload with `createVaultFile()` or `createVaultVersion()`; an artifact's upload is a

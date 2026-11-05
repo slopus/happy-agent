@@ -546,6 +546,11 @@ creation with `400`, and answer vault and vault-upload routes with `404`; client
 vault creation. A vault Surface listed by a daemon a client does not support is left unavailable
 like any unknown type. The `vault.*` events are absent on older compatible daemons.
 
+Searching every vault is additive and does not increment the protocol version. Supporting daemons
+report `capabilities.vaultSearch: true` from health. Older daemons omit it, answer
+`GET /v0/vault-search` with `404`, and rank per-vault search by substring only; clients then search
+each vault on its own or offer no vault results in global search.
+
 Editing a Surface's name and image is additive and does not increment the protocol version.
 Supporting daemons report `capabilities.surfaceEditing: true` from health. Older daemons omit it
 and answer `PATCH /v0/surfaces/:surfaceId` with `404`; clients then offer no renaming or image
@@ -1533,6 +1538,8 @@ Fields:
   Provider routes. `webSocketTunnels: true` advertises the WebSocket twins of the proxy tunnels,
   described under WebSocket tunnels, and the WebSocket keepalive pings described under Keepalive.
   `artifactCovers: true` advertises artifact `cover` and `summary`, described under Artifacts.
+  `vaultSearch: true` advertises `GET /v0/vault-search` and the word-ranked search described
+  under Vault Surfaces.
   `feedSubjectFilter: true` advertises `subjects` on `GET /v0/feed` and
   `POST /v0/feed/read-all`, described under Feed.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
@@ -10744,14 +10751,32 @@ expose the artifact data bridge or rewrite its `/api/*` requests.
 
 #### Search
 
-Search covers one vault's live folders and files. A name search matches the query,
-case-insensitively, as a substring of item names and paths, ranked: names equal to the query, then
-names starting with it, then names containing it, then paths containing it, each group by path. A
-content search matches the query as a case-insensitive substring of text in the newest version of
-plain text files and of the text files inside artifacts' newest versions. A file is text when it is valid UTF-8 without NUL
-and at most 1 MiB; larger and binary files are found by name only. The index is updated in the same
-transaction as the version, so search never returns content a vault no longer holds. Content
-matching needs at least three characters; shorter queries search names only.
+Search covers live folders and files: one vault's through `GET /search` under the vault's routes,
+or every vault's through `GET /v0/vault-search`. Both find and rank the same way.
+
+The query is split into words of letters and digits, ignoring case and diacritics, so `Café` and
+`cafe` are the same word. A word matches any word that starts with it, so a query typed so far
+finds what it is becoming; words are not stemmed. Results come in four tiers, and each tier leaves
+out what an earlier one returned:
+
+1. Name matches, `match: "name"`: every query word matches a word of the item's own name. Ranked
+   by BM25 over names.
+2. Content matches, `match: "content"`: every query word matches a word of one text. Ranked by
+   BM25 over texts.
+3. Path matches, `match: "name"`: every query word matches a word of the item's name or of the
+   folders above it, but not all of them its name. Ranked by BM25 over names and folders.
+4. Substring matches: items whose name or path contains the query, case-insensitively, as
+   `match: "name"` (names equal to the query, then names starting with it, then names containing
+   it, then paths containing it, each group by path); then, for queries of at least three
+   characters, texts containing the query as a case-insensitive substring, as `match: "content"`.
+
+The texts are the newest version of plain text files and the text files inside artifacts' newest
+versions. A file is text when it is valid UTF-8 without NUL and at most 1 MiB; larger and binary
+files are found by name only. An item is returned at most once as a name match, and a text at most
+once as a content match. The indexes are updated in the same transaction as the change, so search
+never returns content a vault no longer holds, and renaming or moving a folder updates the paths
+below it at once. After an upgrade, a daemon indexes the words of existing vaults in the
+background; until it finishes, older items may be found only by substring.
 
 #### Uploads
 
@@ -10794,6 +10819,14 @@ listed.
 
 An upload that does not exist, has expired, or was used is `404 not_found` on every route and when
 it is placed. Placing an upload that is still receiving is `409 conflict`.
+
+#### Searching every vault
+
+`GET /v0/vault-search?q=...` searches the live folders and files of every vault Surface, as
+described under Search, for global search. It takes `q`, 1–256 characters, optional `kind`, and
+optional `limit`, exactly as the per-vault search does, and returns
+`200 { "results": [...], "truncated": false }` with the same results; each `item` carries its
+vault's `surfaceId`. Other query fields are `400 invalid_request`.
 
 #### Settings
 
@@ -10848,12 +10881,14 @@ false }`. `ancestors` runs from the root down to the item's folder; `inTrash` sa
 null, "cursor": "..." }`. A client following events from the first page's `cursor` misses nothing
   made while it reads the rest.
 - `GET /search?q=...` searches as described under Search. `q` is 1–256 characters. Optional `kind`
-  is `name`, `content`, or `all` (default); `parentId` limits it to one live folder and everything
-  below; `limit` is 1–100, default 50. It returns `200 { "results": [...], "truncated": false }`,
-  name matches before content matches. A result is `{ "item": {...}, "path": "...", "match":
-"name", "innerPath": null, "line": null, "snippet": null }`, or for a content match, whose item
-  is always a file, `match: "content"`, the artifact file's `innerPath` when the text is inside an
-  artifact, the 1-based `line`, and a `snippet` of at most 200 characters around the match.
+  is `name`, `content`, or `all` (default); `name` returns only name, path, and name substring
+  matches, and `content` only content matches. `parentId` limits it to one live folder and
+  everything below; `limit` is 1–100, default 50. It returns
+  `200 { "results": [...], "truncated": false }` in the order of the tiers. A result is
+  `{ "item": {...}, "path": "...", "match": "name", "innerPath": null, "line": null, "snippet":
+null }`, or for a content match, whose item is always a file, `match: "content"`, the artifact
+  file's `innerPath` when the text is inside an artifact, the 1-based `line` of the first match,
+  and a `snippet` of at most 200 characters of that line around the match.
 - `GET /trash` lists Trash items, most recently deleted first, as `200 { "items": [{ "item":
 {...}, "path": "/Reports/Q3" }], "nextPageCursor": null, "cursor": "..." }`. `path` is where the
   item was. `limit` is 1–500, default 200.

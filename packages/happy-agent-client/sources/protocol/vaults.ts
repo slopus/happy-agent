@@ -360,7 +360,10 @@ export const vaultSearchKindSchema = Type.Union([
 ]);
 export type VaultSearchKind = Static<typeof vaultSearchKindSchema>;
 
-/** `GET /search` query; content matching needs at least three characters. */
+/**
+ * `GET /search` query. Words match by prefix, ranked by BM25, before substring matches; content
+ * substring matching needs at least three characters.
+ */
 export const vaultSearchQuerySchema = Type.Object({
     kind: Type.Optional(vaultSearchKindSchema),
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
@@ -391,12 +394,23 @@ export const vaultSearchResultSchema = Type.Union([
 ]);
 export type VaultSearchResult = Static<typeof vaultSearchResultSchema>;
 
-/** Name matches come first; `truncated` says more exist. */
+/**
+ * Name matches, then content matches, then path matches, then substring matches; `truncated` says
+ * more exist.
+ */
 export const vaultSearchResponseSchema = Type.Object({
     results: Type.Array(vaultSearchResultSchema),
     truncated: Type.Boolean(),
 });
 export type VaultSearchResponse = Static<typeof vaultSearchResponseSchema>;
+
+/** `GET /v0/vault-search` query: the per-vault search across every vault, without `parentId`. */
+export const vaultGlobalSearchQuerySchema = Type.Object({
+    kind: Type.Optional(vaultSearchKindSchema),
+    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+    q: Type.String({ minLength: 1, maxLength: 256 }),
+});
+export type VaultGlobalSearchQuery = Static<typeof vaultGlobalSearchQuerySchema>;
 
 export const vaultSettingsSchema = Type.Object({
     retention: vaultRetentionSchema,

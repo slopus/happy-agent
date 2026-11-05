@@ -37,6 +37,7 @@ import {
     vaultFileSchema,
     vaultFolderLocationResponseSchema,
     vaultFolderSchema,
+    vaultGlobalSearchQuerySchema,
     vaultItemPageResponseSchema,
     vaultItemSchema,
     vaultNameSchema,
@@ -129,9 +130,22 @@ describe("vault Surface protocol", () => {
         expect(
             Value.Check(createSurfaceRequestSchema, { type: "todo", name: "x", retention: {} }),
         ).toBe(false);
-        expect(Value.Check(healthResponseSchema.properties.capabilities, { vaults: true })).toBe(
-            true,
-        );
+        expect(
+            Value.Check(healthResponseSchema.properties.capabilities, {
+                vaults: true,
+                vaultSearch: true,
+            }),
+        ).toBe(true);
+    });
+
+    it("searches every vault with the per-vault query, less parentId", () => {
+        expect(Value.Check(vaultGlobalSearchQuerySchema, { q: "plan" })).toBe(true);
+        expect(
+            Value.Check(vaultGlobalSearchQuerySchema, { q: "plan", kind: "content", limit: 100 }),
+        ).toBe(true);
+        expect(Value.Check(vaultGlobalSearchQuerySchema, { q: "" })).toBe(false);
+        expect(Value.Check(vaultGlobalSearchQuerySchema, { q: "x".repeat(257) })).toBe(false);
+        expect(Value.Check(vaultGlobalSearchQuerySchema, { q: "plan", limit: 101 })).toBe(false);
     });
 
     it("bounds retention policies", () => {
@@ -574,6 +588,7 @@ describe("vault Surface protocol", () => {
         await client.resolveVaultPath(surfaceId, "/Reports/Q3 & co/summary.pdf");
         await client.listVaultTree(surfaceId, { pageCursor: "p1" });
         await client.searchVault(surfaceId, { q: "launch day", kind: "content" });
+        await client.searchVaults({ q: "launch", limit: 5 });
         await client.listVaultTrash(surfaceId);
         await client.createVaultFolder(surfaceId, { parentId: null, name: "Q3" });
         await client.createVaultFile(surfaceId, { parentId: null, name: "a.txt", uploadId: "u1" });
@@ -637,6 +652,7 @@ describe("vault Surface protocol", () => {
             get(`${base}/resolve?path=%2FReports%2FQ3+%26+co%2Fsummary.pdf`),
             get(`${base}/tree?pageCursor=p1`),
             get(`${base}/search?q=launch+day&kind=content`),
+            get("http://agent.local/v0/vault-search?q=launch&limit=5"),
             get(`${base}/trash`),
             post(`${base}/folders`, { parentId: null, name: "Q3" }),
             post(`${base}/files`, { parentId: null, name: "a.txt", uploadId: "u1" }),
@@ -727,7 +743,7 @@ describe("vault Surface protocol", () => {
         ]);
     });
 
-    it("builds content, site, and zip URLs and reads bytes by range", async () => {
+    it("builds content, app, and zip URLs and reads bytes by range", async () => {
         const requests: Request[] = [];
         const fetch: typeof globalThis.fetch = async (input, init) => {
             const request = new Request(input, init);

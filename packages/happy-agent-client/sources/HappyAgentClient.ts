@@ -140,6 +140,7 @@ import type {
     VaultFileResponse,
     VaultFolderLocationResponse,
     VaultFolderResponse,
+    VaultGlobalSearchQuery,
     VaultItemListQuery,
     VaultItemPageResponse,
     VaultMutationRequest,
@@ -2650,7 +2651,10 @@ export class HappyAgentClient {
         });
     }
 
-    /** Name matches first, then content matches with a line and snippet. */
+    /**
+     * Name matches, then content matches with a line and snippet, then path matches, then
+     * substring matches.
+     */
     async searchVault(
         surfaceId: SurfaceId,
         query: VaultSearchQuery,
@@ -2659,6 +2663,22 @@ export class HappyAgentClient {
         return await this.#json({
             method: "GET",
             path: vaultPath(surfaceId, "search"),
+            query: { ...query },
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * Searches every vault, ranked as `searchVault()`; each item carries its vault's `surfaceId`.
+     * Needs `capabilities.vaultSearch`.
+     */
+    async searchVaults(
+        query: VaultGlobalSearchQuery,
+        options: RequestOptions = {},
+    ): Promise<VaultSearchResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "/v0/vault-search",
             query: { ...query },
             signal: options.signal,
         });
