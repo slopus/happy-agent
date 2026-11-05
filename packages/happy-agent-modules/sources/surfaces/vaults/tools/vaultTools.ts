@@ -742,6 +742,85 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             toLLM: (result) => text(`Moved it; it is now at ${JSON.stringify(result.path)}.`),
         }),
         defineAgentTool({
+            name: "copy_vault_entry",
+            defer: true,
+            capabilities: [CAPABILITY],
+            searchKeywords: [
+                "copy vault file",
+                "duplicate vault file",
+                "copy between vaults",
+                "copy vault artifact",
+            ],
+            description:
+                "Copies a vault file or artifact, any size, to toPath as a new entry whose history starts at version 1 with the copied version's content; no bytes are uploaded or rewritten. toSurfaceId copies into another vault (default this one); version copies an earlier version (default the newest). Folders and files inside an artifact cannot be copied. Missing folders above toPath are created, and nothing may be at toPath.",
+            parameters: Type.Object(
+                {
+                    surfaceId,
+                    path: vaultPathParameter("The file or artifact to copy"),
+                    toPath: vaultPathParameter("The copy's path, including its name"),
+                    toSurfaceId: Type.Optional(
+                        Type.String({
+                            ...surfaceIdSchema,
+                            description: "The vault to copy into; defaults to surfaceId",
+                        }),
+                    ),
+                    version: Type.Optional(Type.Integer({ minimum: 1 })),
+                },
+                { additionalProperties: false },
+            ),
+            returnType: writeResultSchema,
+            durable: true,
+            shouldReviewInAutoMode: () => false,
+            execute: async (ctx, input, call) => {
+                requireVaultWrites(ctx);
+                const source = await entryAt(ctx, input.surfaceId, input.path);
+                if (source.kind === "folder")
+                    throw new SurfaceError(
+                        "invalid_request",
+                        `${JSON.stringify(input.path)} is a folder; copy the files in it one by one.`,
+                    );
+                const targetId = input.toSurfaceId ?? input.surfaceId;
+                const found = await vaults.walk(ctx, targetId, input.toPath);
+                if (found.rest.length === 0)
+                    throw new SurfaceError(
+                        "invalid_request",
+                        found.entry === undefined
+                            ? "toPath must name the copy."
+                            : `Something is already at ${JSON.stringify(input.toPath)}.`,
+                    );
+                if (found.entry !== undefined)
+                    throw new SurfaceError(
+                        "invalid_request",
+                        `${JSON.stringify(found.entry.name)} is not a folder, so nothing can be copied inside it.`,
+                    );
+                const actor = await change(ctx);
+                return ctx.inTx(async (tx) =>
+                    call.commit(
+                        tx,
+                        await placeNew(
+                            tx,
+                            vaults,
+                            targetId,
+                            found.parentId,
+                            found.rest,
+                            source.kind === "artifact" ? "artifact" : "file",
+                            {
+                                type: "copy",
+                                entryId: source.id,
+                                version: input.version ?? "latest",
+                            },
+                            actor,
+                            input.toPath,
+                        ),
+                    ),
+                );
+            },
+            toLLM: (result) =>
+                text(
+                    `Copied it to ${JSON.stringify(result.path)}, a new ${result.kind} at version 1.${result.folders.length === 0 ? "" : ` Created ${result.folders.map((folder) => JSON.stringify(folder)).join(", ")}.`}`,
+                ),
+        }),
+        defineAgentTool({
             name: "delete_vault_entry",
             defer: true,
             capabilities: [CAPABILITY],
@@ -938,7 +1017,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 "save binary to vault",
             ],
             description:
-                "Copies a file on your machine into a vault exactly as it is, binary files included, creating missing folders: a new file, the next version of the file at path, or a file added to the artifact path runs into. A zip stays a zip file; make an artifact from one with write_vault_artifact. Files up to 512 MiB.",
+                "Copies a file on your machine into a vault exactly as it is, binary files included, creating missing folders: a new file, the next version of the file at path, or a file added to the artifact path runs into. A zip stays a zip file; make an artifact from one with write_vault_artifact. Files up to 512 MiB. To copy within or between vaults, use copy_vault_entry.",
             parameters: Type.Object(
                 {
                     surfaceId,
@@ -1139,7 +1218,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                                   found.parentId,
                                   found.rest,
                                   "artifact",
-                                  content,
+                                  { type: "stored", content },
                                   actor,
                                   input.path,
                               )

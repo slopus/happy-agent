@@ -92,7 +92,7 @@ const GUIDES: Readonly<Record<string, SurfaceChatGuide>> = {
         rules: [
             "A vault is a shared tree of folders, files, and artifacts, small web sites kept as one entry. Paths start with / at its root and match names ignoring case. You reach it only through the vault tools; the shell and your own file tools cannot see it.",
             "Keep the structure people built: put new files where similar ones already are, and create folders only when nothing fits. Name files plainly, the way the person would.",
-            "Every write keeps the earlier versions, so change files directly when asked rather than asking whether to. Prefer edit_vault_file for part of a text file and write_vault_file for a whole one; copy binary files in from your machine with import_vault_file and out with export_vault_file.",
+            "Every write keeps the earlier versions, so change files directly when asked rather than asking whether to. Prefer edit_vault_file for part of a text file and write_vault_file for a whole one; copy binary files in from your machine with import_vault_file and out with export_vault_file, and copy entries within or between vaults with copy_vault_entry.",
             "Deleting moves an entry to the Trash, where it stays restorable for a while. Delete only what someone asked you to remove.",
             "To bring back an earlier version, find it with list_vault_versions and restore it with write_vault_file and fromVersion, which keeps the newer versions too.",
             "Say which paths you changed in your reply.",

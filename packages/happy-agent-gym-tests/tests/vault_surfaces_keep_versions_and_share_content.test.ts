@@ -185,6 +185,7 @@ describe("vault Surfaces through the real daemon", () => {
 
     it("lets the agent write, read, publish, and search a vault without Auto review", async () => {
         let surfaceId = "";
+        let archiveId = "";
         let agentId = "";
         const reviews: string[] = [];
         const script: (() => GymTurn)[] = [
@@ -202,6 +203,12 @@ describe("vault Surfaces through the real daemon", () => {
                         { path: "index.html", content: "<h1>Launch</h1>" },
                         { path: "style.css", content: "h1 { color: teal; }" },
                     ],
+                }),
+            () =>
+                call("copy_vault_entry", {
+                    path: "/Notes/todo.md",
+                    toPath: "/Archive/todo.md",
+                    toSurfaceId: archiveId,
                 }),
             () => call("read_vault_file", { path: "/Notes/todo.md" }),
             () => call("grep_vault", { pattern: "teal|oat", output_mode: "content" }),
@@ -232,6 +239,7 @@ describe("vault Surfaces through the real daemon", () => {
         agentId = gym.defaultSessionId;
         const client = gym.client;
         surfaceId = (await client.createSurface({ type: "vault", name: "Team files" })).surface.id;
+        archiveId = (await client.createSurface({ type: "vault", name: "Archive" })).surface.id;
 
         await gym.send("Keep a todo and a launch page in the team vault.", {
             permissionMode: "auto",
@@ -240,16 +248,19 @@ describe("vault Surfaces through the real daemon", () => {
         expect(reviews).toEqual([]);
         expect(script).toEqual([]);
         const results = gym.inference.toolResults().map((result) => JSON.stringify(result));
-        expect(results[3]).toContain("oat milk");
-        expect(results[4]).toContain("/Sites/launch/style.css");
-        expect(results[4]).toContain("/Notes/todo.md");
-        expect(results[5]).toContain("launch");
+        expect(results[3]).toContain("/Archive/todo.md");
+        expect(results[4]).toContain("oat milk");
+        expect(results[5]).toContain("/Sites/launch/style.css");
+        expect(results[5]).toContain("/Notes/todo.md");
+        expect(results[6]).toContain("launch");
 
         const todo = await client.resolveVaultPath(surfaceId, "/Notes/todo.md");
         expect(todo.entry).toMatchObject({ kind: "file", latestVersion: 2 });
         const activity = (await client.listVaultActivity(surfaceId, todo.entry.id)).activity;
         expect(activity.map((a) => a.kind)).toEqual(["version_created", "created"]);
         for (const record of activity) expect(JSON.stringify(record.actor)).toContain(agentId);
+        const archived = await client.resolveVaultPath(archiveId, "/Archive/todo.md");
+        expect(archived.entry).toMatchObject({ latestVersion: 1, sha256: todo.entry.sha256 });
         const site = await client.resolveVaultPath(surfaceId, "/Sites/launch/style.css");
         expect(site).toMatchObject({ entry: { kind: "artifact" }, innerPath: "style.css" });
         const css = await client.getVaultArtifactFile(surfaceId, site.entry.id, 1, "style.css");

@@ -3,7 +3,11 @@ import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ensureAgentDatabaseConnection, type AgentSystemRef } from "@slopus/happy-agent-base";
+import {
+    ensureAgentDatabaseConnection,
+    type AgentModuleScope,
+    type AgentSystemRef,
+} from "@slopus/happy-agent-base";
 import { unzipSync, zipSync } from "fflate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +22,7 @@ import {
     SurfacesModule,
     type SurfaceEvent,
 } from "../../../sources/surfaces/index.js";
+import { SurfacesPersistence } from "../../../sources/surfaces/persistence/SurfacesPersistence.js";
 import type { TasksModule } from "../../../sources/tasks/index.js";
 import type { TeamModule } from "../../../sources/team/index.js";
 import { writeZip } from "../../../sources/surfaces/vaults/zip/writeZip.js";
@@ -61,7 +66,8 @@ async function fixture() {
         await rm(home, { recursive: true, force: true });
     });
     await db.ready;
-    surfaces.beforeStart(db.context, {} as AgentSystemRef);
+    const hooks = surfaces.beforeStart(db.context, {} as AgentSystemRef);
+    const kv = new SurfacesPersistence(db.database).kv();
     const events: SurfaceEvent[] = [];
     surfaces.onEventTransactional((_ctx, event) => {
         events.push(event);
@@ -107,7 +113,20 @@ async function fixture() {
                 () => [],
             )
         ).filter((item) => item.isFile()).length;
-    return { surfaces, vaults, ctx, vault, events, upload, file, folder, home, contentFiles };
+    return {
+        surfaces,
+        vaults,
+        hooks,
+        kv,
+        ctx,
+        vault,
+        events,
+        upload,
+        file,
+        folder,
+        home,
+        contentFiles,
+    };
 }
 
 const enc = (text: string) => new TextEncoder().encode(text);
@@ -448,6 +467,123 @@ describe("vault Surfaces", () => {
             person,
         );
         expect(again).toEqual({ entry: copy.entry, created: false });
+    });
+
+    it("lets an agent copy files and artifacts within and between vaults by digest", async () => {
+        const f = await fixture();
+        const tools = await f.hooks.tools!(f.ctx, {
+            agent: { id: "writer" },
+            kv: f.kv.scoped("writer"),
+        } as AgentModuleScope);
+        const copy = tools.find((tool) => tool.name === "copy_vault_entry")!;
+        const committed: unknown[] = [];
+        const call = (id: string) =>
+            ({
+                id,
+                kv: f.kv.scoped(id),
+                commit: async (_ctx: unknown, result: unknown) => {
+                    committed.push(result);
+                    return result;
+                },
+            }) as never;
+        const docs = await f.folder(null, "Docs");
+        const original = await f.file(docs.id, "big.bin", "first bytes");
+        await f.vaults.createVersion(
+            f.ctx,
+            f.vault.id,
+            original.id,
+            original.version,
+            { type: "upload", uploadId: await f.upload(enc("second bytes")) },
+            person,
+        );
+        const before = await f.contentFiles();
+
+        expect(
+            await copy.execute(
+                f.ctx,
+                {
+                    surfaceId: f.vault.id,
+                    path: "/docs/BIG.bin",
+                    toPath: "/Backup/old/big.bin",
+                    version: 1,
+                },
+                call("c1"),
+            ),
+        ).toEqual({
+            path: "/Backup/old/big.bin",
+            entryId: expect.any(String),
+            kind: "file",
+            version: 1,
+            created: true,
+            folders: ["/Backup", "/Backup/old"],
+        });
+        expect(
+            (await f.vaults.resolve(f.ctx, f.vault.id, "/Backup/old/big.bin")).entry,
+        ).toMatchObject({
+            latestVersion: 1,
+            sha256: sha(enc("first bytes")),
+        });
+        const other = await f.surfaces.create(f.ctx, { type: "vault", name: "Other" }, "alice");
+        const across = (await copy.execute(
+            f.ctx,
+            {
+                surfaceId: f.vault.id,
+                path: "/Docs/big.bin",
+                toPath: "/big.bin",
+                toSurfaceId: other.id,
+            },
+            call("c2"),
+        )) as { entryId: string };
+        const copied = (await f.vaults.location(f.ctx, other.id, across.entryId)).entry;
+        expect(copied).toMatchObject({ latestVersion: 1, sha256: sha(enc("second bytes")) });
+        expect((await f.vaults.activity(f.ctx, other.id, copied.id, {})).activity[0]).toMatchObject(
+            {
+                kind: "created",
+                copiedFrom: original.id,
+                actor: { agentId: "writer" },
+                source: "tool",
+            },
+        );
+        expect(await f.contentFiles()).toBe(before);
+
+        const site = tools.find((tool) => tool.name === "write_vault_artifact")!;
+        expect(
+            await site.execute(
+                f.ctx,
+                {
+                    surfaceId: f.vault.id,
+                    path: "/Sites/launch",
+                    files: [{ path: "index.html", content: "<h1>Launch</h1>" }],
+                },
+                call("a1"),
+            ),
+        ).toMatchObject({ kind: "artifact", version: 1, created: true, folders: ["/Sites"] });
+        const withSite = await f.contentFiles();
+        await copy.execute(
+            f.ctx,
+            {
+                surfaceId: f.vault.id,
+                path: "/Sites/launch",
+                toPath: "/launch",
+                toSurfaceId: other.id,
+            },
+            call("c3"),
+        );
+        expect((await f.vaults.resolve(f.ctx, other.id, "/launch/index.html")).innerPath).toBe(
+            "index.html",
+        );
+        expect(await f.contentFiles()).toBe(withSite);
+
+        for (const [input, message] of [
+            [{ path: "/Docs", toPath: "/Docs2" }, /is a folder/],
+            [{ path: "/Docs/big.bin", toPath: "/Backup/old/big.bin" }, /already at/],
+            [{ path: "/Docs/big.bin", toPath: "/Docs/big.bin/inside" }, /not a folder/],
+            [{ path: "/Docs/missing.bin", toPath: "/x.bin" }, /Nothing is at/],
+        ] as const)
+            await expect(
+                copy.execute(f.ctx, { surfaceId: f.vault.id, ...input }, call("bad")),
+            ).rejects.toThrow(message);
+        expect(committed).toHaveLength(4);
     });
 
     it("removes Trash items past their time with their versions and content", async () => {

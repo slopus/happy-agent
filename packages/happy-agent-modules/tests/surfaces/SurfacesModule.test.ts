@@ -242,6 +242,7 @@ describe("installation-owned Surface state", () => {
             "glob_vault",
             "grep_vault",
             "move_vault_entry",
+            "copy_vault_entry",
             "delete_vault_entry",
             "list_vault_trash",
             "restore_vault_entry",

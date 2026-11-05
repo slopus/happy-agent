@@ -64,9 +64,10 @@ version's text of small UTF-8 files for search and `grep_vault`. The durable hou
 purges expired Trash, and runs the durable `surfaces.vaults.collect` collector, which deletes a
 content file only after its grace time once no version, artifact file, or upload names it.
 Artifacts serve their files under the artifact security model, and folders, vaults, and artifact
-versions stream as stored zips. Models get fourteen common path-based tools; their writes make
-versions without Auto review, and only `import_vault_file`, `export_vault_file`, and
-`write_vault_artifact` from a machine path cross Compute's filesystem boundary.
+versions stream as stored zips. Models get fifteen common path-based tools; `copy_vault_entry`
+copies by digest within or between vaults. Their writes make versions without Auto review, and
+only `import_vault_file`, `export_vault_file`, and `write_vault_artifact` from a machine path
+cross Compute's filesystem boundary.
 
 Reference Surfaces store only an immutable binding to their target beside the shared record.
 Every read resolves it against the owning Artifacts, Bots, or Tasks module, so the live name,

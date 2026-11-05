@@ -7,6 +7,7 @@ import type {
     SurfaceVaults,
     VaultChange,
     VaultContent,
+    VaultContentSource,
     VaultStoredFile,
 } from "../SurfaceVaults.js";
 import { readContent } from "../vaultContentFiles.js";
@@ -188,7 +189,7 @@ export async function writeVaultPath(
                 found.parentId,
                 found.rest,
                 "file",
-                content,
+                { type: "stored", content },
                 change,
                 path,
             ),
@@ -249,7 +250,7 @@ export async function placeNew(
     parentId: string | null,
     names: readonly string[],
     kind: "file" | "artifact",
-    content: VaultContent,
+    content: VaultContentSource,
     change: VaultChange,
     path: string,
 ): Promise<VaultToolWrite> {
@@ -263,7 +264,7 @@ export async function placeNew(
     const { entry } = await vaults.createEntry(
         ctx,
         surfaceId,
-        { parentId: parent, name: names.at(-1)!, kind, content: { type: "stored", content } },
+        { parentId: parent, name: names.at(-1)!, kind, content },
         change,
     );
     return { path, entryId: entry.id, kind, version: 1, created: true, folders };

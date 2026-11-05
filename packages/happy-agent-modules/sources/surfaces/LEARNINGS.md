@@ -275,7 +275,8 @@ the history.
 ## Vault content is addressed by digest and collected later, never in the writing transaction
 
 Content files are named by their SHA-256 and shared across vaults, so a copy or restore records a
-new version row pointing at the same digest instead of moving bytes. Deletion happens only in the
+new version row pointing at the same digest instead of moving bytes. Agents copy the same way through
+`copy_vault_entry`, so copying a large file never sends its bytes through the agent's machine. Deletion happens only in the
 collector: a digest whose last reference goes away is queued with a not-before time an hour out,
 and the collector deletes the file only if nothing names it when that time passes. Bytes written
 before their version commits are queued the same way, so a failed transaction leaves no orphan.
