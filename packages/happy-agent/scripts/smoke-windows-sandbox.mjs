@@ -791,6 +791,10 @@ try {
         };
         const idle = report.idle;
         check(
+            report.sandboxLaunchesDuringSetup > 0,
+            "No sandboxed Git scan was seen while tracking started, so launches cannot be counted.",
+        );
+        check(
             idle.lsassHandleGrowth <= limits.lsassHandleGrowth,
             `LSASS grew by ${idle.lsassHandleGrowth} handles while idle.`,
         );
