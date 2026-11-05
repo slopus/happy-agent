@@ -101,7 +101,8 @@ it, with no checkout build: `unprovisioned` checks that the no-provision guard r
 provisioned profile; `setup` checks `sandbox status|setup --json`; `command` runs one
 `workspace_write` command through a scripted daemon and checks its output and boundary; `idle`
 watches LSASS handles, logon sessions, and `%TEMP%\happy-sandbox-*` folders while a daemon idles
-for ten minutes on a Git project with a rewritten ignored log (slopus/happy#1950). Run the phases
+for ten minutes with live Git tracking on a project whose ignored log is rewritten every second
+(slopus/happy#1950). Run the phases
 in that order on a disposable elevated runner; `.github/workflows/smoke-windows-agent.yml` does.
 
 ## Native Windows 11 x64

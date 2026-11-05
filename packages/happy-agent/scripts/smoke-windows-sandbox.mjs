@@ -701,6 +701,7 @@ try {
         const daemon = await startDaemon("idle", guardedEnvironment());
         let churn;
         let launches;
+        let renewal;
         const samples = [];
         try {
             const workspace = join(daemon.root, "repository");
@@ -728,7 +729,7 @@ try {
                 });
                 assert.equal(git.status, 0, git.stderr);
             }
-            // Setup's sandboxed Git reads show the launch counter sees this daemon's commands.
+            // The first tracked scans show the launch counter sees this daemon's commands.
             const setupLaunches = watchSandboxLaunches();
             const project = await registerProject(daemon, workspace);
             assert.equal(
@@ -736,6 +737,16 @@ try {
                 "ready",
                 `Project setup failed: ${JSON.stringify(project.initialization)}`,
             );
+            // Live Git tracking runs only while a client watches, as Desktop does for open
+            // projects; renew it the way the Happy connection does, well inside its lifetime.
+            const watchGit = () =>
+                api(daemon, "POST", "/v0/git/watch", { workspaceIds: [project.id] });
+            await waitFor(
+                async () => ((await watchGit()).snapshots?.[project.id] ? true : undefined),
+                daemon.child,
+                180_000,
+            );
+            renewal = setInterval(() => void watchGit().catch(() => undefined), 60_000);
             churn = setInterval(
                 () =>
                     void writeFile(
@@ -758,6 +769,7 @@ try {
             }
         } finally {
             clearInterval(churn);
+            clearInterval(renewal);
             launches?.close();
             await daemon.stop();
         }
