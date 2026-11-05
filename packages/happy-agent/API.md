@@ -10548,9 +10548,9 @@ Each vault has one retention policy, applied to every file and artifact in it, i
 {
     "maxVersions": null,
     "maxAgeDays": null,
-    "keepAllDays": 7,
+    "keepAllDays": 1,
     "thinning": [
-        { "afterDays": 7, "everyDays": 1 },
+        { "afterDays": 1, "everyDays": 1 },
         { "afterDays": 30, "everyDays": 7 }
     ],
     "trashDays": 30
@@ -10568,8 +10568,8 @@ Each vault has one retention policy, applied to every file and artifact in it, i
 - `trashDays` — how many days a Trash item stays before it is removed; an integer from 1 through
   3,650, or `null` to keep it until it is restored.
 
-The JSON above is the default policy: every version for a week, one a day until 30 days, one a week
-after that, and no cap. For each entry, versions are kept or dropped in this order:
+The JSON above is the default policy, a Time Machine schedule: every version for a day, one a day
+until 30 days, one a week after that, and no cap. For each entry, versions are kept or dropped in this order:
 
 1. The newest version and every pinned version are always kept, and are left out of the steps below.
 2. A version older than `maxAgeDays` is dropped.
@@ -10584,9 +10584,7 @@ after that, and no cap. For each entry, versions are kept or dropped in this ord
 Ages are measured from a version's `createdAt` at the moment the policy is applied. Buckets are
 aligned to the epoch rather than to any version, so applying the same policy twice at the same
 moment drops nothing more. "Keep the last 10" is `{ "maxVersions": 10, "keepAllDays": 0,
-"thinning": [] }`, keeping everything is `{ "keepAllDays": 0, "thinning": [] }` with no caps, and a
-Time Machine schedule is `keepAllDays: 1` with tiers `{ "afterDays": 1, "everyDays": 1 }` and
-`{ "afterDays": 30, "everyDays": 7 }`.
+"thinning": [] }`, and keeping everything is `{ "keepAllDays": 0, "thinning": [] }` with no caps.
 
 The daemon applies the policy to an entry after each new version of it, and to every entry of
 every vault at least once an hour, in bounded batches that never hold up requests. Changing the

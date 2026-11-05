@@ -126,6 +126,17 @@ describe("vault Surface protocol", () => {
 
     it("bounds retention policies", () => {
         expect(Value.Check(vaultRetentionSchema, DEFAULT_VAULT_RETENTION)).toBe(true);
+        // The default is the Time Machine schedule.
+        expect(DEFAULT_VAULT_RETENTION).toEqual({
+            maxVersions: null,
+            maxAgeDays: null,
+            keepAllDays: 1,
+            thinning: [
+                { afterDays: 1, everyDays: 1 },
+                { afterDays: 30, everyDays: 7 },
+            ],
+            trashDays: 30,
+        });
         const keepEverything = {
             maxVersions: null,
             maxAgeDays: null,

@@ -35,13 +35,16 @@ export const vaultRetentionSchema = Type.Object(
 );
 export type VaultRetention = Static<typeof vaultRetentionSchema>;
 
-/** Every version for a week, one a day until 30 days, one a week after, no cap, 30-day Trash. */
+/**
+ * Time Machine: every version for a day, one a day until 30 days, one a week after, no cap, and a
+ * 30-day Trash.
+ */
 export const DEFAULT_VAULT_RETENTION: VaultRetention = {
-    keepAllDays: 7,
+    keepAllDays: 1,
     maxAgeDays: null,
     maxVersions: null,
     thinning: [
-        { afterDays: 7, everyDays: 1 },
+        { afterDays: 1, everyDays: 1 },
         { afterDays: 30, everyDays: 7 },
     ],
     trashDays: 30,
