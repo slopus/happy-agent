@@ -1,3 +1,4 @@
+import { extractWWWAuthenticateParams } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -7,13 +8,14 @@ import {
     type ElicitRequest,
     type RequestId,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { FetchLike, Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Compute } from "@slopus/happy-agent-compute";
 import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
 
 import type { HappyAgentConfigValues } from "../config/index.js";
 import type { McpElicitationResult } from "./Mcp.js";
 import { MachineStdioTransport } from "./impl/MachineStdioTransport.js";
+import { McpNeedsAuthError } from "./impl/McpNeedsAuthError.js";
 import { McpToolDeadline } from "./impl/McpToolDeadline.js";
 
 type ServerConfig = HappyAgentConfigValues["mcpServers"][string];
@@ -27,6 +29,8 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
 /** The longest delay a timer takes; a tool call's own deadline ends it long before. */
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+/** The longest hint kept from a server's auth challenge; a longer one is dropped. */
+const MAX_CHALLENGE_HINT_LENGTH = 2_048;
 
 /** One live MCP SDK client and the transport/process it owns. */
 export class McpClientConnection {
@@ -37,6 +41,14 @@ export class McpClientConnection {
     #elicitation: ElicitationHandler | undefined;
     /** Elicitations still waiting on a person, by the server's request ID. */
     readonly #withdrawals = new Map<RequestId, AbortController>();
+    /** The last time the server asked for a login, while connecting. */
+    #challenge: McpNeedsAuthError | undefined;
+    #connected = false;
+    /**
+     * Called when a connected HTTP server starts refusing requests for want of a login, such as
+     * after its token was revoked. The connection itself never starts a login.
+     */
+    onauthrequired: ((challenge: McpNeedsAuthError) => void) | undefined;
 
     private constructor(name: string, config: ServerConfig, client: Client) {
         this.name = name;
@@ -95,6 +107,13 @@ export class McpClientConnection {
             { capabilities: { elicitation: { form: {} } } },
         );
         const connection = new McpClientConnection(name, config, client);
+        /*
+         * No auth provider is given to the SDK. With one, a 401 makes the SDK discover the
+         * authorization server and register a client before it would ask for a login, so a
+         * background connect would reach out to servers nobody asked it to. A 401 or a 403 for
+         * want of scope is noted here instead, and the connect reports that the server needs a
+         * login.
+         */
         const transport =
             config.transport === "stdio" && runner !== undefined
                 ? new MachineStdioTransport(runner.ctx, runner.machine, {
@@ -115,6 +134,7 @@ export class McpClientConnection {
                     })
                   : new StreamableHTTPClientTransport(new URL(config.url), {
                         requestInit: { headers: httpHeaders(config) },
+                        fetch: connection.#watchChallenges(fetch),
                     });
         if (transport instanceof StdioClientTransport) {
             transport.stderr?.on("data", () => undefined);
@@ -123,11 +143,30 @@ export class McpClientConnection {
             await client.connect(transport as unknown as Transport, {
                 timeout: config.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
             });
+            connection.#connected = true;
             return connection;
         } catch (error) {
             await client.close().catch(() => undefined);
+            // A server with its own configured credential that refuses it has simply failed: a
+            // Happy login would be sent beside that credential, not instead of it.
+            if (connection.#challenge !== undefined && !hasConfiguredAuthorization(config)) {
+                throw connection.#challenge;
+            }
             throw error;
         }
+    }
+
+    /** Note every 401, and every 403 for want of scope, the server answers with. */
+    #watchChallenges(fetchFn: FetchLike): FetchLike {
+        return async (input, init) => {
+            const response = await fetchFn(input, init);
+            const challenge = authChallenge(response);
+            if (challenge !== undefined) {
+                if (this.#connected) this.onauthrequired?.(challenge);
+                else this.#challenge = challenge;
+            }
+            return response;
+        };
     }
 
     async callTool(
@@ -166,6 +205,32 @@ export class McpClientConnection {
     async close(): Promise<void> {
         await this.client.close();
     }
+}
+
+function authChallenge(response: Response): McpNeedsAuthError | undefined {
+    if (response.status !== 401 && response.status !== 403) return undefined;
+    const { error, resourceMetadataUrl, scope } = extractWWWAuthenticateParams(response);
+    const insufficientScope = response.status === 403;
+    if (insufficientScope && error !== "insufficient_scope") return undefined;
+    const metadata = resourceMetadataUrl?.href;
+    return new McpNeedsAuthError({
+        insufficientScope,
+        ...(metadata === undefined || metadata.length > MAX_CHALLENGE_HINT_LENGTH
+            ? {}
+            : { resourceMetadataUrl: metadata }),
+        ...(scope === undefined || scope.length > MAX_CHALLENGE_HINT_LENGTH ? {} : { scope }),
+    });
+}
+
+/** Whether mcp.toml already gives the server an Authorization header of its own. */
+export function hasConfiguredAuthorization(config: ServerConfig): boolean {
+    return (
+        config.transport === "http" &&
+        (config.bearerTokenEnvVar !== undefined ||
+            Object.keys(config.headers ?? {}).some(
+                (name) => name.toLowerCase() === "authorization",
+            ))
+    );
 }
 
 function httpHeaders(config: Extract<ServerConfig, { transport: "http" }>): Headers {

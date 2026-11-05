@@ -361,6 +361,7 @@ export const mcpServerStatusSchema = Type.Union([
     Type.Literal("connecting"),
     Type.Literal("disabled"),
     Type.Literal("failed"),
+    Type.Literal("needs_auth"),
 ]);
 export type McpServerStatus = Static<typeof mcpServerStatusSchema>;
 

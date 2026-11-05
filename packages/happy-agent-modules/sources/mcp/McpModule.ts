@@ -71,6 +71,7 @@ import {
     type McpUserInputResponse,
 } from "./Mcp.js";
 import { McpClientConnection } from "./McpClientConnection.js";
+import { McpNeedsAuthError } from "./impl/McpNeedsAuthError.js";
 import { createMcpConfigurationTools } from "./createMcpConfigurationTools.js";
 import { createMcpProtocolTools } from "./createMcpProtocolTools.js";
 import { createMcpTool } from "./createMcpTool.js";
@@ -183,7 +184,12 @@ type McpPoolState =
           readonly settled: Promise<void>;
       }
     | { readonly kind: "connected"; readonly connection: McpClientConnection }
-    | { readonly kind: "failed"; readonly failure: string };
+    | { readonly kind: "failed"; readonly failure: string }
+    /**
+     * Refused for want of a login. It is never retried in the background: only a reload, a
+     * configuration change, or a login checks it again.
+     */
+    | { readonly kind: "needs_auth"; readonly challenge: McpNeedsAuthError };
 
 /** How a finished attempt left a server. */
 type McpAttemptOutcome = Exclude<McpPoolState, { readonly kind: "connecting" }>;
@@ -212,6 +218,14 @@ interface McpToolListing {
     failure?: string;
     stale: boolean;
     pending?: Promise<void>;
+}
+
+/**
+ * How a reconcile treats servers that need a login. Only a deliberate reload or configuration
+ * change asks them again; attaching a folder or a runner leaves them as they are.
+ */
+interface McpReconcileOptions {
+    readonly recheck: boolean;
 }
 
 /** A server attempt a reconcile started, for a deliberate reload to wait on. */
@@ -520,6 +534,7 @@ export class McpModule implements AgentModule {
                             : [[workspaceCatalog(entry.workspace), entry.servers] as const],
                     ),
                 ]),
+                { recheck: true },
             );
         });
         await this.#settled(started);
@@ -534,7 +549,9 @@ export class McpModule implements AgentModule {
         const started = await this.#reloadLock.runInLock(ctx, async () => {
             this.#assertOpen();
             this.#toolGeneration += 1;
-            return await this.#reconcileWorkspace(ctx, this.#attachedWorkspace(agentId));
+            return await this.#reconcileWorkspace(ctx, this.#attachedWorkspace(agentId), {
+                recheck: true,
+            });
         });
         await this.#settled(started);
     }
@@ -579,7 +596,7 @@ export class McpModule implements AgentModule {
                 server,
                 await this.#workspaceMachine(runnerId),
             );
-            return await this.#reconcileWorkspace(ctx, workspace);
+            return await this.#reconcileWorkspace(ctx, workspace, { recheck: true });
         });
         await this.#settled(started);
     }
@@ -1066,6 +1083,14 @@ export class McpModule implements AgentModule {
         if (state.kind === "failed") {
             return { name, status: "failed", toolCount: 0, errorMessage: state.failure };
         }
+        if (state.kind === "needs_auth") {
+            return {
+                name,
+                status: "needs_auth",
+                toolCount: 0,
+                errorMessage: needsAuthMessage(name, state.challenge),
+            };
+        }
         const listing = this.#toolListing(state.connection);
         if (listing.tools === undefined) {
             return listing.failure === undefined
@@ -1177,6 +1202,7 @@ export class McpModule implements AgentModule {
         if (state?.kind === "connecting") {
             throw new Error(`MCP server "${name}" is still connecting.`);
         }
+        if (state?.kind === "needs_auth") throw new Error(needsAuthMessage(name, state.challenge));
         throw new Error(
             state?.kind === "failed"
                 ? `MCP server "${name}" failed to connect: ${state.failure}`
@@ -1329,7 +1355,7 @@ export class McpModule implements AgentModule {
             // The folder's servers start in the background; the agent sees them as connecting.
             if (first || !this.#catalogs.has(catalogId)) {
                 try {
-                    await this.#reconcileWorkspace(ctx, normalized);
+                    await this.#reconcileWorkspace(ctx, normalized, { recheck: false });
                 } catch (error) {
                     this.#recordWorkspaceFailure(ctx, normalized, error);
                 }
@@ -1376,6 +1402,7 @@ export class McpModule implements AgentModule {
                     global === undefined ? {} : catalogServerConfigs(global),
                 ],
             ]),
+            { recheck: false },
         );
     }
 
@@ -1433,6 +1460,7 @@ export class McpModule implements AgentModule {
     async #reconcileWorkspace(
         ctx: Context,
         workspace: string,
+        options: McpReconcileOptions,
     ): Promise<readonly McpStartedConnection[]> {
         if (
             this.#closed ||
@@ -1446,6 +1474,7 @@ export class McpModule implements AgentModule {
         const started = await this.#reconcileCatalogs(
             ctx,
             new Map([[workspaceCatalog(workspace), withoutServerNames(servers, globalNames)]]),
+            options,
         );
         this.#workspaceFailures.delete(workspace);
         return started;
@@ -1461,6 +1490,7 @@ export class McpModule implements AgentModule {
     async #reconcileCatalogs(
         ctx: Context,
         catalogs: ReadonlyMap<string, HappyAgentConfigValues["mcpServers"]>,
+        options: McpReconcileOptions,
     ): Promise<readonly McpStartedConnection[]> {
         const desiredCatalogs = new Map<string, McpCatalog>();
         const connectionInputs = new Map<string, McpConnectionInput>();
@@ -1496,6 +1526,7 @@ export class McpModule implements AgentModule {
             const existing = this.#pool.get(connectionId);
             const kind = existing?.state.kind;
             if (kind === "connected" || kind === "connecting") continue;
+            if (kind === "needs_auth" && !options.recheck) continue;
             this.#beginConnecting(ctx, connectionId, existing?.references ?? new Set(), input);
         }
 
@@ -1566,6 +1597,27 @@ export class McpModule implements AgentModule {
         this.#scheduleRetries();
     }
 
+    /**
+     * A connected server that began refusing requests for want of a login needs one again. Its
+     * connection is closed and nothing retries it until a reload, a configuration change, or a
+     * login.
+     */
+    #recordNeedsAuth(
+        connectionId: string,
+        connection: McpClientConnection,
+        challenge: McpNeedsAuthError,
+    ): void {
+        const pooled = this.#pool.get(connectionId);
+        if (pooled?.state.kind !== "connected" || pooled.state.connection !== connection) return;
+        this.#pool.set(connectionId, {
+            references: pooled.references,
+            input: pooled.input,
+            state: { kind: "needs_auth", challenge },
+        });
+        void connection.close().catch(() => undefined);
+        this.#scheduleRetries();
+    }
+
     /** Start one pooled server, on its runner when it has one. */
     async #connect(ctx: Context, input: McpConnectionInput): Promise<McpClientConnection> {
         return this.#runners.native(input.runnerId)
@@ -1581,6 +1633,7 @@ export class McpModule implements AgentModule {
         try {
             return { kind: "connected", connection: await this.#connect(ctx, input) };
         } catch (error) {
+            if (error instanceof McpNeedsAuthError) return { kind: "needs_auth", challenge: error };
             return { kind: "failed", failure: errorMessage(error) };
         }
     }
@@ -1657,6 +1710,8 @@ export class McpModule implements AgentModule {
         });
         connection.client.onclose = () =>
             this.#recordStopped(connectionId, connection, "The MCP server stopped.");
+        connection.onauthrequired = (challenge) =>
+            this.#recordNeedsAuth(connectionId, connection, challenge);
         // Listed now, so the first turn that needs the tools usually finds them waiting.
         void this.#refreshTools(connection);
     }
@@ -1717,7 +1772,7 @@ export class McpModule implements AgentModule {
                 this.#settle(connectionId, current, outcome);
                 if (outcome.kind === "connected") {
                     ctx.log.info(`MCP server ${current.input.name} connected again.`);
-                } else if (owned) {
+                } else if (outcome.kind === "failed" && owned) {
                     this.#armRetry(connectionId, running.attempts + 1);
                 }
             }
@@ -2190,6 +2245,14 @@ function boundServerTitle(title: string): string {
     return title.length <= MAX_MCP_SERVER_NAME_LENGTH
         ? title
         : `${title.slice(0, MAX_MCP_SERVER_NAME_LENGTH - 1).trimEnd()}…`;
+}
+
+/** What the model is told about a server that needs a login, so it can offer one. */
+function needsAuthMessage(name: string, challenge: McpNeedsAuthError): string {
+    const need = challenge.insufficientScope
+        ? `MCP server "${name}" needs a login with more access than the current one.`
+        : `MCP server "${name}" needs a login.`;
+    return `${need} The person can ask you to log in to it. It is not retried on its own; reloading or reconfiguring the MCP servers checks it again.`;
 }
 
 function errorMessage(error: unknown): string {
