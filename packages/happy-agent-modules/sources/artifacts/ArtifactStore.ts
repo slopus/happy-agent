@@ -5,6 +5,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 import {
     artifactAuthorSchema,
+    artifactFileMediaSchema,
     artifactFileSchema,
     artifactRecordSchema,
     artifactSourceSchema,
@@ -13,6 +14,7 @@ import {
     DEFAULT_ARTIFACT_PAGE_SIZE,
     type ArtifactAuthor,
     type ArtifactFile,
+    type ArtifactFileMedia,
     type ArtifactListQuery,
     type ArtifactRecord,
     type ArtifactSource,
@@ -80,6 +82,7 @@ interface FileRow {
     readonly mime_type: string;
     readonly size: number | string;
     readonly sha256: string;
+    readonly media_json: string | null;
 }
 
 interface UploadRow {
@@ -467,9 +470,9 @@ async function insertVersion(
         await agentDatabaseRun(
             ctx.db,
             sql`INSERT INTO ${sql.raw(ARTIFACT_FILES_TABLE)}
-                (artifact_id, version_number, path, mime_type, size, sha256)
+                (artifact_id, version_number, path, mime_type, size, sha256, media_json)
                 VALUES (${version.artifactId}, ${version.number}, ${file.path},
-                    ${file.mimeType}, ${file.size}, ${file.sha256})`,
+                    ${file.mimeType}, ${file.size}, ${file.sha256}, ${mediaJson(file)})`,
         );
     }
 }
@@ -500,12 +503,46 @@ async function queryVersionFiles(
     return files;
 }
 
+/**
+ * What an earlier version measured of the same bytes under the same media type, so a file placed
+ * again is not measured again. Undefined when none did.
+ */
+export async function queryArtifactMediaForContent(
+    ctx: Context,
+    sha256: string,
+    mimeType: string,
+): Promise<ArtifactFileMedia | undefined> {
+    const rows = await agentDatabaseRows<{ media_json: string }>(
+        ctx.db,
+        sql`SELECT media_json FROM ${sql.raw(ARTIFACT_FILES_TABLE)}
+            WHERE sha256 = ${sha256} AND mime_type = ${mimeType} AND media_json IS NOT NULL
+            LIMIT 1`,
+    );
+    const row = rows[0];
+    return row === undefined ? undefined : parseMedia(row.media_json);
+}
+
+/** A file's measurements alone, or null for a file nobody measured. */
+function mediaJson(file: ArtifactFile): string | null {
+    const { path: _path, mimeType: _mimeType, size: _size, sha256: _sha256, ...media } = file;
+    return Object.keys(media).length === 0 ? null : JSON.stringify(media);
+}
+
+function parseMedia(value: string): ArtifactFileMedia {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Value.Check(artifactFileMediaSchema, parsed)) {
+        throw new Error("Artifact storage contains invalid file measurements.");
+    }
+    return parsed;
+}
+
 function fileFromRow(row: FileRow): ArtifactFile {
     const file: ArtifactFile = {
         path: row.path,
         mimeType: row.mime_type,
         size: Number(row.size),
         sha256: row.sha256,
+        ...(row.media_json === null ? {} : parseMedia(row.media_json)),
     };
     if (!Value.Check(artifactFileSchema, file)) {
         throw new Error("Artifact storage contains an invalid file.");

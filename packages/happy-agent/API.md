@@ -697,6 +697,13 @@ and `summary` on artifact and version objects, `null` when unset, and in the `ch
 `cover` or `summary` sent to them; a client treats a missing field as `null` and shows every
 artifact without a cover or summary.
 
+Artifact media metadata and previews are additive and do not increment the protocol version. A
+daemon that has them includes `width`, `height`, `durationMs`, `thumbhash`, and `preview` on the
+artifact file objects it measured, as described under "Media metadata" in Artifacts, and serves
+`GET /v0/artifacts/:artifactId/versions/:number/previews/*path`. Older compatible daemons omit the
+fields and answer the preview route `404`; a client then falls back to the whole file or the type's
+glyph.
+
 The Feed subject filter is additive and does not increment the protocol version. A daemon that has
 it reports `capabilities.feedSubjectFilter: true` from health, accepts `subjects` on `GET /v0/feed`
 and `POST /v0/feed/read-all`, and adds `filteredUnread` to a filtered page. Older compatible
@@ -11465,7 +11472,9 @@ post-like plain text a client shows under the title.
 - A cover is one of the version's own files, named by its `path`. The daemon decodes it and
   records its `mimeType`, its intrinsic `width` and `height` in pixels, as shown after any EXIF
   rotation, and the standard `aspect` that size matches, so a client lays out the post before it
-  loads the image. A client loads it through the file route,
+  loads the image. It also records a `thumbhash` of the first frame, base64 in the same format as
+  chat media and pictures, which a client draws until the image loads; it is `null` when the daemon
+  could not decode the pixels, which is not an error. A client loads it through the file route,
   `GET /v0/artifacts/:artifactId/versions/:number/files/<path>`, at the version it shows.
 - A cover has one of two standard shapes, so it looks the same everywhere:
 
@@ -11480,8 +11489,13 @@ post-like plain text a client shows under the title.
     shows the artifact without its cover.
 
 - A cover is a raster image: `image/png`, `image/jpeg`, `image/webp`, or `image/gif`, decided by
-  its path's extension, and its bytes must decode as that format. SVG is refused, because not every
-  client can draw one: render it to PNG or WebP first. The file is at most 32 MiB.
+  its path's extension, and its bytes must be that format. WebP, still or animated, is the preferred
+  format; a GIF is accepted but should be converted to an animated WebP first, for example with
+  `ffmpeg -i in.gif -c:v libwebp -loop 0 -q:v 75 cover.webp`. An animated cover plays where a client
+  shows it; there is no separate flag for it. The size of a WebP or GIF comes from its container
+  header, the canvas of an extended WebP or a GIF's logical screen, so an animation is measured
+  without decoding every frame. SVG is refused, because not every client can draw one: render it to
+  WebP or PNG first. The file is at most 32 MiB.
 - A summary is post-like plain text, as in a tweet or a short post: what the artifact is and its
   key takeaway, in a few sentences. The daemon turns CRLF line ends into `\n` and trims the text;
   it must then hold 1–5,000 characters, counted as Unicode code points, and no control characters
@@ -11545,11 +11559,12 @@ updating or deleting an artifact requires `If-Match` with it.
     "background": null,
     "display": "inline_expanded",
     "cover": {
-        "path": "cover.png",
-        "mimeType": "image/png",
+        "path": "cover.webp",
+        "mimeType": "image/webp",
         "width": 1600,
         "height": 900,
-        "aspect": "wide"
+        "aspect": "wide",
+        "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI"
     },
     "summary": "Revenue up 18% QoQ, driven by enterprise seats.",
     "live": null,
@@ -11586,7 +11601,8 @@ Fields:
   files themselves are listed by the version.
 - `background` — the latest version's background, or `null` for a transparent slot.
 - `display` — the latest version's display preference, or `null` to leave it to the client.
-- `cover` — the latest version's cover, `{ "path", "mimeType", "width", "height", "aspect" }`, or
+- `cover` — the latest version's cover, `{ "path", "mimeType", "width", "height", "aspect",
+"thumbhash" }`, or
   `null` for none; see "Covers and summaries". Absent on older daemons.
 - `summary` — the latest version's summary, or `null` for none. Absent on older daemons.
 - `live` — the latest version's `{ "url", "networkId" }`, or `null` for file content. Absent on
@@ -11618,11 +11634,12 @@ Fields:
     "background": null,
     "display": "inline_expanded",
     "cover": {
-        "path": "cover.png",
-        "mimeType": "image/png",
+        "path": "cover.webp",
+        "mimeType": "image/webp",
         "width": 1600,
         "height": 900,
-        "aspect": "wide"
+        "aspect": "wide",
+        "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI"
     },
     "summary": "Revenue up 18% QoQ, driven by enterprise seats.",
     "live": null,
@@ -11638,9 +11655,13 @@ Fields:
   manifest, ordered by `path` in Unicode code point order; `entry` is one of them.
 - `background` — the colour behind this version's content, or `null` for a transparent slot.
 - `display` — how this version's author wants it shown, or `null` to leave it to the client.
-- `cover` — this version's cover, `{ "path", "mimeType", "width", "height", "aspect" }`, or `null`
-  for none. `path` is one of `files`; `width` and `height` are the decoded pixel size, and `aspect`
-  is `"wide"` or `"square"`, a set that may grow. Absent on older daemons.
+- `cover` — this version's cover, `{ "path", "mimeType", "width", "height", "aspect", "thumbhash" }`,
+  or `null` for none. `path` is one of `files`; `width` and `height` are the pixel size, `aspect` is
+  `"wide"` or `"square"`, a set that may grow, and `thumbhash` is the base64 ThumbHash of its first
+  frame or `null` when it could not be decoded. The daemon computes the ThumbHash when the version is
+  made and reuses it while the cover's path and digest are unchanged; versions made before ThumbHashes
+  existed keep `null` until the next version. `thumbhash` is absent on older daemons, and `cover`
+  itself is absent on still older ones.
 - `summary` — this version's summary, post-like plain text with `\n` line breaks, or `null` for
   none. Absent on older daemons.
 - `live` — this version's `{ "url", "networkId" }`, or `null` for file content. Absent on older
@@ -11654,7 +11675,11 @@ Fields:
     "path": "images/chart.png",
     "mimeType": "image/png",
     "size": 48213,
-    "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+    "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+    "width": 1600,
+    "height": 900,
+    "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI",
+    "preview": { "width": 640, "height": 360 }
 }
 ```
 
@@ -11665,6 +11690,44 @@ Fields:
 - `mimeType` — the media type the daemon decided from the path's extension.
 - `size` — the length in bytes, at least 1.
 - `sha256` — the lowercase hexadecimal SHA-256 of the bytes. Equal digests mean equal content.
+- `width`, `height` — optional; the picture's or video's positive pixel size as displayed, after
+  EXIF orientation or a video's rotation. See "Media metadata" below.
+- `durationMs` — optional; a video's length in whole milliseconds.
+- `thumbhash` — optional; the standard base64 encoding of a
+  [ThumbHash](https://evanw.github.io/thumbhash/) placeholder of the first frame, at most 128
+  characters, in the same format as chat `media` items.
+- `preview` — optional; `{ "width", "height" }`, the pixel size of the still preview served by
+  `GET /v0/artifacts/:artifactId/versions/:number/previews/*path`. Present only when the daemon
+  made one.
+
+**Media metadata.** The daemon measures the files people show as pictures and videos, as it does
+for chat `media` items, so a client lays them out and shows a placeholder before any bytes load:
+
+- Every image file of an `image` or `image_series` version, and every version's cover file of any
+  type, gets `width`, `height`, and `thumbhash` when the daemon can decode it: PNG, JPEG, GIF,
+  WebP, or AVIF, still or animated. SVG files get none. The size of a WebP or GIF comes from its
+  container header, like a cover's.
+- The video file of a `video` artifact gets `width`, `height`, `durationMs`, and `thumbhash`, and a
+  poster taken from its first frame, when the daemon's host has `ffprobe` and `ffmpeg` on its
+  `PATH`. The daemon runs them itself on its stored copy of the file, whichever client or agent
+  made the version, and gives each at most 15 seconds. Without them, or when they fail, the fields
+  are absent. The poster itself is not served; its preview is.
+- Each of those pictures and each poster gets a `preview`: a still WebP of the first frame, fitted
+  within 640×640 pixels and never enlarged, so a list or grid shows a small image instead of the
+  whole file. The daemon stores each preview once per source digest.
+
+The daemon measures a file when the version that places it is made, and reuses what it measured
+for the same digest and media type in later versions and other artifacts. A file that cannot be
+measured simply lacks the fields; it never refuses the version. Versions made before media
+metadata existed have none, and their kept files get it from the next version on. A client treats
+every one of these fields as optional, because older daemons omit them all.
+
+A client showing an artifact in a list or grid loads a preview rather than the whole file: the
+cover's when there is a cover, otherwise its media file's (an image's picture, an image series'
+first picture, a video's poster), with that file's `thumbhash` as the placeholder, and the type's
+glyph when there is neither. A Feed post still loads the whole cover, which may be animated, with the
+cover's `thumbhash` as its placeholder. A video viewer shows the poster preview until playback
+starts.
 
 The extensions the daemon knows, case-insensitively:
 
@@ -11818,6 +11881,19 @@ than `latest` for a page, so the entry and its files always come from the same v
 rendering a `markdown` entry itself resolves each relative link or image against the entry's URL
 the same way and loads it through this route.
 
+### `GET /v0/artifacts/:artifactId/versions/:number/previews/*path`
+
+The still preview of one file of one version: the picture's, the cover's, or the video poster's,
+as the file's `preview` describes. `number` and `path` name the source file exactly as on the file
+route, with the same decoding and the same `404` for any name the version does not hold. The
+response is the preview's bytes with `Content-Type: image/webp` and `Content-Length`; `ETag`,
+`If-None-Match`, `Cache-Control`, `Vary`, `X-Content-Type-Options`, and `Content-Security-Policy`
+behave as on the file route, and `Content-Disposition: inline` carries the source's name with a
+`.webp` extension. It takes no `Range`.
+
+`404` when the artifact, the version, or the file does not exist, when the artifact is deleted, or
+when the file has no `preview`.
+
 ### `POST /v0/artifact-uploads`
 
 Uploads one file's bytes for a later creation or update. The body is the raw bytes, not JSON; its
@@ -11886,7 +11962,7 @@ Request:
 - `background` — optional; the first version's background, as described above. Omitted or `null`
   means none. Leave it out unless the content needs one fixed canvas.
 - `cover` — optional; the `path` of the first version's cover among `files`, such as
-  `"cover.png"`, or `null` for none. Omitted takes the type's default: an `image`'s own file or an
+  `"cover.webp"`, or `null` for none. Omitted takes the type's default: an `image`'s own file or an
   `image_series`' first, and none for other types. See "Covers and summaries".
 - `summary` — optional; the first version's summary. Omitted or `null` means none.
 

@@ -28,11 +28,11 @@ export const ARTIFACT_REFERENCE_INSTRUCTIONS =
  * are deferred, so an agent may plan an artifact before it has read their descriptions.
  */
 export const ARTIFACT_COVER_INSTRUCTIONS =
-    "A good artifact has a cover: a PNG or WebP, either 16:9 (1600×900) or square (1200×1200), showing its headline, key number, or main chart, readable at feed size; the Feed shows it full width. Give one, with a summary, a short post saying what it is and the key takeaway, to any report, analysis, or result people would want to see in the Feed: render it to PNG first with what you have, such as a headless browser screenshot, rsvg-convert, or matplotlib, then name that file as cover in create_artifact or update_artifact. Scratch and utility artifacts may go without.";
+    "A good artifact has a cover: a WebP, still or animated, either 16:9 (1600×900) or square (1200×1200), showing its headline, key number, or main chart, readable at feed size; the Feed shows it full width. Give one, with a summary, a short post saying what it is and the key takeaway, to any report, analysis, or result people would want to see in the Feed: render it first with what you have, such as a headless browser screenshot, rsvg-convert, or matplotlib, then name that file as cover in create_artifact or update_artifact. Scratch and utility artifacts may go without.";
 
 /** How every writing tool describes `cover`. */
 const ARTIFACT_COVER_DESCRIPTION =
-    "The path of the artifact's cover image among its files, such as \"cover.png\": a PNG or WebP showing the headline, key number, or main chart, readable at feed size. A cover is either 16:9 (1600×900) or square (1200×1200); other shapes are refused. An image artifact's cover is its own picture and an image series' its first, unless you name another or pass null.";
+    "The path of the artifact's cover image among its files, such as \"cover.webp\": a WebP, still or animated, showing the headline, key number, or main chart, readable at feed size. A cover is either 16:9 (1600×900) or square (1200×1200); other shapes are refused. PNG and JPEG work too; convert a GIF to animated WebP first, and SVG is refused. An image artifact's cover is its own picture and an image series' its first, unless you name another or pass null.";
 
 /** How every writing tool describes `summary`. */
 const ARTIFACT_SUMMARY_DESCRIPTION =
@@ -66,7 +66,7 @@ export const artifactToolSummaryChangeSchema = Type.Union(
 
 /** How the writing tools explain covers. */
 export const ARTIFACT_COVER_GUIDANCE =
-    "A good artifact has a cover and a summary. The summary is a short post under the title: what this is and the key takeaway, in a few sentences of plain text, line breaks fine, no Markdown. The cover is a PNG or WebP, either 16:9 (1600×900) or square (1200×1200), showing the headline, key number, or main chart, readable at feed size; the Feed shows it full width and draws nothing over it. Add one to any report, analysis, or result people would want to see in the Feed; scratch and utility artifacts may go without. For a chart or diagram, render it to PNG first with what you have, such as a headless browser screenshot, rsvg-convert, or matplotlib, then publish that file and name it as cover. SVG covers are refused.";
+    "A good artifact has a cover and a summary. The summary is a short post under the title: what this is and the key takeaway, in a few sentences of plain text, line breaks fine, no Markdown. The cover is a WebP, either 16:9 (1600×900) or square (1200×1200), showing the headline, key number, or main chart, readable at feed size; the Feed shows it full width and draws nothing over it. Add one to any report, analysis, or result people would want to see in the Feed; scratch and utility artifacts may go without. For a chart or diagram, render it first with what you have, such as a headless browser screenshot, rsvg-convert, or matplotlib, and save it as WebP. A short looping animated WebP is fine; keep it small, and convert a GIF to one first: ffmpeg -i in.gif -c:v libwebp -loop 0 -q:v 75 cover.webp. PNG and JPEG are accepted; GIF is accepted but discouraged; SVG is refused.";
 
 /** How every writing tool describes `background`, which almost every artifact leaves out. */
 const ARTIFACT_BACKGROUND_DESCRIPTION =

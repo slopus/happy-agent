@@ -345,9 +345,11 @@ analysis, or result people would want to see in the Feed.
 
 - **Shape.** Either 16:9, drawn at 1600×900, or square, drawn at 1200×1200.
   Other shapes are refused.
-- **Format.** PNG or WebP. SVG is refused: render a chart or diagram to PNG
-  first, with a headless browser screenshot, `rsvg-convert`, matplotlib, or
-  whatever the machine has.
+- **Format.** WebP, still or animated. PNG and JPEG work too. Convert a GIF to
+  animated WebP before publishing:
+  `ffmpeg -i in.gif -c:v libwebp -loop 0 -q:v 75 cover.webp` (or `gif2webp`).
+  SVG is refused: render a chart or diagram first, with a headless browser
+  screenshot, `rsvg-convert`, matplotlib, or whatever the machine has.
 - **Content.** One idea: the headline, the key number, or the main chart. It is
   read at feed size, about 400 px wide on a phone, so use few words, large
   type (a headline of at least 64 px at 1600×900), and thick chart lines.

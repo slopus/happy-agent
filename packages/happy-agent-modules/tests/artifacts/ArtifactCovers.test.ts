@@ -91,6 +91,7 @@ describe("artifact covers and summaries", () => {
             width: 1600,
             height: 900,
             aspect: "wide",
+            thumbhash: expect.any(String),
         };
         expect(artifact).toMatchObject({ cover, summary });
         expect(await w.artifacts.getVersion(w.ctx, artifact.id, 1)).toMatchObject({
@@ -100,12 +101,21 @@ describe("artifact covers and summaries", () => {
 
         const retitled = await update(w, artifact, { title: "Q3 revenue, final" });
         expect(retitled).toMatchObject({ latestVersion: 2, cover, summary });
+        // The same file keeps its ThumbHash; another picture gets its own.
+        expect(retitled.cover?.thumbhash).toBe(artifact.cover?.thumbhash);
 
         // Replacing the cover's file measures it again.
         const square = await update(w, retitled, {
             files: [await placed(w, "cover.png", await picture(1200, 1200))],
         });
-        expect(square.cover).toEqual({ ...cover, width: 1200, height: 1200, aspect: "square" });
+        expect(square.cover?.thumbhash).not.toBe(artifact.cover?.thumbhash);
+        expect(square.cover).toEqual({
+            ...cover,
+            width: 1200,
+            height: 1200,
+            aspect: "square",
+            thumbhash: expect.any(String),
+        });
 
         const cleared = await update(w, square, { cover: null, summary: null });
         expect(cleared.cover).toBeUndefined();
@@ -191,6 +201,7 @@ describe("artifact covers and summaries", () => {
             width: 1600,
             height: 900,
             aspect: "wide",
+            thumbhash: expect.any(String),
         });
     });
 
@@ -206,6 +217,89 @@ describe("artifact covers and summaries", () => {
         const long = await update(w, artifact, { summary: "😀".repeat(5000) });
         expect([...(long.summary ?? "")]).toHaveLength(5000);
         expect((await update(w, long, { summary: "Short again." })).summary).toBe("Short again.");
+    });
+
+    it("measures animated WebP and GIF covers from their containers, with a first-frame ThumbHash", async () => {
+        const w = await world("covers-animated");
+        const frames = await Promise.all(
+            [20, 200].map(
+                async (red) =>
+                    await sharp({
+                        create: {
+                            width: 960,
+                            height: 540,
+                            channels: 3,
+                            background: { r: red, g: 80, b: 160 },
+                        },
+                    })
+                        .png()
+                        .toBuffer(),
+            ),
+        );
+        const animated = sharp(frames, { join: { animated: true } });
+        const webp = new Uint8Array(
+            await animated
+                .clone()
+                .webp({ loop: 0, delay: [400, 400] })
+                .toBuffer(),
+        );
+        const gif = new Uint8Array(
+            await animated
+                .clone()
+                .gif({ loop: 0, delay: [400, 400] })
+                .toBuffer(),
+        );
+        const artifact = await report(w, {});
+        const moving = await update(w, artifact, {
+            files: [await placed(w, "cover.webp", webp)],
+            cover: "cover.webp",
+        });
+        expect(moving.cover).toEqual({
+            path: "cover.webp",
+            mimeType: "image/webp",
+            width: 960,
+            height: 540,
+            aspect: "wide",
+            thumbhash: expect.any(String),
+        });
+        const looping = await update(w, moving, {
+            files: [await placed(w, "cover.gif", gif)],
+            cover: "cover.gif",
+        });
+        expect(looping.cover).toMatchObject({ width: 960, height: 540 });
+        const still = await update(w, looping, {
+            files: [
+                await placed(w, "still.webp", await picture(1200, 1200, "webp")),
+                await placed(
+                    w,
+                    "still.gif",
+                    new Uint8Array(await sharp(frames[0]).gif().toBuffer()),
+                ),
+            ],
+            cover: "still.webp",
+        });
+        expect(still.cover).toMatchObject({ aspect: "square", thumbhash: expect.any(String) });
+        expect((await update(w, still, { cover: "still.gif" })).cover).toMatchObject({
+            width: 960,
+            thumbhash: expect.any(String),
+        });
+        const lossless = new Uint8Array(await sharp(frames[0]).webp({ lossless: true }).toBuffer());
+        const exact = await update(w, still, {
+            files: [await placed(w, "lossless.webp", lossless)],
+            cover: "lossless.webp",
+        });
+        expect(exact.cover).toMatchObject({ width: 960, height: 540 });
+        // A GIF whose header reads but whose frames do not decode is a cover without a ThumbHash.
+        const broken = new Uint8Array([...gif.subarray(0, 13), 0x2c, 0, 0, 0, 0, 0xc0, 0x03]);
+        const unreadable = await update(w, exact, {
+            files: [await placed(w, "broken.gif", broken)],
+            cover: "broken.gif",
+        });
+        expect(unreadable.cover).toMatchObject({ width: 960, height: 540, thumbhash: null });
+        // A file named as WebP that is not one is refused, as for any other format.
+        await expect(
+            update(w, exact, { files: [await placed(w, "fake.webp", gif)], cover: "fake.webp" }),
+        ).rejects.toThrow(/could not be read as a WebP image/);
     });
 
     it("leaves other types without a cover unless one is named", async () => {
@@ -230,6 +324,7 @@ describe("artifact covers and summaries", () => {
             width: 1600,
             height: 900,
             aspect: "wide",
+            thumbhash: expect.any(String),
         });
 
         // A new picture under another name takes the default along with it.
@@ -237,7 +332,11 @@ describe("artifact covers and summaries", () => {
             replaceAll: true,
             files: [await placed(w, "chart-v2.jpg", await picture(1200, 1200, "jpeg"))],
         });
-        expect(replaced.cover).toMatchObject({ path: "chart-v2.jpg", aspect: "square" });
+        expect(replaced.cover).toMatchObject({
+            path: "chart-v2.jpg",
+            aspect: "square",
+            thumbhash: expect.any(String),
+        });
 
         // A picture of no standard shape has no cover, and that is not an error.
         const banner = await update(w, replaced, {

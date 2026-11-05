@@ -323,6 +323,35 @@ what the artifact is and its key takeaway, in a few sentences. It is plain text 
 characters with `\n` line breaks; the module turns CRLF into `\n` and trims it before checking,
 so the stored text is what every client shows, and it is never Markdown.
 
+Animated covers are allowed, and WebP is the preferred format, still or animated; the prompts tell
+agents to convert a GIF to animated WebP with ffmpeg, though a GIF is still accepted. A WebP or GIF
+is measured from its container header (an extended WebP's canvas, a GIF's logical screen), because
+decoding an animation to learn its size is wasted work. An `animated` flag was tried and dropped:
+clients play whatever the file is. Each cover carries a `thumbhash` of its first frame, made with
+the same processor and ThumbHash code as pictures, reused while the path and digest stay the same,
+and `null` when decoding fails, so a cover never fails over its placeholder. There is no backfill.
+
+## Pictures and videos carry their measurements and previews
+
+Steve wanted artifact lists to load small previews, not whole files, and every client to lay out
+and placeholder an artifact's pictures and video the way chat media are. So the daemon measures
+the files a version shows — an image's or series' pictures, every cover, and a video artifact's
+video — and records size, a video's length, a ThumbHash, and a still WebP preview within 640×640,
+never enlarged, on the file object. Measurements are reused by digest and media type, and stored
+per version file rather than looked up by digest at read time, so a version made before them stays
+as it was until its next version. Failing to measure is never an error.
+
+Videos are measured on the daemon's host with its own `ffprobe` and `ffmpeg`, unlike Stories'
+posters, which run on the agent's machine: a story's file is only on that machine, but an
+artifact's bytes are in the daemon's store whichever client or agent made the version, and REST
+versions have no agent machine at all. A host without those tools gives videos no measurements.
+Measuring runs before the version's transaction, so seconds of `ffmpeg` never hold the database's
+write lock; a change that races it only leaves a file unmeasured.
+
+The released Bun.Image cannot decode an animated WebP at all, though it reads GIFs, so an animated
+WebP's first frame is rewrapped as a still WebP, copying its bitstream, before it is decoded for a
+ThumbHash or preview. Bun.Image encodes WebP, so previews are WebP on both runtimes.
+
 ## Withdrawn types are removed from storage
 
 `sidebar` and `sidebar_proposal` artifacts belonged to the Spaces sidebar, and `story` artifacts to

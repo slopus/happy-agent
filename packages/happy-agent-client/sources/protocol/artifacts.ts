@@ -129,6 +129,11 @@ export const artifactCoverSchema = Type.Object({
     width: Type.Integer({ minimum: 1 }),
     height: Type.Integer({ minimum: 1 }),
     aspect: artifactCoverAspectSchema,
+    /**
+     * The first frame's ThumbHash in base64, drawn while the image loads: `null` when the daemon
+     * could not decode it, and absent on older daemons.
+     */
+    thumbhash: Type.Optional(Nullable(Type.String())),
 });
 export type ArtifactCover = Static<typeof artifactCoverSchema>;
 
@@ -140,7 +145,18 @@ export const artifactBackgroundInputSchema = Nullable(
 /** A lowercase hexadecimal SHA-256 digest. */
 export const artifactSha256Schema = Type.String({ pattern: "^[0-9a-f]{64}$" });
 
-/** One file of one version. Equal digests mean equal content. */
+/** The pixel size of a file's still preview, served by the preview route. */
+export const artifactFilePreviewSchema = Type.Object({
+    width: Type.Integer({ minimum: 1 }),
+    height: Type.Integer({ minimum: 1 }),
+});
+export type ArtifactFilePreview = Static<typeof artifactFilePreviewSchema>;
+
+/**
+ * One file of one version. Equal digests mean equal content. The daemon measures the pictures of
+ * image and image series versions, every cover, and a video artifact's video; each measurement is
+ * optional, absent when the daemon could not take it and on older daemons.
+ */
 export const artifactFileSchema = Type.Object({
     /** Decided by the daemon from the path's extension; `application/octet-stream` when unknown. */
     mimeType: Type.String(),
@@ -148,6 +164,18 @@ export const artifactFileSchema = Type.Object({
     sha256: artifactSha256Schema,
     /** Bytes, at least 1. */
     size: Type.Integer({ minimum: 1 }),
+    /** The picture's or video's pixel size as displayed, after EXIF orientation or rotation. */
+    width: Type.Optional(Type.Integer({ minimum: 1 })),
+    height: Type.Optional(Type.Integer({ minimum: 1 })),
+    /** A video's length in whole milliseconds. */
+    durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    /** The first frame's ThumbHash in standard base64, at most 128 characters. */
+    thumbhash: Type.Optional(Type.String({ maxLength: 128, minLength: 1 })),
+    /**
+     * A still WebP of the first frame, a video's poster included, fitted within 640×640 and never
+     * enlarged; load it with `artifactPreviewUrl` or `getArtifactPreview`.
+     */
+    preview: Type.Optional(artifactFilePreviewSchema),
 });
 export type ArtifactFile = Static<typeof artifactFileSchema>;
 

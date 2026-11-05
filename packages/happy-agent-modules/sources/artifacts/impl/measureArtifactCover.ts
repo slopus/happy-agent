@@ -1,7 +1,11 @@
-import { getImageProcessor } from "../../impl/images/getImageProcessor.js";
 import type { ArtifactCover, ArtifactFile } from "../Artifact.js";
 import { formatBytes } from "../ArtifactTypes.js";
 import { readArtifactContent } from "./artifactContentFiles.js";
+import {
+    artifactStillFrame,
+    readArtifactPictureSize,
+    readArtifactThumbHash,
+} from "./artifactPictures.js";
 
 /**
  * The image formats a cover may be, by media type, with the name people know each by and the
@@ -31,14 +35,15 @@ export const MAX_ARTIFACT_COVER_SIDE = 4096;
 /** The largest file a cover may be: an image artifact's own limit, so any image can be one. */
 export const MAX_ARTIFACT_COVER_BYTES = 32 * 1024 * 1024;
 
-const MAX_DECODED_PIXELS = 100_000_000;
 const SIZE_ADVICE =
     'A cover is either 16:9 ("wide", best 1600×900, at least 960×540) or square ("square", best 1200×1200, at least 720×720), at most 4096 pixels a side.';
 
 /**
  * Decode one file of a version as a cover and check it against the cover rules: its media type,
  * its size, and its pixel dimensions. Returns the cover, or why the file cannot be one in words
- * that name the file. The dimensions are the picture as shown, after any EXIF rotation.
+ * that name the file. The dimensions are the picture as shown, after any EXIF rotation, or a WebP's
+ * or GIF's canvas, which may be animated; the ThumbHash is of the first frame, the file's own when
+ * the version already measured it.
  */
 export async function measureArtifactCover(
     file: ArtifactFile,
@@ -62,7 +67,7 @@ export async function measureArtifactCover(
         };
     }
     const bytes = await readArtifactContent(contentPath, 0, file.size);
-    const size = await readRasterSize(bytes, format.decoded);
+    const size = await readArtifactPictureSize(bytes, format.decoded);
     if (size === undefined) {
         return { problem: `${name} could not be read as a ${format.label} image.` };
     }
@@ -83,28 +88,18 @@ export async function measureArtifactCover(
         return { problem: `${pixels}, too large. ${SIZE_ADVICE}` };
     }
     return {
-        cover: { path: file.path, mimeType: file.mimeType, width, height, aspect: shape.aspect },
+        cover: {
+            path: file.path,
+            mimeType: file.mimeType,
+            width,
+            height,
+            aspect: shape.aspect,
+            thumbhash: file.thumbhash ?? (await coverThumbHash(bytes, format.decoded)),
+        },
     };
 }
 
-/** A raster image's size as shown, when it decodes as the format its name says. */
-async function readRasterSize(
-    bytes: Uint8Array,
-    format: string,
-): Promise<{ readonly width: number; readonly height: number } | undefined> {
-    try {
-        const processor = await getImageProcessor();
-        const metadata = await processor.metadata(bytes, {
-            autoOrient: true,
-            maxPixels: MAX_DECODED_PIXELS,
-        });
-        if (metadata.format !== format) return undefined;
-        if (!Number.isSafeInteger(metadata.width) || !Number.isSafeInteger(metadata.height)) {
-            return undefined;
-        }
-        if (metadata.width < 1 || metadata.height < 1) return undefined;
-        return { width: metadata.width, height: metadata.height };
-    } catch {
-        return undefined;
-    }
+async function coverThumbHash(bytes: Uint8Array, format: string): Promise<string | null> {
+    const still = artifactStillFrame(bytes, format);
+    return still === undefined ? null : await readArtifactThumbHash(still);
 }

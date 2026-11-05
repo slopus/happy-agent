@@ -250,6 +250,15 @@ export const artifactMigrations = [
             );
         },
     ],
+    [
+        "009-artifact-file-media",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(ARTIFACT_FILES_TABLE)} ADD COLUMN media_json TEXT`,
+            );
+        },
+    ],
 ] as const;
 
 /**

@@ -404,11 +404,25 @@ function artifactCoverResource(cover: ArtifactCover | undefined): Record<string,
               width: cover.width,
               height: cover.height,
               aspect: cover.aspect,
+              thumbhash: cover.thumbhash,
           };
 }
 
+/** A file, with whatever the daemon measured of it; a measurement it lacks is left out. */
 function artifactFileResource(file: ArtifactFile): Record<string, unknown> {
-    return { path: file.path, mimeType: file.mimeType, size: file.size, sha256: file.sha256 };
+    return {
+        path: file.path,
+        mimeType: file.mimeType,
+        size: file.size,
+        sha256: file.sha256,
+        ...(file.width === undefined ? {} : { width: file.width }),
+        ...(file.height === undefined ? {} : { height: file.height }),
+        ...(file.durationMs === undefined ? {} : { durationMs: file.durationMs }),
+        ...(file.thumbhash === undefined ? {} : { thumbhash: file.thumbhash }),
+        ...(file.preview === undefined
+            ? {}
+            : { preview: { width: file.preview.width, height: file.preview.height } }),
+    };
 }
 
 /** Every kind but `agent` names its conversation as `agentId`, `null` when a person acted. */

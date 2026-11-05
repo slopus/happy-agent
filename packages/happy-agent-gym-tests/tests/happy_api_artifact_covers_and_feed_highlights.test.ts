@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { deflateSync } from "node:zlib";
 
 import type {
@@ -23,6 +24,7 @@ interface Covered {
         readonly width: number;
         readonly height: number;
         readonly aspect: string;
+        readonly thumbhash?: string | null;
     } | null;
     readonly summary?: string | null;
 }
@@ -73,7 +75,7 @@ function crc32(bytes: Uint8Array): number {
 }
 
 async function upload(gym: AgentGym, bytes: Uint8Array): Promise<string> {
-    return (await gym.client.uploadArtifactFile({ data: bytes })).upload.id;
+    return (await gym.client.uploadArtifactFile({ data: new Uint8Array(bytes) })).upload.id;
 }
 
 describe("artifact covers and the Highlights filter over the API", () => {
@@ -108,6 +110,7 @@ describe("artifact covers and the Highlights filter over the API", () => {
             width: 1600,
             height: 900,
             aspect: "wide",
+            thumbhash: expect.any(String),
         };
         expect(artifact as Artifact & Covered).toMatchObject({ cover, summary });
         expect(
@@ -187,6 +190,7 @@ describe("artifact covers and the Highlights filter over the API", () => {
             width: 720,
             height: 720,
             aspect: "square",
+            thumbhash: expect.any(String),
         });
         const { artifact: banner } = await gym.client.createArtifact({
             type: "image",
@@ -194,6 +198,37 @@ describe("artifact covers and the Highlights filter over the API", () => {
             files: [{ path: "banner.png", uploadId: await upload(gym, png(1000, 100)) }],
         });
         expect((banner as Artifact & Covered).cover).toBeNull();
+
+        // An animated WebP or GIF is measured from its container, with its first frame's ThumbHash.
+        for (const [path, mimeType] of [
+            ["animated-cover.webp", "image/webp"],
+            ["animated-cover.gif", "image/gif"],
+        ] as const) {
+            const bytes = new Uint8Array(
+                await readFile(new URL(`fixtures/${path}`, import.meta.url)),
+            );
+            const { artifact: moving } = await gym.client.createArtifact(
+                covered(
+                    {
+                        type: "html",
+                        title: "Loop",
+                        files: [
+                            { path: "index.html", text: "<p>Loop</p>" },
+                            { path, uploadId: await upload(gym, bytes) },
+                        ],
+                    },
+                    { cover: path },
+                ),
+            );
+            expect((moving as Artifact & Covered).cover).toEqual({
+                path,
+                mimeType,
+                width: 960,
+                height: 540,
+                aspect: "wide",
+                thumbhash: expect.any(String),
+            });
+        }
         expect(gym.errors).toEqual([]);
     });
 

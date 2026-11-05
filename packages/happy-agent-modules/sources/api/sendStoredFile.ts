@@ -20,6 +20,10 @@ export interface StoredFile {
     /** The file name a download is offered under. */
     readonly name: string;
     readonly cacheControl: string;
+    /** The entity tag, when it is not the quoted digest: for bytes derived from the file. */
+    readonly etag?: string;
+    /** Whether a byte range may be asked for; true unless said otherwise. */
+    readonly ranges?: boolean;
 }
 
 /**
@@ -31,7 +35,7 @@ export async function sendStoredFile(
     response: ServerResponse,
     file: StoredFile,
 ): Promise<void> {
-    const etag = `"${file.sha256}"`;
+    const etag = file.etag ?? `"${file.sha256}"`;
     const caching = {
         "cache-control": file.cacheControl,
         etag,
@@ -42,7 +46,7 @@ export async function sendStoredFile(
         response.end();
         return;
     }
-    const range = byteRange(request.headers.range, file.size);
+    const range = file.ranges === false ? undefined : byteRange(request.headers.range, file.size);
     if (range === "unsatisfiable") {
         response.setHeader("content-range", `bytes */${String(file.size)}`);
         throw new ApiError(
@@ -62,7 +66,7 @@ export async function sendStoredFile(
     const body = handle.createReadStream({ start, end });
     response.writeHead(range === undefined ? 200 : 206, {
         ...caching,
-        "accept-ranges": "bytes",
+        ...(file.ranges === false ? {} : { "accept-ranges": "bytes" }),
         "content-disposition": inlineDisposition(file.name),
         "content-length": end - start + 1,
         ...(range === undefined

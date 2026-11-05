@@ -77,9 +77,12 @@ on the catalog row. Only agents set it, through `create_artifact` and `update_ar
 
 ## Covers and summaries
 
-A version may name a `cover`, one of its own raster image files (PNG, JPEG, WebP, or GIF; never
-SVG) that clients show full width in the Feed, and a `summary`, a short plain-text post shown under the
-title. The module decodes the cover with the shared image processor and records its pixel size and
+A version may name a `cover`, one of its own raster image files (WebP preferred, still or
+animated; PNG, JPEG, or GIF; never SVG) that clients show full width in the Feed, and a `summary`, a
+short plain-text post shown under the title. The module measures the cover — a WebP's or GIF's size
+from its container header, so an animation is not decoded frame by frame, any other format with the
+shared image processor — and records its pixel size, a base64 `thumbhash` of the first frame fitted
+to 100×100 (`null` when the pixels cannot be decoded, which is not an error), and the
 standard `aspect`: `wide` (16:9 within 2%, at least 960×540) or `square` (1:1 within 2%, at least
 720×720), at most 4096 pixels a side. Any other cover refuses the version. Both carry over like a
 background; a kept cover is checked again on every version, reusing the earlier measurement when
@@ -90,6 +93,26 @@ default (`coverDefault`), so the next version takes whatever picture then holds 
 default picture the rules refuse leaves no cover without an error. Naming or clearing a cover ends
 the default. A live-URL artifact holds no files, so it refuses a cover. Agents learn what makes a
 good cover from the module's instructions and the writing tools' descriptions.
+
+## Media metadata and previews
+
+A version's pictures and video carry what the daemon measured of them on their file objects, as
+chat media items do: every picture of an `image` or `image_series` version and every version's
+cover get `width`, `height` (as shown), and a `thumbhash`; a `video` artifact's video gets
+`width`, `height`, `durationMs`, and a `thumbhash` of its first frame. Each of those pictures and
+each video's first frame, its poster, also get a still WebP `preview`, fitted within 640×640 and
+never enlarged, stored once per source digest at `artifacts/previews/<two hex>/<sha256>.webp`.
+
+Measuring runs before the version's transaction, because a video's tools may take seconds, over
+the latest version's files and the placed uploads; the transaction then attaches what was measured
+by digest and media type. A kept file keeps what it has, and bytes measured by any earlier version
+reuse its measurements while their preview is still stored. Pictures are decoded with the shared
+image processor (a WebP's or GIF's size from its container, an animated WebP's first frame
+rewrapped as a still for Bun.Image). Videos are measured with `ffprobe` and `ffmpeg` on the
+daemon's own host, run on the stored copy with a 15-second limit each. Nothing here ever refuses a
+version: whatever cannot be measured, including every video on a host without those tools, is left
+out. Versions made before this keep bare files; their kept files are measured with the next
+version.
 
 ## Versions
 
@@ -190,6 +213,7 @@ type accepts before it is read.
   catalog. Versions of a deleted artifact are not served.
 - `storedFile(ctx, artifactId, number | "latest", path)` returns one file and where its bytes
   are, matching only an exact manifest path; `readFile` reads a bounded window of it.
+  `storedPreview` does the same for a file's still preview, and refuses a file without one.
 - `actorFor(ctx, agentId)` decides an agent's author and source; `resolveSource(ctx, input)` checks
   a source a person names and fills a workspace's project.
 - `onEvent(listener)` reports `artifact_created`, `artifact_updated`, and `artifact_deleted` after
@@ -203,14 +227,15 @@ outermost commit.
 
 Content lives under the daemon's private `artifacts/` folder, which Config owns:
 `artifacts/content/<first two hex digits>/<sha256>` holds each distinct content once, and
-`artifacts/uploads/<uploadId>` holds bytes while they arrive. Nothing is ever written into a
-working directory.
+`artifacts/uploads/<uploadId>` holds bytes while they arrive, and
+`artifacts/previews/<first two hex digits>/<sha256>.webp` holds the still preview made from a
+content. Nothing is ever written into a working directory.
 
 Four tables hold the catalog: one row per artifact with its latest entry, file count, size,
 background, display, cover, summary, indexed source and creator, and revision; one row per version
 with its title, entry path, background, display, cover with its default mark, summary, author,
 source, and the operation ID that made it; one row per
-version file keyed by path, indexed by digest; and one row per upload, whose size, digest, and
+version file keyed by path, indexed by digest, with its measurements; and one row per upload, whose size, digest, and
 UTF-8 flag stay empty until its bytes arrive. The artifact and version rows carry the `major.minor`
 labels.
 
@@ -219,14 +244,15 @@ written. The bytes are written, synced, hashed, and checked for UTF-8; the diges
 only then are the bytes renamed into content storage, or dropped when that content is already
 stored. Placing an upload deletes its row and cancels its removal in the same transaction as the
 version. An unused upload expires after 24 hours: its row and file go, and its content goes too
-unless a version file or another upload holds the same digest. A refused upload is removed at
+unless a version file or another upload holds the same digest, and its preview with it. A refused upload is removed at
 once. Deleting an artifact keeps its content on disk.
 
 ## HTTP
 
 The API module serves the routes `packages/happy-agent/API.md` specifies: `/v0/artifacts` and
 `/v0/artifact-uploads`, with file bytes under
-`/v0/artifacts/:artifactId/versions/:number|latest/files/*path`. A person's change is authored as
+`/v0/artifacts/:artifactId/versions/:number|latest/files/*path` and previews under
+`/v0/artifacts/:artifactId/versions/:number|latest/previews/*path`. A person's change is authored as
 the authenticated user and names its source only when the request does; the API turns
 `onEvent` into `artifact.created`, `artifact.updated`, and `artifact.deleted` for every connection.
 

@@ -74,6 +74,34 @@ export const artifactSummarySchema = Type.String({
  * checked.
  */
 export const artifactSummaryInputSchema = Type.String({ minLength: 1, maxLength: 20_000 });
+/** A ThumbHash placeholder in standard base64. */
+export const artifactThumbHashSchema = Type.String({ minLength: 1, maxLength: 128 });
+/**
+ * What the daemon measured of a picture or video file when a version placed it. Every field is
+ * optional: one it could not measure is absent.
+ */
+export const artifactFileMediaSchema = Type.Object(
+    {
+        /** The pixel size as displayed, after EXIF orientation or a video's rotation. */
+        width: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+        height: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+        /** A video's length in whole milliseconds. */
+        durationMs: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+        /** The first frame's ThumbHash. */
+        thumbhash: Type.Optional(artifactThumbHashSchema),
+        /** The size of the still WebP preview stored under the file's digest. */
+        preview: Type.Optional(
+            Type.Object(
+                {
+                    width: Type.Integer({ minimum: 1, maximum: 640 }),
+                    height: Type.Integer({ minimum: 1, maximum: 640 }),
+                },
+                { additionalProperties: false },
+            ),
+        ),
+    },
+    { additionalProperties: false },
+);
 /**
  * The image a feed shows for a version: one of its files, with the pixel size the daemon decoded
  * from it.
@@ -86,6 +114,8 @@ export const artifactCoverSchema = Type.Object(
         height: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
         /** The standard shape the size matches: `"wide"` (16:9) or `"square"` (1:1). */
         aspect: Type.Union([Type.Literal("wide"), Type.Literal("square")]),
+        /** The first frame's ThumbHash in base64, `null` when it could not be decoded. */
+        thumbhash: Type.Union([artifactThumbHashSchema, Type.Null()]),
     },
     { additionalProperties: false },
 );
@@ -94,13 +124,17 @@ export const artifactBackgroundInputSchema = Type.String({
     pattern: "^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
 });
 
-/** One file of one version, stored once by the digest of its bytes. */
+/**
+ * One file of one version, stored once by the digest of its bytes, with what the daemon measured
+ * of it when it is a picture or video the version shows.
+ */
 export const artifactFileSchema = Type.Object(
     {
         path: artifactPathSchema,
         mimeType: artifactMimeTypeSchema,
         size: artifactCounterSchema,
         sha256: artifactSha256Schema,
+        ...artifactFileMediaSchema.properties,
     },
     { additionalProperties: false },
 );
@@ -401,6 +435,7 @@ export type ArtifactStatus = Static<typeof artifactStatusSchema>;
 export type ArtifactDisplay = Static<typeof artifactDisplaySchema>;
 export type ArtifactCover = Static<typeof artifactCoverSchema>;
 export type ArtifactFile = Static<typeof artifactFileSchema>;
+export type ArtifactFileMedia = Static<typeof artifactFileMediaSchema>;
 export type ArtifactSource = Static<typeof artifactSourceSchema>;
 export type ArtifactSourceInput = Static<typeof artifactSourceInputSchema>;
 export type ArtifactAuthor = Static<typeof artifactAuthorSchema>;
@@ -441,6 +476,16 @@ export interface ArtifactStoredFile {
     /** The version the file was read from, `latest` resolved. */
     readonly version: number;
     /** Where the bytes are on the daemon's machine. */
+    readonly contentPath: string;
+}
+
+/** One stored file's still preview, and where its WebP bytes are on this machine. */
+export interface ArtifactStoredPreview {
+    readonly file: ArtifactFile;
+    /** The version the file was read from, `latest` resolved. */
+    readonly version: number;
+    readonly preview: NonNullable<ArtifactFile["preview"]>;
+    /** Where the preview's bytes are on the daemon's machine. */
     readonly contentPath: string;
 }
 

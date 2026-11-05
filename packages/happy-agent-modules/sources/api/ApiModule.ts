@@ -338,7 +338,13 @@ import {
     type WorkspaceEvent,
 } from "../workspaces/index.js";
 import { ApiArtifactData, ARTIFACT_DATA_ROUTE } from "./ApiArtifactData.js";
-import { ARTIFACT_FILE_ROUTE, artifactFileRequest, sendArtifactFile } from "./ApiArtifactFiles.js";
+import {
+    ARTIFACT_FILE_ROUTE,
+    ARTIFACT_PREVIEW_ROUTE,
+    artifactFileRequest,
+    sendArtifactFile,
+    sendArtifactPreview,
+} from "./ApiArtifactFiles.js";
 import { sendStoredFile } from "./sendStoredFile.js";
 import { ApiError, invalidRequest, notFound, unsupported, type ApiErrorCode } from "./ApiError.js";
 import { ApiEventJournal, type ApiEvent } from "./ApiEventJournal.js";
@@ -7787,6 +7793,19 @@ export class ApiModule implements AgentModule {
                     target.path,
                 );
                 await sendArtifactFile(request, response, stored, target.selector === "latest");
+                return true;
+            }
+            if (ARTIFACT_PREVIEW_ROUTE.test(url.pathname)) {
+                if (request.method !== "GET") return false;
+                const target = artifactFileRequest(url.pathname, ARTIFACT_PREVIEW_ROUTE);
+                if (target === undefined) throw notFound("The artifact version has no such file.");
+                const stored = await artifacts.storedPreview(
+                    ctx,
+                    target.artifactId,
+                    target.selector,
+                    target.path,
+                );
+                await sendArtifactPreview(request, response, stored, target.selector === "latest");
                 return true;
             }
             const route =

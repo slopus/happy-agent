@@ -951,7 +951,7 @@ describe("the artifact tools", () => {
         const w = await world("artifact-tools-cover-guidance");
         const instructions = await w.instructions(AGENT);
         expect(instructions).toContain(
-            "A good artifact has a cover: a PNG or WebP, either 16:9 (1600×900) or square (1200×1200)",
+            "A good artifact has a cover: a WebP, still or animated, either 16:9 (1600×900) or square (1200×1200)",
         );
         const create = await w.tool(AGENT, "create_artifact");
         const update = await w.tool(AGENT, "update_artifact");
@@ -989,6 +989,7 @@ describe("the artifact tools", () => {
                 width: 1600,
                 height: 900,
                 aspect: "wide",
+                thumbhash: expect.any(String),
             },
             summary: "Revenue up 18% QoQ.",
         });
