@@ -1,0 +1,127 @@
+name: Smoke-test packaged Windows Agent
+run-name: Windows Agent smoke ${{ inputs.tag || inputs.run_id || github.event.head_commit.message }}
+
+# Installs a packaged win32-x64 Agent from a GitHub Release or from a workflow run's
+# happy-agent-win32-x64 artifact (so a build can be tested before or after publication) and
+# exercises it the way Desktop does. Pushes to release/windows-smoke test PUSH_TAG or
+# PUSH_RUN_ID below, because a dispatch only runs workflows from the default branch.
+
+on:
+    push:
+        branches:
+            - release/windows-smoke
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: Release tag such as v0.4.114; leave empty when testing a run
+                required: false
+                type: string
+            run_id:
+                description: Workflow run whose happy-agent-win32-x64 artifact holds the archive
+                required: false
+                type: string
+            idle_minutes:
+                description: How long the idle daemon is watched for LSASS growth
+                required: false
+                default: "10"
+                type: string
+
+permissions:
+    contents: read
+    actions: read
+
+concurrency:
+    group: smoke-windows-agent-${{ github.ref }}
+    cancel-in-progress: false
+
+env:
+    PUSH_TAG: v0.4.114-preview.2
+    PUSH_RUN_ID: ""
+    SMOKE_TAG: ${{ inputs.tag }}
+    SMOKE_RUN_ID: ${{ inputs.run_id }}
+    HAPPY_SMOKE_IDLE_MINUTES: ${{ inputs.idle_minutes || '10' }}
+
+jobs:
+    smoke:
+        name: Sandbox onboarding, command, and idle LSASS
+        runs-on: windows-latest
+        timeout-minutes: 75
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  sparse-checkout: packages/happy-agent/scripts
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - name: Download and verify the Agent archive
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  $tag = $env:SMOKE_TAG
+                  $runId = $env:SMOKE_RUN_ID
+                  if ($env:GITHUB_EVENT_NAME -eq 'push') { $tag = $env:PUSH_TAG; $runId = $env:PUSH_RUN_ID }
+                  if ([string]::IsNullOrWhiteSpace($tag) -eq [string]::IsNullOrWhiteSpace($runId)) {
+                      throw 'Choose exactly one of a release tag or a workflow run ID.'
+                  }
+                  New-Item -ItemType Directory -Force download, smoke-results | Out-Null
+                  if ($tag) {
+                      gh release download $tag -R $env:GITHUB_REPOSITORY -D download -p '*-win32-x64.tar.gz' -p '*-win32-x64.tar.gz.sha256'
+                  } else {
+                      gh run download $runId -R $env:GITHUB_REPOSITORY -n happy-agent-win32-x64 -D download
+                  }
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  $archives = @(Get-ChildItem download -Filter '*-win32-x64.tar.gz')
+                  if ($archives.Count -ne 1) { throw "Expected one Windows archive, found $($archives.Count)." }
+                  $archive = $archives[0]
+                  $expected = (Get-Content "$($archive.FullName).sha256" -Raw).Split(' ')[0].Trim()
+                  $actual = (Get-FileHash $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                  if ($expected -ne $actual) { throw "Checksum mismatch: expected $expected, got $actual." }
+                  $version = $archive.Name -replace '^happy-agent-(.+)-win32-x64\.tar\.gz$', '$1'
+                  if ($tag -and "v$version" -ne $tag) { throw "Release $tag holds the $version archive." }
+                  "HAPPY_SMOKE_ARCHIVE=$($archive.FullName)" >> $env:GITHUB_ENV
+                  "HAPPY_SMOKE_VERSION=$version" >> $env:GITHUB_ENV
+                  "Testing Windows Agent ``$version`` from $(if ($tag) { "release $tag" } else { "run $runId" }) (SHA-256 ``$actual``)." >> $env:GITHUB_STEP_SUMMARY
+            - name: Install the packaged Agent
+              id: install
+              run: |
+                  # Hosted runners are elevated with non-interactive UAC; sandbox setup needs that.
+                  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+                  $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+                  if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+                      throw 'The disposable runner must already be elevated for sandbox setup.'
+                  }
+                  $install = Join-Path $env:LOCALAPPDATA 'Programs\Happy Agent'
+                  New-Item -ItemType Directory -Force $install | Out-Null
+                  tar -xzf $env:HAPPY_SMOKE_ARCHIVE -C $install
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  $binary = Join-Path $install 'happy-agent-win32-x64.exe'
+                  $reported = & $binary --version
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  if ($reported -ne "Happy Agent $env:HAPPY_SMOKE_VERSION") { throw "The binary reports '$reported'." }
+                  $signature = Get-AuthenticodeSignature $binary
+                  @{ version = "$reported"; signature = "$($signature.Status)"; signer = "$($signature.SignerCertificate.Subject)" } |
+                      ConvertTo-Json | Set-Content smoke-results/install.json
+                  "Authenticode: $($signature.Status) $($signature.SignerCertificate.Subject)" >> $env:GITHUB_STEP_SUMMARY
+                  $install >> $env:GITHUB_PATH
+                  "HAPPY_SMOKE_BINARY=$binary" >> $env:GITHUB_ENV
+            - name: Unattended guard reports setup required on a fresh profile
+              # Runs first, while this runner's per-user sandbox has never been provisioned.
+              run: node packages/happy-agent/scripts/smoke-windows-sandbox.mjs unprovisioned $env:HAPPY_SMOKE_BINARY smoke-results
+            - name: Sandbox status, setup, and status as JSON
+              id: setup
+              if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+              run: node packages/happy-agent/scripts/smoke-windows-sandbox.mjs setup $env:HAPPY_SMOKE_BINARY smoke-results
+            - name: One sandboxed command through the daemon
+              if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+              run: node packages/happy-agent/scripts/smoke-windows-sandbox.mjs command $env:HAPPY_SMOKE_BINARY smoke-results
+            - name: Idle daemon does not grow LSASS or leave sandbox folders (happy#1950)
+              if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+              run: node packages/happy-agent/scripts/smoke-windows-sandbox.mjs idle $env:HAPPY_SMOKE_BINARY smoke-results
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              if: ${{ always() }}
+              with:
+                  name: windows-agent-smoke-${{ github.run_id }}
+                  path: smoke-results/
+                  if-no-files-found: warn
+                  retention-days: 14

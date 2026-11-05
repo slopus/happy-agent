@@ -95,6 +95,15 @@ terminal input/output and reattachment, invalid-token rejection, and authenticat
 HTTP keep-alive and nested CONNECT tunnels.
 No real WorkOS account or external WorkOS request is used.
 
+`smoke-windows-sandbox.mjs` tests an installed Windows release archive the way Desktop drives
+it, with no checkout build: `unprovisioned` checks that the no-provision guard reports
+`required` and fails a sandboxed command with `windows_sandbox_setup_required` on a never
+provisioned profile; `setup` checks `sandbox status|setup --json`; `command` runs one
+`workspace_write` command through a scripted daemon and checks its output and boundary; `idle`
+watches LSASS handles, logon sessions, and `%TEMP%\happy-sandbox-*` folders while a daemon idles
+for ten minutes on a Git project with a rewritten ignored log (slopus/happy#1950). Run the phases
+in that order on a disposable elevated runner; `.github/workflows/smoke-windows-agent.yml` does.
+
 ## Native Windows 11 x64
 
 All platforms build the pinned Python worker before source workflows, Monty Code Mode tests, or
