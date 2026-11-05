@@ -1,0 +1,41 @@
+name: Temporary happy-providers check (#88)
+
+on:
+    push:
+        branches:
+            - ci/providers-check-88
+
+permissions:
+    contents: read
+
+jobs:
+    check:
+        name: happy-providers
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - name: Check out the repository
+              uses: actions/checkout@v6
+
+            - name: Set up pnpm
+              uses: pnpm/action-setup@v6
+
+            - name: Set up Node.js
+              uses: actions/setup-node@v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+
+            - name: Set up Bun
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: "1.4.4"
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Run type checks
+              run: pnpm --filter @slopus/happy-providers check
+
+            - name: Run the test suite
+              run: pnpm --filter @slopus/happy-providers test
