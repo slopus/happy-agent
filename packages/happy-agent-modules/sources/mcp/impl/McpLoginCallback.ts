@@ -1,7 +1,8 @@
-import { createServer, type Server } from "node:http";
-import { randomInt } from "node:crypto";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { randomInt, timingSafeEqual } from "node:crypto";
 
-const MAX_CALLBACK_URL_LENGTH = 16_384;
+/** The longest request target a sign-in landing has; an authorization code and state fit in it. */
+const MAX_CALLBACK_TARGET_LENGTH = 8_192;
 const PAGE = `<!doctype html><meta charset="utf-8"><title>Signed in</title><p>Signed in. You can close this tab and go back to Happy.</p>`;
 
 /**
@@ -26,21 +27,28 @@ export class McpLoginCallback {
         const received = new Promise<string>((resolve) => {
             resolveReceived = resolve;
         });
+        // Anything can connect to this port, and an exception escaping a request handler ends the
+        // daemon, so every request is answered here and nothing it sends can throw past it.
         const server = createServer((request, response) => {
-            const path = request.url ?? "/";
-            const url = new URL(path.slice(0, MAX_CALLBACK_URL_LENGTH), "http://127.0.0.1");
-            if (request.method !== "GET" || url.pathname !== "/callback") {
-                response.writeHead(404).end();
-                return;
+            try {
+                const landed = landing(request, response, state);
+                if (landed === undefined) return;
+                const address = server.address();
+                const port = address !== null && typeof address === "object" ? address.port : 0;
+                resolveReceived(`http://127.0.0.1:${String(port)}${landed}`);
+            } catch {
+                try {
+                    if (!response.headersSent) response.writeHead(500);
+                    response.end();
+                } catch {
+                    request.socket.destroy();
+                }
             }
-            if (url.searchParams.get("state") !== state) {
-                response.writeHead(400, { "content-type": "text/plain" }).end("Unknown sign-in.");
-                return;
-            }
-            response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(PAGE);
-            const address = server.address();
-            const port = address !== null && typeof address === "object" ? address.port : 0;
-            resolveReceived(`http://127.0.0.1:${String(port)}${path}`);
+        });
+        server.on("clientError", (_error, socket) => {
+            if (socket.writable)
+                socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+            else socket.destroy();
         });
         const port = await new Promise<number | undefined>((resolve) => {
             server.once("error", () => resolve(undefined));
@@ -50,6 +58,8 @@ export class McpLoginCallback {
             });
         });
         if (port !== undefined) {
+            // A failure to accept a connection must not reach the process either.
+            server.on("error", () => undefined);
             server.unref();
             return new McpLoginCallback(port, server, received);
         }
@@ -63,4 +73,44 @@ export class McpLoginCallback {
         this.#server?.closeAllConnections();
         this.#server?.close();
     }
+}
+
+/**
+ * Answer one request, and return its target when it is this sign-in landing. Only an origin-form
+ * target, a single path from this server's root, is parsed; `//host`, absolute-form, and `*`
+ * targets are not a browser landing here and are refused before parsing.
+ */
+function landing(
+    request: IncomingMessage,
+    response: ServerResponse,
+    state: string,
+): string | undefined {
+    const target = request.url ?? "";
+    if (target.length > MAX_CALLBACK_TARGET_LENGTH) return reply(response, 414);
+    if (!target.startsWith("/") || target.startsWith("//")) return reply(response, 400);
+    let url: URL;
+    try {
+        url = new URL(target, "http://127.0.0.1");
+    } catch {
+        return reply(response, 400);
+    }
+    if (url.pathname !== "/callback") return reply(response, 404);
+    if (request.method !== "GET") return reply(response, 405);
+    if (!sameState(url.searchParams.get("state"), state)) {
+        return reply(response, 400, "Unknown sign-in.");
+    }
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(PAGE);
+    return target;
+}
+
+function reply(response: ServerResponse, status: number, text?: string): undefined {
+    response.writeHead(status, { "content-type": "text/plain", connection: "close" }).end(text);
+    return undefined;
+}
+
+function sameState(given: string | null, expected: string): boolean {
+    if (given === null) return false;
+    const left = Buffer.from(given);
+    const right = Buffer.from(expected);
+    return left.length === right.length && timingSafeEqual(left, right);
 }
