@@ -87,6 +87,56 @@ export const artifactLiveSchema = Type.Object({
 });
 export type ArtifactLive = Static<typeof artifactLiveSchema>;
 
+/**
+ * Post-like plain text a client shows under the title, like a tweet or a short post: trimmed, with
+ * `\n` line breaks and no other control characters, and no Markdown. At most 5,000 characters,
+ * counted as code points; the schema bounds UTF-16 units. Clients may linkify `http(s)` URLs.
+ */
+export const artifactSummarySchema = Type.String({
+    maxLength: 10_000,
+    minLength: 1,
+    pattern: "^(?!\\s)(?![\\s\\S]*\\s$)[^\\x00-\\x09\\x0b-\\x1f\\x7f-\\x9f\\u2028\\u2029]+$",
+});
+export type ArtifactSummary = Static<typeof artifactSummarySchema>;
+
+/**
+ * A summary as a request writes it. The daemon turns CRLF into `\n`, trims it, and refuses one
+ * that is then empty, over 5,000 characters, or holds another control character.
+ */
+export const artifactSummaryInputSchema = Type.String({ maxLength: 20_000, minLength: 1 });
+
+/**
+ * A cover's standard shape: `"wide"` (16:9) or `"square"` (1:1). The set may grow; a client that
+ * meets a shape it does not know shows the artifact without its cover.
+ */
+export const artifactCoverAspectSchema = Type.Union([
+    Type.Literal("wide"),
+    Type.Literal("square"),
+    Type.String(),
+]);
+export type ArtifactCoverAspect = Static<typeof artifactCoverAspectSchema>;
+
+/**
+ * The image a feed shows for a version, full width: one of the version's files, served by the
+ * file route, with its intrinsic size in pixels decoded by the daemon and the standard shape that
+ * size matches. Always a raster image, at most 4096 pixels a side.
+ */
+export const artifactCoverSchema = Type.Object({
+    /** One of `image/png`, `image/jpeg`, `image/webp`, or `image/gif`. */
+    mimeType: Type.String(),
+    /** The file's `path` in the same version. */
+    path: artifactPathSchema,
+    width: Type.Integer({ minimum: 1 }),
+    height: Type.Integer({ minimum: 1 }),
+    aspect: artifactCoverAspectSchema,
+    /**
+     * The first frame's ThumbHash in base64, drawn while the image loads: `null` when the daemon
+     * could not decode it, and absent on older daemons.
+     */
+    thumbhash: Type.Optional(Nullable(Type.String())),
+});
+export type ArtifactCover = Static<typeof artifactCoverSchema>;
+
 /** A background as a request names it: the same colours in either case, or `null` for none. */
 export const artifactBackgroundInputSchema = Nullable(
     Type.String({ pattern: "^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$" }),
@@ -95,7 +145,18 @@ export const artifactBackgroundInputSchema = Nullable(
 /** A lowercase hexadecimal SHA-256 digest. */
 export const artifactSha256Schema = Type.String({ pattern: "^[0-9a-f]{64}$" });
 
-/** One file of one version. Equal digests mean equal content. */
+/** The pixel size of a file's still preview, served by the preview route. */
+export const artifactFilePreviewSchema = Type.Object({
+    width: Type.Integer({ minimum: 1 }),
+    height: Type.Integer({ minimum: 1 }),
+});
+export type ArtifactFilePreview = Static<typeof artifactFilePreviewSchema>;
+
+/**
+ * One file of one version. Equal digests mean equal content. The daemon measures the pictures of
+ * image and image series versions, every cover, and a video artifact's video; each measurement is
+ * optional, absent when the daemon could not take it and on older daemons.
+ */
 export const artifactFileSchema = Type.Object({
     /** Decided by the daemon from the path's extension; `application/octet-stream` when unknown. */
     mimeType: Type.String(),
@@ -103,6 +164,18 @@ export const artifactFileSchema = Type.Object({
     sha256: artifactSha256Schema,
     /** Bytes, at least 1. */
     size: Type.Integer({ minimum: 1 }),
+    /** The picture's or video's pixel size as displayed, after EXIF orientation or rotation. */
+    width: Type.Optional(Type.Integer({ minimum: 1 })),
+    height: Type.Optional(Type.Integer({ minimum: 1 })),
+    /** A video's length in whole milliseconds. */
+    durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    /** The first frame's ThumbHash in standard base64, at most 128 characters. */
+    thumbhash: Type.Optional(Type.String({ maxLength: 128, minLength: 1 })),
+    /**
+     * A still WebP of the first frame, a video's poster included, fitted within 640×640 and never
+     * enlarged; load it with `artifactPreviewUrl` or `getArtifactPreview`.
+     */
+    preview: Type.Optional(artifactFilePreviewSchema),
 });
 export type ArtifactFile = Static<typeof artifactFileSchema>;
 
@@ -180,6 +253,8 @@ export type ArtifactAuthorKind = ArtifactAuthor["kind"];
 export const artifactSchema = Type.Object({
     /** The latest version's background; `null` for a transparent slot, absent on older daemons. */
     background: Type.Optional(Nullable(artifactBackgroundSchema)),
+    /** The latest version's cover; `null` for none, absent on older daemons. */
+    cover: Type.Optional(Nullable(artifactCoverSchema)),
     createdAt: timestampSchema,
     createdBy: artifactAuthorSchema,
     deletedAt: Nullable(timestampSchema),
@@ -205,6 +280,8 @@ export const artifactSchema = Type.Object({
     /** Where the artifact was created. */
     source: Nullable(artifactSourceSchema),
     status: Type.Union([Type.Literal("active"), Type.Literal("deleted")]),
+    /** The latest version's summary; `null` for none, absent on older daemons. */
+    summary: Type.Optional(Nullable(artifactSummarySchema)),
     title: artifactTitleSchema,
     type: artifactTypeSchema,
     updatedAt: timestampSchema,
@@ -220,6 +297,8 @@ export const artifactVersionSchema = Type.Object({
     artifactId: cuid2Schema,
     /** The colour behind this version's content; `null` for a transparent slot, absent on older daemons. */
     background: Type.Optional(Nullable(artifactBackgroundSchema)),
+    /** The image a feed shows for this version; `null` for none, absent on older daemons. */
+    cover: Type.Optional(Nullable(artifactCoverSchema)),
     createdAt: timestampSchema,
     createdBy: artifactAuthorSchema,
     /** How this version's author wants it shown; `null` leaves it to the client, absent on older daemons. */
@@ -237,6 +316,8 @@ export const artifactVersionSchema = Type.Object({
     /** The version's identity within its artifact, from 1, whatever its label. */
     number: Type.Integer({ minimum: 1 }),
     source: Nullable(artifactSourceSchema),
+    /** Post-like text shown under the title; `null` for none, absent on older daemons. */
+    summary: Type.Optional(Nullable(artifactSummarySchema)),
     title: artifactTitleSchema,
 });
 export type ArtifactVersion = Static<typeof artifactVersionSchema>;
@@ -351,12 +432,19 @@ export type ArtifactFileInput = Static<typeof artifactFileInputSchema>;
 export const createArtifactRequestSchema = Type.Object({
     /** The first version's background. Leave it out unless the content needs one fixed canvas. */
     background: Type.Optional(artifactBackgroundInputSchema),
+    /**
+     * The path of the first version's cover among `files`, or `null` for none. Absent takes the
+     * type's default: an image's own file or an image series' first, and none for other types.
+     */
+    cover: Type.Optional(Nullable(artifactPathSchema)),
     /** Every file of the first version, in any order. */
     files: Type.Array(artifactFileInputSchema, { maxItems: 256, minItems: 1 }),
     /** The retry key: repeating it returns the existing artifact unchanged. */
     id: Type.Optional(cuid2Schema),
     mutationId: Type.Optional(mutationIdSchema),
     source: Type.Optional(artifactSourceInputSchema),
+    /** The first version's summary; absent or `null` for none. */
+    summary: Type.Optional(Nullable(artifactSummaryInputSchema)),
     title: artifactTitleSchema,
     type: artifactTypeSchema,
 });
@@ -364,13 +452,18 @@ export type CreateArtifactRequest = Static<typeof createArtifactRequestSchema>;
 
 /**
  * `PATCH /v0/artifacts/:artifactId` — requires `If-Match` and at least one of `title`,
- * `background`, `files`, `remove`, `replaceAll`, and `major`. The new version starts from the
+ * `background`, `cover`, `summary`, `files`, `remove`, `replaceAll`, and `major`. The new version starts from the
  * latest one's files, or from none with `replaceAll`; `files` adds or replaces paths and `remove`
  * takes paths out.
  */
 export const updateArtifactRequestSchema = Type.Object({
     /** A colour sets the new version's background, `null` clears it, and absent keeps it. */
     background: Type.Optional(artifactBackgroundInputSchema),
+    /**
+     * A path in the new version sets its cover, `null` clears it, and absent keeps it; the kept
+     * cover's file must stay in the version.
+     */
+    cover: Type.Optional(Nullable(artifactPathSchema)),
     files: Type.Optional(Type.Array(artifactFileInputSchema, { maxItems: 256 })),
     /**
      * Make the new version this major version, `major.0`: exactly one more than the latest
@@ -382,6 +475,8 @@ export const updateArtifactRequestSchema = Type.Object({
     replaceAll: Type.Optional(Type.Boolean()),
     /** Where this change is being made. */
     source: Type.Optional(artifactSourceInputSchema),
+    /** Text sets the new version's summary, `null` clears it, and absent keeps it. */
+    summary: Type.Optional(Nullable(artifactSummaryInputSchema)),
     title: Type.Optional(artifactTitleSchema),
 });
 export type UpdateArtifactRequest = Static<typeof updateArtifactRequestSchema>;

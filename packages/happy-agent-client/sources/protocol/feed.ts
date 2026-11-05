@@ -147,6 +147,12 @@ export const feedQuerySchema = Type.Object(
         before: Type.Optional(feedCursorSchema),
         /** 1–200, default 50. */
         limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+        /**
+         * List only entries about these subject types, such as `["artifact", "task"]`; sent as one
+         * comma-separated `subjects`. An unknown type matches nothing. Daemons with
+         * `capabilities.feedSubjectFilter`.
+         */
+        subjects: Type.Optional(Type.Array(feedSubjectTypeSchema, { maxItems: 32 })),
     },
     { additionalProperties: false },
 );
@@ -158,6 +164,8 @@ export const feedResponseSchema = Type.Object({
     items: Type.Array(feedItemSchema),
     /** How many of the caller's entries are open. */
     unread: Type.Integer({ minimum: 0 }),
+    /** With `subjects`, how many open entries are about those types; absent without a filter. */
+    filteredUnread: Type.Optional(Type.Integer({ minimum: 0 })),
     /** Whether older entries exist beyond this page. */
     hasMore: Type.Boolean(),
     /** The event cursor captured before reading; follow `feed.*` events from it. */
@@ -198,6 +206,11 @@ export const feedReadAllRequestSchema = Type.Object(
     {
         /** Only entries whose `cursor` is not newer close. */
         through: Type.Optional(feedCursorSchema),
+        /**
+         * Only entries about these subject types close. Daemons with
+         * `capabilities.feedSubjectFilter`.
+         */
+        subjects: Type.Optional(Type.Array(feedSubjectTypeSchema, { maxItems: 32 })),
         mutationId: Type.Optional(mutationIdSchema),
     },
     { additionalProperties: false },

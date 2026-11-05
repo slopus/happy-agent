@@ -8,6 +8,7 @@ import {
     artifactPathSchema,
     artifactResponseSchema,
     artifactSchema,
+    artifactSummarySchema,
     artifactUploadResponseSchema,
     artifactVersionListResponseSchema,
     artifactVersionSchema,
@@ -345,6 +346,133 @@ describe("artifacts protocol", () => {
                 version: nextVersion,
             }),
         ).toBe(true);
+    });
+
+    it("carries a raster cover with its size and a one-line summary, absent on older daemons", () => {
+        const cover = {
+            path: "cover.png",
+            mimeType: "image/png",
+            width: 1600,
+            height: 900,
+            aspect: "wide",
+            thumbhash: "1QcSHQRnh493V4dIh4eXh1h4kJUI",
+        };
+        expect(
+            Value.Check(artifactSchema, { ...artifact, cover: { ...cover, thumbhash: null } }),
+        ).toBe(true);
+        const { thumbhash: _thumbhash, ...olderCover } = cover;
+        expect(Value.Check(artifactSchema, { ...artifact, cover: olderCover })).toBe(true);
+        expect(
+            Value.Check(artifactSchema, { ...artifact, cover: { ...cover, aspect: "tall" } }),
+        ).toBe(true);
+        const summary = "Revenue up 18% QoQ, driven by enterprise seats.";
+        expect(Value.Check(artifactSchema, { ...artifact, cover, summary })).toBe(true);
+        expect(Value.Check(artifactSchema, { ...artifact, cover: null, summary: null })).toBe(true);
+        expect(Value.Check(artifactSchema, artifact)).toBe(true);
+        expect(Value.Check(artifactVersionSchema, { ...firstVersion, cover, summary })).toBe(true);
+        expect(
+            Value.Check(artifactVersionSchema, { ...firstVersion, cover: { path: "c.png" } }),
+        ).toBe(false);
+        for (const bad of ["", " ", " padded", "trailing\n", "tab\there", "cr\r\nlf"]) {
+            expect(Value.Check(artifactSummarySchema, bad)).toBe(false);
+        }
+        expect(Value.Check(artifactSummarySchema, "Q3 grew 18%.\n\nChurn fell to 2.1%.")).toBe(
+            true,
+        );
+        expect(Value.Check(artifactSummarySchema, "a".repeat(5000))).toBe(true);
+        expect(
+            Value.Check(updateArtifactRequestSchema, { summary: "  Two lines\r\nof text  " }),
+        ).toBe(true);
+        expect(
+            Value.Check(createArtifactRequestSchema, {
+                type: "markdown",
+                title: "Q3",
+                files: [{ path: "index.md", text: "# Q3" }],
+                cover: "cover.png",
+                summary,
+            }),
+        ).toBe(true);
+        expect(Value.Check(updateArtifactRequestSchema, { cover: null, summary: null })).toBe(true);
+        expect(Value.Check(updateArtifactRequestSchema, { cover: "../escape.png" })).toBe(false);
+        expect(
+            Value.Check(artifactUpdatedChangesSchema, {
+                entry,
+                fileCount: 2,
+                latestVersion: 2,
+                size: artifact.size,
+                title: artifact.title,
+                updatedAt: createdAt + 1,
+                updatedBy: artifact.updatedBy,
+                updatedSource: artifact.updatedSource,
+                cover,
+                summary: null,
+            }),
+        ).toBe(true);
+    });
+
+    it("carries media metadata and previews on files, all optional for older daemons", async () => {
+        const picture = {
+            ...chart,
+            width: 1600,
+            height: 900,
+            thumbhash: "1QcSHQRnh493V4dIh4eXh1h4kJUI",
+            preview: { width: 640, height: 360 },
+        };
+        const clip = {
+            mimeType: "video/mp4",
+            path: "clip.mp4",
+            sha256,
+            size: 3,
+            width: 1080,
+            height: 1920,
+            durationMs: 12_500,
+            thumbhash: "1QcSHQRnh493V4dIh4eXh1h4kJUI",
+            preview: { width: 360, height: 640 },
+        };
+        const measured = { ...firstVersion, entry: picture, files: [picture, entry] };
+        expect(Value.Check(artifactVersionSchema, measured)).toBe(true);
+        expect(
+            Value.Check(artifactVersionSchema, { ...firstVersion, entry: clip, files: [clip] }),
+        ).toBe(true);
+        expect(Value.Check(artifactVersionSchema, firstVersion)).toBe(true);
+        for (const broken of [
+            { ...picture, width: 0 },
+            { ...picture, preview: { width: 640 } },
+            { ...picture, thumbhash: "x".repeat(129) },
+            { ...clip, durationMs: -1 },
+        ]) {
+            expect(
+                Value.Check(artifactVersionSchema, {
+                    ...firstVersion,
+                    entry: broken,
+                    files: [broken],
+                }),
+            ).toBe(false);
+        }
+
+        const requests: { headers: Headers; url: string }[] = [];
+        const fetch: typeof globalThis.fetch = async (input, init) => {
+            const headers = new Headers(init?.headers);
+            requests.push({ headers, url: input.toString() });
+            if (headers.get("if-none-match") === '"preview"')
+                return new Response(null, { status: 304 });
+            return new Response(new Uint8Array([7]), {
+                headers: { "content-type": "image/webp", etag: '"preview"' },
+                status: 200,
+            });
+        };
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+        expect(client.artifactPreviewUrl("artifact1", 2, "Bilder/Übersicht 1.png")).toBe(
+            "http://agent.local/v0/artifacts/artifact1/versions/2/previews/Bilder/%C3%9Cbersicht%201.png",
+        );
+        const preview = await client.getArtifactPreview("artifact1", "latest", "clip.mp4");
+        expect(preview).toMatchObject({ contentType: "image/webp", etag: '"preview"' });
+        expect(requests[0]?.url).toBe(
+            "http://agent.local/v0/artifacts/artifact1/versions/latest/previews/clip.mp4",
+        );
+        await expect(
+            client.getArtifactPreview("artifact1", 2, "clip.mp4", { ifNoneMatch: '"preview"' }),
+        ).resolves.toBeNull();
     });
 
     it("accepts relative file paths and refuses every way out of the artifact", () => {

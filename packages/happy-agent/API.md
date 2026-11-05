@@ -696,6 +696,28 @@ types, and no longer reports `stemCellIdentities`, `sidebarOperations`, `sidebar
 from bots, tasks, and Surfaces, and run their own onboarding against `GET /v0/onboarding` and
 `POST /v0/onboarding/complete`.
 
+Artifact covers and summaries are additive and do not increment the protocol version. A daemon
+that has them reports `capabilities.artifactCovers: true` from health and always includes `cover`
+and `summary` on artifact and version objects, `null` when unset, and in the `changes` of
+`artifact.updated`. Older compatible daemons omit both fields and the capability, and ignore a
+`cover` or `summary` sent to them; a client treats a missing field as `null` and shows every
+artifact without a cover or summary.
+
+Artifact media metadata and previews are additive and do not increment the protocol version. A
+daemon that has them includes `width`, `height`, `durationMs`, `thumbhash`, and `preview` on the
+artifact file objects it measured, as described under "Media metadata" in Artifacts, and serves
+`GET /v0/artifacts/:artifactId/versions/:number/previews/*path`. Older compatible daemons omit the
+fields and answer the preview route `404`; a client then falls back to the whole file or the type's
+glyph.
+
+The Feed subject filter is additive and does not increment the protocol version. A daemon that has
+it reports `capabilities.feedSubjectFilter: true` from health, accepts `subjects` on `GET /v0/feed`
+and `POST /v0/feed/read-all`, and adds `filteredUnread` to a filtered page. Older compatible
+daemons omit the capability, ignore the query parameter, and refuse `subjects` in the read-all body
+with `400`. A client that meets such a daemon filters the pages it already holds itself, keeps
+paging until it fills a screen, and closes a filtered view's entries with `POST /v0/feed/seen`
+instead of read-all.
+
 Drain intent is additive and does not increment the protocol version. A daemon that supports it
 accepts the optional `POST /v0/drain` body and includes `drain` in the drain response, health, the
 `hello` frame, and the `daemon.draining` event, as described under Daemon lifecycle. Older
@@ -1510,6 +1532,9 @@ Fields:
   `providerRoutes: true` advertises the routes under `/v0/provider-routes`, described under
   Provider routes. `webSocketTunnels: true` advertises the WebSocket twins of the proxy tunnels,
   described under WebSocket tunnels, and the WebSocket keepalive pings described under Keepalive.
+  `artifactCovers: true` advertises artifact `cover` and `summary`, described under Artifacts.
+  `feedSubjectFilter: true` advertises `subjects` on `GET /v0/feed` and
+  `POST /v0/feed/read-all`, described under Feed.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
   It is a CUID2 of exactly 24 characters matching `^[a-z][a-z0-9]{23}$`, generated once and
   persisted with the installation's data, so it survives restarts and upgrades. It is reported
@@ -11846,13 +11871,13 @@ machine to keep in step, so the tools are the same for every agent, whichever mo
 whoever executes its other tools. They take the artifact's `artifactId` and a `path` inside it,
 under the file object's path rules below, and otherwise follow the file tools agents already know:
 
-| Tool                  | Arguments                                                                         | Does                                                                                    |
-| --------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `create_artifact`     | `type`, `title`, `display`, `background`, `content`, `files`, `url`               | Issues the artifact's ID and makes version 1.0                                          |
-| `write_artifact_file` | `artifactId`, `path`, `content`                                                   | Writes one whole text file, adding it or replacing the one there                        |
-| `edit_artifact_file`  | `artifactId`, `path`, `old_string`, `new_string`, `replace_all`                   | Replaces exact text in one text file of the latest version                              |
-| `read_artifact_file`  | `artifactId`, `path`, `version`, `offset`, `limit`                                | Reads a text file as numbered lines, or shows an image                                  |
-| `update_artifact`     | `artifactId`, `title`, `display`, `background`, `files`, `remove`, `major`, `url` | Changes metadata or a live URL, copies files in, removes files, bumps the major version |
+| Tool                  | Arguments                                                                                             | Does                                                                                    |
+| --------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `create_artifact`     | `type`, `title`, `display`, `background`, `cover`, `summary`, `content`, `files`, `url`               | Issues the artifact's ID and makes version 1.0                                          |
+| `write_artifact_file` | `artifactId`, `path`, `content`                                                                       | Writes one whole text file, adding it or replacing the one there                        |
+| `edit_artifact_file`  | `artifactId`, `path`, `old_string`, `new_string`, `replace_all`                                       | Replaces exact text in one text file of the latest version                              |
+| `read_artifact_file`  | `artifactId`, `path`, `version`, `offset`, `limit`                                                    | Reads a text file as numbered lines, or shows an image                                  |
+| `update_artifact`     | `artifactId`, `title`, `display`, `background`, `cover`, `summary`, `files`, `remove`, `major`, `url` | Changes metadata or a live URL, copies files in, removes files, bumps the major version |
 
 The daemon issues every artifact's ID in `create_artifact`; the model never chooses one. For a
 Markdown or HTML artifact, optional `content` supplies the complete UTF-8 text of `index.md` or
@@ -12052,7 +12077,8 @@ A new file-content version starts from the files of the latest one and adds, rep
 files, so files that did not change carry over without being sent again; it may also replace every
 file at once. An update that changes only the title or the background makes a new version holding
 the same files. The artifact object mirrors its latest version in `latestVersion`, `latestMajor`,
-`latestMinor`, `title`, `entry`, `fileCount`, `size`, `background`, `display`, and `live`, records
+`latestMinor`, `title`, `entry`, `fileCount`, `size`, `background`, `display`, `cover`, `summary`,
+and `live`, records
 its creation in `source`, `createdBy`, and `createdAt`, and its latest change in `updatedBy`,
 `updatedSource`, and `updatedAt`.
 
@@ -12087,6 +12113,66 @@ shown at and never caps it or scrolls inside it, so a page that needs scrolling 
 beside the chat. The page is laid on the conversation's own surface, with no frame or background of
 its own unless the version names a `background`, and the client gives it the conversation's color
 scheme, light or dark, as its `color-scheme`. The standard styles below make that the default.
+
+**Covers and summaries.** A version may have a `cover`, an image that sums it up where artifacts
+are listed, such as the Feed, which shows it full width under the title as a post. The artifact
+draws everything into the image itself — a title card with the headline, the key number, or the
+main chart — and clients draw nothing of their own over it. A version may also have a `summary`,
+post-like plain text a client shows under the title.
+
+- A cover is one of the version's own files, named by its `path`. The daemon decodes it and
+  records its `mimeType`, its intrinsic `width` and `height` in pixels, as shown after any EXIF
+  rotation, and the standard `aspect` that size matches, so a client lays out the post before it
+  loads the image. It also records a `thumbhash` of the first frame, base64 in the same format as
+  chat media and pictures, which a client draws until the image loads; it is `null` when the daemon
+  could not decode the pixels, which is not an error. A client loads it through the file route,
+  `GET /v0/artifacts/:artifactId/versions/:number/files/<path>`, at the version it shows.
+- A cover has one of two standard shapes, so it looks the same everywhere:
+
+    | `aspect`   | Shape | Recommended size | Smallest |
+    | ---------- | ----- | ---------------- | -------- |
+    | `"wide"`   | 16:9  | 1600×900         | 960×540  |
+    | `"square"` | 1:1   | 1200×1200        | 720×720  |
+
+    A size matches a shape when `width / height` is within 2% of its ratio. Each side is at most
+    4,096 pixels. Any other shape or size is refused with a message naming both shapes and their
+    recommended sizes. The set of aspects may grow; a client that meets an `aspect` it does not know
+    shows the artifact without its cover.
+
+- A cover is a raster image: `image/png`, `image/jpeg`, `image/webp`, or `image/gif`, decided by
+  its path's extension, and its bytes must be that format. WebP, still or animated, is the preferred
+  format; a GIF is accepted but should be converted to an animated WebP first, for example with
+  `ffmpeg -i in.gif -c:v libwebp -loop 0 -q:v 75 cover.webp`. An animated cover plays where a client
+  shows it; there is no separate flag for it. The size of a WebP or GIF comes from its container
+  header, the canvas of an extended WebP or a GIF's logical screen, so an animation is measured
+  without decoding every frame. SVG is refused, because not every client can draw one: render it to
+  WebP or PNG first. The file is at most 32 MiB.
+- A summary is post-like plain text, as in a tweet or a short post: what the artifact is and its
+  key takeaway, in a few sentences. The daemon turns CRLF line ends into `\n` and trims the text;
+  it must then hold 1–5,000 characters, counted as Unicode code points, and no control characters
+  (U+0000–U+001F, U+007F–U+009F) other than `\n`, nor a Unicode line or paragraph separator.
+  It is never Markdown: clients show it as text, keeping its line breaks, and may linkify
+  `http(s)` URLs. The stored text is what every response returns.
+- A cover or summary that breaks these rules is `400 invalid_request` with a message saying which
+  rule, and no version is made.
+- A new version keeps the latest version's cover path and summary unless the change names new ones
+  or clears them with `null`. The daemon decodes the kept cover again for every version, because
+  its file may have been replaced; if the version no longer holds the cover's file, or the new file
+  breaks the rules, the change is refused unless it also names another cover or clears it. So a
+  change that removes or replaces the cover's file through `remove`, `replaceAll`, `files`, or the
+  artifact file tools must name a cover or clear it at the same time.
+- An `image` artifact's cover is its own file, and an `image_series` artifact's its first file,
+  unless a change names another cover or clears it. Such a default follows the files: a version that
+  replaces the picture takes the new one as its cover. A default picture the rules refuse, such as
+  an SVG or a picture of neither standard shape, leaves the version without a cover, and that is not
+  an error. Once a cover is cleared or named, it stays that way. Every other type has no cover unless
+  one is named. Images and image series made before covers existed take their default from their
+  next version on.
+- A live-URL artifact holds no files a cover could be, so naming a cover for one is
+  `400 invalid_request`; it may have a summary.
+
+Agents give a cover and summary to reports, analyses, and results people would want to see in the
+Feed; the artifact tools tell them so. Scratch and utility artifacts usually have neither.
 
 **Deletion.** Deleting leaves a tombstone. `status` becomes `"deleted"`, `deletedBy`,
 `deletedSource`, and `deletedAt` record the deletion, which is also the artifact's latest change,
@@ -12123,6 +12209,15 @@ updating or deleting an artifact requires `If-Match` with it.
     "size": 412870,
     "background": null,
     "display": "inline_expanded",
+    "cover": {
+        "path": "cover.webp",
+        "mimeType": "image/webp",
+        "width": 1600,
+        "height": 900,
+        "aspect": "wide",
+        "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI"
+    },
+    "summary": "Revenue up 18% QoQ, driven by enterprise seats.",
     "live": null,
     "source": {
         "kind": "workspace",
@@ -12157,6 +12252,10 @@ Fields:
   files themselves are listed by the version.
 - `background` — the latest version's background, or `null` for a transparent slot.
 - `display` — the latest version's display preference, or `null` to leave it to the client.
+- `cover` — the latest version's cover, `{ "path", "mimeType", "width", "height", "aspect",
+"thumbhash" }`, or
+  `null` for none; see "Covers and summaries". Absent on older daemons.
+- `summary` — the latest version's summary, or `null` for none. Absent on older daemons.
 - `live` — the latest version's `{ "url", "networkId" }`, or `null` for file content. Absent on
   older daemons. When present and non-null, it takes precedence over `entry`; see "Live URLs".
 - `source` — where the artifact was created, or `null`.
@@ -12185,6 +12284,15 @@ Fields:
     ],
     "background": null,
     "display": "inline_expanded",
+    "cover": {
+        "path": "cover.webp",
+        "mimeType": "image/webp",
+        "width": 1600,
+        "height": 900,
+        "aspect": "wide",
+        "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI"
+    },
+    "summary": "Revenue up 18% QoQ, driven by enterprise seats.",
     "live": null,
     "createdBy": { "kind": "user", "userId": "u1x2y3z4a5b6c7d8e9f0g1h2" },
     "source": null,
@@ -12198,6 +12306,15 @@ Fields:
   manifest, ordered by `path` in Unicode code point order; `entry` is one of them.
 - `background` — the colour behind this version's content, or `null` for a transparent slot.
 - `display` — how this version's author wants it shown, or `null` to leave it to the client.
+- `cover` — this version's cover, `{ "path", "mimeType", "width", "height", "aspect", "thumbhash" }`,
+  or `null` for none. `path` is one of `files`; `width` and `height` are the pixel size, `aspect` is
+  `"wide"` or `"square"`, a set that may grow, and `thumbhash` is the base64 ThumbHash of its first
+  frame or `null` when it could not be decoded. The daemon computes the ThumbHash when the version is
+  made and reuses it while the cover's path and digest are unchanged; versions made before ThumbHashes
+  existed keep `null` until the next version. `thumbhash` is absent on older daemons, and `cover`
+  itself is absent on still older ones.
+- `summary` — this version's summary, post-like plain text with `\n` line breaks, or `null` for
+  none. Absent on older daemons.
 - `live` — this version's `{ "url", "networkId" }`, or `null` for file content. Absent on older
   daemons. The URL may change between versions; the artifact's network never does.
 - `createdBy`, `source`, `createdAt` — who made this version, where, and when.
@@ -12209,7 +12326,11 @@ Fields:
     "path": "images/chart.png",
     "mimeType": "image/png",
     "size": 48213,
-    "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+    "sha256": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+    "width": 1600,
+    "height": 900,
+    "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI",
+    "preview": { "width": 640, "height": 360 }
 }
 ```
 
@@ -12220,6 +12341,44 @@ Fields:
 - `mimeType` — the media type the daemon decided from the path's extension.
 - `size` — the length in bytes, at least 1.
 - `sha256` — the lowercase hexadecimal SHA-256 of the bytes. Equal digests mean equal content.
+- `width`, `height` — optional; the picture's or video's positive pixel size as displayed, after
+  EXIF orientation or a video's rotation. See "Media metadata" below.
+- `durationMs` — optional; a video's length in whole milliseconds.
+- `thumbhash` — optional; the standard base64 encoding of a
+  [ThumbHash](https://evanw.github.io/thumbhash/) placeholder of the first frame, at most 128
+  characters, in the same format as chat `media` items.
+- `preview` — optional; `{ "width", "height" }`, the pixel size of the still preview served by
+  `GET /v0/artifacts/:artifactId/versions/:number/previews/*path`. Present only when the daemon
+  made one.
+
+**Media metadata.** The daemon measures the files people show as pictures and videos, as it does
+for chat `media` items, so a client lays them out and shows a placeholder before any bytes load:
+
+- Every image file of an `image` or `image_series` version, and every version's cover file of any
+  type, gets `width`, `height`, and `thumbhash` when the daemon can decode it: PNG, JPEG, GIF,
+  WebP, or AVIF, still or animated. SVG files get none. The size of a WebP or GIF comes from its
+  container header, like a cover's.
+- The video file of a `video` artifact gets `width`, `height`, `durationMs`, and `thumbhash`, and a
+  poster taken from its first frame, when the daemon's host has `ffprobe` and `ffmpeg` on its
+  `PATH`. The daemon runs them itself on its stored copy of the file, whichever client or agent
+  made the version, and gives each at most 15 seconds. Without them, or when they fail, the fields
+  are absent. The poster itself is not served; its preview is.
+- Each of those pictures and each poster gets a `preview`: a still WebP of the first frame, fitted
+  within 640×640 pixels and never enlarged, so a list or grid shows a small image instead of the
+  whole file. The daemon stores each preview once per source digest.
+
+The daemon measures a file when the version that places it is made, and reuses what it measured
+for the same digest and media type in later versions and other artifacts. A file that cannot be
+measured simply lacks the fields; it never refuses the version. Versions made before media
+metadata existed have none, and their kept files get it from the next version on. A client treats
+every one of these fields as optional, because older daemons omit them all.
+
+A client showing an artifact in a list or grid loads a preview rather than the whole file: the
+cover's when there is a cover, otherwise its media file's (an image's picture, an image series'
+first picture, a video's poster), with that file's `thumbhash` as the placeholder, and the type's
+glyph when there is neither. A Feed post still loads the whole cover, which may be animated, with the
+cover's `thumbhash` as its placeholder. A video viewer shows the poster preview until playback
+starts.
 
 The extensions the daemon knows, case-insensitively:
 
@@ -12373,6 +12532,19 @@ than `latest` for a page, so the entry and its files always come from the same v
 rendering a `markdown` entry itself resolves each relative link or image against the entry's URL
 the same way and loads it through this route.
 
+### `GET /v0/artifacts/:artifactId/versions/:number/previews/*path`
+
+The still preview of one file of one version: the picture's, the cover's, or the video poster's,
+as the file's `preview` describes. `number` and `path` name the source file exactly as on the file
+route, with the same decoding and the same `404` for any name the version does not hold. The
+response is the preview's bytes with `Content-Type: image/webp` and `Content-Length`; `ETag`,
+`If-None-Match`, `Cache-Control`, `Vary`, `X-Content-Type-Options`, and `Content-Security-Policy`
+behave as on the file route, and `Content-Disposition: inline` carries the source's name with a
+`.webp` extension. It takes no `Range`.
+
+`404` when the artifact, the version, or the file does not exist, when the artifact is deleted, or
+when the file has no `preview`.
+
 ### `POST /v0/artifact-uploads`
 
 Uploads one file's bytes for a later creation or update. The body is the raw bytes, not JSON; its
@@ -12440,10 +12612,15 @@ Request:
 - `files` — required, 1–256 version files, as described above: every file of the first version.
 - `background` — optional; the first version's background, as described above. Omitted or `null`
   means none. Leave it out unless the content needs one fixed canvas.
+- `cover` — optional; the `path` of the first version's cover among `files`, such as
+  `"cover.webp"`, or `null` for none. Omitted takes the type's default: an `image`'s own file or an
+  `image_series`' first, and none for other types. See "Covers and summaries".
+- `summary` — optional; the first version's summary. Omitted or `null` means none.
 
 The first version's `display` is `null`.
 
-A `background` that is not such a colour is `400 invalid_request`. Files that break the type's
+A `background` that is not such a colour is `400 invalid_request`, as is a cover or summary that
+breaks the rules under "Covers and summaries". Files that break the type's
 rules — a missing entry, too many or too few files, a media type the type does not accept, a file
 or total over its limit, an entry that is not valid UTF-8, an invalid path, or a path that is also
 a folder — are `400 invalid_request`. An upload that does not exist,
@@ -12469,18 +12646,23 @@ Request:
     "files": [{ "path": "images/chart.png", "uploadId": "u9q3m5p7b2e4f6g8h1j3k5l7" }],
     "remove": ["images/old-chart.png"],
     "replaceAll": false,
+    "cover": "images/chart.png",
+    "summary": "Revenue up 21% QoQ after the late enterprise deals.",
     "major": 2
 }
 ```
 
-Every field is optional, but at least one of `title`, `background`, `files`, `remove`,
-`replaceAll`, and `major` is required. The new version starts from the latest version's files, or
+Every field is optional, but at least one of `title`, `background`, `cover`, `summary`, `files`,
+`remove`, `replaceAll`, and `major` is required. The new version starts from the latest version's files, or
 from none when `replaceAll` is `true`. `files`, up to 256 version files, then adds each path or replaces the
 file already there, and `remove`, up to 256 paths, takes files out. A path both written and
 removed, or removed but not present, is `400`, and the result must satisfy the type's rules just
 as a creation does. An omitted `title` keeps the current title. A `background` colour sets the
 new version's background, `null` clears it, and omitting it keeps the latest version's; anything
-else is `400`. The new version keeps the latest version's `display`. `source` says where this
+else is `400`. A `cover` path in the new version sets its cover, `null` clears it, and omitting it
+keeps the latest version's cover path, whose file the new version must still hold; a `summary`
+sets the new version's summary, `null` clears it, and omitting it keeps the latest one. Both follow
+"Covers and summaries". The new version keeps the latest version's `display`. `source` says where this
 change is being made; it becomes the new version's `source` and the artifact's `updatedSource`.
 `major` makes the new version that major version, as "Versions" describes; without it the new
 version is the next minor one.
@@ -13077,8 +13259,18 @@ Query parameters:
 - `before` — optional; an entry `cursor`. Only entries with an older `cursor` are listed, so a
   client passes the last entry it holds to load the next page.
 - `limit` — optional, 1–200, default 50.
+- `subjects` — optional; a comma-separated list of subject types, such as
+  `subjects=artifact,task`. Only entries about those types are listed, and `before`, `limit`, and
+  `hasMore` page within that filtered list. An unknown type matches nothing and is not an error,
+  and empty names are skipped, so a list naming none lists nothing. Daemons with
+  `capabilities.feedSubjectFilter`.
 
-A malformed `before` or `limit` is `400 invalid_request`.
+A malformed `before` or `limit`, or a `subjects` list naming more than 32 types or a type longer
+than 64 characters, is `400 invalid_request`.
+
+**Highlights.** Clients offer a Highlights view of the Feed: entries about artifacts and tasks,
+read with `subjects=artifact,task`. Live `feed.*` events are not filtered; a client showing a
+filtered view leaves out entries whose subject type is outside it.
 
 Response — `200`:
 
@@ -13088,13 +13280,16 @@ Response — `200`:
         /* feed item objects, newest cursor first */
     ],
     "unread": 3,
+    "filteredUnread": 1,
     "hasMore": true,
     "cursor": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f"
 }
 ```
 
 - `items` — at most `limit` entries.
-- `unread` — how many of the caller's entries are open.
+- `unread` — how many of the caller's entries are open, of every subject type, filtered or not.
+- `filteredUnread` — with `subjects`, how many of the caller's entries about those types are open;
+  absent without `subjects`.
 - `hasMore` — whether older entries exist beyond this page.
 - `cursor` — the event cursor captured before reading. Follow the `feed.*` events from it. An entry
   that takes in a change while a client pages moves to the top, so a client merges entries by
@@ -13135,11 +13330,15 @@ commit and echoing `mutationId`. A request that closes nothing emits nothing.
 
 Closes every open entry of the caller.
 
-Request: `{}`, or `{ "through": "...", "mutationId": "..." }`. Optional `through` is an entry
-`cursor`: only open entries whose `cursor` is not newer close, so entries that arrived after the
-client last drew the feed stay open.
+Request: `{}`, or `{ "through": "...", "subjects": ["artifact", "task"], "mutationId": "..." }`.
+Optional `through` is an entry `cursor`: only open entries whose `cursor` is not newer close, so
+entries that arrived after the client last drew the feed stay open. Optional `subjects` is a JSON
+array of up to 32 subject types, each 1–64 characters: only open entries about those types close,
+so "Mark all read" in a filtered view such as Highlights closes only what that view shows. An
+unknown type closes nothing. Daemons with `capabilities.feedSubjectFilter`; older daemons refuse
+`subjects` with `400`.
 
-Response — `200`: `{ "unread": 0 }`, the caller's remaining open entries. Each closed entry emits
+Response — `200`: `{ "unread": 0 }`, the caller's remaining open entries of every subject type. Each closed entry emits
 `feed.item.updated`, then `feed.unread.updated` follows once, all after commit and echoing
 `mutationId`. A request that closes nothing emits nothing.
 
@@ -13938,9 +14137,10 @@ agent's change carries none.
 - `artifact.updated` — a new version was made.
     - `artifactId` (ID string), `previousVersion`, `version`, `changes`.
     - `changes` always holds `latestVersion`, `latestMajor`, `latestMinor`, `title`, `entry`,
-      `fileCount`, `size`, `background`, `display`, `live`, `updatedBy`, `updatedSource`, and `updatedAt`;
-      older daemons leave out `latestMajor` and `latestMinor`. Read the new version's files through the
-      version routes.
+      `fileCount`, `size`, `background`, `display`, `cover`, `summary`, `live`, `updatedBy`,
+      `updatedSource`, and `updatedAt`; older daemons leave out `latestMajor` and `latestMinor`, and
+      daemons predating covers leave out `cover` and `summary`. Read the new version's files through
+      the version routes.
       Daemons predating live-URL artifacts omit `live`; current daemons include the new version's
       `{ "url", "networkId" }`, or `null` for file content.
 - `artifact.deleted` — the artifact was deleted and is now a tombstone.

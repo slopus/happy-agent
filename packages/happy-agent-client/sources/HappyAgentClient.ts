@@ -1312,7 +1312,11 @@ export class HappyAgentClient {
         return await this.#json({
             method: "GET",
             path: "v0/feed",
-            query: { before: query.before, limit: query.limit },
+            query: {
+                before: query.before,
+                limit: query.limit,
+                subjects: query.subjects?.join(","),
+            },
             signal: options.signal,
         });
     }
@@ -1333,7 +1337,10 @@ export class HappyAgentClient {
         });
     }
 
-    /** `POST /v0/feed/read-all` — closes every open entry, or those not newer than `through`. */
+    /**
+     * `POST /v0/feed/read-all` — closes every open entry, or those not newer than `through`, or
+     * only those about the subject types in `subjects`.
+     */
     async markFeedReadAll(
         request: FeedReadAllRequest = {},
         options: RequestOptions = {},
@@ -3123,6 +3130,45 @@ export class HappyAgentClient {
     }
 
     /**
+     * `GET /v0/artifacts/:artifactId/versions/:number/previews/*path` — the still WebP preview of
+     * one file with a `preview`; `null` when `ifNoneMatch` still matches.
+     */
+    async getArtifactPreview(
+        artifactId: Cuid2,
+        version: ArtifactVersionSelector,
+        path: ArtifactPath,
+        options: Omit<ArtifactFileRequestOptions, "range"> = {},
+    ): Promise<ArtifactFileContent | null> {
+        const response = await this.#send({
+            method: "GET",
+            path: artifactPreviewPath(artifactId, version, path),
+            accept: "image/webp",
+            ifNoneMatch: options.ifNoneMatch,
+            signal: options.signal,
+            allowNotModified: true,
+        });
+        if (response.status === 304) return null;
+        return {
+            contentRange: null,
+            contentType: response.headers.get("content-type") ?? "image/webp",
+            data: await response.arrayBuffer(),
+            etag: response.headers.get("etag"),
+        };
+    }
+
+    /**
+     * The URL of `GET /v0/artifacts/:artifactId/versions/:number/previews/*path`, for an image
+     * element or a list thumbnail, with the bearer token added by whatever transport carries it.
+     */
+    artifactPreviewUrl(
+        artifactId: Cuid2,
+        version: ArtifactVersionSelector,
+        path: ArtifactPath,
+    ): string {
+        return endpointUrl(this.#endpoint, artifactPreviewPath(artifactId, version, path));
+    }
+
+    /**
      * The URL of `CONNECT /v0/artifacts/:artifactId/proxy`. The daemon enforces the live
      * artifact's current destination policy on its recorded network. Fetch cannot open this
      * tunnel; the caller's transport supplies authentication. Never fall back to a network proxy.
@@ -4273,6 +4319,15 @@ function artifactFilePath(
 ): string {
     const encoded = path.split("/").map(encodeURIComponent).join("/");
     return `${artifactVersionPath(artifactId, version)}/files/${encoded}`;
+}
+
+function artifactPreviewPath(
+    artifactId: Cuid2,
+    version: ArtifactVersionSelector,
+    path: ArtifactPath,
+): string {
+    const encoded = path.split("/").map(encodeURIComponent).join("/");
+    return `${artifactVersionPath(artifactId, version)}/previews/${encoded}`;
 }
 
 function vaultPath(surfaceId: SurfaceId, rest: string): string {
