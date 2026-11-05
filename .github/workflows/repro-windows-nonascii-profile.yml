@@ -1,0 +1,106 @@
+name: Windows non-ASCII profile sandbox
+run-name: Windows non-ASCII profile ${{ inputs.tag || inputs.run_id || github.event.head_commit.message }}
+
+# slopus/happy-agent#90: installs a packaged win32-x64 Agent, creates a local administrator whose
+# name (and so profile path) holds non-ASCII characters, and runs the Agent as that user to prove
+# its credential folders are denied to sandboxed commands and named correctly in the deny-read
+# ACL state. Pushes to a security/windows-nonascii-* branch test PUSH_TAG or PUSH_RUN_ID below.
+
+on:
+    push:
+        branches:
+            - security/windows-nonascii-*
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: Release tag such as v0.4.114; leave empty when testing a run
+                required: false
+                type: string
+            run_id:
+                description: Workflow run whose happy-agent-win32-x64 artifact holds the archive
+                required: false
+                type: string
+
+permissions:
+    contents: read
+    actions: read
+
+env:
+    PUSH_TAG: v0.4.114
+    PUSH_RUN_ID: ""
+    REPRO_TAG: ${{ inputs.tag }}
+    REPRO_RUN_ID: ${{ inputs.run_id }}
+
+jobs:
+    repro:
+        name: Credential folders under a non-ASCII profile
+        runs-on: windows-latest
+        timeout-minutes: 60
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  sparse-checkout: packages/happy-agent/scripts
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+            - name: Download and install the Agent archive
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  $tag = $env:REPRO_TAG
+                  $runId = $env:REPRO_RUN_ID
+                  if ($env:GITHUB_EVENT_NAME -eq 'push') { $tag = $env:PUSH_TAG; $runId = $env:PUSH_RUN_ID }
+                  if ([string]::IsNullOrWhiteSpace($tag) -eq [string]::IsNullOrWhiteSpace($runId)) {
+                      throw 'Choose exactly one of a release tag or a workflow run ID.'
+                  }
+                  New-Item -ItemType Directory -Force download | Out-Null
+                  if ($tag) {
+                      gh release download $tag -R $env:GITHUB_REPOSITORY -D download -p '*-win32-x64.tar.gz'
+                  } else {
+                      gh run download $runId -R $env:GITHUB_REPOSITORY -n happy-agent-win32-x64 -D download
+                  }
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  $archive = @(Get-ChildItem download -Filter '*-win32-x64.tar.gz')[0]
+                  # Everything the other user runs lives outside both profiles.
+                  $root = 'C:\happy-repro'
+                  New-Item -ItemType Directory -Force "$root\agent", "$root\results", "$root\work" | Out-Null
+                  tar -xzf $archive.FullName -C "$root\agent"
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                  Copy-Item (Get-Command node).Source "$root\node.exe"
+                  Copy-Item packages/happy-agent/scripts/repro-windows-nonascii-profile.mjs "$root\repro.mjs"
+                  icacls $root /grant '*S-1-1-0:(OI)(CI)F' /T /Q | Out-Null
+                  & "$root\agent\happy-agent-win32-x64.exe" --version >> $env:GITHUB_STEP_SUMMARY
+            - name: Run the Agent as a user with a non-ASCII profile
+              run: |
+                  # "Wiesław_Тест用户", spelled with code points so no file encoding can alter it.
+                  $name = -join ([char[]]@(0x57,0x69,0x65,0x73,0x6C,0x61,0x0142,0x5F,0x0422,0x0435,0x0441,0x0442,0x7528,0x6237))
+                  $password = 'Rp-' + [guid]::NewGuid().ToString('N') + '!a1'
+                  $secure = ConvertTo-SecureString $password -AsPlainText -Force
+                  New-LocalUser -Name $name -Password $secure -PasswordNeverExpires | Out-Null
+                  Add-LocalGroupMember -Group (Get-LocalGroup -SID 'S-1-5-32-544') -Member $name
+                  $root = 'C:\happy-repro'
+                  $summary = "$root\results\summary.md"
+                  $command = "/d /v:on /c set HAPPY_REPRO_SUMMARY=$summary&& `"$root\node.exe`" `"$root\repro.mjs`" `"$root\agent\happy-agent-win32-x64.exe`" `"$root\results`" `"$root\work`" > `"$root\results\task.log`" 2>&1 & echo !ERRORLEVEL! > `"$root\results\exit-code.txt`""
+                  $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $command -WorkingDirectory $root
+                  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 45)
+                  Register-ScheduledTask -TaskName HappyNonAsciiRepro -Action $action -Settings $settings -User "$env:COMPUTERNAME\$name" -Password $password -RunLevel Highest | Out-Null
+                  Start-ScheduledTask -TaskName HappyNonAsciiRepro
+                  $deadline = (Get-Date).AddMinutes(45)
+                  while (-not (Test-Path "$root\results\exit-code.txt") -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 10 }
+                  Start-Sleep -Seconds 2
+                  Get-Content "$root\results\task.log" -Encoding utf8 -ErrorAction SilentlyContinue
+                  Get-Content $summary -Encoding utf8 -ErrorAction SilentlyContinue >> $env:GITHUB_STEP_SUMMARY
+                  if (-not (Test-Path "$root\results\exit-code.txt")) {
+                      Get-ScheduledTaskInfo -TaskName HappyNonAsciiRepro | Format-List | Out-String | Write-Output
+                      throw 'The task did not finish.'
+                  }
+                  $code = (Get-Content "$root\results\exit-code.txt").Trim()
+                  if ($code -ne '0') { throw "The reproduction failed with exit code $code." }
+            - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              if: ${{ always() }}
+              with:
+                  name: windows-nonascii-profile-${{ github.run_id }}
+                  path: C:\happy-repro\results\
+                  if-no-files-found: warn
+                  retention-days: 14
