@@ -35,8 +35,8 @@ concurrency:
     cancel-in-progress: false
 
 env:
-    PUSH_TAG: ""
-    PUSH_RUN_ID: "42033166667"
+    PUSH_TAG: v0.4.114
+    PUSH_RUN_ID: ""
     SMOKE_TAG: ${{ inputs.tag }}
     SMOKE_RUN_ID: ${{ inputs.run_id }}
     HAPPY_SMOKE_IDLE_MINUTES: ${{ inputs.idle_minutes || '10' }}
