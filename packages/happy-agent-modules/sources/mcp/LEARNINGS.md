@@ -117,6 +117,14 @@ registration therefore never carry configured headers, require https (http only 
 configured with an http loopback URL), refuse private, loopback, link-local, and metadata
 addresses off the server's own host, and are bounded in time, redirects, and size.
 
+Checking a host's addresses and then calling `fetch` with its name let the name resolve again: a
+rebinding DNS answer could be public when checked and private when connected, on every redirect
+too. Each hop now resolves once, with a time limit, and connects through `node:http` or
+`node:https` with a lookup that answers only the checked addresses; the hostname stays the SNI and
+certificate name, and no pooled socket is reused. An undici dispatcher would have done this under
+Node, but Bun, which Happy Agent ships on, ignores dispatchers and resolves the name itself, while
+both honour a request's `lookup`.
+
 A login belongs to its catalog, as the person sees it: one for the user-wide servers on every
 machine, and one per folder for that folder's servers. A logged-in connection is pooled within its
 catalog only, so a folder never presents another folder's login. Logins live in the module's own

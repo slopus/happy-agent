@@ -1,15 +1,24 @@
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { lookup as lookupHost } from "node:dns/promises";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { isIP, type LookupFunction } from "node:net";
 
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 /** The most a metadata, registration, or token response may hold. */
 const MAX_OAUTH_RESPONSE_BYTES = 256 * 1024;
 const OAUTH_REQUEST_TIMEOUT_MS = 15_000;
+const DNS_LOOKUP_TIMEOUT_MS = 5_000;
 const MAX_OAUTH_REDIRECTS = 3;
 /** The only request headers an OAuth request carries; nothing from the server's configuration. */
 const FORWARDED_HEADERS = ["accept", "content-type", "mcp-protocol-version"] as const;
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
+
+/** An address a host was checked to have, which is the only one a request to it may connect to. */
+export interface McpOAuthAddress {
+    readonly address: string;
+    readonly family: number;
+}
 
 /** A login step this module refused on its own, whose message is safe to show the person. */
 export class McpOAuthRefusal extends Error {
@@ -25,39 +34,37 @@ export class McpOAuthRefusal extends Error {
  * (or the server's own host, when the server is an http loopback address), refuses private,
  * loopback, link-local, and metadata addresses on any other host, and bounds every response's
  * size, time, and redirects.
+ *
+ * Each hop resolves its host once, checks every address, and connects only to those addresses,
+ * so a DNS answer that changes between the check and the connection cannot reach a private
+ * address. The hostname still names the server for SNI and certificate verification. This uses
+ * node:http rather than fetch, because fetch resolves the host again on its own, and Bun, which
+ * Happy Agent ships on, ignores an undici dispatcher.
  */
 export function mcpOAuthFetch(serverUrl: URL): FetchLike {
     return async (input, init) => {
         let url = new URL(input instanceof Request ? input.url : String(input));
         const method = (init?.method ?? "GET").toUpperCase();
-        const headers = forwardedHeaders(init?.headers);
+        const { headers, body } = await outgoing(init);
         const signal = AbortSignal.any([
             AbortSignal.timeout(OAUTH_REQUEST_TIMEOUT_MS),
             ...(init?.signal ? [init.signal] : []),
         ]);
         for (let hop = 0; hop <= MAX_OAUTH_REDIRECTS; hop += 1) {
-            await assertMcpOAuthEndpoint(url, serverUrl);
-            const response = await fetch(url, {
-                method,
-                headers,
-                ...(init?.body === undefined || init.body === null ? {} : { body: init.body }),
-                redirect: "manual",
-                signal,
-            });
-            const location = response.headers.get("location");
-            if (response.status >= 300 && response.status < 400 && location !== null) {
-                await response.body?.cancel();
+            const addresses = await resolveMcpOAuthEndpoint(url, serverUrl);
+            const reply = await send(url, { method, headers, body, signal, addresses });
+            const location = reply.headers.get("location");
+            if (reply.status >= 300 && reply.status < 400 && location !== null) {
                 // A redirected POST would resend credentials somewhere the endpoint did not name.
                 if (method !== "GET")
                     throw new McpOAuthRefusal("The authorization server redirected a request.");
                 url = new URL(location, url);
                 continue;
             }
-            const body = await boundedBody(response);
-            return new Response(NULL_BODY_STATUSES.has(response.status) ? null : body, {
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers,
+            return new Response(NULL_BODY_STATUSES.has(reply.status) ? null : reply.body, {
+                status: reply.status,
+                statusText: reply.statusText,
+                headers: reply.headers,
             });
         }
         throw new McpOAuthRefusal("The authorization server redirected too many times.");
@@ -65,22 +72,29 @@ export function mcpOAuthFetch(serverUrl: URL): FetchLike {
 }
 
 /**
- * Whether a URL is one the login may use for this server. The authorization link a person opens is
- * held to the same scheme rule; only requests the daemon itself sends also check the address.
+ * The addresses a URL the login may use resolves to, after checking them for this server. The
+ * authorization link a person opens is held to the same scheme rule; only requests the daemon
+ * itself sends also check the address.
  */
-export async function assertMcpOAuthEndpoint(target: URL, serverUrl: URL): Promise<void> {
+export async function resolveMcpOAuthEndpoint(
+    target: URL,
+    serverUrl: URL,
+): Promise<readonly McpOAuthAddress[]> {
     assertMcpOAuthScheme(target, serverUrl);
-    if (sameHost(target, serverUrl)) return;
     const host = bareHost(target.hostname);
-    const addresses =
-        isIP(host) === 0
-            ? (await lookup(host, { all: true, verbatim: true })).map((entry) => entry.address)
-            : [host];
-    if (host === "localhost" || host.endsWith(".localhost") || addresses.some(isPrivateAddress)) {
-        throw new McpOAuthRefusal(
+    const own = sameHost(target, serverUrl);
+    const refused = () =>
+        new McpOAuthRefusal(
             `The authorization server ${target.host} is on a private network address.`,
         );
+    if (!own && (host === "localhost" || host.endsWith(".localhost"))) throw refused();
+    const family = isIP(host);
+    const addresses = family === 0 ? await lookupInTime(host) : [{ address: host, family }];
+    if (addresses.length === 0) {
+        throw new McpOAuthRefusal(`The authorization server ${target.host} has no address.`);
     }
+    if (!own && addresses.some((entry) => isPrivateAddress(entry.address))) throw refused();
+    return addresses;
 }
 
 /** https, except an http loopback MCP server's own host, which may serve its own login. */
@@ -162,29 +176,159 @@ function forwardedHeaders(headers: RequestInit["headers"]): Headers {
     // Client authentication for a registered confidential client, which the SDK adds itself.
     const authorization = given.get("authorization");
     if (authorization?.startsWith("Basic ") === true) forwarded.set("authorization", authorization);
+    // The response is read as it arrives, so it must not be compressed.
+    forwarded.set("accept-encoding", "identity");
     return forwarded;
 }
 
-async function boundedBody(response: Response): Promise<Uint8Array> {
-    const reader = response.body?.getReader();
-    if (reader === undefined) return new Uint8Array();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > MAX_OAUTH_RESPONSE_BYTES) {
-            await reader.cancel();
-            throw new McpOAuthRefusal("The authorization server's response was too large.");
+/** The forwarded headers and the encoded body of a request, with its length and content type. */
+async function outgoing(
+    init: RequestInit | undefined,
+): Promise<{ readonly headers: Headers; readonly body: Uint8Array | undefined }> {
+    const headers = forwardedHeaders(init?.headers);
+    if (init?.body === undefined || init.body === null) return { headers, body: undefined };
+    const encoded = new Request("http://127.0.0.1/", { method: "POST", body: init.body });
+    const contentType = encoded.headers.get("content-type");
+    if (contentType !== null && !headers.has("content-type")) {
+        headers.set("content-type", contentType);
+    }
+    const body = new Uint8Array(await encoded.arrayBuffer());
+    headers.set("content-length", String(body.byteLength));
+    return { headers, body };
+}
+
+async function lookupInTime(host: string): Promise<readonly McpOAuthAddress[]> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+            reject(new McpOAuthRefusal(`The address of ${host} could not be looked up in time.`));
+        }, DNS_LOOKUP_TIMEOUT_MS);
+    });
+    try {
+        const found = await Promise.race([lookupHost(host, { all: true, verbatim: true }), late]);
+        return found.map((entry) => ({ address: entry.address, family: entry.family }));
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/** A DNS lookup that answers only with the addresses already checked for this host. */
+function pinnedLookup(addresses: readonly McpOAuthAddress[]): LookupFunction {
+    return (_hostname, options, callback) => {
+        const family = options.family === 4 || options.family === 6 ? options.family : 0;
+        const usable = addresses.filter((entry) => family === 0 || entry.family === family);
+        const [first] = usable;
+        if (first === undefined) {
+            const error: NodeJS.ErrnoException = new Error("The host has no checked address.");
+            error.code = "ENOTFOUND";
+            callback(error, "", 0);
+            return;
         }
-        chunks.push(value);
+        if (options.all === true)
+            callback(
+                null,
+                usable.map((entry) => ({ ...entry })),
+            );
+        else callback(null, first.address, first.family);
+    };
+}
+
+interface McpOAuthReply {
+    readonly status: number;
+    readonly statusText: string;
+    readonly headers: Headers;
+    readonly body: Uint8Array<ArrayBuffer>;
+}
+
+/** One request on a fresh connection to the checked addresses, with its whole bounded response. */
+async function send(
+    url: URL,
+    request: {
+        readonly method: string;
+        readonly headers: Headers;
+        readonly body: Uint8Array | undefined;
+        readonly signal: AbortSignal;
+        readonly addresses: readonly McpOAuthAddress[];
+    },
+): Promise<McpOAuthReply> {
+    const { signal } = request;
+    signal.throwIfAborted();
+    const open = url.protocol === "https:" ? httpsRequest : httpRequest;
+    return await new Promise<McpOAuthReply>((resolve, reject) => {
+        const outgoingRequest = open(
+            url,
+            {
+                method: request.method,
+                headers: Object.fromEntries(request.headers),
+                lookup: pinnedLookup(request.addresses),
+                // A pooled socket may have been connected by someone else, to another address.
+                agent: false,
+            },
+            (incoming) => {
+                readBounded(incoming).then(
+                    (body) =>
+                        resolve({
+                            status: incoming.statusCode ?? 0,
+                            statusText: incoming.statusMessage ?? "",
+                            headers: incomingHeaders(incoming),
+                            body,
+                        }),
+                    reject,
+                );
+            },
+        );
+        const stop = (): void => {
+            outgoingRequest.destroy(
+                signal.reason instanceof Error ? signal.reason : new Error("The request stopped."),
+            );
+        };
+        signal.addEventListener("abort", stop, { once: true });
+        outgoingRequest.on("close", () => signal.removeEventListener("abort", stop));
+        outgoingRequest.on("error", reject);
+        outgoingRequest.end(request.body);
+    });
+}
+
+async function readBounded(incoming: IncomingMessage): Promise<Uint8Array<ArrayBuffer>> {
+    return await new Promise((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let settled = false;
+        const fail = (error: Error): void => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+        };
+        incoming.on("data", (chunk: Buffer) => {
+            size += chunk.byteLength;
+            if (size > MAX_OAUTH_RESPONSE_BYTES) {
+                fail(new McpOAuthRefusal("The authorization server's response was too large."));
+                incoming.destroy();
+                return;
+            }
+            chunks.push(chunk);
+        });
+        incoming.on("end", () => {
+            if (settled) return;
+            settled = true;
+            resolve(new Uint8Array(Buffer.concat(chunks)));
+        });
+        incoming.on("error", fail);
+        incoming.on("close", () => {
+            fail(new Error("The authorization server closed the connection."));
+        });
+    });
+}
+
+function incomingHeaders(incoming: IncomingMessage): Headers {
+    const headers = new Headers();
+    const raw = incoming.rawHeaders;
+    for (let index = 0; index + 1 < raw.length; index += 2) {
+        try {
+            headers.append(raw[index] ?? "", raw[index + 1] ?? "");
+        } catch {
+            // A header fetch cannot represent is not one the login reads.
+        }
     }
-    const body = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-        body.set(chunk, offset);
-        offset += chunk.byteLength;
-    }
-    return body;
+    return headers;
 }

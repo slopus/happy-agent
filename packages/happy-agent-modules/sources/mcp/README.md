@@ -87,7 +87,8 @@ authorization URL with a random single-use state and `resource` set to the serve
 `mcpOAuthFetch` carries those requests without the server's configured headers, requires https
 (http only for a server configured with an http loopback URL), refuses private, loopback,
 link-local, and metadata addresses off the server's own host, and bounds time, redirects, and body
-size. The redirect is `http://127.0.0.1:<port>/callback`; `McpLoginCallback` listens there when it
+size. Each hop resolves its host once, within five seconds, and connects only to the addresses it
+checked, through `node:http` with a pinned lookup, while the hostname stays the TLS name. The redirect is `http://127.0.0.1:<port>/callback`; `McpLoginCallback` listens there when it
 can. The person gets the link in a question through `UserInputModule.askForPermission`, so only
 they can answer it, and pastes back the landed address, which `parseMcpLoginRedirect` checks
 before the code is exchanged. The tool returns only an outcome and a plain message, never tokens,
