@@ -64,7 +64,7 @@ when health reports `capabilities.vaults`. Folders and files are separate resour
 `kind`: `createVaultFolder()` makes an empty folder, and a file is a plain file or an artifact, a
 vault app (a small web app) whose name ends in `.artifact` (`isVaultArtifactName()`). `listVaultItems()` pages
 one folder, folders first; `listVaultTree()` pages every live item for a client that keeps the
-whole tree, and `resolveVaultPath()` and `searchVault()` find items by path, name, or text. Bytes
+whole tree, and `resolveVaultPath()` finds an item by path; `search()` finds them by name or text. Bytes
 arrive as resumable uploads: `createVaultUpload({ size })`, then `uploadVaultChunk()` from the
 upload's `received` until it is complete; a `conflict` error carries the current upload to resume
 from. Place an upload with `createVaultFile()` or `createVaultVersion()`; an artifact's upload is a
@@ -79,15 +79,15 @@ file, saved as `vaultArtifactDownloadName(file)`. Follow `vault.folder.*`, `vaul
 `vault.version.updated`, and `vault.settings.updated`; deleting or restoring a folder announces
 only the folder.
 
-`quickSearch({ q, types, limit })` searches everything at once when health reports
-`capabilities.quickSearch`: vault files and folders, Surfaces, documents, todos, calendar events,
-artifacts, conversations, projects, and workspaces, each result a typed variant with a stable `key`
-(`<type>:<id>`) and its fused `rank`; results of types this client does not know are dropped,
-and fields it does not know are kept. Agent results name the `workspaceId` and `projectId` that
-open them.
+`search({ q, types, limit })` searches everything in the node the caller can reach when health
+reports `capabilities.search`: vault files and folders, documents, conversation messages, todos,
+calendar events, artifacts, Surfaces, conversations, projects, workspaces, people, and skills,
+each result a typed variant with a stable `key` (`<type>:<id>`) and its fused `rank`; results of
+types this client does not know are dropped, and fields it does not know are kept. Agent and
+message results name the `workspaceId` and `projectId` that open them.
 Search what the app already holds first, then fuse the two lists with
-`fuseQuickSearchResults(remote, local)`, Reciprocal Rank Fusion with k = 60 where the remote
-fields win on a shared key. `quickSearchFusion.fixtures.json`, shipped with the package, holds the
+`fuseSearchResults(remote, local)`, Reciprocal Rank Fusion with k = 60 where the remote
+fields win on a shared key. `searchFusion.fixtures.json`, shipped with the package, holds the
 literal cases every platform's fusion must reproduce.
 
 The Feed is each person's list of what happened, served when health reports

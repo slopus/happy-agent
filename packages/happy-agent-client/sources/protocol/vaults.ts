@@ -353,57 +353,6 @@ export const vaultActivityPageResponseSchema = Type.Object({
 });
 export type VaultActivityPageResponse = Static<typeof vaultActivityPageResponseSchema>;
 
-export const vaultSearchKindSchema = Type.Union([
-    Type.Literal("name"),
-    Type.Literal("content"),
-    Type.Literal("all"),
-]);
-export type VaultSearchKind = Static<typeof vaultSearchKindSchema>;
-
-/**
- * `GET /search` query. Words match by prefix, ranked by BM25, before substring matches; content
- * substring matching needs at least three characters.
- */
-export const vaultSearchQuerySchema = Type.Object({
-    kind: Type.Optional(vaultSearchKindSchema),
-    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-    parentId: Type.Optional(cuid2Schema),
-    q: Type.String({ minLength: 1, maxLength: 256 }),
-});
-export type VaultSearchQuery = Static<typeof vaultSearchQuerySchema>;
-
-export const vaultSearchResultSchema = Type.Union([
-    Type.Object({
-        innerPath: Type.Null(),
-        item: vaultItemSchema,
-        line: Type.Null(),
-        match: Type.Literal("name"),
-        path: vaultPathSchema,
-        snippet: Type.Null(),
-    }),
-    Type.Object({
-        /** The artifact file holding the text, or `null` for a plain file. */
-        innerPath: Nullable(Type.String({ minLength: 1 })),
-        /** A content match is always a file. */
-        item: vaultFileSchema,
-        line: Type.Integer({ minimum: 1 }),
-        match: Type.Literal("content"),
-        path: vaultPathSchema,
-        snippet: Type.String({ maxLength: 200 }),
-    }),
-]);
-export type VaultSearchResult = Static<typeof vaultSearchResultSchema>;
-
-/**
- * Name matches, then content matches, then path matches, then substring matches; `truncated` says
- * more exist.
- */
-export const vaultSearchResponseSchema = Type.Object({
-    results: Type.Array(vaultSearchResultSchema),
-    truncated: Type.Boolean(),
-});
-export type VaultSearchResponse = Static<typeof vaultSearchResponseSchema>;
-
 export const vaultSettingsSchema = Type.Object({
     retention: vaultRetentionSchema,
     surfaceId: surfaceIdSchema,

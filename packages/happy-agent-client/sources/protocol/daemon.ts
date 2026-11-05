@@ -174,8 +174,8 @@ export const healthResponseSchema = Type.Object({
             feedSubjectFilter: Type.Optional(Type.Boolean()),
             /** True when artifacts and their versions carry `cover` and `summary`, under Artifacts. */
             artifactCovers: Type.Optional(Type.Boolean()),
-            /** True when the daemon serves `GET /v0/quick-search`, under Quick search. */
-            quickSearch: Type.Optional(Type.Boolean()),
+            /** True when the daemon serves `POST /v0/search`, under Search. */
+            search: Type.Optional(Type.Boolean()),
         }),
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */

@@ -145,8 +145,6 @@ import type {
     VaultMutationRequest,
     VaultPath,
     VaultResolveResponse,
-    VaultSearchQuery,
-    VaultSearchResponse,
     VaultSettingsResponse,
     VaultSettingsSnapshotResponse,
     VaultTrashPageResponse,
@@ -160,11 +158,11 @@ import type {
     VaultVersionSelector,
 } from "./protocol/vaults.js";
 import {
-    quickSearchResultSchema,
-    type QuickSearchRequest,
-    type QuickSearchResponse,
-    type QuickSearchResult,
-} from "./protocol/quickSearch.js";
+    searchResultSchema,
+    type SearchRequest,
+    type SearchResponse,
+    type SearchResult,
+} from "./protocol/search.js";
 import type {
     CloudAccessTokenResponse,
     CloudAuthorizingResponse,
@@ -2657,52 +2655,28 @@ export class HappyAgentClient {
     }
 
     /**
-     * Searches everything quick search covers, fused into one ranked list. Results of types this
-     * client does not know are dropped. Needs `capabilities.quickSearch`; fuse the answer with
-     * local results through `fuseQuickSearchResults()`.
+     * Searches everything in the node the caller can reach, fused into one ranked list. Results
+     * of types this client does not know are dropped; fields it does not know are kept. Needs `capabilities.search`; fuse the answer with
+     * local results through `fuseSearchResults()`.
      */
-    async quickSearch(
-        request: QuickSearchRequest,
-        options: RequestOptions = {},
-    ): Promise<QuickSearchResponse> {
+    async search(request: SearchRequest, options: RequestOptions = {}): Promise<SearchResponse> {
         const response = await this.#json<{
             results: unknown[];
             truncated: boolean;
             partial: boolean;
         }>({
-            method: "GET",
-            path: "/v0/quick-search",
-            query: {
-                q: request.q,
-                types: request.types?.join(","),
-                limit: request.limit,
-            },
+            method: "POST",
+            path: "v0/search",
+            json: request,
             signal: options.signal,
         });
         return {
-            results: response.results.filter((result): result is QuickSearchResult =>
-                Value.Check(quickSearchResultSchema, result),
+            results: response.results.filter((result): result is SearchResult =>
+                Value.Check(searchResultSchema, result),
             ),
             truncated: response.truncated,
             partial: response.partial,
         };
-    }
-
-    /**
-     * Name matches, then content matches with a line and snippet, then path matches, then
-     * substring matches.
-     */
-    async searchVault(
-        surfaceId: SurfaceId,
-        query: VaultSearchQuery,
-        options: RequestOptions = {},
-    ): Promise<VaultSearchResponse> {
-        return await this.#json({
-            method: "GET",
-            path: vaultPath(surfaceId, "search"),
-            query: { ...query },
-            signal: options.signal,
-        });
     }
 
     /** Trash items, folders and files, most recently deleted first, with where each one was. */

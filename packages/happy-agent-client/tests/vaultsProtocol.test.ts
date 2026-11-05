@@ -41,7 +41,6 @@ import {
     vaultItemSchema,
     vaultNameSchema,
     vaultResolveResponseSchema,
-    vaultSearchResponseSchema,
     vaultTrashPageResponseSchema,
     vaultUploadSchema,
     vaultVersionDetailSchema,
@@ -281,7 +280,7 @@ describe("vault Surface protocol", () => {
             );
     });
 
-    it("models versions, manifests, activity, and search results", () => {
+    it("models versions, manifests, and activity", () => {
         expect(Value.Check(vaultVersionSchema, fileVersion)).toBe(true);
         const siteVersion = {
             ...fileVersion,
@@ -328,58 +327,6 @@ describe("vault Surface protocol", () => {
         ])
             expect(Value.Check(vaultActivitySchema, item)).toBe(true);
         expect(Value.Check(vaultActivitySchema, { ...activity, kind: "pinned" })).toBe(false);
-
-        expect(
-            Value.Check(vaultSearchResponseSchema, {
-                results: [
-                    {
-                        item: folder,
-                        path: "/Reports",
-                        match: "name",
-                        innerPath: null,
-                        line: null,
-                        snippet: null,
-                    },
-                    {
-                        item: file,
-                        path: "/Reports/summary.pdf",
-                        match: "name",
-                        innerPath: null,
-                        line: null,
-                        snippet: null,
-                    },
-                    {
-                        item: site,
-                        path: "/Reports/launch.artifact",
-                        match: "content",
-                        innerPath: "index.html",
-                        line: 12,
-                        snippet: "<h1>Launch day</h1>",
-                    },
-                ],
-                truncated: false,
-            }),
-        ).toBe(true);
-        expect(
-            Value.Check(vaultSearchResponseSchema.properties.results.items, {
-                item: file,
-                path: "/a",
-                match: "content",
-                innerPath: null,
-                line: null,
-                snippet: "x",
-            }),
-        ).toBe(false);
-        expect(
-            Value.Check(vaultSearchResponseSchema.properties.results.items, {
-                item: folder,
-                path: "/Reports",
-                match: "content",
-                innerPath: null,
-                line: 1,
-                snippet: "x",
-            }),
-        ).toBe(false);
     });
 
     it("accepts exactly one content source and never a client-supplied author", () => {
@@ -575,7 +522,6 @@ describe("vault Surface protocol", () => {
         await client.getVaultFolder(surfaceId, folder.id);
         await client.resolveVaultPath(surfaceId, "/Reports/Q3 & co/summary.pdf");
         await client.listVaultTree(surfaceId, { pageCursor: "p1" });
-        await client.searchVault(surfaceId, { q: "launch day", kind: "content" });
         await client.listVaultTrash(surfaceId);
         await client.createVaultFolder(surfaceId, { parentId: null, name: "Q3" });
         await client.createVaultFile(surfaceId, { parentId: null, name: "a.txt", uploadId: "u1" });
@@ -638,7 +584,6 @@ describe("vault Surface protocol", () => {
             get(dir),
             get(`${base}/resolve?path=%2FReports%2FQ3+%26+co%2Fsummary.pdf`),
             get(`${base}/tree?pageCursor=p1`),
-            get(`${base}/search?q=launch+day&kind=content`),
             get(`${base}/trash`),
             post(`${base}/folders`, { parentId: null, name: "Q3" }),
             post(`${base}/files`, { parentId: null, name: "a.txt", uploadId: "u1" }),

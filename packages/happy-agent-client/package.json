@@ -20,7 +20,7 @@
             "import": "./dist/index.js",
             "default": "./dist/index.js"
         },
-        "./quickSearchFusion.fixtures.json": "./fixtures/quickSearchFusion.fixtures.json"
+        "./searchFusion.fixtures.json": "./fixtures/searchFusion.fixtures.json"
     },
     "publishConfig": {
         "access": "public"
