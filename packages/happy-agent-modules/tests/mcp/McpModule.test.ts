@@ -67,6 +67,7 @@ describe("McpModule production discovery", () => {
         const { module } = await configuredModule({ docs: stdio("docs") });
         try {
             const hooks = await resolveModuleHooks(ctx, module);
+            await ready(module, "agent-a", ["docs"]);
             const tools = await hooks.tools!(ctx, scope());
             expect(tools.map((tool) => tool.name)).toContain("mcp__docs__echo");
             expect(tools.map((tool) => tool.name)).toContain("reload_mcp_servers");
@@ -104,10 +105,60 @@ describe("McpModule production discovery", () => {
         }
     });
 
+    it("never makes a turn or an agent's restoration wait for a server to start", async () => {
+        const root = await temporaryRoot();
+        const userGate = gatedStdio(root, "user-start", "user");
+        const folderGate = gatedStdio(root, "folder-start", "folder");
+        const workspace = join(root, "workspace-slow");
+        await write(root, "workspace-slow/mcp.toml", serverToml("folder", folderGate.server));
+        const { module } = await configuredModule({ user: userGate.server }, root);
+        const agents = new McpAgents({ agent: workspace });
+        try {
+            const hooks = await resolveModuleHooks(ctx, module, agents.ref);
+            await waitForFile(userGate.marker);
+            // Restoration only starts attaching the folder, while the user-wide server still hangs.
+            expect(
+                hooks.agentRestored?.(ctx, systemScope(agents), lifecycleAgent("agent")),
+            ).toBeUndefined();
+            await waitForFile(folderGate.marker);
+
+            const started = Date.now();
+            const names = (await hooks.tools!(ctx, scope("agent"))).map((tool) => tool.name);
+            expect(Date.now() - started).toBeLessThan(1_000);
+            expect(names).toContain("list_mcp_servers");
+            expect(names.filter((name) => name.startsWith("mcp__"))).toEqual([]);
+            await expect(module.listServerPage(ctx, "agent")).resolves.toMatchObject({
+                servers: [
+                    { name: "folder", status: "connecting", toolCount: 0 },
+                    { name: "user", status: "connecting", toolCount: 0 },
+                ],
+            });
+            await expect(echo(module, "agent", "user", "early")).rejects.toThrow(
+                'MCP server "user" is still connecting.',
+            );
+
+            await writeFile(userGate.release, "release", "utf8");
+            await writeFile(folderGate.release, "release", "utf8");
+            await expect
+                .poll(
+                    async () =>
+                        (await hooks.tools!(ctx, scope("agent")))
+                            .map((tool) => tool.name)
+                            .filter((name) => name.startsWith("mcp__")),
+                    { timeout: 10_000 },
+                )
+                .toEqual(["mcp__folder__echo", "mcp__user__echo"]);
+            await expect(echo(module, "agent", "folder", "later")).resolves.toBe("folder:later");
+        } finally {
+            await module.close();
+        }
+    });
+
     it("lists a server's tools once until it reports a change or is reloaded", async () => {
         const { module } = await configuredModule({ docs: stdio("docs") });
         try {
             const hooks = await resolveModuleHooks(ctx, module);
+            await ready(module, "agent-a", ["docs"]);
             await Promise.all(
                 ["agent-a", "agent-a", "agent-b", "agent-b"].map(
                     async (agentId) => await hooks.tools!(ctx, scope(agentId)),
@@ -142,6 +193,7 @@ describe("McpModule production discovery", () => {
         const { module } = await configuredModule({ mixed: stdio("mixed-tools") });
         try {
             const hooks = await resolveModuleHooks(ctx, module);
+            await ready(module, "agent-a", ["mixed"]);
             const tools = await hooks.tools!(ctx, scope());
 
             expect(tools.map((tool) => tool.name)).toEqual(
@@ -233,6 +285,8 @@ describe("McpModule production discovery", () => {
             const hooks = await resolveModuleHooks(ctx, module, agents.ref);
             await hooks.agentCreated?.(ctx, systemScope(agents), lifecycleAgent("agent-a"));
             await hooks.agentRestored?.(ctx, systemScope(agents), lifecycleAgent("agent-b"));
+            await ready(module, "agent-a", ["shared"]);
+            await ready(module, "agent-b", ["shared"]);
 
             expect(await processId(module, "agent-a", "shared")).toBe(
                 await processId(module, "agent-b", "shared"),
@@ -292,6 +346,7 @@ describe("McpModule production discovery", () => {
             );
 
             await hooks.agentCreated?.(ctx, systemScope(agents), lifecycleAgent("agent-b"));
+            await ready(module, "agent-b", ["global", "shared"]);
             await expect(processId(module, "agent-b", "shared")).resolves.toMatch(/^\d+$/u);
             await workspaceEvents.archive(secondWorkspace);
             await expect(processId(module, "agent-b", "shared")).rejects.toThrow(
@@ -300,6 +355,7 @@ describe("McpModule production discovery", () => {
 
             await workspaceEvents.create(secondWorkspace);
             await hooks.agentCreated?.(ctx, systemScope(agents), lifecycleAgent("agent-b"));
+            await ready(module, "agent-b", ["global", "shared"]);
             await expect(processId(module, "agent-b", "shared")).resolves.toMatch(/^\d+$/u);
         } finally {
             await module.close();
@@ -334,6 +390,8 @@ describe("McpModule production discovery", () => {
             for (const id of ["agent-a", "agent-b", "agent-c"]) {
                 await hooks.agentCreated?.(ctx, systemScope(agents), lifecycleAgent(id));
             }
+            await expect.poll(() => module.workspaceMcpConfigLocation("agent-a")).toBeDefined();
+            await ready(module, "agent-a", ["global"]);
             const configure = (await hooks.tools!(ctx, scope("agent-a"))).find(
                 (tool) => tool.name === "configure_mcp_server",
             );
@@ -409,9 +467,10 @@ describe("McpModule production discovery", () => {
         try {
             const hooks = await resolveModuleHooks(ctx, module, agents.ref);
             await hooks.agentCreated?.(ctx, systemScope(agents), lifecycleAgent("healthy"));
-            await expect(
+            expect(() =>
                 hooks.agentRestored?.(ctx, systemScope(agents), lifecycleAgent("broken")),
-            ).resolves.toBeUndefined();
+            ).not.toThrow();
+            await ready(module, "healthy", ["healthy"]);
 
             await expect(echo(module, "healthy", "healthy", "before")).resolves.toBe(
                 "healthy:before",
@@ -428,8 +487,13 @@ describe("McpModule production discovery", () => {
             );
 
             await write(root, "workspace-broken/mcp.toml", providerMcp("repaired", "repaired"));
-            const tools = await hooks.tools!(ctx, scope("broken"));
-            expect(tools.map((tool) => tool.name)).toContain("mcp__repaired__echo");
+            // A turn starts the never-loaded catalog again; its tools reach a later turn.
+            await expect
+                .poll(
+                    async () => (await hooks.tools!(ctx, scope("broken"))).map((tool) => tool.name),
+                    { timeout: 10_000 },
+                )
+                .toContain("mcp__repaired__echo");
             await expect(echo(module, "broken", "repaired", "working")).resolves.toBe(
                 "repaired:working",
             );
@@ -451,6 +515,7 @@ describe("McpModule production discovery", () => {
         try {
             const hooks = await resolveModuleHooks(ctx, module, agents.ref);
             await hooks.agentCreated?.(ctx, systemScope(agents), lifecycleAgent("agent"));
+            await ready(module, "agent", ["server"]);
             await write(root, "workspace-race/mcp.toml", serverToml("server", gate.server));
 
             const blockingReload = module.reloadWorkspace(ctx, "agent");
@@ -483,9 +548,9 @@ describe("McpModule production discovery", () => {
             const hooks = await resolveModuleHooks(ctx, module);
             const before = (await hooks.tools!(ctx, scope())).map((tool) => tool.name);
             expect(before).not.toContain("mcp__slow__echo");
-            await expect(module.listServerPage(ctx, "agent-a")).resolves.toMatchObject({
-                servers: [{ name: "slow", status: "failed", toolCount: 0 }],
-            });
+            await expect
+                .poll(async () => (await module.listServerPage(ctx, "agent-a")).servers)
+                .toMatchObject([{ name: "slow", status: "failed", toolCount: 0 }]);
 
             await writeFile(gate.release, "release", "utf8");
 
@@ -505,9 +570,8 @@ describe("McpModule production discovery", () => {
     it("restarts a server whose process stopped", async () => {
         const { module } = await configuredModule({ docs: stdio("docs") });
         try {
-            await (
-                await resolveModuleHooks(ctx, module)
-            ).tools!(ctx, scope());
+            await resolveModuleHooks(ctx, module);
+            await ready(module, "agent-a", ["docs"]);
             const first = await processId(module, "agent-a", "docs");
 
             process.kill(Number(first), "SIGKILL");
@@ -546,6 +610,23 @@ describe("McpModule production discovery", () => {
         );
     });
 });
+
+/**
+ * Wait until an agent sees exactly these servers, none of them still connecting. Starting the
+ * module, creating an agent, and a turn only start servers; nothing waits for them.
+ */
+async function ready(module: McpModule, agentId: string, names: readonly string[]) {
+    await expect
+        .poll(
+            async () =>
+                (await module.listServerPage(ctx, agentId)).servers.map(
+                    (server) =>
+                        `${server.name}:${server.status === "connecting" ? "connecting" : "settled"}`,
+                ),
+            { timeout: 10_000 },
+        )
+        .toEqual(names.map((name) => `${name}:settled`));
+}
 
 async function configuredModule(servers: Record<string, ReturnType<typeof stdio>>, root?: string) {
     root ??= await temporaryRoot();

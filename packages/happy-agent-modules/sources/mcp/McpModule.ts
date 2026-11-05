@@ -138,6 +138,11 @@ interface McpCatalogServer {
     readonly connectionId?: string;
     /** Why this agent may not use the server, in words the model reads. */
     readonly unavailable?: string;
+    /**
+     * A user-wide stdio server shown to an agent whose folder is still being attached: which
+     * machine runs it for that agent is not known yet, so it is reported as connecting.
+     */
+    readonly awaitingFolder?: true;
 }
 
 /**
@@ -166,17 +171,59 @@ interface McpConnectionInput {
     readonly runnerId: string | undefined;
 }
 
+/**
+ * Where one pooled server stands. A connecting server's attempt runs in the background and is
+ * adopted only while the entry still holds its token, so a reload, release, or shutdown that got
+ * there first wins.
+ */
+type McpPoolState =
+    | {
+          readonly kind: "connecting";
+          readonly token: object;
+          readonly settled: Promise<void>;
+      }
+    | { readonly kind: "connected"; readonly connection: McpClientConnection }
+    | { readonly kind: "failed"; readonly failure: string };
+
+/** How a finished attempt left a server. */
+type McpAttemptOutcome = Exclude<McpPoolState, { readonly kind: "connecting" }>;
+
 interface McpPooledConnection {
     readonly references: Set<string>;
     readonly input: McpConnectionInput;
-    readonly connection?: McpClientConnection;
-    readonly failure?: string;
+    readonly state: McpPoolState;
 }
 
 /** A failed server's background retry: how often it has failed again, and the pending attempt. */
 interface McpRetry {
     readonly attempts: number;
     readonly timer?: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * One connection's tools as last listed. Readers on a turn's path take what is here and never
+ * wait; a missing or stale listing is refreshed in the background, at most one at a time.
+ */
+interface McpToolListing {
+    /** The reload generation the tools were listed in; an older one is refreshed on next read. */
+    generation: number;
+    tools?: McpTool[];
+    /** Why the last listing failed, while there are no tools to show instead. */
+    failure?: string;
+    stale: boolean;
+    pending?: Promise<void>;
+}
+
+/** A server attempt a reconcile started, for a deliberate reload to wait on. */
+interface McpStartedConnection {
+    readonly connectionId: string;
+    readonly settled: Promise<void>;
+}
+
+/** An agent's folder attachment while it runs in its own lifetime. */
+interface McpActivation {
+    readonly token: object;
+    readonly settled: Promise<void>;
 }
 
 /**
@@ -197,8 +244,14 @@ export class McpModule implements AgentModule {
     readonly #catalogs = new Map<string, McpCatalog>();
     readonly #pool = new Map<string, McpPooledConnection>();
     /** Each connection's tools, listed once until the server reports a change or a reload. */
-    #toolLists = new WeakMap<McpClientConnection, Promise<McpTool[]>>();
+    readonly #toolListings = new WeakMap<McpClientConnection, McpToolListing>();
+    /** Bumped by every reload, so a server that changed its tools without saying so is listed again. */
+    #toolGeneration = 0;
     readonly #retries = new Map<string, McpRetry>();
+    /** Folder attachments in progress, one per agent, each in a lifetime of its own. */
+    readonly #activations = new Map<string, McpActivation>();
+    /** Agents with no working directory, which use only the user-wide catalog on this machine. */
+    readonly #folderless = new Set<string>();
     readonly #agentWorkspaces = new Map<string, string>();
     readonly #workspaceAgents = new Map<string, Set<string>>();
     readonly #archivedWorkspaces = new Set<string>();
@@ -270,7 +323,7 @@ export class McpModule implements AgentModule {
             for (const id of connected) this.#connectedRunners.add(id);
             this.#failServersOnAbsentRunners();
             if (!returned || this.#closed || this.#initialReload === undefined) return;
-            if (![...this.#pool.values()].some((entry) => entry.failure !== undefined)) return;
+            if (![...this.#pool.values()].some((entry) => entry.state.kind === "failed")) return;
             const reloadCtx = detach(ctx).named("mcp-runner-reconnect");
             void this.reload(reloadCtx).catch((error: unknown) => {
                 reloadCtx.log.warn(
@@ -284,11 +337,11 @@ export class McpModule implements AgentModule {
         /**
          * Keep a durable, bounded server index for prompt projections and restart diagnostics.
          * The live connection catalog remains authoritative; this snapshot is only written
-         * through the caller's Agent Storage transaction.
+         * through the caller's Agent Storage transaction. Like the tools hook, it never waits for a
+         * server: it records what is known now.
          */
         beforeAgentLoop: async (ctx: Context, scope: AgentModuleScope): Promise<void> => {
-            await this.#initialReload;
-            await this.#ensureAgentWorkspace(ctx, scope.agent.id);
+            this.#attachInBackground(ctx, scope.agent.id);
             const servers = await this.#listAllServers(
                 ctx,
                 scope.agent.id,
@@ -331,16 +384,19 @@ export class McpModule implements AgentModule {
         /**
          * The dynamic tool list is intentionally rebuilt from the current connected catalog, so
          * an online reload reaches the next provider request without restarting the daemon.
+         *
+         * Nothing here waits for a server. The tools are whatever is connected and listed right
+         * now; a folder still attaching, a server still starting, or a listing not yet back is
+         * started in the background, and its tools reach a later request.
          */
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
-            await this.#initialReload;
             const agentId = assertAgentId(scope.agent.id);
-            await this.#ensureAgentWorkspace(ctx, agentId);
+            this.#attachInBackground(ctx, agentId);
             const servers = await this.#listAllServers(ctx, agentId, scope.agent.permissionMode);
             const connected = servers.filter((server) => server.status === "connected");
             const loadedTools: AnyAgentTool[] = [];
             for (const server of connected) {
-                const tools = await this.#listAllTools(ctx, agentId, server.name);
+                const tools = this.#listedTools(agentId, server.name);
                 if (loadedTools.length + tools.length > MAX_MCP_TOTAL_TOOLS) {
                     throw new Error("MCP tool catalog exceeded its bound.");
                 }
@@ -381,19 +437,23 @@ export class McpModule implements AgentModule {
                 ...protocolTools,
             ];
         },
-        agentCreated: async (
+        // Creation and restoration only start attaching the agent's folder. Restoration runs while
+        // the daemon starts, and a folder's servers may take as long as their startup timeouts.
+        agentCreated: (
             ctx: Context,
             scope: AgentModuleSystemScope,
             agent: AgentModuleAgentLifecycle,
-        ): Promise<void> => {
-            await this.#activateAgent(ctx, scope.agents, agent.id);
+        ): void => {
+            this.#rememberContext(ctx);
+            this.#logActivationFailure(ctx, agent.id, this.#activate(scope.agents, agent.id));
         },
-        agentRestored: async (
+        agentRestored: (
             ctx: Context,
             scope: AgentModuleSystemScope,
             agent: AgentModuleAgentLifecycle,
-        ): Promise<void> => {
-            await this.#activateAgent(ctx, scope.agents, agent.id);
+        ): void => {
+            this.#rememberContext(ctx);
+            this.#logActivationFailure(ctx, agent.id, this.#activate(scope.agents, agent.id));
         },
         agentArchived: async (
             ctx: Context,
@@ -417,7 +477,7 @@ export class McpModule implements AgentModule {
     async reload(ctx: Context): Promise<void> {
         this.#rememberContext(ctx);
         this.#assertOpen();
-        await this.#reloadLock.runInLock(ctx, async () => {
+        const started = await this.#reloadLock.runInLock(ctx, async () => {
             this.#assertOpen();
             const servers = await this.#config.readMcpServers();
             const globalNames = new Set(Object.keys(servers));
@@ -446,8 +506,8 @@ export class McpModule implements AgentModule {
                 }),
             );
             // A server that changes its tools without saying so shows them after a reload.
-            this.#toolLists = new WeakMap();
-            await this.#reconcileCatalogs(
+            this.#toolGeneration += 1;
+            return await this.#reconcileCatalogs(
                 ctx,
                 new Map([
                     [GLOBAL_CATALOG, servers],
@@ -462,6 +522,7 @@ export class McpModule implements AgentModule {
                 ]),
             );
         });
+        await this.#settled(started);
     }
 
     /** Reconcile only the workspace catalog used by the calling agent. */
@@ -469,12 +530,13 @@ export class McpModule implements AgentModule {
         this.#rememberContext(ctx);
         this.#assertOpen();
         assertAgentId(agentId);
-        await this.#ensureAgentWorkspace(ctx, agentId);
-        await this.#reloadLock.runInLock(ctx, async () => {
+        await this.#ensureAgentWorkspace(agentId);
+        const started = await this.#reloadLock.runInLock(ctx, async () => {
             this.#assertOpen();
-            this.#toolLists = new WeakMap();
-            await this.#reconcileWorkspace(ctx, this.#attachedWorkspace(agentId));
+            this.#toolGeneration += 1;
+            return await this.#reconcileWorkspace(ctx, this.#attachedWorkspace(agentId));
         });
+        await this.#settled(started);
     }
 
     async configureServer(
@@ -500,8 +562,8 @@ export class McpModule implements AgentModule {
         this.#rememberContext(ctx);
         this.#assertOpen();
         assertAgentId(agentId);
-        await this.#ensureAgentWorkspace(ctx, agentId);
-        await this.#reloadLock.runInLock(ctx, async () => {
+        await this.#ensureAgentWorkspace(agentId);
+        const started = await this.#reloadLock.runInLock(ctx, async () => {
             this.#assertOpen();
             const workspace = this.#attachedWorkspace(agentId);
             if (server !== undefined && this.#catalogs.get(GLOBAL_CATALOG)?.servers.has(name)) {
@@ -517,8 +579,9 @@ export class McpModule implements AgentModule {
                 server,
                 await this.#workspaceMachine(runnerId),
             );
-            await this.#reconcileWorkspace(ctx, workspace);
+            return await this.#reconcileWorkspace(ctx, workspace);
         });
+        await this.#settled(started);
     }
 
     /** Where configuration actually reads and writes the shared user catalog. */
@@ -548,10 +611,11 @@ export class McpModule implements AgentModule {
         this.#scheduleRetries();
         const close = async (): Promise<void> => {
             const connections = [...this.#pool.values()].flatMap((entry) =>
-                entry.connection === undefined ? [] : [entry.connection],
+                entry.state.kind === "connected" ? [entry.state.connection] : [],
             );
             this.#pool.clear();
             this.#catalogs.clear();
+            this.#activations.clear();
             this.#agentWorkspaces.clear();
             this.#workspaceAgents.clear();
             this.#archivedWorkspaces.clear();
@@ -566,7 +630,7 @@ export class McpModule implements AgentModule {
     }
 
     async listServerPage(
-        ctx: Context,
+        _ctx: Context,
         agentId: string,
         query: McpServerPageQuery = {},
         _permissionMode: McpPermissionMode = "auto",
@@ -583,63 +647,11 @@ export class McpModule implements AgentModule {
                 this.#maximumVisibleRows(24),
             ),
         };
-        const all = await Promise.all(
-            [...this.#effectiveServers(agentId).entries()]
-                .sort(([left], [right]) => left.localeCompare(right))
-                .map(async ([name, server]): Promise<McpServerSummary> => {
-                    const { config } = server;
-                    if (config.enabled === false) {
-                        return { name, status: "disabled", toolCount: 0 };
-                    }
-                    if (server.unavailable !== undefined) {
-                        return {
-                            name,
-                            status: "failed",
-                            toolCount: 0,
-                            errorMessage: server.unavailable,
-                        };
-                    }
-                    const pooled =
-                        server.connectionId === undefined
-                            ? undefined
-                            : this.#pool.get(server.connectionId);
-                    const connection = pooled?.connection;
-                    if (connection === undefined || server.connectionId === undefined) {
-                        return {
-                            name,
-                            status: "failed",
-                            toolCount: 0,
-                            errorMessage: pooled?.failure ?? "Connection failed.",
-                        };
-                    }
-                    try {
-                        const tools = await this.#allTools(ctx, connection);
-                        const capabilities = connection.client.getServerCapabilities();
-                        return {
-                            name,
-                            status: "connected",
-                            toolCount: tools.length,
-                            ...(config.enabledTools === undefined
-                                ? {}
-                                : { enabledTools: [...config.enabledTools] }),
-                            ...(config.disabledTools === undefined
-                                ? {}
-                                : { disabledTools: [...config.disabledTools] }),
-                            ...(capabilities?.prompts === undefined ? {} : { promptSupport: true }),
-                            ...(capabilities?.resources === undefined
-                                ? {}
-                                : { resourceSupport: true }),
-                        };
-                    } catch (error) {
-                        return {
-                            name,
-                            status: "failed",
-                            toolCount: 0,
-                            errorMessage: errorMessage(error),
-                        };
-                    }
-                }),
-        );
+        // A server still starting, or whose tools are still being listed, is reported as
+        // connecting rather than waited for.
+        const all = [...this.#effectiveServers(agentId).entries()]
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([name, server]) => this.#serverSummary(name, server));
         const raw = pageFrom(all, normalized.cursor, normalized.limit, "servers");
         assertServerPage(raw);
         if (raw.servers.length > normalized.limit) {
@@ -1032,30 +1044,62 @@ export class McpModule implements AgentModule {
         return mcpResultToContentBlocks(result);
     }
 
-    async #listAllTools(
-        ctx: Context,
-        agentId: string,
-        server: string,
-    ): Promise<readonly McpTool[]> {
-        const tools: McpTool[] = [];
-        let cursor: string | undefined;
-        for (let pageCount = 0; pageCount < MAX_MCP_PAGE_SIZE; pageCount += 1) {
-            const page = await this.listToolPage(ctx, agentId, {
-                server,
-                ...(cursor === undefined ? {} : { cursor }),
-                limit: this.#maxPageSize,
-            });
-            tools.push(...page.tools);
-            if (page.nextCursor === undefined) {
-                assertUnique(
-                    tools.map((tool) => tool.name),
-                    "tool",
-                );
-                return tools;
-            }
-            cursor = page.nextCursor;
+    /** One server as an agent sees it right now, without waiting on the server. */
+    #serverSummary(name: string, server: McpCatalogServer): McpServerSummary {
+        const { config } = server;
+        if (config.enabled === false) {
+            return { name, status: "disabled", toolCount: 0 };
         }
-        throw new Error("MCP tool pagination exceeded its bound.");
+        if (server.unavailable !== undefined) {
+            return { name, status: "failed", toolCount: 0, errorMessage: server.unavailable };
+        }
+        if (server.awaitingFolder === true) {
+            return { name, status: "connecting", toolCount: 0 };
+        }
+        const pooled =
+            server.connectionId === undefined ? undefined : this.#pool.get(server.connectionId);
+        const state = pooled?.state;
+        if (state === undefined) {
+            return { name, status: "failed", toolCount: 0, errorMessage: "Connection failed." };
+        }
+        if (state.kind === "connecting") return { name, status: "connecting", toolCount: 0 };
+        if (state.kind === "failed") {
+            return { name, status: "failed", toolCount: 0, errorMessage: state.failure };
+        }
+        const listing = this.#toolListing(state.connection);
+        if (listing.tools === undefined) {
+            return listing.failure === undefined
+                ? { name, status: "connecting", toolCount: 0 }
+                : { name, status: "failed", toolCount: 0, errorMessage: listing.failure };
+        }
+        const capabilities = state.connection.client.getServerCapabilities();
+        return {
+            name,
+            status: "connected",
+            toolCount: listing.tools.length,
+            ...(config.enabledTools === undefined
+                ? {}
+                : { enabledTools: [...config.enabledTools] }),
+            ...(config.disabledTools === undefined
+                ? {}
+                : { disabledTools: [...config.disabledTools] }),
+            ...(capabilities?.prompts === undefined ? {} : { promptSupport: true }),
+            ...(capabilities?.resources === undefined ? {} : { resourceSupport: true }),
+        };
+    }
+
+    /** The tools a connected server listed last, or none while they are still being listed. */
+    #listedTools(agentId: string, server: string): readonly McpTool[] {
+        const pooled = this.#pool.get(
+            this.#effectiveServers(agentId).get(server)?.connectionId ?? "",
+        );
+        if (pooled?.state.kind !== "connected") return [];
+        const tools = this.#toolListing(pooled.state.connection).tools ?? [];
+        assertUnique(
+            tools.map((tool) => tool.name),
+            "tool",
+        );
+        return tools;
     }
 
     async #listAllServers(
@@ -1123,14 +1167,20 @@ export class McpModule implements AgentModule {
     #connection(agentId: string, name: string): McpClientConnection {
         const server = this.#effectiveServers(agentId).get(name);
         if (server?.unavailable !== undefined) throw new Error(server.unavailable);
+        if (server?.awaitingFolder === true) {
+            throw new Error(`MCP server "${name}" is still connecting.`);
+        }
         const pooled =
             server?.connectionId === undefined ? undefined : this.#pool.get(server.connectionId);
-        const connection = pooled?.connection;
-        if (connection !== undefined) return connection;
+        const state = pooled?.state;
+        if (state?.kind === "connected") return state.connection;
+        if (state?.kind === "connecting") {
+            throw new Error(`MCP server "${name}" is still connecting.`);
+        }
         throw new Error(
-            pooled?.failure === undefined
-                ? `MCP server "${name}" is not connected.`
-                : `MCP server "${name}" failed to connect: ${pooled.failure}`,
+            state?.kind === "failed"
+                ? `MCP server "${name}" failed to connect: ${state.failure}`
+                : `MCP server "${name}" is not connected.`,
         );
     }
 
@@ -1149,8 +1199,16 @@ export class McpModule implements AgentModule {
             workspace === undefined ? undefined : parseWorkspaceKey(workspace).runnerId;
         const globalCatalog =
             runnerId === undefined ? GLOBAL_CATALOG : runnerGlobalCatalog(runnerId);
+        // Until an agent's folder is attached, which machine runs its user-wide stdio servers is
+        // not known, so they are not offered from this one.
+        const attaching = workspace === undefined && this.#activations.has(agentId);
         for (const [name, server] of this.#catalogs.get(globalCatalog)?.servers ?? []) {
-            servers.set(name, server);
+            servers.set(
+                name,
+                attaching && server.config.transport === "stdio" && server.config.enabled !== false
+                    ? { config: server.config, awaitingFolder: true }
+                    : server,
+            );
         }
         if (this.#runsAsWorkloadUser(agentId)) return servers;
         for (const [name, server] of servers) {
@@ -1172,22 +1230,67 @@ export class McpModule implements AgentModule {
         return this.#agentUsers.get(agentId) === workloadUser;
     }
 
-    async #ensureAgentWorkspace(ctx: Context, agentId: string): Promise<void> {
-        if (this.#closed) return;
+    /**
+     * Attach an agent to its folder's catalog unless it already is. The attachment runs in a
+     * lifetime of its own and is shared by everyone asking for it meanwhile; only callers that act
+     * on the folder's catalog, such as a reload, wait for it.
+     */
+    #ensureAgentWorkspace(agentId: string): Promise<void> {
+        if (this.#closed || this.#folderless.has(agentId)) return Promise.resolve();
         const workspace = this.#agentWorkspaces.get(agentId);
         if (
             workspace !== undefined &&
             this.#catalogs.has(workspaceCatalog(workspace)) &&
             this.#hasRunnerGlobalCatalog(workspace)
         )
-            return;
+            return Promise.resolve();
         const agents = this.#agents;
-        if (agents === undefined) return;
-        await this.#activateAgent(ctx, agents, agentId);
+        if (agents === undefined) return Promise.resolve();
+        return this.#activate(agents, agentId);
     }
 
-    async #activateAgent(ctx: Context, agents: AgentSystemRef, agentId: string): Promise<void> {
-        this.#rememberContext(ctx);
+    /** Start attaching an agent's folder from a turn without making the turn wait for it. */
+    #attachInBackground(ctx: Context, agentId: string): void {
+        this.#logActivationFailure(ctx, agentId, this.#ensureAgentWorkspace(agentId));
+    }
+
+    #logActivationFailure(ctx: Context, agentId: string, activation: Promise<void>): void {
+        activation.catch((error: unknown) => {
+            ctx.log.warn(
+                `MCP servers for agent ${agentId} could not be prepared: ${errorMessage(error)}`,
+            );
+        });
+    }
+
+    /** One attachment per agent at a time, in its own named lifetime rather than the caller's. */
+    #activate(agents: AgentSystemRef, agentId: string): Promise<void> {
+        const pending = this.#activations.get(agentId);
+        if (pending !== undefined) return pending.settled;
+        const root = this.#context;
+        if (this.#closed || root === undefined) return Promise.resolve();
+        const token = {};
+        const settled = this.#activateAgent(
+            detach(root).named("mcp-agent-activation"),
+            agents,
+            agentId,
+            token,
+        ).finally(() => {
+            if (this.#activations.get(agentId)?.token === token) this.#activations.delete(agentId);
+        });
+        this.#activations.set(agentId, { token, settled });
+        return settled;
+    }
+
+    /**
+     * @param token This attachment's claim. Releasing the agent withdraws it, so an attachment
+     * that was still reading the agent's configuration cannot attach an agent archived meanwhile.
+     */
+    async #activateAgent(
+        ctx: Context,
+        agents: AgentSystemRef,
+        agentId: string,
+        token: object,
+    ): Promise<void> {
         if (this.#closed) return;
         if (this.#runners.hasBotUsers) {
             const user = await this.#runners.userFor(ctx, agentId).catch(() => undefined);
@@ -1198,11 +1301,12 @@ export class McpModule implements AgentModule {
         const workspace = config?.environment?.workingDirectory;
         if (workspace === undefined) {
             await this.#releaseAgent(ctx, agentId);
+            this.#folderless.add(agentId);
             return;
         }
         const runnerId = config === undefined ? undefined : this.#compute.runnerOf(config);
         await this.#reloadLock.runInLock(ctx, async () => {
-            if (this.#closed) return;
+            if (this.#closed || this.#activations.get(agentId)?.token !== token) return;
             const normalized = workspaceKey(this.#runners, runnerId, workspace);
             if (this.#archivedWorkspaces.has(normalized)) return;
             const previous = this.#agentWorkspaces.get(agentId);
@@ -1218,9 +1322,11 @@ export class McpModule implements AgentModule {
             }
             const demand = this.#workspaceAgents.get(normalized) ?? new Set<string>();
             const first = demand.size === 0;
+            this.#folderless.delete(agentId);
             this.#agentWorkspaces.set(agentId, normalized);
             demand.add(agentId);
             this.#workspaceAgents.set(normalized, demand);
+            // The folder's servers start in the background; the agent sees them as connecting.
             if (first || !this.#catalogs.has(catalogId)) {
                 try {
                     await this.#reconcileWorkspace(ctx, normalized);
@@ -1235,6 +1341,8 @@ export class McpModule implements AgentModule {
     async #releaseAgent(ctx: Context, agentId: string): Promise<void> {
         this.#rememberContext(ctx);
         await this.#reloadLock.runInLock(ctx, async () => {
+            this.#activations.delete(agentId);
+            this.#folderless.delete(agentId);
             const workspace = this.#agentWorkspaces.get(agentId);
             if (workspace === undefined) return;
             await this.#releaseAgentLocked(agentId, workspace);
@@ -1260,10 +1368,14 @@ export class McpModule implements AgentModule {
     async #ensureRunnerGlobalCatalog(ctx: Context, runnerId: string | undefined): Promise<void> {
         if (runnerId === undefined || this.#catalogs.has(runnerGlobalCatalog(runnerId))) return;
         const global = this.#catalogs.get(GLOBAL_CATALOG);
-        await this.#reconcileCatalog(
+        await this.#reconcileCatalogs(
             ctx,
-            runnerGlobalCatalog(runnerId),
-            global === undefined ? {} : catalogServerConfigs(global),
+            new Map([
+                [
+                    runnerGlobalCatalog(runnerId),
+                    global === undefined ? {} : catalogServerConfigs(global),
+                ],
+            ]),
         );
     }
 
@@ -1318,7 +1430,10 @@ export class McpModule implements AgentModule {
         });
     }
 
-    async #reconcileWorkspace(ctx: Context, workspace: string): Promise<void> {
+    async #reconcileWorkspace(
+        ctx: Context,
+        workspace: string,
+    ): Promise<readonly McpStartedConnection[]> {
         if (
             this.#closed ||
             this.#archivedWorkspaces.has(workspace) ||
@@ -1328,26 +1443,25 @@ export class McpModule implements AgentModule {
         }
         const servers = await this.#readWorkspaceServers(workspace);
         const globalNames = new Set(this.#catalogs.get(GLOBAL_CATALOG)?.servers.keys() ?? []);
-        await this.#reconcileCatalog(
+        const started = await this.#reconcileCatalogs(
             ctx,
-            workspaceCatalog(workspace),
-            withoutServerNames(servers, globalNames),
+            new Map([[workspaceCatalog(workspace), withoutServerNames(servers, globalNames)]]),
         );
         this.#workspaceFailures.delete(workspace);
+        return started;
     }
 
-    async #reconcileCatalog(
-        ctx: Context,
-        catalogId: string,
-        servers: HappyAgentConfigValues["mcpServers"],
-    ): Promise<void> {
-        await this.#reconcileCatalogs(ctx, new Map([[catalogId, servers]]));
-    }
-
+    /**
+     * Swap in the desired catalogs and start, in the background, every server they need that is
+     * not already connected or connecting. Nothing here waits for a server: a new server is
+     * visible as connecting at once, and is adopted when its attempt finishes if it is still
+     * wanted then. The returned attempts are for callers that act on the catalog on purpose, such
+     * as a reload, and wait for them after releasing the lock.
+     */
     async #reconcileCatalogs(
         ctx: Context,
         catalogs: ReadonlyMap<string, HappyAgentConfigValues["mcpServers"]>,
-    ): Promise<void> {
+    ): Promise<readonly McpStartedConnection[]> {
         const desiredCatalogs = new Map<string, McpCatalog>();
         const connectionInputs = new Map<string, McpConnectionInput>();
         for (const [catalogId, servers] of catalogs) {
@@ -1378,43 +1492,15 @@ export class McpModule implements AgentModule {
             desiredCatalogs.set(catalogId, { servers: desired });
         }
 
-        const attempts = await Promise.all(
-            [...connectionInputs.entries()].map(async ([connectionId, input]) => {
-                const existing = this.#pool.get(connectionId);
-                if (existing?.connection !== undefined) return undefined;
-                try {
-                    return {
-                        connectionId,
-                        input,
-                        connection: await this.#connect(ctx, input),
-                    } as const;
-                } catch (error) {
-                    return {
-                        connectionId,
-                        input,
-                        failure: errorMessage(error),
-                    } as const;
-                }
-            }),
-        );
-        for (const attempt of attempts) {
-            if (attempt === undefined) continue;
-            const references =
-                this.#pool.get(attempt.connectionId)?.references ?? new Set<string>();
-            if (attempt.connection === undefined) {
-                this.#pool.set(attempt.connectionId, {
-                    references,
-                    input: attempt.input,
-                    failure: attempt.failure,
-                });
-            } else {
-                this.#adopt(attempt.connectionId, references, attempt.input, attempt.connection);
-            }
+        for (const [connectionId, input] of connectionInputs) {
+            const existing = this.#pool.get(connectionId);
+            const kind = existing?.state.kind;
+            if (kind === "connected" || kind === "connecting") continue;
+            this.#beginConnecting(ctx, connectionId, existing?.references ?? new Set(), input);
         }
 
-        // Every connection needed by the batch is ready or has a bounded failure before any
-        // visible catalog changes. The map writes below are synchronous, so readers see the whole
-        // old batch or the whole new one rather than a global/workspace half-state.
+        // The map writes below are synchronous, so readers see the whole old batch or the whole
+        // new one rather than a global/workspace half-state.
         for (const [catalogId, desired] of desiredCatalogs) {
             for (const connectionId of catalogConnectionIds(this.#catalogs.get(catalogId))) {
                 this.#pool.get(connectionId)?.references.delete(catalogId);
@@ -1428,6 +1514,24 @@ export class McpModule implements AgentModule {
         }
         await this.#closeUnreferencedConnections();
         this.#scheduleRetries();
+        return [...connectionInputs.keys()].flatMap((connectionId) => {
+            const state = this.#pool.get(connectionId)?.state;
+            return state?.kind === "connecting" ? [{ connectionId, settled: state.settled }] : [];
+        });
+    }
+
+    /**
+     * Wait, outside the reload lock, for the attempts a deliberate reload started, then for the
+     * tools of what they connected, so its caller sees what came of its own change.
+     */
+    async #settled(started: readonly McpStartedConnection[]): Promise<void> {
+        await Promise.all(started.map(async (attempt) => await attempt.settled));
+        await Promise.all(
+            started.map(async ({ connectionId }) => {
+                const state = this.#pool.get(connectionId)?.state;
+                if (state?.kind === "connected") await this.#refreshTools(state.connection);
+            }),
+        );
     }
 
     async #removeCatalog(catalogId: string): Promise<void> {
@@ -1445,7 +1549,7 @@ export class McpModule implements AgentModule {
         for (const [connectionId, pooled] of this.#pool) {
             if (pooled.references.size > 0) continue;
             this.#pool.delete(connectionId);
-            if (pooled.connection !== undefined) closing.push(pooled.connection);
+            if (pooled.state.kind === "connected") closing.push(pooled.state.connection);
         }
         await Promise.allSettled(closing.map(async (connection) => await connection.close()));
     }
@@ -1453,11 +1557,11 @@ export class McpModule implements AgentModule {
     /** A live connection that ended is a failure, which is retried in the background. */
     #recordStopped(connectionId: string, connection: McpClientConnection, failure: string): void {
         const pooled = this.#pool.get(connectionId);
-        if (pooled?.connection !== connection) return;
+        if (pooled?.state.kind !== "connected" || pooled.state.connection !== connection) return;
         this.#pool.set(connectionId, {
             references: pooled.references,
             input: pooled.input,
-            failure,
+            state: { kind: "failed", failure },
         });
         this.#scheduleRetries();
     }
@@ -1472,19 +1576,89 @@ export class McpModule implements AgentModule {
               });
     }
 
-    /** Make a started server the live connection behind its pool entry. */
+    /** Start one pooled server and say how it went, without throwing. */
+    async #attempt(ctx: Context, input: McpConnectionInput): Promise<McpAttemptOutcome> {
+        try {
+            return { kind: "connected", connection: await this.#connect(ctx, input) };
+        } catch (error) {
+            return { kind: "failed", failure: errorMessage(error) };
+        }
+    }
+
+    /**
+     * Mark a pooled server connecting and start it in the servers' own lifetime. The attempt holds
+     * no lock while it connects, and takes the reload lock only to adopt what it got.
+     */
+    #beginConnecting(
+        callerCtx: Context,
+        connectionId: string,
+        references: Set<string>,
+        input: McpConnectionInput,
+    ): void {
+        const token = {};
+        const ctx = this.#serversLifetime(callerCtx);
+        const settled = (async () => {
+            const outcome = await this.#attempt(ctx, input);
+            await this.#reloadLock.runInLock(ctx, async () => {
+                const current = this.#pool.get(connectionId);
+                if (
+                    this.#closed ||
+                    current?.state.kind !== "connecting" ||
+                    current.state.token !== token ||
+                    current.references.size === 0
+                ) {
+                    if (outcome.kind === "connected") {
+                        await outcome.connection.close().catch(() => undefined);
+                    }
+                    return;
+                }
+                this.#settle(connectionId, current, outcome);
+                this.#scheduleRetries();
+            });
+        })().catch((error: unknown) => {
+            ctx.log.warn(`MCP server ${input.name} could not be started: ${errorMessage(error)}`);
+        });
+        this.#pool.set(connectionId, {
+            references,
+            input,
+            state: { kind: "connecting", token, settled },
+        });
+    }
+
+    /** Record how an attempt left a pooled server that still wants it. */
+    #settle(connectionId: string, pooled: McpPooledConnection, outcome: McpAttemptOutcome): void {
+        if (outcome.kind === "connected") {
+            this.#adopt(connectionId, pooled.references, pooled.input, outcome.connection);
+            return;
+        }
+        this.#pool.set(connectionId, {
+            references: pooled.references,
+            input: pooled.input,
+            state: outcome,
+        });
+    }
+
+    /** Make a started server the live connection behind its pool entry, and list its tools. */
     #adopt(
         connectionId: string,
         references: Set<string>,
         input: McpConnectionInput,
         connection: McpClientConnection,
     ): void {
-        this.#pool.set(connectionId, { references, input, connection });
+        this.#pool.set(connectionId, {
+            references,
+            input,
+            state: { kind: "connected", connection },
+        });
         connection.client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
-            this.#toolLists.delete(connection);
+            const listing = this.#toolListings.get(connection);
+            if (listing !== undefined) listing.stale = true;
+            void this.#refreshTools(connection);
         });
         connection.client.onclose = () =>
             this.#recordStopped(connectionId, connection, "The MCP server stopped.");
+        // Listed now, so the first turn that needs the tools usually finds them waiting.
+        void this.#refreshTools(connection);
     }
 
     /**
@@ -1496,14 +1670,14 @@ export class McpModule implements AgentModule {
     #scheduleRetries(): void {
         for (const [connectionId, retry] of this.#retries) {
             const pooled = this.#pool.get(connectionId);
-            if (this.#closed || pooled?.failure === undefined || pooled.references.size === 0) {
+            if (this.#closed || pooled?.state.kind !== "failed" || pooled.references.size === 0) {
                 clearTimeout(retry.timer);
                 this.#retries.delete(connectionId);
             }
         }
         if (this.#closed || this.#context === undefined) return;
         for (const [connectionId, pooled] of this.#pool) {
-            if (pooled.failure === undefined || pooled.references.size === 0) continue;
+            if (pooled.state.kind !== "failed" || pooled.references.size === 0) continue;
             if (!this.#retries.has(connectionId)) this.#armRetry(connectionId, 0);
         }
     }
@@ -1523,32 +1697,29 @@ export class McpModule implements AgentModule {
         const scheduled = this.#retries.get(connectionId);
         const pooled = this.#pool.get(connectionId);
         const root = this.#context;
-        if (this.#closed || scheduled === undefined || pooled?.failure === undefined) return;
+        if (this.#closed || scheduled === undefined || pooled?.state.kind !== "failed") return;
         if (root === undefined) return;
         // The entry stays while the attempt runs, so nothing arms a second attempt beside it.
         const running: McpRetry = { attempts: scheduled.attempts };
         this.#retries.set(connectionId, running);
         this.#retriesContext ??= detach(root).named("mcp-server-retries");
         const ctx = this.#retriesContext;
-        let connection: McpClientConnection | undefined;
-        let failure = pooled.failure;
-        try {
-            connection = await this.#connect(ctx, pooled.input);
-        } catch (error) {
-            failure = errorMessage(error);
-        }
+        const outcome = await this.#attempt(ctx, pooled.input);
         await this.#reloadLock.runInLock(ctx, async () => {
             const current = this.#pool.get(connectionId);
             const owned = this.#retries.get(connectionId) === running;
             if (owned) this.#retries.delete(connectionId);
-            if (this.#closed || current?.failure === undefined || current.references.size === 0) {
-                await connection?.close().catch(() => undefined);
-            } else if (connection === undefined) {
-                this.#pool.set(connectionId, { ...current, failure });
-                if (owned) this.#armRetry(connectionId, running.attempts + 1);
+            if (this.#closed || current?.state.kind !== "failed" || current.references.size === 0) {
+                if (outcome.kind === "connected") {
+                    await outcome.connection.close().catch(() => undefined);
+                }
             } else {
-                this.#adopt(connectionId, current.references, current.input, connection);
-                ctx.log.info(`MCP server ${current.input.name} connected again.`);
+                this.#settle(connectionId, current, outcome);
+                if (outcome.kind === "connected") {
+                    ctx.log.info(`MCP server ${current.input.name} connected again.`);
+                } else if (owned) {
+                    this.#armRetry(connectionId, running.attempts + 1);
+                }
             }
             this.#scheduleRetries();
         });
@@ -1557,15 +1728,15 @@ export class McpModule implements AgentModule {
     /** Fail every server on a runner that is not connected, and stop what it holds of them. */
     #failServersOnAbsentRunners(): void {
         for (const [connectionId, pooled] of this.#pool) {
-            const connection = pooled.connection;
             const runnerId = /^runner:([^:]+):/u.exec(connectionId)?.[1];
             if (
-                connection === undefined ||
+                pooled.state.kind !== "connected" ||
                 runnerId === undefined ||
                 this.#connectedRunners.has(runnerId)
             ) {
                 continue;
             }
+            const connection = pooled.state.connection;
             const failure = `The runner ${this.#runners.displayName(runnerId)} is not connected.`;
             this.#recordStopped(connectionId, connection, failure);
             void connection.close().catch(() => undefined);
@@ -1576,9 +1747,11 @@ export class McpModule implements AgentModule {
         this.#context ??= ctx;
     }
 
-    /** The lifetime of servers on runners, which outlive whatever request first needed them. */
-    #serversLifetime(ctx: Context): Context {
-        this.#serversContext ??= detach(this.#context ?? ctx).named("mcp-servers");
+    /** The lifetime of servers and their work, which outlive whatever request first needed them. */
+    #serversLifetime(ctx?: Context): Context {
+        const root = this.#context ?? ctx;
+        if (root === undefined) throw new Error("The MCP module has not started.");
+        this.#serversContext ??= detach(root).named("mcp-servers");
         return this.#serversContext;
     }
 
@@ -1639,31 +1812,83 @@ export class McpModule implements AgentModule {
 
     /**
      * Every provider request and tool execution reads the tools, so one listing is shared by every
-     * session on the connection. It is not bound to the caller, who only stops waiting for it.
+     * session on the connection. Reading it never waits: a missing or out-of-date listing is
+     * refreshed in the background, and the reader takes what is there now.
      */
-    async #allTools(ctx: Context, connection: McpClientConnection): Promise<McpTool[]> {
-        let listing = this.#toolLists.get(connection);
+    #toolListing(connection: McpClientConnection): McpToolListing {
+        let listing = this.#toolListings.get(connection);
         if (listing === undefined) {
-            const started = this.#listTools(this.#serversLifetime(ctx), connection);
-            this.#toolLists.set(connection, started);
-            started.catch(() => {
-                if (this.#toolLists.get(connection) === started) this.#toolLists.delete(connection);
+            listing = { generation: this.#toolGeneration, stale: true };
+            this.#toolListings.set(connection, listing);
+        }
+        if (listing.stale || listing.generation !== this.#toolGeneration) {
+            void this.#refreshTools(connection);
+        }
+        return listing;
+    }
+
+    /**
+     * List a connection's tools in the servers' lifetime, joining a listing already under way. It
+     * is not bound to whoever asked, who only stops waiting for it, and it never rejects: a
+     * failure is kept on the listing and the next read tries again.
+     */
+    #refreshTools(connection: McpClientConnection): Promise<void> {
+        let listing = this.#toolListings.get(connection);
+        if (listing === undefined) {
+            listing = { generation: this.#toolGeneration, stale: true };
+            this.#toolListings.set(connection, listing);
+        }
+        if (listing.pending !== undefined) return listing.pending;
+        const target = listing;
+        target.stale = false;
+        target.generation = this.#toolGeneration;
+        const pending = this.#listTools(this.#serversLifetime(), connection)
+            .then(
+                (tools) => {
+                    target.tools = tools;
+                    delete target.failure;
+                },
+                (error: unknown) => {
+                    if (target.tools === undefined) target.failure = errorMessage(error);
+                    target.stale = true;
+                },
+            )
+            .finally(() => {
+                delete target.pending;
             });
-            listing = started;
+        target.pending = pending;
+        return pending;
+    }
+
+    /** A connection's tools for a caller that asked for them, waiting only as long as it lasts. */
+    async #allTools(ctx: Context, connection: McpClientConnection): Promise<McpTool[]> {
+        const listing = this.#toolListing(connection);
+        if (
+            listing.tools !== undefined &&
+            !listing.stale &&
+            listing.generation === this.#toolGeneration
+        ) {
+            return listing.tools;
         }
+        const refresh = this.#refreshTools(connection);
         const lifetime = ctx.lifetime;
-        if (lifetime === undefined) return await listing;
-        lifetime.throwIfAborted();
-        let stop = (): void => {};
-        const stopped = new Promise<never>((_, reject) => {
-            stop = () => reject(lifetime.reason);
-            lifetime.addEventListener("abort", stop, { once: true });
-        });
-        try {
-            return await Promise.race([listing, stopped]);
-        } finally {
-            lifetime.removeEventListener("abort", stop);
+        if (lifetime === undefined) {
+            await refresh;
+        } else {
+            lifetime.throwIfAborted();
+            let stop = (): void => {};
+            const stopped = new Promise<never>((_, reject) => {
+                stop = () => reject(lifetime.reason);
+                lifetime.addEventListener("abort", stop, { once: true });
+            });
+            try {
+                await Promise.race([refresh, stopped]);
+            } finally {
+                lifetime.removeEventListener("abort", stop);
+            }
         }
+        if (listing.tools !== undefined) return listing.tools;
+        throw new Error(listing.failure ?? "The MCP server did not list its tools.");
     }
 
     async #listTools(ctx: Context, connection: McpClientConnection): Promise<McpTool[]> {

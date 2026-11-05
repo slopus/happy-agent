@@ -177,6 +177,7 @@ describe("MCP servers on a runner", () => {
             } as never,
         );
 
+        await connected(module);
         await expect(echo(module, "hello")).resolves.toBe("on-runner:hello");
         expect(started).toEqual([
             expect.objectContaining({ command: process.execPath, args: [fixture, "on-runner"] }),
@@ -194,9 +195,9 @@ describe("MCP servers on a runner", () => {
             { agents, sharedKV: {} } as never,
             { id: "agent", metadata: undefined } as never,
         );
-        expect(module.workspaceMcpConfigLocation("agent")).toBe(
-            `${join(workspace, "mcp.toml")} on the runner build-box`,
-        );
+        await expect
+            .poll(() => module.workspaceMcpConfigLocation("agent"))
+            .toBe(`${join(workspace, "mcp.toml")} on the runner build-box`);
 
         await module.configureWorkspaceServer(ctx, "agent", "tools", {
             transport: "stdio",
@@ -227,6 +228,7 @@ describe("MCP servers on a runner", () => {
                 metadata: undefined,
             } as never,
         );
+        await connected(module);
         await expect(echo(module, "before")).resolves.toBe("on-runner:before");
 
         await runner.stop();
@@ -264,6 +266,7 @@ describe("MCP servers on a runner", () => {
             } as never,
         );
 
+        await connected(module);
         await expect(echo(module, "hi")).resolves.toBe("global:hi");
         expect(started.map((options) => options.args?.at(-1))).toEqual(["global"]);
     });
@@ -287,6 +290,7 @@ describe("MCP servers on a runner", () => {
 
         // An agent on the runner that is not the default gets the server on its own runner.
         await created(hooks, agents, "onOther");
+        await connected(module, "onOther");
         await expect(echo(module, "hi", "onOther")).resolves.toBe("global:hi");
         expect(startedOn.get("gpu-box")).toHaveLength(1);
         expect(startedOn.get("build-box")).toBeUndefined();
@@ -294,6 +298,8 @@ describe("MCP servers on a runner", () => {
         // A second agent on that runner shares the process; the default runner starts its own.
         await created(hooks, agents, "alsoOnOther");
         await created(hooks, agents, "onDefault");
+        await connected(module, "alsoOnOther");
+        await connected(module, "onDefault");
         await expect(echo(module, "again", "alsoOnOther")).resolves.toBe("global:again");
         await expect(echo(module, "there", "onDefault")).resolves.toBe("global:there");
         expect(startedOn.get("gpu-box")).toHaveLength(1);
@@ -314,10 +320,12 @@ describe("MCP servers on a runner", () => {
         const hooks = await resolveModuleHooks(ctx, module, agents);
         await module.reload(ctx);
         await created(hooks, agents, "here");
+        await connected(module, "here");
         await expect(echo(module, "local", "here")).resolves.toBe("global:local");
         expect(startedOn.get("build-box")).toBeUndefined();
 
         await created(hooks, agents, "there");
+        await connected(module, "there");
         await expect(echo(module, "remote", "there")).resolves.toBe("global:remote");
         expect(startedOn.get("build-box")).toHaveLength(1);
     });
@@ -337,6 +345,13 @@ async function created(
         { agents, sharedKV: {} } as never,
         { id: agentId, metadata: undefined } as never,
     );
+}
+
+/** Creation only starts attaching an agent's folder; wait until its server is connected. */
+async function connected(module: McpModule, agentId = "agent"): Promise<void> {
+    await expect
+        .poll(async () => (await module.listServerPage(ctx, agentId)).servers, { timeout: 10_000 })
+        .toMatchObject([{ name: "tools", status: "connected" }]);
 }
 
 async function echo(module: McpModule, text: string, agentId = "agent"): Promise<string> {

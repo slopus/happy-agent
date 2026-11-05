@@ -137,12 +137,25 @@ async function harness() {
         await gym.send(`${ASK}${serverName}:${label}`, { sessionId, permissionMode: "auto" });
         return await answered(label);
     }
-    return { gym, run, ask, answered };
+    /**
+     * A folder's servers start in the background and their tools reach a later turn, so list the
+     * session's servers until this one is connected.
+     */
+    async function connected(sessionId: string, serverName: string) {
+        await gym.waitUntil(
+            async () =>
+                (await run(sessionId, "list_mcp_servers", {})).includes(`${serverName}\tconnected`)
+                    ? true
+                    : undefined,
+            `${serverName} to connect`,
+        );
+    }
+    return { gym, run, ask, answered, connected };
 }
 
 describe("bot and task folders", () => {
     it("load their own mcp.toml for the agents in that folder only, across restarts", async () => {
-        const { gym, run, ask, answered } = await harness();
+        const { gym, run, ask, answered, connected } = await harness();
         const scout = (await gym.client.createBot({ name: "Scout" })).bot;
         const other = (await gym.client.createBot({ name: "Other" })).bot;
         const created = await run(scout.agent.id, "create_subtask", {
@@ -166,8 +179,11 @@ describe("bot and task folders", () => {
             },
         });
 
+        await connected(scout.agent.id, "scout_tools");
         expect(await ask(scout.agent.id, "scout_tools", "bot")).toBe("scout_tools:bot");
+        await connected(subtaskId, "scout_tools");
         expect(await ask(subtaskId, "scout_tools", "subtask")).toBe("scout_tools:subtask");
+        await connected(task.agent.id, "task_tools");
         expect(await ask(task.agent.id, "task_tools", "task")).toBe("task_tools:task");
         expect(await ask(other.agent.id, "scout_tools", "other-bot")).toBeUndefined();
         expect(await ask(other.agent.id, "task_tools", "other-bot-task")).toBeUndefined();
@@ -215,7 +231,7 @@ describe("bot and task folders", () => {
     }, 120_000);
 
     it("lets configure_mcp_server write and connect the current folder's servers", async () => {
-        const { gym, run, ask } = await harness();
+        const { gym, run, ask, connected } = await harness();
         const scout = (await gym.client.createBot({ name: "Scout" })).bot;
         const other = (await gym.client.createBot({ name: "Other" })).bot;
 
@@ -246,6 +262,7 @@ describe("bot and task folders", () => {
         expect(await ask(other.agent.id, "scout_tools", "elsewhere")).toBeUndefined();
 
         await gym.restart();
+        await connected(scout.agent.id, "scout_tools");
         expect(await ask(scout.agent.id, "scout_tools", "restarted")).toBe("scout_tools:restarted");
 
         const removed = await run(scout.agent.id, "configure_mcp_server", {

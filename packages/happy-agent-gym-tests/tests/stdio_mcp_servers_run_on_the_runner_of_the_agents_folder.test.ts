@@ -17,6 +17,7 @@ const BOX_TOKEN = "m".repeat(43);
 const OTHER_TOKEN = "n".repeat(43);
 const server = fileURLToPath(new URL("./fixtures/whereMcpServer.mjs", import.meta.url));
 const ASK = "where-are-you:";
+const LIST = "list-servers:";
 const running = new Set<AgentGym>();
 
 afterEach(async () => {
@@ -83,6 +84,19 @@ async function runners(options: { readonly userWide?: boolean } = {}) {
             if (request.messages.at(-1)?.role === "tool") {
                 return { content: [{ type: "text", text: "Answered." }] };
             }
+            const listing = new RegExp(`${LIST}([0-9]+)`).exec(lastUserText(request));
+            if (listing !== null) {
+                return {
+                    content: [
+                        {
+                            type: "tool_call",
+                            name: "list_mcp_servers",
+                            arguments: {},
+                            callId: `list_${listing[1]}`,
+                        },
+                    ],
+                };
+            }
             const asked = new RegExp(`${ASK}([a-z]+):([a-z]+)`).exec(lastUserText(request));
             if (asked === null) return { content: [{ type: "text", text: "Settled." }] };
             return {
@@ -141,12 +155,33 @@ async function runners(options: { readonly userWide?: boolean } = {}) {
         return (await gym.client.createAgent({ workspaceId: project.id })).agent.id;
     }
 
+    let listings = 0;
+    /**
+     * An agent's servers start in the background, and their tools reach a later turn, so ask the
+     * agent to list its servers until this one is connected.
+     */
+    async function connected(agentId: string, serverName: string): Promise<void> {
+        await gym.waitUntil(async () => {
+            const callId = `list_${String(++listings)}`;
+            await gym.send(`${LIST}${String(listings)}`, {
+                sessionId: agentId,
+                permissionMode: "full_access",
+            });
+            const listed = await gym.waitUntil(
+                () => gym.inference.toolResults().find((item) => item.callId === callId),
+                `the server list ${callId}`,
+            );
+            return listed.text.includes(`${serverName}\tconnected`) ? true : undefined;
+        }, `${serverName} to connect for ${agentId}`);
+    }
+
     /** Where the `serverName` server that `agentId` reaches says it runs. */
     async function where(
         agentId: string,
         serverName: string,
         tag: string,
     ): Promise<{ home: string | null; cwd: string }> {
+        await connected(agentId, serverName);
         await gym.send(`${ASK}${serverName}:${tag}`, {
             sessionId: agentId,
             permissionMode: "full_access",

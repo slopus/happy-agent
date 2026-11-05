@@ -358,6 +358,7 @@ export type McpGetPromptResult = Static<typeof mcpGetPromptResultSchema>;
 export const mcpServerStatusSchema = Type.Union([
     Type.Literal("blocked"),
     Type.Literal("connected"),
+    Type.Literal("connecting"),
     Type.Literal("disabled"),
     Type.Literal("failed"),
 ]);
