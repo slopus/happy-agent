@@ -98,5 +98,18 @@ describe("vault versions with an operation ID", () => {
         // Without an operation ID the If-Match still applies.
         const stale = await postVersion(gym, vault.id, plan.id, plan.version, { fromVersion: 1 });
         expect(stale.status).toBe(409);
+
+        // A refused attempt records nothing, so its retry with the current If-Match goes through.
+        const refused = await postVersion(gym, vault.id, plan.id, plan.version, {
+            fromVersion: 1,
+            operationId: "attempt-3",
+        });
+        expect(refused.status).toBe(409);
+        const retried = await postVersion(gym, vault.id, plan.id, refused.body.currentVersion, {
+            fromVersion: 1,
+            operationId: "attempt-3",
+        });
+        expect(retried.status).toBe(201);
+        expect(retried.body.version).toMatchObject({ number: 3, restoredFrom: 1 });
     }, 600_000);
 });

@@ -404,6 +404,39 @@ describe("vault Surfaces", () => {
         });
     });
 
+    it("records an operation ID only when the version request succeeds", async () => {
+        const f = await fixture();
+        const entry = await f.file(null, "notes.txt", "one");
+        const attempt = async (expected: string) =>
+            f.vaults.createVersion(
+                f.ctx,
+                f.vault.id,
+                entry.id,
+                expected,
+                { type: "upload", uploadId: await f.upload(enc("two")) },
+                { ...person, operationId: "retry-me" },
+            );
+        await expect(attempt("stale")).rejects.toMatchObject({ code: "conflict" });
+        await expect(
+            f.vaults.createVersion(
+                f.ctx,
+                f.vault.id,
+                entry.id,
+                entry.version,
+                { type: "upload", uploadId: "missing" },
+                { ...person, operationId: "retry-me" },
+            ),
+        ).rejects.toBeDefined();
+        expect(
+            await f.vaults.replayVersion(f.ctx, f.vault.id, entry.id, "retry-me"),
+        ).toBeUndefined();
+        // The client's retry with the current If-Match and the same ID goes through.
+        expect(await attempt(entry.version)).toMatchObject({
+            created: true,
+            version: { number: 2 },
+        });
+    });
+
     it("searches names and content, and leaves the Trash out", async () => {
         const f = await fixture();
         const plans = await f.folder(null, "Plans");
