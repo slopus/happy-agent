@@ -189,6 +189,36 @@ describe("McpModule production discovery", () => {
         }
     });
 
+    it("offers only the tools each catalog's enabled_tools and disabled_tools allow", async () => {
+        const root = await temporaryRoot();
+        await write(
+            root,
+            join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "mcp.toml"),
+            [
+                `${serverToml("hidden", stdio("mixed-tools"))}disabled_tools = ["echo"]`,
+                `${serverToml("only", stdio("mixed-tools"))}enabled_tools = ["echo"]`,
+                "",
+            ].join("\n"),
+        );
+        const config = await ConfigModule.load(join(root, ".happy"));
+        const module = mcpModule(
+            config,
+            new UserInputModule(new PresenceModule(config)),
+            new WorkspaceEvents().module,
+        );
+        try {
+            const hooks = await resolveModuleHooks(ctx, module);
+            await ready(module, "agent-a", ["hidden", "only"]);
+            const names = (await hooks.tools!(ctx, scope())).map((tool) => tool.name);
+            expect(names.filter((name) => name.startsWith("mcp__")).sort()).toEqual([
+                "mcp__hidden__nested",
+                "mcp__only__echo",
+            ]);
+        } finally {
+            await module.close();
+        }
+    });
+
     it("keeps healthy tools when one server tool exceeds the JSON depth bound", async () => {
         const { module } = await configuredModule({ mixed: stdio("mixed-tools") });
         try {

@@ -1441,13 +1441,18 @@ export class McpModule implements AgentModule {
         };
     }
 
-    /** The tools a connected server listed last, or none while they are still being listed. */
+    /**
+     * The tools a connected server listed last that this agent's catalog allows, or none while
+     * they are still being listed. Pooled servers are shared across catalogs, so each catalog's
+     * enabled_tools and disabled_tools apply here rather than to the shared listing.
+     */
     #listedTools(agentId: string, server: string): readonly McpTool[] {
-        const pooled = this.#pool.get(
-            this.#effectiveServers(agentId).get(server)?.connectionId ?? "",
+        const entry = this.#effectiveServers(agentId).get(server);
+        const pooled = this.#pool.get(entry?.connectionId ?? "");
+        if (entry === undefined || pooled?.state.kind !== "connected") return [];
+        const tools = (this.#toolListing(pooled.state.connection).tools ?? []).filter((tool) =>
+            isMcpToolAllowed(entry.config, tool.name),
         );
-        if (pooled?.state.kind !== "connected") return [];
-        const tools = this.#toolListing(pooled.state.connection).tools ?? [];
         assertUnique(
             tools.map((tool) => tool.name),
             "tool",
