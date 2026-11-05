@@ -64,8 +64,7 @@ when health reports `capabilities.vaults`. Folders and files are separate resour
 `kind`: `createVaultFolder()` makes an empty folder, and a file is a plain file or an artifact, a
 vault app (a small web app) whose name ends in `.artifact` (`isVaultArtifactName()`). `listVaultItems()` pages
 one folder, folders first; `listVaultTree()` pages every live item for a client that keeps the
-whole tree, and `resolveVaultPath()` and `searchVault()` find items by path, name, or text;
-`searchVaults()` searches every vault at once when health reports `capabilities.vaultSearch`. Bytes
+whole tree, and `resolveVaultPath()` and `searchVault()` find items by path, name, or text. Bytes
 arrive as resumable uploads: `createVaultUpload({ size })`, then `uploadVaultChunk()` from the
 upload's `received` until it is complete; a `conflict` error carries the current upload to resume
 from. Place an upload with `createVaultFile()` or `createVaultVersion()`; an artifact's upload is a
@@ -79,6 +78,15 @@ answers `404` was pruned. Show bytes through `vaultFileContentUrl()` and artifac
 file, saved as `vaultArtifactDownloadName(file)`. Follow `vault.folder.*`, `vault.file.*`,
 `vault.version.updated`, and `vault.settings.updated`; deleting or restoring a folder announces
 only the folder.
+
+`quickSearch({ q, types, limit })` searches everything at once when health reports
+`capabilities.quickSearch`: vault files and folders, Surfaces, documents, todos, calendar events,
+artifacts, conversations, projects, and workspaces, each result a typed variant with a stable `key`
+(`<type>:<id>`) and its fused `rank`; results of types this client does not know are dropped.
+Search what the app already holds first, then fuse the two lists with
+`fuseQuickSearchResults(remote, local)`, Reciprocal Rank Fusion with k = 60 where the remote
+fields win on a shared key. `quickSearchFusion.fixtures.json`, shipped with the package, holds the
+literal cases every platform's fusion must reproduce.
 
 The Feed is each person's list of what happened, served when health reports
 `capabilities.feed`. `getFeed({ before, limit })` reads entries newest `cursor` first; pass the

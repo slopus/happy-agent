@@ -546,10 +546,9 @@ creation with `400`, and answer vault and vault-upload routes with `404`; client
 vault creation. A vault Surface listed by a daemon a client does not support is left unavailable
 like any unknown type. The `vault.*` events are absent on older compatible daemons.
 
-Searching every vault is additive and does not increment the protocol version. Supporting daemons
-report `capabilities.vaultSearch: true` from health. Older daemons omit it, answer
-`GET /v0/vault-search` with `404`, and rank per-vault search by substring only; clients then search
-each vault on its own or offer no vault results in global search.
+Quick search is additive and does not increment the protocol version. Supporting daemons report
+`capabilities.quickSearch: true` from health. Older daemons omit it and answer
+`GET /v0/quick-search` with `404`; clients then show local search results only.
 
 Editing a Surface's name and image is additive and does not increment the protocol version.
 Supporting daemons report `capabilities.surfaceEditing: true` from health. Older daemons omit it
@@ -1538,8 +1537,7 @@ Fields:
   Provider routes. `webSocketTunnels: true` advertises the WebSocket twins of the proxy tunnels,
   described under WebSocket tunnels, and the WebSocket keepalive pings described under Keepalive.
   `artifactCovers: true` advertises artifact `cover` and `summary`, described under Artifacts.
-  `vaultSearch: true` advertises `GET /v0/vault-search` and the word-ranked search described
-  under Vault Surfaces.
+  `quickSearch: true` advertises `GET /v0/quick-search`, described under Quick search.
   `feedSubjectFilter: true` advertises `subjects` on `GET /v0/feed` and
   `POST /v0/feed/read-all`, described under Feed.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
@@ -10751,8 +10749,8 @@ expose the artifact data bridge or rewrite its `/api/*` requests.
 
 #### Search
 
-Search covers live folders and files: one vault's through `GET /search` under the vault's routes,
-or every vault's through `GET /v0/vault-search`. Both find and rank the same way.
+Search covers one vault's live folders and files through `GET /search` under the vault's routes.
+Quick search finds vault folders and files across every vault with the same tiers.
 
 The query is split into words of letters and digits, ignoring case and diacritics, so `Café` and
 `cafe` are the same word. A word matches any word that starts with it, so a query typed so far
@@ -10819,14 +10817,6 @@ listed.
 
 An upload that does not exist, has expired, or was used is `404 not_found` on every route and when
 it is placed. Placing an upload that is still receiving is `409 conflict`.
-
-#### Searching every vault
-
-`GET /v0/vault-search?q=...` searches the live folders and files of every vault Surface, as
-described under Search, for global search. It takes `q`, 1–256 characters, optional `kind`, and
-optional `limit`, exactly as the per-vault search does, and returns
-`200 { "results": [...], "truncated": false }` with the same results; each `item` carries its
-vault's `surfaceId`. Other query fields are `400 invalid_request`.
 
 #### Settings
 
@@ -13994,6 +13984,144 @@ this daemon accepts in `desktopCapabilities`; omission means none.
 A `404` or `501` from session
 creation may mean the daemon lacks Live support; clients must not mistake that for an empty
 session or silently choose a different authentication method.
+
+## Quick search
+
+Quick search answers every search box that finds things by name or text across the installation,
+such as the desktop's quick switcher and mobile search. Clients search what they already hold at
+once, call `GET /v0/quick-search` in parallel, and fuse the two lists as described under Fusing
+results. A daemon that serves it reports `capabilities.quickSearch: true` from health. Older
+daemons omit it and answer the route with `404`; clients then show their local results only.
+
+### Matching and ranking
+
+The query is split into words of letters and digits, ignoring case and diacritics, so `Café` and
+`cafe` are the same word. A word matches any word that starts with it, so a query typed so far
+finds what it is becoming; words are not stemmed. Each kind of thing is searched by its own
+provider, which ranks its matches with BM25: matches in names and titles first, then matches in
+content. Vault folders and files follow the tiers described under Vault Surfaces search, and a
+vault item is returned once, under its best tier. The daemon then fuses the providers' lists with
+Reciprocal Rank Fusion: a result at 1-based position `p` in its provider's list scores
+`1 / (60 + p)`, results are ordered by score, and equal scores follow the provider order of the
+table below, then position.
+
+Names, titles, todo text, calendar event titles, and vault and artifact text change in the search
+index in the same transaction as the change itself. A document's text is indexed shortly after
+each edit, so a content match may lag the newest edit by about a second. After an upgrade, a
+daemon indexes existing content in the background; until it finishes, older content may be
+missing from results.
+
+### `GET /v0/quick-search`
+
+Query parameters:
+
+- `q` — required, 1–256 characters.
+- `types` — optional, a comma-separated list of result types to search, such as
+  `vault_file,todo`. Without it every type is searched. Types the daemon does not know are
+  ignored, so a newer client can ask an older daemon; when none of the listed types is known, the
+  results are empty.
+- `limit` — optional, 1–100, default 30.
+
+Any other query parameter, an empty `types` value, or a malformed value is `400 invalid_request`.
+
+Response — `200`:
+
+```json
+{
+    "results": [
+        {
+            "type": "vault_file",
+            "key": "vault_file:f1a2b3c4d5e6f7g8h9i0j1k2",
+            "rank": 1,
+            "surfaceId": "v1a2u3l4t5s6u7r8f9a0c1e2",
+            "fileId": "f1a2b3c4d5e6f7g8h9i0j1k2",
+            "name": "Launch plan.md",
+            "path": "/Docs/Launch plan.md",
+            "kind": "file",
+            "match": "content",
+            "innerPath": null,
+            "line": 4,
+            "snippet": "The launch moves to Friday"
+        },
+        {
+            "type": "todo",
+            "key": "todo:t1o2d3o4i5d6t7o8d9o0i1d2",
+            "rank": 2,
+            "surfaceId": "s1u2r3f4a5c6e7i8d9t0o1d2",
+            "todoId": "t1o2d3o4i5d6t7o8d9o0i1d2",
+            "text": "Book the launch venue",
+            "status": "active"
+        }
+    ],
+    "truncated": false,
+    "partial": false
+}
+```
+
+- `results` — at most `limit` results in fused order. Every result has `type`, `key`, and `rank`,
+  its 1-based position in this list. A thing appears at most once.
+- `truncated` — `true` when more results matched than `limit`.
+- `partial` — `true` when a provider did not answer within the daemon's time budget of about
+  250 ms, or failed, and its results are missing. Retrying may find them.
+
+A caller finds exactly what it may read through the routes that list each kind of thing: in team
+mode every signed-in member finds vaults, Surfaces, todos, documents, calendar events, artifacts,
+projects, workspaces, and conversations, but tasks only where they hold a membership, and bots as
+`GET /v0/bots` lists them. Things in a vault's Trash, deleted todos, deleted calendar events,
+deleted artifacts, and hidden subagents are never returned. Archived projects, workspaces, and
+conversations are, marked as archived.
+
+### Result types
+
+Keys are `<type>:<id>`, with the ID named below; a key is stable for as long as the thing exists.
+Types are listed in provider order. Clients ignore results whose `type` they do not know, so
+daemons may add types without a protocol change.
+
+| `type`           | Key ID        | Fields                                                                                                            |
+| ---------------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `vault_file`     | `fileId`      | `surfaceId`, `fileId`, `name`, `path`, `kind` (`"file"` or `"artifact"`), `match`, `innerPath`, `line`, `snippet` |
+| `vault_folder`   | `folderId`    | `surfaceId`, `folderId`, `name`, `path`, `match`                                                                  |
+| `document`       | `surfaceId`   | `surfaceId`, `name`, `match`, `line`, `snippet`                                                                   |
+| `todo`           | `todoId`      | `surfaceId`, `todoId`, `text`, `status` (`"active"` or `"completed"`)                                             |
+| `calendar_event` | `eventId`     | `surfaceId`, `eventId`, `title`, `allDay`, `start`                                                                |
+| `artifact`       | `artifactId`  | `artifactId`, `title`, `artifactType`, `match`, `snippet`                                                         |
+| `surface`        | `surfaceId`   | `surfaceId`, `surfaceType`, `name`                                                                                |
+| `agent`          | `agentId`     | `agentId`, `title`, `kind` (`"chat"`, `"task"`, `"subtask"`, or `"bot"`), `archived`                              |
+| `project`        | `projectId`   | `projectId`, `name`, `archived`                                                                                   |
+| `workspace`      | `workspaceId` | `workspaceId`, `projectId`, `name`, `archived`                                                                    |
+
+- `match` says where the words matched: `"name"` in the name or title, `"content"` in the text,
+  or, for vault items, `"path"` only in the folders above. A vault folder's `match` is `"name"` or
+  `"path"`; a document's and an artifact's are `"name"` or `"content"`.
+- `line` and `snippet` describe a content match: the 1-based line where a query word first
+  appears and at most 200 characters of that line around it. They are `null` for other matches.
+  `innerPath` names the file inside a vault app holding the text, and is otherwise `null`.
+- A vault file is the vault's plain file or vault app at `path`; a vault folder is a folder.
+- A `document` is a document Surface, matched by its name or by the text of its Markdown
+  projection. Other Surfaces, vaults included, are `surface` results matched by name, with
+  `surfaceType` as the catalog reports it.
+- A `todo` matches by its text. A `calendar_event` matches by its title; `start` is the epoch
+  milliseconds start of the series' next occurrence, or of its last one when the series has
+  ended, and `allDay` says whether it is an all-day event.
+- An `artifact` matches by its title or by the text of its newest version: Markdown as written and
+  HTML without its tags. `artifactType` is the artifact's `type`.
+- An `agent` is a conversation people see: `"chat"` for a project or workspace conversation,
+  `"task"` for a task's agent, `"subtask"` for a subtask, and `"bot"` for a bot's own agent. It
+  matches by `title`.
+- `project` and `workspace` match by name. A project is its root workspace, which is never also a
+  `workspace` result.
+
+### Fusing results
+
+Clients fuse their local results with the daemon's the same way, so every platform shows the same
+order. A client ranks its own local list as the daemon does, assigning 1-based positions, and
+scores each list's result at position `p` as `1 / (60 + p)`, using a remote result's `rank` as its
+position. Results with the same `key` are one result whose score is the sum of its scores; it
+shows the remote result's fields when the daemon returned one, and the local result's otherwise.
+Results are ordered by score, highest first. Equal scores are ordered by remote `rank`, results
+the daemon did not return coming after those it did, and then by local position. The client
+package ships these rules as `fuseQuickSearchResults()` and its test vectors as
+`quickSearchFusion.fixtures.json`.
 
 ## Events
 

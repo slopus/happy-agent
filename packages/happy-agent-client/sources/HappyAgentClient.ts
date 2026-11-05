@@ -140,7 +140,6 @@ import type {
     VaultFileResponse,
     VaultFolderLocationResponse,
     VaultFolderResponse,
-    VaultGlobalSearchQuery,
     VaultItemListQuery,
     VaultItemPageResponse,
     VaultMutationRequest,
@@ -160,6 +159,12 @@ import type {
     VaultVersionResponse,
     VaultVersionSelector,
 } from "./protocol/vaults.js";
+import {
+    quickSearchResultSchema,
+    type QuickSearchRequest,
+    type QuickSearchResponse,
+    type QuickSearchResult,
+} from "./protocol/quickSearch.js";
 import type {
     CloudAccessTokenResponse,
     CloudAuthorizingResponse,
@@ -2652,6 +2657,38 @@ export class HappyAgentClient {
     }
 
     /**
+     * Searches everything quick search covers, fused into one ranked list. Results of types this
+     * client does not know are dropped. Needs `capabilities.quickSearch`; fuse the answer with
+     * local results through `fuseQuickSearchResults()`.
+     */
+    async quickSearch(
+        request: QuickSearchRequest,
+        options: RequestOptions = {},
+    ): Promise<QuickSearchResponse> {
+        const response = await this.#json<{
+            results: unknown[];
+            truncated: boolean;
+            partial: boolean;
+        }>({
+            method: "GET",
+            path: "/v0/quick-search",
+            query: {
+                q: request.q,
+                types: request.types?.join(","),
+                limit: request.limit,
+            },
+            signal: options.signal,
+        });
+        return {
+            results: response.results.filter((result): result is QuickSearchResult =>
+                Value.Check(quickSearchResultSchema, result),
+            ),
+            truncated: response.truncated,
+            partial: response.partial,
+        };
+    }
+
+    /**
      * Name matches, then content matches with a line and snippet, then path matches, then
      * substring matches.
      */
@@ -2663,22 +2700,6 @@ export class HappyAgentClient {
         return await this.#json({
             method: "GET",
             path: vaultPath(surfaceId, "search"),
-            query: { ...query },
-            signal: options.signal,
-        });
-    }
-
-    /**
-     * Searches every vault, ranked as `searchVault()`; each item carries its vault's `surfaceId`.
-     * Needs `capabilities.vaultSearch`.
-     */
-    async searchVaults(
-        query: VaultGlobalSearchQuery,
-        options: RequestOptions = {},
-    ): Promise<VaultSearchResponse> {
-        return await this.#json({
-            method: "GET",
-            path: "/v0/vault-search",
             query: { ...query },
             signal: options.signal,
         });

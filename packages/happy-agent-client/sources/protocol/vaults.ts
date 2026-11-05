@@ -404,14 +404,6 @@ export const vaultSearchResponseSchema = Type.Object({
 });
 export type VaultSearchResponse = Static<typeof vaultSearchResponseSchema>;
 
-/** `GET /v0/vault-search` query: the per-vault search across every vault, without `parentId`. */
-export const vaultGlobalSearchQuerySchema = Type.Object({
-    kind: Type.Optional(vaultSearchKindSchema),
-    limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
-    q: Type.String({ minLength: 1, maxLength: 256 }),
-});
-export type VaultGlobalSearchQuery = Static<typeof vaultGlobalSearchQuerySchema>;
-
 export const vaultSettingsSchema = Type.Object({
     retention: vaultRetentionSchema,
     surfaceId: surfaceIdSchema,
