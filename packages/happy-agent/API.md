@@ -752,7 +752,7 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   daemon's own machine),
   `method_not_allowed` (405, a withdrawn write method on a resource that remains readable),
   `too_large` (413), `range_not_satisfiable` (416, an artifact or vault file `Range` outside the
-  file), `name_taken` (409, a vault entry name already used in its folder),
+  file), `name_taken` (409, a vault folder or file name already used in its folder),
   `settings_full` (409, a person's user settings are at their limit), `unsupported` (501),
   `internal` (500).
 
@@ -783,7 +783,7 @@ event cursors (defined in the events chapter) and resource versions (next sectio
 ### Resource versions and `If-Match`
 
 Every resource that appears in version-chained `*.updated` events — projects, workspaces,
-terminals, agents, bots, tasks, artifacts, secrets, surfaces, todos, vault entries and settings, questions, processes, and the profile — carries a `version`
+terminals, agents, bots, tasks, artifacts, secrets, surfaces, todos, vault folders, files, and settings, questions, processes, and the profile — carries a `version`
 field: a **UUIDv7** minted at the moment of the change. Because versions are time-ordered, a
 client holding two copies of the same resource compares their versions and keeps the greater
 one; this is how a REST snapshot and the event stream reconcile without bookkeeping. Versions
@@ -791,7 +791,7 @@ also chain updates together: every `*.updated` event names the version it replac
 can tell whether its cached copy is current or dirty (see the events chapter).
 
 Mutations of projects, workspaces, bots, tasks, artifacts, secrets, todos, calendar events, chat
-Surface messages, vault entries, and the profile additionally require an `If-Match` header carrying the version
+Surface messages, vault folders and files, and the profile additionally require an `If-Match` header carrying the version
 the client last saw. Creation is excepted, and so are per-person memberships and their order, such
 as joining, leaving, and reordering a task. Two mutations of things that are not event-chained
 resources also require it, each with the version its own section names: enabling or disabling a
@@ -10395,7 +10395,7 @@ attribution, creator join rules, image handling, durable replay, and permission 
 ### Vault Surfaces
 
 A `vault` Surface is a shared file store shaped like a file system without being one: a tree of
-folders, files, and artifact entries that people browse like a Finder window or search, and that
+folders, files, and artifacts that people browse like a Finder window or search, and that
 keeps earlier versions of every file under a retention policy the vault's people choose. A daemon
 that serves vaults reports `capabilities.vaults: true` from health.
 
@@ -10408,16 +10408,39 @@ supplied-ID retries, and `surface.created` follow the catalog rules. Repeating a
 ID changes nothing, including its settings.
 
 Vault content lives on the daemon's machine, in its private data directory (`.happy/agent/vaults`).
-Content is stored once per SHA-256, across all vaults, so a file kept by several versions, entries,
-or vaults is one file on disk, and moving or renaming never touches stored bytes. Nothing is ever
-written into a working directory. Agents never reach vault storage through their own file system;
-they use the vault tools below. Vault data has the same access as other Surface data: every
+Content is stored once per SHA-256, across all vaults, so content kept by several versions, files,
+or vaults is one file on disk, and moving or renaming never touches stored bytes. Nothing is
+ever written into a working directory. Agents never reach vault storage through their own file
+system; they use the vault tools below. Vault data has the same access as other Surface data: every
 onboarded authenticated person may read and change every vault, and guests never may.
 
-#### Entries
+#### Folders and files
 
-The tree is made of entries. Storage is flat: an entry names its parent, and folders exist only as
-entries.
+A vault holds **folders** and **files**; together they are its **items**. A folder holds other
+items and may be empty. A file is either a plain file or an artifact, a small web site kept as one
+file, and every file has numbered versions; folders have none. Storage is flat: an item names its
+parent folder, and the vault's root is not a folder. Every item has a `kind`, `"folder"`, `"file"`,
+or `"artifact"`, so a list holding both tells them apart, and an item's kind never changes.
+
+A folder:
+
+```json
+{
+    "id": "f7k2m9q4w1e5t8y3u6i0o2p5",
+    "surfaceId": "s4k8m2q9w1e5r7y3u6i0o2p4",
+    "parentId": null,
+    "name": "Reports",
+    "kind": "folder",
+    "createdAt": 1755300000000,
+    "createdBy": { "userId": "u1x2y3z4a5b6c7d8e9f0g1h2", "agentId": null },
+    "updatedAt": 1755300000000,
+    "updatedBy": { "userId": "u1x2y3z4a5b6c7d8e9f0g1h2", "agentId": null },
+    "deletedAt": null,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e"
+}
+```
+
+A file:
 
 ```json
 {
@@ -10440,71 +10463,83 @@ entries.
 }
 ```
 
-- `id` — a CUID2, the entry's identity. Paths are derived from names and change when an entry or
-  one of its folders is renamed or moved; the ID never does.
-- `parentId` — the folder holding the entry, or `null` at the vault's root. The root is not an
-  entry.
-- `kind` — `"folder"`, `"file"`, or `"artifact"`. It never changes.
-- `latestVersion` — the number of the newest version of a file or artifact; `null` for a folder.
-- `size` — bytes of a file's newest version, or of all files of an artifact's newest version
-  together; `null` for a folder. A file may be empty.
-- `sha256` — the lowercase hexadecimal SHA-256 of a file's newest version; `null` for folders and
-  artifacts.
-- `mediaType` — a file's media type, decided by the daemon from its name's extension with the
-  artifact extension table, `application/octet-stream` when the extension is unknown. Renaming can
-  change it. `null` for folders and artifacts.
-- `artifact` — for an artifact entry, its newest version's `{ "type": "html", "entry": "index.html",
-"fileCount": 12 }`, described under Artifact entries; `null` otherwise.
+Both have:
+
+- `id` — a CUID2, the item's identity, unique across the vault's folders and files. Paths are
+  derived from names and change when an item or one of its folders is renamed or moved; the ID
+  never does.
+- `parentId` — the folder holding the item, or `null` at the vault's root.
+- `kind` — `"folder"` for a folder; `"file"` or `"artifact"` for a file.
 - `createdBy`, `updatedBy` — actors `{ "userId": ..., "agentId": ... }`, resolved from trusted
   execution context as for todo revisions: `userId` is the authenticated person for HTTP, or the
   identified person whose message an agent is working on, and `null` in standalone mode or when
   nobody is identified; `agentId` is the executing agent for tools and `null` for HTTP.
-  `updatedBy` and `updatedAt` describe the entry's latest change of any kind.
-- `deletedAt` — when the entry itself was moved to the Trash, or `null`. See Trash.
-- `version` — the UUIDv7 resource version. It covers every field above and advances on every
-  change to the entry. It is unrelated to the numbered content versions below.
+  `updatedBy` and `updatedAt` describe the item's latest change of any kind.
+- `deletedAt` — when the item itself was moved to the Trash, or `null`. See Trash.
+- `version` — the UUIDv7 resource version. It covers every field and advances on every change to
+  the item. It is unrelated to a file's numbered content versions below.
+
+A file also has:
+
+- `latestVersion` — the number of its newest version.
+- `size` — bytes of its newest version, or of all files of an artifact's newest version together.
+  A plain file may be empty.
+- `sha256` — the lowercase hexadecimal SHA-256 of a plain file's newest version; `null` for an
+  artifact.
+- `mediaType` — a plain file's media type, decided by the daemon from its name's extension with
+  the artifact extension table, `application/octet-stream` when the extension is unknown. Renaming
+  can change it. `null` for an artifact.
+- `artifact` — for an artifact, its newest version's `{ "type": "html", "entry": "index.html",
+"fileCount": 12 }`, described under Artifacts; `null` for a plain file.
 
 A **name** is 1–255 bytes of UTF-8 after Unicode NFC normalization, which the daemon applies and
 stores. It holds no `/`, `\`, or ASCII control character, and is not `.` or `..`. Names are unique
-among a folder's live children case-insensitively: two names collide when their NFC forms are
-equal after Unicode default lowercasing, so `Report.pdf` and `report.PDF` cannot sit side by side,
-and a vault exported to a case-insensitive file system loses nothing. Names keep the case they were
-given. A **path** is `/` followed by the names from the root down, joined with `/`, such as
-`/Reports/Q3/summary.pdf`. Paths are resolved case-insensitively, so `/reports/q3/SUMMARY.pdf`
-names the same entry. An entry is at most 64 levels below the root. A folder cannot be moved into
-itself or into a folder inside it.
+among a folder's live children, folders and files together, case-insensitively: two names collide
+when their NFC forms are equal after Unicode default lowercasing, so `Report.pdf` and `report.PDF`
+cannot sit side by side, and a vault exported to a case-insensitive file system loses nothing.
+Names keep the case they were given. A **path** is `/` followed by the names from the root down,
+joined with `/`, such as `/Reports/Q3/summary.pdf`. Paths are resolved case-insensitively, so
+`/reports/q3/SUMMARY.pdf` names the same file. An item is at most 64 levels below the root. A
+folder cannot be moved into itself or into a folder inside it.
 
-Entries have no manual order. Listings put folders first, then files and artifacts together,
-sorted as the request asks.
+An artifact's name ends in `.artifact`, such as `launch.artifact`, and only an artifact's name
+does: the suffix, matched case-insensitively, is how people, clients, and agents recognize an
+artifact in the tree, in paths, and on disk after a download, and it decides whether a new file is
+an artifact. Creating, renaming, restoring under a new name, moving, or copying is refused with
+`400 invalid_request` when an artifact's new name would lose the suffix or a folder's or plain
+file's would gain it.
+
+Items have no manual order. Listings put folders first, then plain files and artifacts together,
+sorted as the request asks. Folders are never removed for being empty.
 
 #### Trash
 
-Deleting moves an entry to the vault's Trash: it sets the entry's own `deletedAt` and nothing else.
-Deleting a folder takes everything inside it along without touching those entries. An entry is
-**in the Trash** when it or any folder above it is deleted, and **live** otherwise. Only live
-entries appear in listings, the tree, path resolution, and search, and only live folders can hold
-new or moved entries. A **Trash item** is a deleted entry whose folders are all live; the Trash
+Deleting moves an item to the vault's Trash: it sets the item's own `deletedAt` and nothing else.
+Deleting a folder takes everything inside it along without touching those items. An item is **in
+the Trash** when it or any folder above it is deleted, and **live** otherwise. Only live items
+appear in listings, the tree, path resolution, and search, and only live folders can hold new or
+moved items. A **Trash item** is a deleted folder or file whose folders are all live; the Trash
 lists those.
 
 Restoring a Trash item clears its `deletedAt`, bringing back everything inside it that was not
-deleted separately before; an entry deleted on its own earlier stays in the Trash inside the
-restored folder, and is a Trash item again. A restored entry returns to its folder, or to the
-vault's root when that folder is no longer live, unless the request names another live folder
-and, optionally, a new name. An entry inside a deleted folder is not a Trash item, so it cannot be
+deleted separately before; an item deleted on its own earlier stays in the Trash inside the
+restored folder, and is a Trash item again. A restored item returns to its folder, or to the
+vault's root when that folder is no longer live, unless the request names another live folder and,
+optionally, a new name. An item inside a deleted folder is not a Trash item, so it cannot be
 restored on its own; restore its folder first.
 
-An entry in the Trash cannot be renamed, moved, or given a new version. Its history and content
-stay readable, so people can look at what they are about to restore. Trash items are removed
+An item in the Trash cannot be renamed, moved, or given a new version. Its history and content stay
+readable, so people can look at what they are about to restore. Trash items are removed
 permanently, with everything inside them, their versions, and their activity, once they have been
-in the Trash for the policy's `trashDays`. That is the only way an entry ever disappears.
+in the Trash for the policy's `trashDays`. That is the only way an item ever disappears.
 
 #### Versions
 
-Every content change of a file or artifact appends one version. Folders have no versions.
+Every content change of a file appends one version. Folders have no versions.
 
 ```json
 {
-    "entryId": "e4k8m2q9w1e5r7y3u6i0o2p4",
+    "fileId": "e4k8m2q9w1e5r7y3u6i0o2p4",
     "surfaceId": "s4k8m2q9w1e5r7y3u6i0o2p4",
     "number": 3,
     "size": 48213,
@@ -10518,17 +10553,17 @@ Every content change of a file or artifact appends one version. Folders have no 
 }
 ```
 
-- `number` — from 1, the next number for every new version of the entry. Numbers of pruned
+- `number` — from 1, the next number for every new version of the file. Numbers of pruned
   versions are never reused.
-- `size`, `sha256` — the file's bytes and digest; for an artifact, `size` is all its files together
-  and `sha256` is `null`.
-- `artifact` — for an artifact version, `{ "type", "entry", "fileCount" }`; `null` for a file. A
-  single-version read adds `files`, the version's whole manifest, as described under Artifact
-  entries.
+- `size`, `sha256` — a plain file's bytes and digest; for an artifact, `size` is all its files
+  together and `sha256` is `null`.
+- `artifact` — for an artifact version, `{ "type", "entry", "fileCount" }`; `null` for a plain
+  file. A single-version read adds `files`, the version's whole file list, as described under
+  Artifacts.
 - `pinned` — whether a person pinned the version. Pinned versions are never pruned.
 - `restoredFrom` — the number of the version whose content this version copied, when it was made
   from an earlier version; otherwise `null`.
-- `actor`, `source` — who made the version, as for entry actors, and `"api"` or `"tool"`.
+- `actor`, `source` — who made the version, as for item actors, and `"api"` or `"tool"`.
 
 A version never changes after it is made, except for `pinned`. Writing content identical to the
 newest version makes no version and changes nothing. Renames, moves, deletion, and restoration are
@@ -10536,13 +10571,13 @@ not versions; the activity log records them. Restoring an earlier version is an 
 whose content is that version's: it appends a new version with `restoredFrom` set, so history
 only grows.
 
-One agent makes at most 100 versions of one entry in any hour through its tools; a write beyond
+One agent makes at most 100 versions of one file in any hour through its tools; a write beyond
 that fails and asks the agent to make its changes in fewer calls. People are not limited. This
 keeps a looping agent from pushing a vault's history out through a count-based policy.
 
 #### Retention
 
-Each vault has one retention policy, applied to every file and artifact in it, in the Trash too:
+Each vault has one retention policy, applied to every file in it, in the Trash too:
 
 ```json
 {
@@ -10557,8 +10592,8 @@ Each vault has one retention policy, applied to every file and artifact in it, i
 }
 ```
 
-- `maxVersions` — keep at most this many versions of each entry, the newest included; an integer
-  from 1 through 10,000, or `null` for no cap. Pinned versions are not counted.
+- `maxVersions` — keep at most this many versions of each file, the newest included; an
+  integer from 1 through 10,000, or `null` for no cap. Pinned versions are not counted.
 - `maxAgeDays` — drop versions older than this many days; an integer from 1 through 36,500, or
   `null` to keep them however old.
 - `keepAllDays` — keep every version younger than this many days; an integer from 0 through 36,500.
@@ -10569,25 +10604,26 @@ Each vault has one retention policy, applied to every file and artifact in it, i
   3,650, or `null` to keep it until it is restored.
 
 The JSON above is the default policy, a Time Machine schedule: every version for a day, one a day
-until 30 days, one a week after that, and no cap. For each entry, versions are kept or dropped in this order:
+until 30 days, one a week after that, and no cap. For each file, versions are kept or dropped
+in this order:
 
 1. The newest version and every pinned version are always kept, and are left out of the steps below.
 2. A version older than `maxAgeDays` is dropped.
 3. A version younger than `keepAllDays` is kept.
 4. Otherwise the version belongs to the tier with the largest `afterDays` not above its age. With
    no such tier it is kept. Within a tier, time is divided into buckets of `everyDays` days counted
-   from the Unix epoch, and the newest of the entry's versions that belong to that tier in each
+   from the Unix epoch, and the newest of the file's versions that belong to that tier in each
    bucket is kept; the others are dropped.
-5. When `maxVersions` is set, only the newest `maxVersions` minus one versions that survived the steps
-   above are kept beside the newest version.
+5. When `maxVersions` is set, only the newest `maxVersions` minus one versions that survived the
+   steps above are kept beside the newest version.
 
 Ages are measured from a version's `createdAt` at the moment the policy is applied. Buckets are
 aligned to the epoch rather than to any version, so applying the same policy twice at the same
 moment drops nothing more. "Keep the last 10" is `{ "maxVersions": 10, "keepAllDays": 0,
 "thinning": [] }`, and keeping everything is `{ "keepAllDays": 0, "thinning": [] }` with no caps.
 
-The daemon applies the policy to an entry after each new version of it, and to every entry of
-every vault at least once an hour, in bounded batches that never hold up requests. Changing the
+The daemon applies the policy to a file after each new version of it, and to every file of every
+vault at least once an hour, in bounded batches that never hold up requests. Changing the
 policy never prunes inside the settings request; the next pass applies it. Pruning removes version
 rows permanently; a pruned version answers `404 not_found` and emits no event, so a client showing
 history drops a version that answers `404`. Stored content is removed when no version, upload, or
@@ -10595,12 +10631,12 @@ artifact manifest in any vault still uses it.
 
 #### Activity
 
-Every entry keeps an append-only activity log of what happened to it, for history views:
+Every folder and file keeps an append-only activity log of what happened to it, for history views:
 
 ```json
 {
     "id": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
-    "entryId": "e4k8m2q9w1e5r7y3u6i0o2p4",
+    "itemId": "e4k8m2q9w1e5r7y3u6i0o2p4",
     "kind": "moved",
     "fromParentId": null,
     "toParentId": "f7k2m9q4w1e5t8y3u6i0o2p5",
@@ -10612,24 +10648,24 @@ Every entry keeps an append-only activity log of what happened to it, for histor
 }
 ```
 
-`id` is a UUIDv7. `kind` decides the other fields:
+`id` is a UUIDv7 and `itemId` the folder or file it belongs to. `kind` decides the other fields:
 
-- `created` — `parentId`, `name`, and `copiedFrom`, the entry ID it was copied from or `null`.
+- `created` — `parentId`, `name`, and `copiedFrom`, the ID of the file it was copied from or `null`.
 - `moved` — `fromParentId`, `toParentId`, `fromName`, and `toName`; a rename keeps the parent.
 - `deleted` — nothing more.
-- `restored` — `parentId` and `name`, where the entry came back.
-- `version_created` — `number` and `restoredFrom`. The version may since have been pruned.
-  Creating a file or an artifact records `created` only; its version 1 is implied.
-- `pinned`, `unpinned` — `number`.
+- `restored` — `parentId` and `name`, where the item came back.
+- `version_created` — `number` and `restoredFrom`, for files only. The version may since have been
+  pruned. Creating a file records `created` only; its version 1 is implied.
+- `pinned`, `unpinned` — `number`, for files only.
 
 The set of kinds may grow; a client shows a kind it does not recognize as "changed". Activity is
-removed only with its entry.
+removed only with its item.
 
-#### Artifact entries
+#### Artifacts
 
-An artifact entry is a small static web site kept as one entry: a bundle of files, each named by
+An artifact is a small static web site kept as one file: a bundle of files, each named by
 a relative `path` under the artifact file object's path rules, served under one URL prefix so
-relative references resolve without rewriting. Its inner files are not tree entries, and its
+relative references resolve without rewriting. Its inner files are not items of the tree, and its
 versions are whole bundles. A version's `artifact` summary is `{ "type", "entry", "fileCount" }`:
 
 | `type`     | `entry`             | Rules                                               |
@@ -10638,26 +10674,44 @@ versions are whole bundles. A version's `artifact` summary is `{ "type", "entry"
 | `markdown` | `index.md`, UTF-8   | 1–256 files, entry at most 4 MiB, 256 MiB together  |
 
 A bundle holding `index.html` at its root is `html`, otherwise one holding `index.md` is
-`markdown`, otherwise it is refused. The type may differ between versions. Every file holds at
+`markdown`, otherwise it is refused. The type may differ between versions. `artifact.json` at a
+bundle's root is reserved for its manifest and is never a site file. Every file holds at
 least one byte, file media types come from the artifact extension table, paths are case-sensitive,
-and no path is also a folder of another. A single-version read carries `files`, the whole manifest
+and no path is also a folder of another. A single-version read carries `files`, the whole file list
 in path order, each `{ "path", "mimeType", "size", "sha256" }` exactly as the artifact file object.
 
-People make artifact versions from a zip upload. The daemon reads the zip when the upload is
-placed:
+An artifact travels as a **`.artifact` file**: a zip holding the site's files at its root beside
+`artifact.json`, its manifest.
+
+```json
+{ "format": "happy.artifact", "formatVersion": 1, "type": "html", "entry": "index.html" }
+```
+
+`format` is always `happy.artifact`. `formatVersion` is `1`; a higher one is refused as made by a
+newer Happy. `type` and `entry` are the version's summary, and `entry` must be the file the type
+names in the table above. Fields not described here are ignored. The manifest is not stored as a
+site file: the daemon keeps `type` and `entry` on the version and writes the manifest again on
+download, so a downloaded `.artifact` file uploads back as the same content.
+
+People make artifact versions by uploading a `.artifact` file. A client uploading a file whose name
+ends in `.artifact` creates an artifact, or makes a new version of the artifact of that name,
+just as it does for a plain file. A `.zip` is always a plain file. The daemon reads the `.artifact`
+file when the upload is placed:
 
 - Folder records, everything under `__MACOSX/`, files named `.DS_Store`, and empty files are left
   out.
-- When no `index.html` or `index.md` sits at the zip's root and every remaining file is inside one
-  top-level folder, that folder is removed from every path, so a zipped `site/` folder works.
+- When no `artifact.json` sits at the zip's root and every remaining file is inside one top-level
+  folder, that folder is removed from every path, so a zipped `launch.artifact/` folder works.
+- `artifact.json` must be at the root, valid UTF-8 JSON, and agree with the files.
 - Stored and deflated records only. Encrypted records, symbolic links, absolute paths, `\`, `.` and
   `..` segments, duplicate paths, and anything else that breaks the path rules are refused, and so
   is a zip whose files break the limits above while it is being read, whatever its headers claim.
 
-A refused zip is `400 invalid_request` with a message saying why, and nothing is changed. Agents
-write artifacts with the tools below, file by file or as a whole.
+A refused `.artifact` file, including one that is not a zip or has no valid manifest, is
+`400 invalid_request` with a message saying why, and nothing is changed. Agents write artifacts
+with the tools below, file by file or as a whole.
 
-An artifact entry is served as the artifact routes serve `html` artifacts, in the same sandbox:
+An artifact is served as the artifact routes serve `html` artifacts, in the same sandbox:
 every response carries the artifact file route's `Content-Security-Policy` sandbox and
 `X-Content-Type-Options: nosniff`, so its pages run in an opaque origin without the daemon's or the
 client's storage or credentials. A vault artifact has no artifact data store; clients do not
@@ -10665,13 +10719,13 @@ expose the artifact data bridge or rewrite its `/api/*` requests.
 
 #### Search
 
-Search covers one vault's live entries. A name search matches the query, case-insensitively, as a
-substring of entry names and paths, ranked: names equal to the query, then names starting with it,
-then names containing it, then paths containing it, each group by path. A content search matches
-the query as a case-insensitive substring of text in the newest version of text files and of the
-text files inside artifacts' newest versions. A file is text when it is valid UTF-8 without NUL
-and at most 1 MiB; larger and binary files are found by name only. The index is updated in the
-same transaction as the version, so search never returns content a vault no longer holds. Content
+Search covers one vault's live folders and files. A name search matches the query,
+case-insensitively, as a substring of item names and paths, ranked: names equal to the query, then
+names starting with it, then names containing it, then paths containing it, each group by path. A
+content search matches the query as a case-insensitive substring of text in the newest version of
+plain text files and of the text files inside artifacts' newest versions. A file is text when it is valid UTF-8 without NUL
+and at most 1 MiB; larger and binary files are found by name only. The index is updated in the same
+transaction as the version, so search never returns content a vault no longer holds. Content
 matching needs at least three characters; shorter queries search names only.
 
 #### Uploads
@@ -10695,7 +10749,7 @@ An upload is global, like an artifact upload: whoever holds its ID may place it 
 how many bytes have arrived, always from the start; `status` is `"receiving"` until `received`
 equals `size`, then `"complete"`, when `sha256` holds the digest of the bytes. An upload expires 24
 hours after it was created or last received bytes, whichever is later, and then neither it nor its
-bytes remain unless something else holds the same content. Placing an upload in an entry uses it
+bytes remain unless something else holds the same content. Placing an upload in a file uses it
 up in the same transaction; an upload is used at most once. Uploads emit no events and are not
 listed.
 
@@ -10730,154 +10784,170 @@ A vault's settings are `{ "surfaceId": "...", "retention": {...}, "updatedAt": 1
 #### Routes
 
 The prefix is `/v0/surfaces/vault/:surfaceId`. Every route checks that the Surface has type `vault`
-and scopes entries, versions, and activity to it. Unknown Surfaces, a Surface of another type, and
-entries of another vault return `404 not_found`, as do malformed IDs in the path. Unsupported
-body or query fields and malformed values return `400 invalid_request`. Paged reads take an
-optional `limit` and an opaque `pageCursor`, the previous page's `nextPageCursor`, which is `null`
-on the last page; an unrecognized `pageCursor` is `400 invalid_request`. `cursor` in a response is
-the shared event cursor, captured before the first read.
+and scopes folders, files, versions, and activity to it. Unknown Surfaces, a Surface of another
+type, folders and files of another vault, a folder ID on a file route, and a file ID on a folder
+route return `404 not_found`, as do malformed IDs in the path. Unsupported body or query fields and
+malformed values return `400 invalid_request`. Paged reads take an optional `limit` and an opaque
+`pageCursor`, the previous page's `nextPageCursor`, which is `null` on the last page; an
+unrecognized `pageCursor` is `400 invalid_request`. `cursor` in a response is the shared event
+cursor, captured before the first read.
 
-Every mutation of an existing entry — rename, move, delete, restore, and new versions — requires
-`If-Match` with the entry's `version`. A missing or malformed header is `400 invalid_request`, and
-a stale one is `409 conflict` with `currentVersion` and the current `entry`. A name already taken
-by a live entry in the destination folder is `409 name_taken` carrying that sibling as `entry`.
-Changing an entry in the Trash, placing anything in a folder that is not live, and moving a folder
-into itself are `409 conflict` with the current `entry`. Creation, pins, and settings do not use
-`If-Match`.
+Every change to an existing folder or file — rename, move, delete, restore, and new versions —
+requires `If-Match` with its `version`. A missing or malformed header is `400 invalid_request`, and
+a stale one is `409 conflict` with `currentVersion` and the current `folder` or `file`. A name
+already taken by a live item in the destination folder is `409 name_taken` carrying that sibling as
+`item`. Changing an item in the Trash, placing anything in a folder that is not live, and moving a
+folder into itself are `409 conflict` with the current `folder` or `file`. Creation, pins, and
+settings do not use `If-Match`.
 
 Reading:
 
-- `GET /entries` lists the live children of the folder `parentId`, or of the root without it.
-  Optional `sort` is `name` (default), `updatedAt`, or `size`, and `order` is `asc` or `desc`
-  (default `asc` for `name`, `desc` otherwise). Folders come first in every sort; names compare
-  case-insensitively, then by ID. `limit` is 1–500, default 200. It returns `200 { "entries": [...],
-"nextPageCursor": null, "cursor": "..." }`. A `parentId` that is not a folder of this vault is
-  `404 not_found`; a folder in the Trash still lists its children, so people can look inside.
-- `GET /entries/:entryId` returns `200 { "entry": {...}, "path": "/Reports/Q3/summary.pdf",
-"ancestors": [{ "id": "...", "name": "Reports" }, ...], "inTrash": false }`. `ancestors` runs
-  from the root down to the entry's folder; `inTrash` says whether the entry is in the Trash. Trash
-  items and the entries inside them are readable here.
-- `GET /resolve?path=/Reports/Q3/summary.pdf` returns the same body plus `innerPath`, for a live
-  path. When the path runs on past an artifact entry, `entry` is the artifact and `innerPath` is the
-  rest, which must be a file of its newest version; otherwise `innerPath` is `null`. `path` must
-  start with `/` and name at least one entry; a trailing `/` is ignored. A path that names nothing
-  is `404 not_found`.
-- `GET /tree` lists every live entry of the vault, in ID order, for clients that keep the whole
-  tree. `limit` is 1–1,000, default 500. It returns `200 { "entries": [...], "nextPageCursor": null,
-"cursor": "..." }`. A client following events from the first page's `cursor` misses nothing made
-  while it reads the rest.
+- `GET /items` lists the live children of the folder `parentId`, or of the root without it,
+  folders and files together as items. Optional `sort` is `name` (default), `updatedAt`, or
+  `size`, and `order` is `asc` or `desc` (default `asc` for `name`, `desc` otherwise). Folders come
+  first in every sort; names compare case-insensitively, then by ID. `limit` is 1–500, default 200. It returns `200 { "items": [...], "nextPageCursor": null, "cursor": "..." }`. A `parentId`
+  that is not a folder of this vault is `404 not_found`; a folder in the Trash still lists its
+  children, so people can look inside.
+- `GET /folders/:folderId` returns `200 { "folder": {...}, "path": "/Reports", "ancestors": [...],
+"inTrash": false }`, and `GET /files/:fileId` returns `200 { "file": {...}, "path":
+"/Reports/Q3/summary.pdf", "ancestors": [{ "id": "...", "name": "Reports" }, ...], "inTrash":
+false }`. `ancestors` runs from the root down to the item's folder; `inTrash` says whether the
+  item is in the Trash. Trash items and the items inside them are readable here.
+- `GET /resolve?path=/Reports/Q3/summary.pdf` returns `200 { "item": {...}, "path": "...",
+"ancestors": [...], "inTrash": false, "innerPath": null }` for a live path. When the path runs on
+  past an artifact, `item` is the artifact and `innerPath` is the rest, which must be a file of its
+  newest version; otherwise `innerPath` is `null`. `path` must start with `/` and name at least one
+  item; a trailing `/` is ignored. A path that names nothing is `404 not_found`.
+- `GET /tree` lists every live folder and file of the vault, in ID order, for clients that keep the
+  whole tree. `limit` is 1–1,000, default 500. It returns `200 { "items": [...], "nextPageCursor":
+null, "cursor": "..." }`. A client following events from the first page's `cursor` misses nothing
+  made while it reads the rest.
 - `GET /search?q=...` searches as described under Search. `q` is 1–256 characters. Optional `kind`
   is `name`, `content`, or `all` (default); `parentId` limits it to one live folder and everything
   below; `limit` is 1–100, default 50. It returns `200 { "results": [...], "truncated": false }`,
-  name matches before content matches. A result is `{ "entry": {...}, "path": "...",
-"match": "name", "innerPath": null, "line": null, "snippet": null }`, or for a content match
-  `match: "content"`, the artifact file's `innerPath` when the text is inside an artifact, the
-  1-based `line` of the first match, and a `snippet` of at most 200 characters around it. Each file
-  appears at most once per match kind. `truncated` says more results exist; narrow the query.
-- `GET /trash` lists Trash items, most recently deleted first, as `200 { "items": [{ "entry":
-{...}, "path": "..." }], "nextPageCursor": null, "cursor": "..." }`. `path` is where the item was.
-  `limit` is 1–500, default 200.
-- `GET /entries/:entryId/versions` lists a file's or artifact's surviving versions, newest first,
-  without manifests, as `200 { "versions": [...], "nextPageCursor": null }`. `limit` is 1–200,
-  default 50. A folder returns `404 not_found`.
-- `GET /entries/:entryId/versions/:number` returns `200 { "version": {...} }`; `number` may be
+  name matches before content matches. A result is `{ "item": {...}, "path": "...", "match":
+"name", "innerPath": null, "line": null, "snippet": null }`, or for a content match, whose item
+  is always a file, `match: "content"`, the artifact file's `innerPath` when the text is inside an
+  artifact, the 1-based `line`, and a `snippet` of at most 200 characters around the match.
+- `GET /trash` lists Trash items, most recently deleted first, as `200 { "items": [{ "item":
+{...}, "path": "/Reports/Q3" }], "nextPageCursor": null, "cursor": "..." }`. `path` is where the
+  item was. `limit` is 1–500, default 200.
+- `GET /files/:fileId/versions` lists a file's surviving versions, newest first, as
+  `200 { "versions": [...], "nextPageCursor": null }`, without their file lists. `limit` is 1–200,
+  default 50.
+- `GET /files/:fileId/versions/:number` returns `200 { "version": {...} }`; `number` may be
   `latest`. An artifact version carries `artifact.files`. A pruned or unknown version is
   `404 not_found`.
-- `GET /entries/:entryId/activity` lists activity newest first, as `200 { "activity": [...],
-"nextPageCursor": null }`. `limit` is 1–200, default 50.
+- `GET /folders/:folderId/activity` and `GET /files/:fileId/activity` list an item's activity
+  newest first, as `200 { "activity": [...], "nextPageCursor": null }`. `limit` is 1–200,
+  default 50.
 
 Changing:
 
-- `POST /entries` creates an entry and returns `201 { "entry": {...} }`, emitting
-  `vault.entry.created`. It accepts `{ "parentId": null, "name": "Q3", "kind": "folder" }`, plus
-  optional `id` and `mutationId`, and for a file or an artifact exactly one content source:
-  `uploadId` (for an artifact, a zip) or `fromEntryId`, an entry of the same kind in any vault
-  whose content the new entry copies, with optional `fromVersion` (default its newest). A folder
-  takes no content source. A file or an artifact starts at version 1, and the activity records
-  `created` with `copiedFrom`. Repeating a supplied `id` returns the current entry unchanged with
-  `201`, even after deletion or restart, consumes no upload, and emits no event; the other fields
-  are ignored.
-- `PATCH /entries/:entryId` renames or moves: `{ "name": "...", "parentId": "...",
-"mutationId": "..." }` with at least one of `name` and `parentId` (`null` is the root). It
-  returns `200 { "entry": {...} }`. A change records `moved` and emits `vault.entry.updated`; the
-  same name and folder is a no-op.
-- `POST /entries/:entryId/delete` accepts `{}` or `{ "mutationId": "..." }`, moves the entry to the
-  Trash, records `deleted`, and returns `200 { "entry": {...} }`, emitting `vault.entry.updated`.
-  Deleting an entry that is already deleted is a no-op after the `If-Match` check. Deleting an
-  entry inside a deleted folder is allowed and marks it on its own.
-- `POST /entries/:entryId/restore` accepts `{ "parentId": "...", "name": "...", "mutationId":
-"..." }`, all optional, restores a Trash item as described under Trash, records `restored`, and
-  returns `200 { "entry": {...} }`, emitting `vault.entry.updated`. An entry that is not a Trash
-  item is `409 conflict`.
-- `POST /entries/:entryId/versions` makes a new version of a file or artifact from
-  `{ "uploadId": "..." }` (for an artifact, a zip of its whole bundle) or `{ "fromVersion": 2 }`,
-  plus optional `mutationId`. It returns `201 { "entry": {...}, "version": {...} }`, records
-  `version_created`, and emits `vault.entry.updated`. Content identical to the newest version
-  returns `200 { "entry": {...}, "version": null }`, changes nothing, and still uses up the upload.
-  A folder is `409 conflict`.
-- `POST /entries/:entryId/versions/:number/pin` and `/unpin` accept `{}` or
+- `POST /folders` creates a folder from `{ "parentId": null, "name": "Q3" }`, plus optional `id`
+  and `mutationId`, and returns `201 { "folder": {...} }`, emitting `vault.folder.created`. A new
+  folder is empty and stays until it is deleted.
+- `POST /files` creates a file and returns `201 { "file": {...} }`, emitting `vault.file.created`.
+  It accepts `{ "parentId": "...", "name": "summary.pdf" }`, plus optional `id` and `mutationId`,
+  and exactly one content source: `uploadId`, or `fromFileId`, a file in any vault whose content
+  the new file copies, with optional `fromVersion` (default its newest). A name ending in
+  `.artifact` makes an artifact, whose upload must be a `.artifact` file and whose copy source must
+  be an artifact; any other name makes a plain file, whose copy source must be a plain file. A new
+  file starts at version 1, and the activity records `created` with `copiedFrom`.
+- Repeating a supplied `id` on either creation route returns the current folder or file unchanged
+  with `201`, even after deletion or restart, consumes no upload, and emits no event; the other
+  fields are ignored. An `id` already used by an item of the other kind is `409 conflict`.
+- `PATCH /folders/:folderId` and `PATCH /files/:fileId` rename or move: `{ "name": "...",
+"parentId": "...", "mutationId": "..." }` with at least one of `name` and `parentId` (`null` is
+  the root). They return `200 { "folder": {...} }` or `200 { "file": {...} }`. A change records
+  `moved` and emits `vault.folder.updated` or `vault.file.updated`; the same name and folder is a
+  no-op.
+- `POST /folders/:folderId/delete` and `POST /files/:fileId/delete` accept `{}` or
+  `{ "mutationId": "..." }`, move the item to the Trash, record `deleted`, and return the item as
+  above, emitting its `updated` event. Deleting an item that is already deleted is a no-op after the
+  `If-Match` check. Deleting an item inside a deleted folder is allowed and marks it on its own.
+- `POST /folders/:folderId/restore` and `POST /files/:fileId/restore` accept `{ "parentId": "...",
+"name": "...", "mutationId": "..." }`, all optional, restore a Trash item as described under
+  Trash, record `restored`, and return the item as above, emitting its `updated` event. An item
+  that is not a Trash item is `409 conflict`.
+- `POST /files/:fileId/versions` makes a new version of a file from `{ "uploadId": "..." }` (for an
+  artifact, a `.artifact` file of its whole bundle) or `{ "fromVersion": 2 }`, plus optional
+  `mutationId`. It returns `201 { "file": {...}, "version": {...} }`, records `version_created`,
+  and emits `vault.file.updated`. Content identical to the newest version returns
+  `200 { "file": {...}, "version": null }`, changes nothing, and still uses up the upload.
+- `POST /files/:fileId/versions/:number/pin` and `/unpin` accept `{}` or
   `{ "mutationId": "..." }` and return `200 { "version": {...} }`. A change records `pinned` or
-  `unpinned` and emits `vault.version.updated`; it does not change the entry or its `version`.
+  `unpinned` and emits `vault.version.updated`; it does not change the file or its `version`.
   Pinning a pinned version, or unpinning an unpinned one, is a no-op.
 
 Content:
 
-- `GET /entries/:entryId/versions/:number/content` serves a file version's bytes; `number` may be
-  `latest`. `Content-Type` is the entry's `mediaType`, with `; charset=utf-8` for `text/*`.
-  `Content-Disposition` is `inline` with the entry's name as `filename*`, or `attachment` with
+- `GET /files/:fileId/versions/:number/content` serves a plain file version's bytes; `number` may
+  be `latest`. `Content-Type` is the file's `mediaType`, with `; charset=utf-8` for `text/*`.
+  `Content-Disposition` is `inline` with the file's name as `filename*`, or `attachment` with
   `?download=true`. `ETag`, `If-None-Match`, `Range`, `Cache-Control`, `Vary`,
   `X-Content-Type-Options`, and the sandbox `Content-Security-Policy` follow the artifact file route
   exactly, with the version's `sha256` as the entity tag; numbered versions are immutable and
-  `latest` is revalidated. Folders and artifacts are `404 not_found`.
-- `GET /entries/:entryId/versions/:number/files/*path` serves one file of an artifact version under
+  `latest` is revalidated. An artifact is `404 not_found`.
+- `GET /files/:fileId/versions/:number/artifact/*path` serves one file of an artifact version under
   every rule of `GET /v0/artifacts/:artifactId/versions/:number/files/*path`: per-segment
-  percent-encoding, exact manifest matches only, caching, ranges, and the same sandbox. A client
-  showing a page uses a numbered version, so the entry and its files come from one version.
-- `GET /entries/:entryId/versions/:number/zip` downloads an artifact version as a zip with its files
-  at the root.
-- `GET /entries/:entryId/zip` downloads a live folder, and `GET /zip` the whole vault: every live
-  entry below it, files at their relative paths, each artifact as a folder of its newest version's
-  files, and empty folders as folder records.
+  percent-encoding, exact file-list matches only, caching, ranges, and the same sandbox. A client
+  showing a page uses a numbered version, so the artifact and its files come from one version. A
+  plain file is `404 not_found`.
+- `GET /files/:fileId/versions/:number/zip` downloads an artifact version as its `.artifact` file:
+  `artifact.json` first, then its files in path order, named in `Content-Disposition` by the
+  artifact's name. Every record carries the version's creation time, so one version always
+  downloads as the same bytes. A plain file is `404 not_found`.
+- `GET /folders/:folderId/zip` downloads a live folder, and `GET /zip` the whole vault: every live
+  item below it, plain files at their relative paths, each artifact as its newest version's
+  `.artifact` file under the artifact's name, and folders, empty ones included, as folder records.
+  The folder or vault is named in `Content-Disposition` with `.zip`.
 
-Zips are streamed with `Content-Type: application/zip`, `Content-Disposition: attachment` naming
-the entry (or the vault) with `.zip`, no `Content-Length`, UTF-8 names, and ZIP64 records where
-sizes need them. They are made on request and never stored.
+Zips are streamed with `Content-Type: application/zip`, `Content-Disposition: attachment`, no
+`Content-Length`, UTF-8 names, and ZIP64 records where sizes need them. They are made on request
+and never stored.
 
 #### Events
 
 All vault events are shared and follow commit.
 
-- `vault.entry.created` carries the full `entry` and optional `mutationId`.
-- `vault.entry.updated` carries `surfaceId`, `entryId`, `previousVersion`, `version`, `changes`,
-  and optional `mutationId`. `changes` holds the changed fields among `name`, `parentId`,
+- `vault.folder.created` carries the full `folder`, and `vault.file.created` the full `file`, each
+  with optional `mutationId`.
+- `vault.folder.updated` carries `surfaceId`, `folderId`, `previousVersion`, `version`, `changes`,
+  and optional `mutationId`. `changes` holds the changed fields among `name`, `parentId`, and
+  `deletedAt`, always with `updatedAt` and `updatedBy`.
+- `vault.file.updated` carries `surfaceId`, `fileId`, `previousVersion`, `version`, `changes`, and
+  optional `mutationId`. `changes` holds the changed fields among `name`, `parentId`,
   `latestVersion`, `size`, `sha256`, `mediaType`, `artifact`, and `deletedAt`, always with
   `updatedAt` and `updatedBy`.
-- `vault.entry.removed` carries `surfaceId` and `entryId` when a Trash item was removed for good,
-  with everything inside it; a client drops the entry and every entry below it.
-- `vault.version.updated` carries `surfaceId`, `entryId`, `number`, `pinned`, and optional
+- `vault.folder.removed` carries `surfaceId` and `folderId`, and `vault.file.removed` carries
+  `surfaceId` and `fileId`, when a Trash item was removed for good; for a folder, everything inside
+  it went with it, and a client drops every item below it.
+- `vault.version.updated` carries `surfaceId`, `fileId`, `number`, `pinned`, and optional
   `mutationId` when a version was pinned or unpinned.
 - `vault.settings.updated` carries `surfaceId`, `previousVersion`, `version`, `changes` (`retention`
   and `updatedAt`), and optional `mutationId`.
 
-Deleting or restoring a folder emits one event, for the folder; a client holding entries below it
-derives their state from the tree. Consumers follow normal version-chain reconciliation and
-refetch an entry, or the folder they show, on a gap. Version creation is announced through the
-entry's `latestVersion`; pruning emits nothing. Vault content and history are not part of desktop
-bootstrap; opening a vault reads its root, or the whole tree, with that read's cursor.
+Deleting or restoring a folder emits one event, for the folder; a client holding items below it
+derives their state from the tree. Consumers follow normal version-chain reconciliation and refetch
+an item, or the folder they show, on a gap. Version creation is announced through the file's
+`latestVersion`; pruning emits nothing. Vault content and history are not part of desktop
+bootstrap.
 
 #### Agent tools
 
 Agents read and change vaults only through fixed common tools, available to every ordinary agent
 model, shaped like the file tools they already know. Each takes the vault's `surfaceId` and
-addresses entries by vault path, resolved case-insensitively. A path that runs on past an
-artifact entry addresses a file inside it: with `launch` an artifact, `/Sites/launch/index.html`
-is its entry and `/Sites/launch/img/hero.png` one of its files. Writing such a path makes a new
-version of the artifact with that file added or replaced.
+addresses folders and files by vault path, resolved case-insensitively. A path that runs on past an
+artifact addresses a file inside it: `/Sites/launch.artifact/index.html` is the entry file of the
+artifact `launch.artifact`, and `/Sites/launch.artifact/img/hero.png` is one of its files. Writing
+such a path makes a new version of the artifact with that file added or replaced.
 
 - `list_vault` accepts `surfaceId`, optional `path` (default `/`), and optional `depth` from 1
-  through 10, default 1. It lists a folder's live entries with their kinds, sizes, newest version
-  numbers, and change times, recursing to `depth`, folders first; at most 1,000 lines, saying when
-  more were left out. Listing an artifact lists the files of its newest version.
+  through 10, default 1. It lists a folder's live folders and files, folders first and marked as
+  folders, with the files' kinds, sizes, newest version numbers, and change times, recursing to
+  `depth`; at most 1,000 lines, saying when more were left out. Listing an artifact lists the files
+  of its newest version.
 - `read_vault_file` accepts `surfaceId`, `path`, optional `version`, and optional `offset` and
   `limit`. It reads a file, or a file inside an artifact, exactly as `read_artifact_file` reads an
   artifact file: numbered lines, 2,000 at a time from `offset`, raster images shown to the model,
@@ -10892,36 +10962,53 @@ version of the artifact with that file added or replaced.
   uniqueness rule. A version someone made while the call ran refuses the edit instead of being
   undone.
 - `glob_vault` accepts `surfaceId`, `pattern`, and optional `path` (default `/`). It matches the
-  paths of live entries below `path` against a glob relative to it (`*`, `**`, `?`, `[...]`, and
-  `{a,b}`), case-insensitively, and returns at most 200 paths, most recently changed first, saying
-  when more matched. Files inside artifacts are not matched.
+  paths of live folders and files below `path` against a glob relative to it (`*`, `**`, `?`,
+  `[...]`, and `{a,b}`), case-insensitively, and returns at most 200 paths, most recently changed
+  first, with a trailing `/` on folders, saying when more matched. Files inside artifacts are not
+  matched.
 - `grep_vault` accepts `surfaceId`, `pattern` (a JavaScript regular expression), optional `path`,
   optional `glob` limiting the files searched, optional `case_insensitive`, optional `output_mode`
   (`files_with_matches`, the default, `content` for matching lines with their numbers, or `count`),
   and optional `head_limit`, default 100. It searches the text that content search covers, files
   inside artifacts included, and says that larger and binary files were not searched.
-- `move_vault_entry` accepts `surfaceId`, `path`, and `toPath`, and renames or moves a file,
-  folder, or artifact. The folder above `toPath` must already exist, and nothing may be at
-  `toPath`.
-- `delete_vault_entry` accepts `surfaceId` and `path` and moves the entry to the Trash.
-- `list_vault_trash` accepts `surfaceId` and lists Trash items with their IDs, former paths, and
-  deletion times.
-- `restore_vault_entry` accepts `surfaceId`, `entryId` (from `list_vault_trash`), and optional
-  `toPath`, and restores a Trash item there or where it was.
+- `create_vault_folder` accepts `surfaceId` and `path` and creates that folder, empty, with any
+  missing folders above it. A folder already there is reported and left as it is.
+- `move_vault_file` and `move_vault_folder` accept `surfaceId`, `path`, and `toPath`, and rename or
+  move a file (or artifact) or a folder. The folder above `toPath` must already exist, and nothing
+  may be at `toPath`.
+- `copy_vault_file` accepts `surfaceId`, `path`, `toPath`, optional `toSurfaceId`, another vault to
+  copy into (default the same vault), and optional `version` (default the newest). It copies a file
+  or an artifact, not a folder or a file inside an artifact, to `toPath` as a new file whose history
+  starts at version 1 with the source version's content, as `POST /files` with `fromFileId` does;
+  no bytes are uploaded or rewritten. Missing folders above `toPath` are created, and nothing may
+  be at `toPath`. Its activity records `copiedFrom`.
+- `delete_vault_file` and `delete_vault_folder` accept `surfaceId` and `path` and move the file or
+  the folder, with everything inside it, to the Trash.
+- `list_vault_trash` accepts `surfaceId` and lists Trash items, each marked as a folder or a file,
+  with their IDs, former paths, and deletion times.
+- `restore_vault_file` accepts `surfaceId`, `fileId`, and optional `toPath`, and
+  `restore_vault_folder` accepts `surfaceId`, `folderId`, and optional `toPath`. Each restores a
+  Trash item from `list_vault_trash` there or where it was.
 - `list_vault_versions` accepts `surfaceId`, `path`, optional `pageCursor`, and optional `limit`
-  from 1 through 50, default 20. It lists versions newest first with their actors, sizes, pins,
-  and `restoredFrom`, and recent activity. `read_vault_file` with `version` reads an old one.
+  from 1 through 50, default 20. It lists a file's versions newest first with their actors, sizes,
+  pins, and `restoredFrom`, and recent activity. `read_vault_file` with `version` reads an old one.
 - `import_vault_file` accepts `surfaceId`, `fromPath`, a file on the agent's machine, and `path`,
   where it goes in the vault. It copies the file's bytes as they are, whatever they hold, creating
   missing folders, and makes the file or a new version of it, or adds the file to an artifact when
-  `path` runs into one. A zip stays a zip file.
-- `export_vault_file` accepts `surfaceId`, `path`, `toPath` on the agent's machine, and optional
-  `version`. A file is written to `toPath`, replacing a file there. An artifact is written as a
-  folder of its files at `toPath`, which must be absent or an empty folder.
-- `write_vault_artifact` accepts `surfaceId`, `path`, and either `files`, a list of
-  `{ "path": "index.html", "content": "..." }` inline UTF-8 files, or `fromPath`, a folder or a zip
-  on the agent's machine. It creates an artifact at `path`, or makes a new version of the artifact
-  there whose files are exactly those given. The bundle rules and zip rules above apply.
+  `path` runs into one. When `path` names a file ending in `.artifact`, the file is read as a
+  `.artifact` file and makes that artifact or a new version of it. A zip stays a zip file. To copy
+  within or between vaults, use `copy_vault_file`.
+- `export_vault_file` accepts `surfaceId`, `path`, `toPath` on the agent's machine, optional
+  `version`, and optional `unpack`. A plain file is written to `toPath`, replacing a file there. An
+  artifact is written as its `.artifact` file, or with `unpack: true` as a folder of its files at
+  `toPath`, which must be absent or an empty folder.
+- `write_vault_artifact` accepts `surfaceId`, `path`, which must end in `.artifact`, and either
+  `files`, a list of `{ "path": "index.html", "content": "..." }` inline UTF-8 files, or
+  `fromPath`, a folder, a zip, or a `.artifact` file on the agent's machine. It creates an artifact
+  at `path`, or makes a new version of the artifact there whose files are exactly those given. The
+  bundle rules and zip rules above apply; `artifact.json` at the root of `files` is refused, and
+  one in a folder or zip is read as the manifest, while a bundle without one takes its type from
+  its `index.html` or `index.md`.
 
 Read tools are never reviewed. Writes change shared data that keeps its history and Trash, so,
 as for artifacts an agent made, they are not reviewed: Workspace write, Auto, and Full access allow
@@ -10934,7 +11021,7 @@ workspace in Workspace write and Auto, reviewed with temporary Full access in Au
 at a protected path, refused in Read only. No vault write needs or grants Full access on its own.
 
 Every writing tool is durable and keyed by its call ID: a call repeated after a restart finds the
-versions and entries it made and returns its result without making another version, entry, or
+folders, files, and versions it made and returns its result without making another one or another
 event. Every result names the paths it changed and the version numbers it made. Reading and
 writing never join anyone to the Surface.
 
@@ -11086,7 +11173,7 @@ Surface membership changes never stop the chat, delete its folder, or discard hi
 when nobody remains joined. Since Surfaces have no deletion route, their chats and folders
 remain for the Surface's lifetime. The agent's context names its Surface ID, type, and stored
 label, and tells it to use ordinary Surface tools, plus document tools for document content,
-calendar tools for calendar events, vault tools for a vault's files, and the read-only message
+calendar tools for calendar events, vault tools for a vault's folders and files, and the read-only message
 tools for a chat Surface's conversation. A calendar chat's context calls its Surface a calendar. A chat Surface's agent
 context calls its Surface a conversation among people, and tells the agent it reads that
 conversation but cannot post to it, so it answers in its own shared chat.
