@@ -10,6 +10,7 @@ import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { MAX_NODE_AVATAR_BYTES, type NodeAvatarAsset, type NodeState } from "./NodeState.js";
 import { nodeMigrations, queryNodeState, saveNodeState } from "./persistence/nodeState.js";
 import { normalizeManagedImage } from "../impl/images/normalizeManagedImage.js";
+import { readMacAccountPicture } from "./impl/readMacAccountPicture.js";
 import { setNodeNameTool } from "./tools/set_node_name.js";
 import { setNodeAvatarTool } from "./tools/set_node_avatar.js";
 
@@ -51,10 +52,14 @@ export class NodeModule implements AgentModule {
     }
 
     readonly beforeStart = async (ctx: Context): Promise<AgentModuleHooks> => {
-        const initialName = await this.#config.initialNodeName();
+        // Machine detection runs outside the transaction and only before the node is first seeded.
+        const initial =
+            (await ctx.inTx(queryNodeState)) === undefined
+                ? await this.#detectInitialState()
+                : undefined;
         await ctx.inTx(async (txCtx) => {
-            if ((await queryNodeState(txCtx)) === undefined) {
-                await saveNodeState(txCtx, { name: initialName, avatar: null });
+            if (initial !== undefined && (await queryNodeState(txCtx)) === undefined) {
+                await saveNodeState(txCtx, initial);
             }
             await this.#scheduleRuntimeWrite(txCtx);
         });
@@ -145,12 +150,7 @@ export class NodeModule implements AgentModule {
             const bytes = await compute.fs.readFileBuffer(permissions, path, {
                 maxBytes: MAX_NODE_AVATAR_BYTES,
             });
-            const image = await normalizeManagedImage(bytes);
-            asset = {
-                data: Buffer.from(image.bytes).toString("base64"),
-                etag: image.etag,
-                thumbhash: image.thumbhash,
-            };
+            asset = await normalizeAvatar(bytes);
         }
         return await ctx.inTx(async (txCtx) => {
             await this.requireAdmin(txCtx, agentId);
@@ -168,6 +168,17 @@ export class NodeModule implements AgentModule {
             throw new Error(
                 "Only an active admin bot can change this installation's name or avatar.",
             );
+    }
+
+    async #detectInitialState(): Promise<NodeState> {
+        const [name, avatar] = await Promise.all([
+            this.#config.initialNodeName(),
+            // The account picture is an optional default; an unusable image leaves no avatar.
+            readMacAccountPicture()
+                .then((bytes) => (bytes === null ? null : normalizeAvatar(bytes)))
+                .catch(() => null),
+        ]);
+        return { name, avatar };
     }
 
     async #isAdmin(ctx: Context, agentId: string): Promise<boolean> {
@@ -195,6 +206,15 @@ export class NodeModule implements AgentModule {
             for (const listener of this.#listeners) await listener(committedCtx);
         });
     }
+}
+
+async function normalizeAvatar(bytes: Uint8Array): Promise<NodeAvatarAsset> {
+    const image = await normalizeManagedImage(bytes);
+    return {
+        data: Buffer.from(image.bytes).toString("base64"),
+        etag: image.etag,
+        thumbhash: image.thumbhash,
+    };
 }
 
 function project(state: NodeState): NodeConfig {

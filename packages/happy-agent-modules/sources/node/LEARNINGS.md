@@ -23,3 +23,13 @@ need a separate authenticated endpoint.
 Node, bot, and Surface pictures had duplicated WebP, hash, and ThumbHash processing. They now
 call the same bounded managed-image function. Existing decoded-pixel limits remain options;
 each owner still handles its own filesystem permissions, persisted representation, and events.
+
+## A new Mac installation looks like that Mac
+
+Steve asked that a first install on a Mac name itself after the Mac and use the user's picture.
+The name already came from `scutil --get ComputerName`; the avatar was always `null`. On the first
+start only, the node now also reads the account picture with `dscl` (preferring `JPEGPhoto`, which
+is the cropped image the system shows, over the original `Picture` file) and converts other
+formats with `sips`. This is a convenience default, so every failure is silent and yields no
+avatar, detection never runs once the row exists, and the seeding insert stays conditional so a
+concurrent start cannot overwrite the first.
