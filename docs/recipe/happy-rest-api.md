@@ -342,7 +342,9 @@ happy_send POST "/v0/artifacts/$ART_ID/delete" '{}' -H "If-Match: $ART_VERSION" 
 
 Binary files go up first with `POST /v0/artifact-uploads` (raw bytes) and are then placed with
 `{ "path": ..., "uploadId": ... }`. An update starts from the latest version's files; `remove`
-and `replaceAll` take files out. See Artifacts in `API.md` for types, limits, and sources.
+and `replaceAll` take files out. To show an artifact as a post in the Feed, upload a 16:9
+(1600×900) or square (1200×1200) PNG with it and name it with `"cover": "cover.png"`, plus a
+one-line `"summary"`. See Artifacts in `API.md` for types, limits, sources, and covers.
 
 ## Surfaces: todos, documents, and calendars
 

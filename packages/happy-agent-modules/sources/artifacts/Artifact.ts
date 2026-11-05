@@ -58,6 +58,30 @@ export const artifactDisplaySchema = Type.Union([
     Type.Literal("inline_expanded"),
     Type.Literal("side"),
 ]);
+/**
+ * One line of plain text a client shows under the title: 1–280 characters, not only blank, with
+ * no control characters or line breaks.
+ */
+export const artifactSummarySchema = Type.String({
+    minLength: 1,
+    maxLength: 280,
+    pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]+$",
+});
+/**
+ * The image a feed shows for a version: one of its files, with the pixel size the daemon decoded
+ * from it.
+ */
+export const artifactCoverSchema = Type.Object(
+    {
+        path: artifactPathSchema,
+        mimeType: artifactMimeTypeSchema,
+        width: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+        height: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+        /** The standard shape the size matches: `"wide"` (16:9) or `"square"` (1:1). */
+        aspect: Type.Union([Type.Literal("wide"), Type.Literal("square")]),
+    },
+    { additionalProperties: false },
+);
 /** A background as someone names it: the same colours, in either case. */
 export const artifactBackgroundInputSchema = Type.String({
     pattern: "^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
@@ -171,6 +195,10 @@ export const artifactRecordSchema = Type.Object(
         background: Type.Optional(artifactBackgroundSchema),
         /** The latest version's display preference; absent leaves it to the client. */
         display: Type.Optional(artifactDisplaySchema),
+        /** The latest version's cover; absent when it has none. */
+        cover: Type.Optional(artifactCoverSchema),
+        /** The latest version's summary; absent when it has none. */
+        summary: Type.Optional(artifactSummarySchema),
         live: Type.Optional(artifactLiveSchema),
         source: Type.Optional(artifactSourceSchema),
         createdBy: artifactAuthorSchema,
@@ -207,6 +235,16 @@ export const artifactVersionSchema = Type.Object(
         background: Type.Optional(artifactBackgroundSchema),
         /** How this version's author wants it shown; absent leaves it to the client. */
         display: Type.Optional(artifactDisplaySchema),
+        /** The image a feed shows for this version; absent when it has none. */
+        cover: Type.Optional(artifactCoverSchema),
+        /**
+         * Whether the cover is the type's default, an image's own file or a series' first one,
+         * rather than one somebody named. A default follows the files into the next version and
+         * may be absent when that file cannot be a cover.
+         */
+        coverDefault: Type.Optional(Type.Literal(true)),
+        /** One line a client shows under the title; absent when it has none. */
+        summary: Type.Optional(artifactSummarySchema),
         live: Type.Optional(artifactLiveSchema),
         createdBy: artifactAuthorSchema,
         source: Type.Optional(artifactSourceSchema),
@@ -259,6 +297,13 @@ export const createArtifactInputSchema = Type.Object(
         background: Type.Optional(artifactBackgroundInputSchema),
         /** The first version's display preference; absent leaves it to the client. */
         display: Type.Optional(artifactDisplaySchema),
+        /**
+         * The path of the first version's cover, `null` for none, and absent for the type's
+         * default: an image's own file or a series' first one, and none for other types.
+         */
+        cover: Type.Optional(Type.Union([artifactPathSchema, Type.Null()])),
+        /** The first version's summary; absent or `null` for none. */
+        summary: Type.Optional(Type.Union([artifactSummarySchema, Type.Null()])),
         live: Type.Optional(artifactLiveSchema),
         author: artifactAuthorSchema,
         source: Type.Optional(artifactSourceSchema),
@@ -286,6 +331,10 @@ export const updateArtifactInputSchema = Type.Object(
         background: Type.Optional(Type.Union([artifactBackgroundInputSchema, Type.Null()])),
         /** A preference sets the new version's display, `null` clears it, and absent keeps it. */
         display: Type.Optional(Type.Union([artifactDisplaySchema, Type.Null()])),
+        /** A path sets the new version's cover, `null` clears it, and absent keeps it. */
+        cover: Type.Optional(Type.Union([artifactPathSchema, Type.Null()])),
+        /** A line sets the new version's summary, `null` clears it, and absent keeps it. */
+        summary: Type.Optional(Type.Union([artifactSummarySchema, Type.Null()])),
         /**
          * Make the new version this major one, `major.0`. It must be one more than the latest
          * major, and the latest version must be a minor one.
@@ -343,6 +392,7 @@ export const artifactVersionQuerySchema = Type.Object(
 export type ArtifactType = Static<typeof artifactTypeSchema>;
 export type ArtifactStatus = Static<typeof artifactStatusSchema>;
 export type ArtifactDisplay = Static<typeof artifactDisplaySchema>;
+export type ArtifactCover = Static<typeof artifactCoverSchema>;
 export type ArtifactFile = Static<typeof artifactFileSchema>;
 export type ArtifactSource = Static<typeof artifactSourceSchema>;
 export type ArtifactSourceInput = Static<typeof artifactSourceInputSchema>;

@@ -41,6 +41,7 @@ import {
     MAX_ARTIFACT_FILES,
     updateArtifactInputSchema,
     type ArtifactAuthor,
+    type ArtifactCover,
     type ArtifactCreation,
     type ArtifactFile,
     type ArtifactFileInput,
@@ -101,7 +102,8 @@ import {
     storeArtifactContent,
     type ArtifactContentSource,
 } from "./impl/artifactContentFiles.js";
-import { ARTIFACT_REFERENCE_INSTRUCTIONS } from "./tools/common.js";
+import { measureArtifactCover } from "./impl/measureArtifactCover.js";
+import { ARTIFACT_COVER_INSTRUCTIONS, ARTIFACT_REFERENCE_INSTRUCTIONS } from "./tools/common.js";
 import { connectArtifactNetwork, describeArtifactNetworkExposure } from "./impl/artifactNetwork.js";
 import {
     LIVE_ARTIFACT_FALLBACK,
@@ -209,7 +211,7 @@ export class ArtifactsModule implements AgentModule {
     }
 
     readonly #hooks: AgentModuleHooks = {
-        instructions: () => ARTIFACT_REFERENCE_INSTRUCTIONS,
+        instructions: () => `${ARTIFACT_REFERENCE_INSTRUCTIONS}\n\n${ARTIFACT_COVER_INSTRUCTIONS}`,
         tools: async (_ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => [
             createArtifactTool(this, this.#compute, scope.agent.id),
             writeArtifactFileTool(this, scope.agent.id),
@@ -536,6 +538,20 @@ export class ArtifactsModule implements AgentModule {
             }
             const background = input.background?.toLowerCase();
             const display = input.display;
+            const summary = input.summary ?? undefined;
+            const cover = await this.#resolveCover(
+                input.type,
+                input.live !== undefined,
+                files,
+                input.cover === undefined
+                    ? coversByDefault(input.type)
+                        ? { kind: "default" }
+                        : { kind: "none" }
+                    : input.cover === null
+                      ? { kind: "none" }
+                      : { kind: "named", path: input.cover, carried: false },
+                [],
+            );
             const now = Date.now();
             const artifact: ArtifactRecord = {
                 id: input.id ?? createId(),
@@ -550,6 +566,8 @@ export class ArtifactsModule implements AgentModule {
                 size: totalSize(files),
                 ...(background === undefined ? {} : { background }),
                 ...(display === undefined ? {} : { display }),
+                ...(cover.cover === undefined ? {} : { cover: cover.cover }),
+                ...(summary === undefined ? {} : { summary }),
                 ...(input.live === undefined ? {} : { live: input.live }),
                 ...(input.source === undefined ? {} : { source: input.source }),
                 createdBy: input.author,
@@ -569,6 +587,8 @@ export class ArtifactsModule implements AgentModule {
                 files,
                 ...(background === undefined ? {} : { background }),
                 ...(display === undefined ? {} : { display }),
+                ...cover,
+                ...(summary === undefined ? {} : { summary }),
                 ...(input.live === undefined ? {} : { live: input.live }),
                 createdBy: input.author,
                 ...(input.source === undefined ? {} : { source: input.source }),
@@ -603,6 +623,8 @@ export class ArtifactsModule implements AgentModule {
             input.title === undefined &&
             input.background === undefined &&
             input.display === undefined &&
+            input.cover === undefined &&
+            input.summary === undefined &&
             input.files === undefined &&
             input.remove === undefined &&
             input.replaceAll === undefined &&
@@ -610,7 +632,7 @@ export class ArtifactsModule implements AgentModule {
             input.url === undefined
         ) {
             throw new ArtifactInputError(
-                "Change the title, the background, the display, the URL, or the files, or make a major version.",
+                "Change the title, the background, the display, the cover, the summary, the URL, or the files, or make a major version.",
             );
         }
         const url = input.url === undefined ? undefined : normalizeArtifactUrl(input.url);
@@ -650,7 +672,9 @@ export class ArtifactsModule implements AgentModule {
                 (input.title === undefined || input.title === current.title) &&
                 (input.background === undefined ||
                     (input.background?.toLowerCase() ?? undefined) === current.background) &&
-                (input.display === undefined || (input.display ?? undefined) === current.display)
+                (input.display === undefined || (input.display ?? undefined) === current.display) &&
+                (input.cover === undefined || input.cover === null) &&
+                (input.summary === undefined || (input.summary ?? undefined) === current.summary)
             ) {
                 return current;
             }
@@ -694,6 +718,23 @@ export class ArtifactsModule implements AgentModule {
                     : (input.background?.toLowerCase() ?? undefined);
             const display =
                 input.display === undefined ? current.display : (input.display ?? undefined);
+            const summary =
+                input.summary === undefined ? current.summary : (input.summary ?? undefined);
+            const cover = await this.#resolveCover(
+                current.type,
+                current.live !== undefined,
+                files,
+                input.cover === null
+                    ? { kind: "none" }
+                    : input.cover !== undefined
+                      ? { kind: "named", path: input.cover, carried: false }
+                      : latest.coverDefault === true
+                        ? { kind: "default" }
+                        : latest.cover === undefined
+                          ? { kind: "none" }
+                          : { kind: "named", path: latest.cover.path, carried: true },
+                latest.cover === undefined ? [] : [{ cover: latest.cover, files: latest.files }],
+            );
             const live =
                 current.live === undefined
                     ? undefined
@@ -718,6 +759,10 @@ export class ArtifactsModule implements AgentModule {
             if (background !== undefined) next.background = background;
             delete next.display;
             if (display !== undefined) next.display = display;
+            delete next.cover;
+            if (cover.cover !== undefined) next.cover = cover.cover;
+            delete next.summary;
+            if (summary !== undefined) next.summary = summary;
             const version: ArtifactVersion = {
                 artifactId: current.id,
                 number: next.latestVersion,
@@ -728,6 +773,8 @@ export class ArtifactsModule implements AgentModule {
                 files,
                 ...(background === undefined ? {} : { background }),
                 ...(display === undefined ? {} : { display }),
+                ...cover,
+                ...(summary === undefined ? {} : { summary }),
                 ...(live === undefined ? {} : { live }),
                 createdBy: input.author,
                 ...(input.source === undefined ? {} : { source: input.source }),
@@ -1038,6 +1085,64 @@ export class ArtifactsModule implements AgentModule {
     }
 
     /**
+     * A new version's cover. A named cover must be one of the version's files and pass the cover
+     * rules, or the version is refused; a cover carried over from the latest version is checked
+     * again, since its file may have been replaced or removed. The type's default — an image's own
+     * file or a series' first one — is kept only when it passes, and otherwise leaves the version
+     * without a cover. A live artifact holds no files a cover could be.
+     */
+    async #resolveCover(
+        type: ArtifactType,
+        live: boolean,
+        files: readonly ArtifactFile[],
+        choice: CoverChoice,
+        previous: readonly {
+            readonly cover: ArtifactCover;
+            readonly files: readonly ArtifactFile[];
+        }[],
+    ): Promise<{ readonly cover?: ArtifactCover; readonly coverDefault?: true }> {
+        if (choice.kind === "none") return {};
+        if (live) {
+            if (choice.kind === "default") return {};
+            throw new ArtifactInputError(
+                "A live-URL artifact holds no files, so it cannot have a cover. Give it a summary instead, or publish the page's files as an html artifact with a cover.",
+            );
+        }
+        const path = choice.kind === "default" ? files[0]?.path : choice.path;
+        const file = files.find((candidate) => candidate.path === path);
+        if (file === undefined) {
+            if (choice.kind === "default") return { coverDefault: true };
+            throw new ArtifactInputError(
+                choice.carried
+                    ? `The cover ${JSON.stringify(path)} would no longer be in the artifact. Name another file as its cover, or remove the cover with cover: null.`
+                    : `The artifact has no file at ${JSON.stringify(path)} to use as its cover. Add the image to the files, then name its path.`,
+            );
+        }
+        // The same bytes at the same path measure the same, so an unchanged cover is not decoded
+        // again for every version.
+        const known = previous.find(
+            (entry) =>
+                entry.cover.path === file.path &&
+                entry.files.some(
+                    (candidate) => candidate.path === file.path && candidate.sha256 === file.sha256,
+                ),
+        );
+        const measured =
+            known === undefined
+                ? await measureArtifactCover(file, this.#config.artifactContentPath(file.sha256))
+                : { cover: { ...known.cover, mimeType: file.mimeType } };
+        if (choice.kind === "default") {
+            return "cover" in measured
+                ? { cover: measured.cover, coverDefault: true }
+                : { coverDefault: true };
+        }
+        if ("problem" in measured) {
+            throw new ArtifactInputError(`That cover cannot be used: ${measured.problem}`);
+        }
+        return { cover: measured.cover };
+    }
+
+    /**
      * A version's files: the kept ones with staged uploads placed over them, checked against the
      * type's rules, in path order. The uploads are used up in the caller's transaction, and only
      * once everything checks out. Every upload must exist, be received, be unexpired, and still
@@ -1174,6 +1279,17 @@ export class ArtifactsModule implements AgentModule {
         if (this.#agents === undefined) throw new Error("The artifacts module has not started.");
         return this.#agents;
     }
+}
+
+/** Which cover a new version asks for. */
+type CoverChoice =
+    | { readonly kind: "none" }
+    | { readonly kind: "default" }
+    | { readonly kind: "named"; readonly path: string; readonly carried: boolean };
+
+/** Whether a type's cover is its own picture unless someone names another or clears it. */
+function coversByDefault(type: ArtifactType): boolean {
+    return type === "image" || type === "image_series";
 }
 
 /** The durable removal of one upload, cancelled when the upload is used. */

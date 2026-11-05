@@ -85,7 +85,7 @@ import {
     renameBotRequestSchema,
     storyCreateRequestSchema,
     feedCursorSchema,
-    feedReadAllRequestSchema,
+    feedReadAllRequestSchema as publishedFeedReadAllRequestSchema,
     feedSeenRequestSchema,
     feedSubscriptionRequestSchema,
     storyReplyRequestSchema,
@@ -156,6 +156,8 @@ import {
     ArtifactNotFoundError,
     ArtifactsModule,
     ArtifactTooLargeError,
+    artifactPathSchema,
+    artifactSummarySchema,
     artifactTypeSchema,
     DEFAULT_ARTIFACT_PAGE_SIZE,
     MAX_ARTIFACT_PAGE_SIZE,
@@ -414,14 +416,38 @@ import {
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 
 const API_PROTOCOL_VERSION = 33;
+/** A cover as a request names it: a path in the new version, or `null` for none. */
+const artifactCoverInputSchema = Type.Optional(Type.Union([artifactPathSchema, Type.Null()]));
+const artifactSummaryInputSchema = Type.Optional(Type.Union([artifactSummarySchema, Type.Null()]));
 const createArtifactRequestSchema = Type.Composite([
     Type.Omit(publishedCreateArtifactRequestSchema, ["type"]),
-    Type.Object({ type: artifactTypeSchema }),
+    Type.Object({
+        type: artifactTypeSchema,
+        cover: artifactCoverInputSchema,
+        summary: artifactSummaryInputSchema,
+    }),
 ]);
 const updateArtifactRequestSchema = Type.Composite([
     publishedUpdateArtifactRequestSchema,
-    Type.Object({ baseVersion: Type.Optional(Type.Integer({ minimum: 1 })) }),
+    Type.Object({
+        baseVersion: Type.Optional(Type.Integer({ minimum: 1 })),
+        cover: artifactCoverInputSchema,
+        summary: artifactSummaryInputSchema,
+    }),
 ]);
+/** The most subject types one Feed filter names. */
+const MAX_FEED_SUBJECT_TYPES = 32;
+const feedSubjectTypeFilterSchema = Type.Array(Type.String({ minLength: 1, maxLength: 64 }), {
+    maxItems: MAX_FEED_SUBJECT_TYPES,
+});
+const feedReadAllRequestSchema = Type.Object(
+    {
+        ...publishedFeedReadAllRequestSchema.properties,
+        /** Close only entries about these subject types. */
+        subjects: Type.Optional(feedSubjectTypeFilterSchema),
+    },
+    { additionalProperties: false },
+);
 
 /**
  * How many archived agents the desktop bootstrap carries. Recent history is what the desktop
@@ -468,6 +494,8 @@ const ARTIFACT_UPDATED_FIELDS = [
     "size",
     "background",
     "display",
+    "cover",
+    "summary",
     "live",
     "updatedBy",
     "updatedSource",
@@ -7414,10 +7442,12 @@ export class ApiModule implements AgentModule {
                 if (before !== undefined && !Value.Check(feedCursorSchema, before))
                     throw invalidRequest("The feed cursor is invalid.");
                 const limit = feedLimit(url);
+                const subjects = feedSubjectTypes(url);
                 const cursor = this.#journal.cursor();
                 const page = await feed.list(ctx, {
                     ...(before === undefined ? {} : { before }),
                     ...(limit === undefined ? {} : { limit }),
+                    ...(subjects === undefined ? {} : { subjects }),
                 });
                 sendJson(response, 200, { ...page, cursor });
                 return true;
@@ -7435,7 +7465,7 @@ export class ApiModule implements AgentModule {
                 const body = await bodyAs(request, feedReadAllRequestSchema, "feed read marker");
                 const read = await this.#withMutationId(
                     body.mutationId,
-                    async () => await feed.markAllSeen(ctx, body.through),
+                    async () => await feed.markAllSeen(ctx, body.through, body.subjects),
                 );
                 sendJson(response, 200, read);
                 return true;
@@ -7735,6 +7765,8 @@ export class ApiModule implements AgentModule {
                             title: body.title,
                             files,
                             ...(body.background == null ? {} : { background: body.background }),
+                            ...(body.cover === undefined ? {} : { cover: body.cover }),
+                            ...(body.summary === undefined ? {} : { summary: body.summary }),
                             author: this.#artifactUser(ctx),
                             ...(source === undefined ? {} : { source }),
                         }),
@@ -7842,6 +7874,8 @@ export class ApiModule implements AgentModule {
                             ...(body.background === undefined
                                 ? {}
                                 : { background: body.background }),
+                            ...(body.cover === undefined ? {} : { cover: body.cover }),
+                            ...(body.summary === undefined ? {} : { summary: body.summary }),
                             ...(files === undefined ? {} : { files }),
                             ...(body.remove === undefined ? {} : { remove: body.remove }),
                             ...(body.replaceAll === undefined
@@ -10072,7 +10106,8 @@ export class ApiModule implements AgentModule {
                     : { providerRoutes: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#stories === undefined ? {} : { storyFeed: true }),
-                ...(this.#feed === undefined ? {} : { feed: true }),
+                ...(this.#feed === undefined ? {} : { feed: true, feedSubjectFilter: true }),
+                ...(this.#artifacts === undefined ? {} : { artifactCovers: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),
@@ -10690,6 +10725,23 @@ function feedLimit(url: URL): number | undefined {
     if (!/^[1-9][0-9]{0,2}$/.test(value) || Number(value) > 200)
         throw invalidRequest("The feed limit is invalid.");
     return Number(value);
+}
+
+/**
+ * The subject types a Feed page is filtered to, from a comma-separated `subjects`, or undefined
+ * when the page is not filtered. Empty names are skipped, so a list of none matches nothing.
+ */
+function feedSubjectTypes(url: URL): string[] | undefined {
+    const values = url.searchParams.getAll("subjects");
+    if (values.length === 0) return undefined;
+    const types = [
+        ...new Set(values.flatMap((value) => value.split(",")).filter((type) => type !== "")),
+    ];
+    if (!Value.Check(feedSubjectTypeFilterSchema, types))
+        throw invalidRequest(
+            `The feed subjects filter is invalid: name at most ${String(MAX_FEED_SUBJECT_TYPES)} subject types of 1 to 64 characters each.`,
+        );
+    return types;
 }
 
 function documentQuery<const Key extends "seq" | "afterSeq" | "limit" | "stateVector">(

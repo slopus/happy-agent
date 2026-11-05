@@ -298,6 +298,26 @@ desktop's two diff colours are `--happy-diff-added` and `--happy-diff-removed`, 
 text colours `--happy-added` and `--happy-removed`, which must stay readable as text. Long lines
 wrap by default, because an inline page never scrolls inside, and `nowrap` scrolls them instead.
 
+## A cover is an image the artifact draws, in one of two shapes
+
+Steve wanted the Feed to show a good artifact as a post with a picture of what it found, not a
+type glyph. A version may name a `cover`, one of its own files, and a one-line `summary`; clients
+draw only the image, so the headline, key number, or chart lives in the picture itself. The daemon
+decodes the cover and records its size, so clients lay a post out without measuring. Steve then
+fixed the shapes to `wide` (16:9) and `square` (1:1), within 2%, with minimum sizes and a 4096px
+cap, so posts look the same everywhere; anything else is refused with both recommended sizes.
+
+SVG covers are refused rather than rasterized. iOS and Android cannot draw SVG, and the released
+daemon is a Bun executable whose image processor is `Bun.Image`, which does not read SVG and has no
+Sharp to fall back on. Steve chose to have agents render charts and diagrams to PNG themselves,
+with whatever their machine has, so the prompts say how, and the daemon renders nothing.
+
+Covers carry over like a background, but a kept cover is checked again on every version, because
+`write_artifact_file` or `files` can replace its file; losing the file refuses the version. An
+image's or series' default cover is marked as a default so it follows the picture when the file is
+replaced, instead of failing the way a named cover would. A live-URL artifact holds no files, so it
+refuses a cover.
+
 ## Withdrawn types are removed from storage
 
 `sidebar` and `sidebar_proposal` artifacts belonged to the Spaces sidebar, and `story` artifacts to

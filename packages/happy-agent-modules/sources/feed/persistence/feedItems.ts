@@ -2,7 +2,7 @@ import { agentDatabaseRows, agentDatabaseRun } from "@slopus/happy-agent-base";
 import type { FeedSubject } from "@slopus/happy-agent-client";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 
 import { feedItemRecordSchema, type FeedItemRecord } from "../FeedRecords.js";
 
@@ -25,18 +25,22 @@ export async function updateFeedItem(ctx: Context, item: FeedItemRecord): Promis
     );
 }
 
-/** A reader's entries with a cursor older than `before`, newest first, at most `limit`. */
+/**
+ * A reader's entries with a cursor older than `before`, newest first, at most `limit`, about only
+ * the subject types named in `subjects` when it is given.
+ */
 export async function queryFeedItems(
     ctx: Context,
     reader: string,
     before: string | undefined,
     limit: number,
+    subjects?: readonly string[],
 ): Promise<FeedItemRecord[]> {
     const older = before === undefined ? sql`` : sql`AND cursor < ${before}`;
     const rows = await agentDatabaseRows<{ record: string }>(
         ctx.db,
         sql`SELECT record FROM happy_agent_feed_items WHERE reader = ${reader} ${older}
-            ORDER BY cursor DESC LIMIT ${limit}`,
+            ${subjectTypes(subjects)} ORDER BY cursor DESC LIMIT ${limit}`,
     );
     return rows.map((row) => parse(row.record));
 }
@@ -71,29 +75,47 @@ export async function queryNewestFeedItem(
     return rows[0] && parse(rows[0].record);
 }
 
-/** Every open entry of a reader whose cursor is not newer than `through`, oldest first. */
+/**
+ * Every open entry of a reader whose cursor is not newer than `through`, oldest first, about only
+ * the subject types named in `subjects` when it is given.
+ */
 export async function queryOpenFeedItems(
     ctx: Context,
     reader: string,
     through: string | undefined,
+    subjects?: readonly string[],
 ): Promise<FeedItemRecord[]> {
     const bound = through === undefined ? sql`` : sql`AND cursor <= ${through}`;
     const rows = await agentDatabaseRows<{ record: string }>(
         ctx.db,
         sql`SELECT record FROM happy_agent_feed_items WHERE reader = ${reader}
-            AND seen_at IS NULL ${bound} ORDER BY cursor`,
+            AND seen_at IS NULL ${bound} ${subjectTypes(subjects)} ORDER BY cursor`,
     );
     return rows.map((row) => parse(row.record));
 }
 
-/** How many of a reader's entries are open. */
-export async function queryFeedUnread(ctx: Context, reader: string): Promise<number> {
+/** How many of a reader's entries are open, of only the subject types in `subjects` if given. */
+export async function queryFeedUnread(
+    ctx: Context,
+    reader: string,
+    subjects?: readonly string[],
+): Promise<number> {
     const rows = await agentDatabaseRows<{ unread: number }>(
         ctx.db,
         sql`SELECT COUNT(*) AS unread FROM happy_agent_feed_items
-            WHERE reader = ${reader} AND seen_at IS NULL`,
+            WHERE reader = ${reader} AND seen_at IS NULL ${subjectTypes(subjects)}`,
     );
     return Number(rows[0]?.unread ?? 0);
+}
+
+/** A condition keeping only the named subject types; an empty list keeps none. */
+function subjectTypes(subjects: readonly string[] | undefined): SQL {
+    if (subjects === undefined) return sql``;
+    if (subjects.length === 0) return sql`AND 0 = 1`;
+    return sql`AND subject_type IN (${sql.join(
+        subjects.map((type) => sql`${type}`),
+        sql`, `,
+    )})`;
 }
 
 /** Whether a reader has any entry for a subject. */

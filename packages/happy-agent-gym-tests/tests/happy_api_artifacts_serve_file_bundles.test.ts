@@ -107,6 +107,8 @@ describe("artifact file bundles over the API", () => {
             size: Buffer.byteLength(ENTRY) + Buffer.byteLength(STYLE) + CHART.byteLength,
             background: null,
             display: null,
+            cover: null,
+            summary: null,
             live: null,
             source: null,
             createdBy: { kind: "user", userId: null },

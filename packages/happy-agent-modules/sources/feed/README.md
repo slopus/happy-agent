@@ -59,6 +59,13 @@ fan-out skips for them, and seeds the last 30 days, at most 200 subjects, as see
 Subscribing to a cluster seeds that cluster the same way. Peeking folds the same history without
 writing anything.
 
+## Filtering by subject type
+
+`list` and `markAllSeen` take an optional list of subject types and keep to entries about them in
+SQL, so paging, the read-all bound, and the separate `filteredUnread` count all work inside the
+filtered list while `unread` stays the reader's whole count. An unknown type matches nothing.
+Clients use it for Highlights, artifacts and tasks; the filter is the client's choice, not stored.
+
 ## Storage
 
 Migration `001-feed` creates the tables; `002-feed-references` removes the snapshots the first

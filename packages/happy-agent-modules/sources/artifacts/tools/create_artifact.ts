@@ -19,6 +19,7 @@ import { ARTIFACT_TYPE_RULES } from "../ArtifactTypes.js";
 import { LIVE_ARTIFACT_FALLBACK, normalizeArtifactUrl } from "../impl/liveArtifact.js";
 import {
     formatArtifactBackground,
+    formatArtifactCover,
     formatArtifactLink,
     formatArtifactSource,
     formatArtifactVersion,
@@ -29,13 +30,16 @@ import {
     stageArtifactSources,
 } from "../impl/stageArtifactSources.js";
 import {
+    ARTIFACT_COVER_GUIDANCE,
     ARTIFACT_FILES_GUIDANCE,
     ARTIFACT_PRESENTED_NOTICE,
     ARTIFACT_TOOL_CAPABILITY,
     artifactToolBackgroundSchema,
+    artifactToolCoverSchema,
     artifactToolDisplaySchema,
     artifactToolResultSchema,
     artifactToolSourceSchema,
+    artifactToolSummarySchema,
     presentedArtifact,
 } from "./common.js";
 
@@ -45,6 +49,8 @@ const createArtifactToolInputSchema = Type.Object(
         title: artifactTitleSchema,
         display: Type.Optional(artifactToolDisplaySchema),
         background: Type.Optional(artifactToolBackgroundSchema),
+        cover: Type.Optional(artifactToolCoverSchema),
+        summary: Type.Optional(artifactToolSummarySchema),
         content: Type.Optional(
             Type.String({
                 description:
@@ -113,13 +119,16 @@ export function createArtifactTool(
             "image gallery",
             "video",
             "pdf",
+            "artifact cover",
+            "feed image",
         ],
         description: [
             "Create an artifact: a titled, versioned item in this installation's shared catalog, visible to everyone who uses it. It is recorded as made by you, in the bot, task, project, or workspace you are working in. The call gives you its ID.",
             'For markdown or html, pass content to publish the complete entry (index.md or index.html) in this call. Prefer this when you already have the text; supply supporting text files inline, such as files: [{ "path": "style.css", "content": "body { color: inherit; }" }], so the entry and all assets appear together in version 1.0. Mix inline files with local copies as needed. Each file supplies either content with a required path, or fromPath with an optional path, never both. Every destination path must be unique; do not also supply the entry in files when using top-level content. Without content or an entry in files, it starts with a short entry holding its title. Make later changes with write_artifact_file and edit_artifact_file. An image, image series, video, or document needs its file from the start: pass it in files, such as { "fromPath": "out/chart.png" }. A copy keeps its own name unless you give it a path, so to publish a document you already wrote, copy it in as the entry: { "fromPath": "notes/plan.md", "path": "index.md" }.',
             ARTIFACT_FILES_GUIDANCE,
-            "Change its title, background, or display later with update_artifact.",
-            'For a running web page, use { type: "html", title, url, display? } without content or files. The URL is the content, never downloaded by the daemon. The client opens it through your network in a browser profile isolated to this artifact; cookies and storage are never shared with the workspace browser or other artifacts. Change the URL with update_artifact; its original network stays fixed and its fallback files cannot be edited.',
+            `${ARTIFACT_COVER_GUIDANCE} For example: files: [{ "fromPath": "out/cover.png", "path": "cover.png" }], cover: "cover.png", summary: "Revenue up 18% QoQ, driven by enterprise seats."`,
+            "Change its title, background, display, cover, or summary later with update_artifact.",
+            'For a running web page, use { type: "html", title, url, display? } without content or files. The URL is the content, never downloaded by the daemon. The client opens it through your network in a browser profile isolated to this artifact; cookies and storage are never shared with the workspace browser or other artifacts. Change the URL with update_artifact; its original network stays fixed and its fallback files cannot be edited. A live page holds no files, so it cannot have a cover; give it a summary.',
         ].join("\n\n"),
         parameters: createArtifactToolInputSchema,
         returnType: artifactToolResultSchema,
@@ -235,6 +244,8 @@ export function createArtifactTool(
                     ...(live === undefined ? {} : { live }),
                     ...(input.background === undefined ? {} : { background: input.background }),
                     ...(input.display === undefined ? {} : { display: input.display }),
+                    ...(input.cover === undefined ? {} : { cover: input.cover }),
+                    ...(input.summary === undefined ? {} : { summary: input.summary }),
                     author: actor.author,
                     source: actor.source,
                 }));
@@ -245,7 +256,12 @@ export function createArtifactTool(
             {
                 type: "text",
                 text: [
-                    `Artifact created: ${JSON.stringify(artifact.title)} — id ${artifact.id}, ${artifact.type}, ${formatArtifactVersion(artifact)}, ${String(artifact.fileCount)} ${artifact.fileCount === 1 ? "file" : "files"}, opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${artifact.display === undefined ? "" : `, shown ${artifact.display}`}.`,
+                    `Artifact created: ${JSON.stringify(artifact.title)} — id ${artifact.id}, ${artifact.type}, ${formatArtifactVersion(artifact)}, ${String(artifact.fileCount)} ${artifact.fileCount === 1 ? "file" : "files"}, opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${artifact.display === undefined ? "" : `, shown ${artifact.display}`}${formatArtifactCover(artifact)}.`,
+                    ...(artifact.cover === undefined && artifact.live === undefined
+                        ? [
+                              "It has no cover. If people would want to see it in the Feed, add one with update_artifact's cover.",
+                          ]
+                        : []),
                     ...(artifact.source === undefined
                         ? []
                         : [`Made in ${formatArtifactSource(artifact.source)}.`]),

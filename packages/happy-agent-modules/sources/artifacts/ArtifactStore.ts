@@ -42,6 +42,8 @@ interface ArtifactRow {
     readonly size: number | string;
     readonly background: string | null;
     readonly display: string | null;
+    readonly cover_json: string | null;
+    readonly summary: string | null;
     readonly source_json: string | null;
     readonly created_by_json: string;
     readonly created_at: number | string;
@@ -64,6 +66,9 @@ interface VersionRow {
     readonly live_json: string | null;
     readonly background: string | null;
     readonly display: string | null;
+    readonly cover_json: string | null;
+    readonly cover_default: number | string | null;
+    readonly summary: string | null;
     readonly created_by_json: string;
     readonly source_json: string | null;
     readonly created_at: number | string;
@@ -284,7 +289,8 @@ export async function insertArtifact(
             txCtx.db,
             sql`INSERT INTO ${sql.raw(ARTIFACTS_TABLE)} (
                 id, type, title, status, latest_version, latest_major, latest_minor, entry_json,
-                file_count, size, background, display, live_json, source_json, source_kind, source_id, source_agent_id,
+                file_count, size, background, display, cover_json, summary, live_json, source_json,
+                source_kind, source_id, source_agent_id,
                 created_by_json, created_by_kind, created_by_id, created_at,
                 updated_by_json, updated_source_json, updated_at,
                 deleted_by_json, deleted_source_json, deleted_at, revision
@@ -293,7 +299,8 @@ export async function insertArtifact(
                 ${artifact.latestVersion}, ${artifact.latestMajor}, ${artifact.latestMinor},
                 ${JSON.stringify(artifact.entry)},
                 ${artifact.fileCount}, ${artifact.size}, ${artifact.background ?? null},
-                ${artifact.display ?? null}, ${json(artifact.live)}, ${json(source)}, ${source?.kind ?? null},
+                ${artifact.display ?? null}, ${json(artifact.cover)}, ${artifact.summary ?? null},
+                ${json(artifact.live)}, ${json(source)}, ${source?.kind ?? null},
                 ${source === undefined ? null : artifactSourceId(source)},
                 ${source?.agentId ?? null},
                 ${JSON.stringify(artifact.createdBy)}, ${artifact.createdBy.kind},
@@ -338,7 +345,8 @@ export async function insertArtifactVersion(
                 entry_json = ${JSON.stringify(artifact.entry)},
                 file_count = ${artifact.fileCount}, size = ${artifact.size},
                 background = ${artifact.background ?? null},
-                display = ${artifact.display ?? null}, live_json = ${json(artifact.live)}`,
+                display = ${artifact.display ?? null}, cover_json = ${json(artifact.cover)},
+                summary = ${artifact.summary ?? null}, live_json = ${json(artifact.live)}`,
         );
         await insertVersion(txCtx, version, operationId);
     });
@@ -444,11 +452,14 @@ async function insertVersion(
     await agentDatabaseRun(
         ctx.db,
         sql`INSERT INTO ${sql.raw(ARTIFACT_VERSIONS_TABLE)}
-            (artifact_id, number, major, minor, title, entry_path, background, display, live_json,
-                created_by_json, source_json, created_at, operation_id)
+            (artifact_id, number, major, minor, title, entry_path, background, display, cover_json,
+                cover_default, summary, live_json, created_by_json, source_json, created_at,
+                operation_id)
             VALUES (${version.artifactId}, ${version.number}, ${version.major}, ${version.minor},
                 ${version.title},
-                ${version.entry.path}, ${version.background ?? null}, ${version.display ?? null}, ${json(version.live)},
+                ${version.entry.path}, ${version.background ?? null}, ${version.display ?? null},
+                ${json(version.cover)}, ${version.coverDefault === true ? 1 : null},
+                ${version.summary ?? null}, ${json(version.live)},
                 ${JSON.stringify(version.createdBy)},
                 ${json(version.source)}, ${version.createdAt}, ${operationId ?? null})`,
     );
@@ -521,6 +532,8 @@ function artifactFromRow(row: ArtifactRow): ArtifactRecord {
         size: Number(row.size),
         ...(row.background === null ? {} : { background: row.background }),
         ...(row.display === null ? {} : { display: row.display }),
+        ...(row.cover_json === null ? {} : { cover: JSON.parse(row.cover_json) as unknown }),
+        ...(row.summary === null ? {} : { summary: row.summary }),
         ...(source === undefined ? {} : { source }),
         createdBy: JSON.parse(row.created_by_json) as unknown,
         createdAt: Number(row.created_at),
@@ -551,6 +564,11 @@ function versionFromRow(row: VersionRow, files: readonly ArtifactFile[]): Artifa
         ...(row.live_json === null ? {} : { live: JSON.parse(row.live_json) as unknown }),
         ...(row.background === null ? {} : { background: row.background }),
         ...(row.display === null ? {} : { display: row.display }),
+        ...(row.cover_json === null ? {} : { cover: JSON.parse(row.cover_json) as unknown }),
+        ...(row.cover_default !== null && Number(row.cover_default) === 1
+            ? { coverDefault: true }
+            : {}),
+        ...(row.summary === null ? {} : { summary: row.summary }),
         createdBy: JSON.parse(row.created_by_json) as unknown,
         ...(source === undefined ? {} : { source }),
         createdAt: Number(row.created_at),

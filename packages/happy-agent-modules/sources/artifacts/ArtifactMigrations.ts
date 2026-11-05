@@ -22,7 +22,11 @@ export const ARTIFACT_UPLOADS_TABLE = "happy_agent_module_artifact_uploads";
  * row for its latest version, is `NULL` for a transparent slot, and its display preference, mirrored
  * the same way, is `NULL` when it leaves the choice to the client. Every version carries its
  * `major.minor` label beside its number, and the catalog row mirrors the latest one's; versions
- * made before labels existed read as 1.0, 1.1, and so on.
+ * made before labels existed read as 1.0, 1.1, and so on. A version's cover is the JSON of its
+ * path, media type, and decoded size, mirrored on the catalog row like the background, and
+ * `cover_default` marks a cover that is the type's own default rather than one somebody named.
+ * Versions of images and image series made before covers existed are marked as defaults, so their
+ * next version takes its picture as its cover.
  */
 export const artifactMigrations = [
     [
@@ -219,6 +223,31 @@ export const artifactMigrations = [
         "007-withdraw-removed-artifact-types",
         async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
             await withdrawArtifactTypes(database, ["sidebar", "sidebar_proposal", "story"]);
+        },
+    ],
+    [
+        "008-artifact-cover-summary",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            for (const table of [ARTIFACTS_TABLE, ARTIFACT_VERSIONS_TABLE]) {
+                await agentDatabaseRun(
+                    database,
+                    sql`ALTER TABLE ${sql.raw(table)} ADD COLUMN cover_json TEXT`,
+                );
+                await agentDatabaseRun(
+                    database,
+                    sql`ALTER TABLE ${sql.raw(table)} ADD COLUMN summary TEXT`,
+                );
+            }
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(ARTIFACT_VERSIONS_TABLE)} ADD COLUMN cover_default INTEGER`,
+            );
+            await agentDatabaseRun(
+                database,
+                sql`UPDATE ${sql.raw(ARTIFACT_VERSIONS_TABLE)} SET cover_default = 1
+                    WHERE artifact_id IN (SELECT id FROM ${sql.raw(ARTIFACTS_TABLE)}
+                        WHERE type IN ('image', 'image_series'))`,
+            );
         },
     ],
 ] as const;

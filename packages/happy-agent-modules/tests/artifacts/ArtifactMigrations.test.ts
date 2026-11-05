@@ -70,4 +70,57 @@ describe("the artifact migrations", () => {
         ).toEqual([{ live_json: null }, { live_json: null }, { live_json: null }]);
         database.close();
     });
+
+    it("marks earlier images' versions for a default cover, and nothing else", async () => {
+        const covers = artifactMigrations.findIndex(
+            ([name]) => name === "008-artifact-cover-summary",
+        );
+        expect(covers).toBeGreaterThan(0);
+        const database = moduleDatabase(artifactMigrations.slice(0, covers), "artifact-covers");
+        await database.ready;
+        const author = JSON.stringify({ kind: "user" });
+        for (const [id, type] of [
+            ["artifactpicture", "image"],
+            ["artifactframes", "image_series"],
+            ["artifactnotes", "markdown"],
+        ] as const) {
+            await agentDatabaseRun(
+                database.database,
+                sql`INSERT INTO ${sql.raw(ARTIFACTS_TABLE)} (id, type, title, status,
+                    latest_version, entry_json, file_count, size, created_by_json,
+                    created_by_kind, created_at, updated_by_json, updated_at, revision)
+                    VALUES (${id}, ${type}, 'Old', 'active', 1, '{}', 1, 1, ${author}, 'user', 1,
+                    ${author}, 1, 1)`,
+            );
+            await agentDatabaseRun(
+                database.database,
+                sql`INSERT INTO ${sql.raw(ARTIFACT_VERSIONS_TABLE)} (artifact_id, number, title,
+                    entry_path, created_by_json, created_at)
+                    VALUES (${id}, 1, 'Old', 'a', ${author}, 1)`,
+            );
+        }
+
+        for (const [, migrate] of artifactMigrations.slice(covers)) {
+            await migrate(database.context, database.database);
+        }
+
+        expect(
+            await agentDatabaseRows(
+                database.database,
+                sql`SELECT artifact_id, cover_json, cover_default, summary
+                    FROM ${sql.raw(ARTIFACT_VERSIONS_TABLE)} ORDER BY artifact_id`,
+            ),
+        ).toEqual([
+            { artifact_id: "artifactframes", cover_json: null, cover_default: 1, summary: null },
+            { artifact_id: "artifactnotes", cover_json: null, cover_default: null, summary: null },
+            { artifact_id: "artifactpicture", cover_json: null, cover_default: 1, summary: null },
+        ]);
+        expect(
+            await agentDatabaseRows(
+                database.database,
+                sql`SELECT cover_json, summary FROM ${sql.raw(ARTIFACTS_TABLE)} LIMIT 1`,
+            ),
+        ).toEqual([{ cover_json: null, summary: null }]);
+        database.close();
+    });
 });

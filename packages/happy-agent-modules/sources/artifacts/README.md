@@ -75,6 +75,22 @@ or `side`; absent leaves it to the client. It behaves exactly like a background:
 version, kept by a new version unless the change names another or clears it with `null`, mirrored
 on the catalog row. Only agents set it, through `create_artifact` and `update_artifact`.
 
+## Covers and summaries
+
+A version may name a `cover`, one of its own raster image files (PNG, JPEG, WebP, or GIF; never
+SVG) that clients show full width in the Feed, and a `summary`, one plain-text line shown under the
+title. The module decodes the cover with the shared image processor and records its pixel size and
+standard `aspect`: `wide` (16:9 within 2%, at least 960×540) or `square` (1:1 within 2%, at least
+720×720), at most 4096 pixels a side. Any other cover refuses the version. Both carry over like a
+background; a kept cover is checked again on every version, reusing the earlier measurement when
+its path and digest are unchanged, and a version that loses the cover's file is refused.
+
+An `image`'s cover is its own file and an `image_series`' its first, marked on the version as a
+default (`coverDefault`), so the next version takes whatever picture then holds that place; a
+default picture the rules refuse leaves no cover without an error. Naming or clearing a cover ends
+the default. A live-URL artifact holds no files, so it refuses a cover. Agents learn what makes a
+good cover from the module's instructions and the writing tools' descriptions.
+
 ## Versions
 
 Every version has an integer `number`, its identity everywhere, and a `major.minor` label. The first
@@ -157,12 +173,12 @@ type accepts before it is read.
 - `stageUpload(ctx, bytes)` and `stageText(ctx, text)` receive one file's bytes as an upload.
   `stageFiles(ctx, files)` turns `{ path, text }` and `{ path, uploadId }` descriptions into
   placements, staging each text. Each commits on its own, so call them outside a transaction.
-- `create(ctx, { id?, type, title, files, background?, display?, author, source? })` places
+- `create(ctx, { id?, type, title, files, background?, display?, cover?, summary?, author, source? })` places
   uploads at paths and makes the first version. Repeating `id` returns the existing artifact
   unchanged.
-- `update(ctx, { artifactId, expectedRevision?, operationId?, title?, background?, display?, files?, remove?, replaceAll?, major?, author, source? })`
-  makes the next version from the latest one's files, background, and display; a `null`
-  background or display clears it, and `major` makes it a major version. Unchanged files carry
+- `update(ctx, { artifactId, expectedRevision?, operationId?, title?, background?, display?, cover?, summary?, files?, remove?, replaceAll?, major?, author, source? })`
+  makes the next version from the latest one's files, background, display, cover, and summary; a
+  `null` background, display, cover, or summary clears it, and `major` makes it a major version. Unchanged files carry
   over by digest. A repeated `operationId` returns the artifact without making another version.
 - `commitFileChanges(ctx, { agentId, artifactId, expectedRevision?, operationId, writes, removes })`
   makes one agent's file changes the next minor version, skipping files written as they were and
@@ -191,8 +207,9 @@ Content lives under the daemon's private `artifacts/` folder, which Config owns:
 working directory.
 
 Four tables hold the catalog: one row per artifact with its latest entry, file count, size,
-background, display, indexed source and creator, and revision; one row per version with its title,
-entry path, background, display, author, source, and the operation ID that made it; one row per
+background, display, cover, summary, indexed source and creator, and revision; one row per version
+with its title, entry path, background, display, cover with its default mark, summary, author,
+source, and the operation ID that made it; one row per
 version file keyed by path, indexed by digest; and one row per upload, whose size, digest, and
 UTF-8 flag stay empty until its bytes arrive. The artifact and version rows carry the `major.minor`
 labels.

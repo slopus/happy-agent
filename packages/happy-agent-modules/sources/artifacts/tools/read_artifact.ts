@@ -14,6 +14,7 @@ import { decodeArtifactText } from "../impl/decodeArtifactText.js";
 import {
     formatArtifactAuthor,
     formatArtifactBackground,
+    formatArtifactCover,
     formatArtifactFile,
     formatArtifactLink,
     formatArtifactSource,
@@ -106,7 +107,7 @@ function formatArtifactRead({
     lines.push(
         `Version ${String(version.number)} of ${String(artifact.latestVersion)}, made ${new Date(version.createdAt).toISOString()} by ${formatArtifactAuthor(version.createdBy)}${version.source === undefined ? "" : ` in ${formatArtifactSource(version.source)}`}: ${JSON.stringify(version.title)}.`,
         `Mention it in chat as ${formatArtifactLink(artifact.id, artifact.title)}${version.number === artifact.latestVersion ? "" : `, or this version as ${formatArtifactLink(artifact.id, version.title, version.number)}`}.`,
-        `${formatFileCount(version.files.length)}, opening ${JSON.stringify(version.entry.path)}${formatArtifactBackground(version.background)}:`,
+        `${formatFileCount(version.files.length)}, opening ${JSON.stringify(version.entry.path)}${formatArtifactBackground(version.background)}${formatArtifactCover(version)}:`,
         ...version.files.map(formatArtifactFile),
     );
     if (entryText !== undefined) {
