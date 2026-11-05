@@ -75,6 +75,18 @@ function sandboxJson(args, env) {
         error: result.error?.message,
     };
     report.cli = [...(report.cli ?? []), record];
+    // Name an outdated build plainly so a version gap is not mistaken for a smoke bug.
+    if (result.status === 1 && result.stderr.includes("The Windows sandbox command is not valid")) {
+        throw new Error(
+            `This Agent predates the JSON sandbox CLI and rejects \`sandbox ${args.join(" ")}\`.`,
+        );
+    }
+    if (result.stderr.includes("unknown supervisor argument: --json")) {
+        throw new Error(
+            "The bundled Windows supervisor predates the JSON sandbox CLI; " +
+                "the Agent must pin @slopus/happy-agent-supervisor 0.0.20 or later.",
+        );
+    }
     assert.equal(
         result.error,
         undefined,
@@ -477,25 +489,52 @@ function check(condition, message) {
     if (!condition) failures.push(message);
 }
 
+function attempt(run) {
+    try {
+        return run();
+    } catch (error) {
+        failures.push(error instanceof Error ? error.message : String(error));
+        return undefined;
+    }
+}
+
+/** The last exec_command result the agent saw, for failure messages. */
+function commandOutput(transcript) {
+    const start = transcript.lastIndexOf("Wall time:");
+    return start < 0 ? "(no command result)" : transcript.slice(start, start + 800);
+}
+
 try {
     if (phase === "unprovisioned") {
         // 4. A fresh profile under the unattended guard reports `required` and never provisions.
         const env = guardedEnvironment();
-        const before = sandboxJson(["status", "--json"], env);
-        assertStatusShape(before);
         assert.equal(
-            before.status,
-            "required",
+            sandboxAccountCount(),
+            0,
             "This phase needs a runner whose sandbox was never set up.",
         );
-        check(before.setupVersion > 0, "A working native helper reports its setup version, not 0.");
-        check(
-            before.previousAttempt === undefined,
-            `A fresh profile reported previousAttempt ${before.previousAttempt}.`,
-        );
-        const setup = sandboxJson(["setup", "--json"], env);
-        assertSetupShape(setup);
-        check(setup.status === "failed", `Guarded setup must report failed, not ${setup.status}.`);
+        // CLI failures are recorded without skipping the daemon's own guarded command.
+        const before = attempt(() => sandboxJson(["status", "--json"], env));
+        if (before !== undefined) {
+            assertStatusShape(before);
+            check(before.status === "required", `A fresh profile reported ${before.status}.`);
+            check(
+                before.setupVersion > 0,
+                "A working native helper reports its setup version, not 0.",
+            );
+            check(
+                before.previousAttempt === undefined,
+                `A fresh profile reported previousAttempt ${before.previousAttempt}.`,
+            );
+        }
+        const setup = attempt(() => sandboxJson(["setup", "--json"], env));
+        if (setup !== undefined) {
+            assertSetupShape(setup);
+            check(
+                setup.status === "failed",
+                `Guarded setup must report failed, not ${setup.status}.`,
+            );
+        }
 
         const daemon = await startDaemon("guarded", env);
         try {
@@ -512,7 +551,8 @@ try {
                 report.command = { elapsedMs: run.elapsedMs, runStatus: run.runStatus };
                 check(
                     run.transcript.includes("windows_sandbox_setup_required"),
-                    "The sandboxed command did not fail with windows_sandbox_setup_required.",
+                    "The sandboxed command did not fail with windows_sandbox_setup_required: " +
+                        commandOutput(run.transcript),
                 );
                 check(
                     !run.transcript.includes("guarded-command-ran"),
@@ -530,16 +570,18 @@ try {
             await daemon.stop();
         }
 
-        const after = sandboxJson(["status", "--json"], env);
-        assertStatusShape(after);
-        check(
-            after.status === "required",
-            `The guard did not prevent provisioning: status is ${after.status}.`,
-        );
-        check(
-            after.previousAttempt === undefined,
-            `The guard recorded a setup attempt: ${after.previousAttempt}.`,
-        );
+        const after = attempt(() => sandboxJson(["status", "--json"], env));
+        if (after !== undefined) {
+            assertStatusShape(after);
+            check(
+                after.status === "required",
+                `The guard did not prevent provisioning: status is ${after.status}.`,
+            );
+            check(
+                after.previousAttempt === undefined,
+                `The guard recorded a setup attempt: ${after.previousAttempt}.`,
+            );
+        }
         report.sandboxAccounts = sandboxAccountCount();
         check(
             report.sandboxAccounts === 0,
@@ -613,7 +655,8 @@ try {
             check(run.runStatus === "completed", `The agent run ended ${run.runStatus}.`);
             check(
                 run.transcript.includes(`sandbox-command-ok-${nonce}`),
-                "The sandboxed command output never reached the agent.",
+                "The sandboxed command output never reached the agent: " +
+                    commandOutput(run.transcript),
             );
             check(
                 run.transcript.includes("Process exited with code 0"),
