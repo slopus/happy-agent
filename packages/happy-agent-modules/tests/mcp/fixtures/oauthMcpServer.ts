@@ -27,13 +27,22 @@ interface PendingCode {
  * dynamic client registration, and a token endpoint checking S256 PKCE, the redirect URI, and the
  * resource. `authorize` plays the person's browser: it approves an authorization link and returns
  * the address the browser would land on.
+ *
+ * With `clientAuth: "client_secret_post"`, the authorization server advertises both secret methods
+ * but registers every client as a confidential one that must authenticate with its secret in the
+ * form, and refuses HTTP Basic with invalid_client, as servers that chose post do.
  */
 export async function startOAuthMcpServer(
-    options: { readonly label?: string; readonly scope?: string } = {},
+    options: {
+        readonly label?: string;
+        readonly scope?: string;
+        readonly clientAuth?: "client_secret_post";
+    } = {},
 ) {
     const label = options.label ?? "oauth";
     const requests: OAuthFixtureRequest[] = [];
     const clients = new Set<string>();
+    const secrets = new Map<string, string>();
     const codes = new Map<string, PendingCode>();
     const accessTokens = new Set<string>();
     const refreshTokens = new Set<string>();
@@ -72,18 +81,43 @@ export async function startOAuthMcpServer(
                     response_types_supported: ["code"],
                     grant_types_supported: ["authorization_code", "refresh_token"],
                     code_challenge_methods_supported: ["S256"],
-                    token_endpoint_auth_methods_supported: ["none"],
+                    token_endpoint_auth_methods_supported:
+                        options.clientAuth === undefined
+                            ? ["none"]
+                            : ["client_secret_basic", "client_secret_post"],
                 });
                 return;
             }
             if (url.pathname === "/register" && request.method === "POST") {
                 const clientId = `client-${randomUUID()}`;
                 clients.add(clientId);
-                json(201, { ...(JSON.parse(body) as object), client_id: clientId });
+                if (options.clientAuth === undefined) {
+                    json(201, { ...(JSON.parse(body) as object), client_id: clientId });
+                    return;
+                }
+                const secret = `secret-${randomUUID()}`;
+                secrets.set(clientId, secret);
+                json(201, {
+                    ...(JSON.parse(body) as object),
+                    client_id: clientId,
+                    client_secret: secret,
+                    token_endpoint_auth_method: options.clientAuth,
+                });
                 return;
             }
             if (url.pathname === "/token" && request.method === "POST") {
                 const form = new URLSearchParams(body);
+                if (options.clientAuth !== undefined) {
+                    const secret = secrets.get(form.get("client_id") ?? "");
+                    if (
+                        request.headers.authorization !== undefined ||
+                        secret === undefined ||
+                        form.get("client_secret") !== secret
+                    ) {
+                        json(401, { error: "invalid_client" });
+                        return;
+                    }
+                }
                 if (form.get("grant_type") === "authorization_code") {
                     const pending = codes.get(form.get("code") ?? "");
                     codes.delete(form.get("code") ?? "");
@@ -209,6 +243,10 @@ export async function startOAuthMcpServer(
             landing.searchParams.set("code", code);
             landing.searchParams.set("state", url.searchParams.get("state") ?? "");
             return landing.href;
+        },
+        /** Let every access token lapse while keeping refresh tokens, so the next call refreshes. */
+        expireAccessTokens(): void {
+            accessTokens.clear();
         },
         /** Forget every token, as a server does when it revokes a login. */
         revokeAll(): void {

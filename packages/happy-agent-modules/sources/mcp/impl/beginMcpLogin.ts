@@ -76,7 +76,7 @@ export async function beginMcpLogin(options: {
         }
     }
     const scope = options.scope ?? info.resourceMetadata?.scopes_supported?.join(" ") ?? undefined;
-    let client: McpLoginClient & { readonly token_endpoint_auth_method?: string };
+    let client: McpLoginClient;
     let registered = false;
     if (options.configuredClient !== undefined) {
         client = options.configuredClient;

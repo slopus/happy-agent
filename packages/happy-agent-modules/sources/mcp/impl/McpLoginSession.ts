@@ -15,6 +15,12 @@ const REFRESH_AHEAD_MS = 60_000;
 export interface McpLoginClient {
     readonly client_id: string;
     readonly client_secret?: string;
+    /**
+     * How the client authenticates at the token endpoint, as its registration said. Without it the
+     * SDK picks HTTP Basic whenever the server lists it, and a server that registered the client
+     * for another method refuses the refresh.
+     */
+    readonly token_endpoint_auth_method?: string;
 }
 
 /**

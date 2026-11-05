@@ -177,6 +177,32 @@ describe("logging in to an MCP server", () => {
         expect((await world.signIn(fixture, "agent-a", "docs")).status).toBe("logged_in");
     });
 
+    it("refreshes a confidential client's login with the method it registered", async () => {
+        const fixture = await oauthServer({ clientAuth: "client_secret_post" });
+        const world = await authWorld({
+            user: `[mcp_servers.docs]\nurl = "${fixture.url}"\n`,
+            agents: { "agent-a": "folder-a" },
+        });
+        await world.status("agent-a", "docs", "needs_auth");
+        expect((await world.signIn(fixture, "agent-a", "docs")).status).toBe("logged_in");
+
+        // The access token lapses; the next call refreshes it with the secret in the form, as the
+        // client registered, and the login keeps working instead of being erased.
+        fixture.expireAccessTokens();
+        await expect(world.echo("agent-a", "docs", "refreshed")).resolves.toBe("oauth:refreshed");
+        const refreshes = fixture
+            .authRequests()
+            .filter(
+                (request) =>
+                    request.path === "/token" &&
+                    new URLSearchParams(request.body).get("grant_type") === "refresh_token",
+            );
+        expect(refreshes).toHaveLength(1);
+        expect(refreshes[0]?.headers.authorization).toBeUndefined();
+        expect(new URLSearchParams(refreshes[0]?.body).get("client_secret")).toMatch(/^secret-/u);
+        await world.status("agent-a", "docs", "connected");
+    });
+
     it("explains how to log in to a stdio server outside Happy instead of asking", async () => {
         const world = await authWorld({
             user: [
@@ -194,8 +220,8 @@ describe("logging in to an MCP server", () => {
     });
 });
 
-async function oauthServer() {
-    const fixture = await startOAuthMcpServer();
+async function oauthServer(options: Parameters<typeof startOAuthMcpServer>[0] = {}) {
+    const fixture = await startOAuthMcpServer(options);
     cleanups.push(async () => await fixture.close());
     return fixture;
 }

@@ -918,6 +918,12 @@ export class McpModule implements AgentModule {
                           ...(login.client.clientSecret === undefined
                               ? {}
                               : { client_secret: login.client.clientSecret }),
+                          ...(login.client.tokenEndpointAuthMethod === undefined
+                              ? {}
+                              : {
+                                    token_endpoint_auth_method:
+                                        login.client.tokenEndpointAuthMethod,
+                                }),
                       }
                     : configuredLoginClientOrUndefined(config),
         });
