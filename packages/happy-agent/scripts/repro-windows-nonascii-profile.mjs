@@ -14,7 +14,10 @@ import { join, resolve, win32 } from "node:path";
 //   node repro-windows-nonascii-profile.mjs <happy-agent.exe> <results> <work>
 //
 // Run it as that user, already elevated, on a disposable runner. <work> must be outside the
-// profile so project setup does not depend on the profile directory's own ACL.
+// profile. A batch-logon session cannot start the sandbox runner on the interactive window
+// station, so HAPPY_REPRO_PROFILE instead runs as the current user with USERPROFILE pointing at a
+// non-ASCII folder, which is where the Agent looks for credential folders. Sandbox state always
+// stays in the real profile. HAPPY_REPRO_SKIP_READS=1 records a session that cannot run commands.
 
 const [binaryArgument, resultsArgument, workArgument] = process.argv.slice(2);
 if (process.platform !== "win32") throw new Error("This reproduction requires Windows.");
@@ -328,7 +331,9 @@ async function runSandboxedCommand(daemon, workspace, cmd) {
     };
 }
 
-const profile = homedir();
+const profile = process.env.HAPPY_REPRO_PROFILE || homedir();
+const realProfile = userInfo().homedir;
+const checkReads = process.env.HAPPY_REPRO_SKIP_READS !== "1";
 const nonce = randomBytes(6).toString("hex");
 const secrets = {
     claude: { path: join(profile, ".claude", "repro-secret.txt"), value: `claude-${nonce}` },
@@ -345,6 +350,7 @@ const stateFile = join(
 try {
     report.user = userInfo().username;
     report.profile = describe(profile);
+    report.realProfile = describe(realProfile);
     report.userProfileVariable = describe(process.env.USERPROFILE ?? "");
     check(/[^\x00-\x7f]/u.test(profile), `The profile ${profile} has no non-ASCII character.`);
     for (const secret of Object.values(secrets)) {
@@ -352,7 +358,7 @@ try {
         await writeFile(secret.path, secret.value);
     }
 
-    const env = { ...process.env };
+    const env = { ...process.env, USERPROFILE: profile };
     delete env.HAPPY_WINDOWS_SANDBOX_NO_PROVISION;
     delete env.HAPPY_WINDOWS_SANDBOX_HOME;
     const setup = sandboxJson(["setup", "--json"], env);
@@ -394,7 +400,7 @@ try {
                     `A sandboxed command in the ${workspace.label} workspace read ${secret.path}.`,
                 );
                 check(
-                    denied,
+                    denied || !checkReads,
                     `The ${name} read in the ${workspace.label} workspace reported no denial: ${run.transcript.slice(-1500)}`,
                 );
             }
@@ -447,7 +453,7 @@ try {
         report[`acl${folder}`] = powershell(`icacls ${literal(join(profile, folder))}`);
     }
     report.usersDirectory = (await readdir(win32.dirname(profile))).map(describe);
-    const sandboxLogs = join(profile, ".happy", "windows-sandbox", ".sandbox");
+    const sandboxLogs = join(realProfile, ".happy", "windows-sandbox", ".sandbox");
     for (const name of await readdir(sandboxLogs).catch(() => [])) {
         if (name.endsWith(".log")) await copyFile(join(sandboxLogs, name), join(results, name));
     }

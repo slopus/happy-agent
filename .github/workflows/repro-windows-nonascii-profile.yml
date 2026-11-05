@@ -1,10 +1,12 @@
 name: Windows non-ASCII profile sandbox
 run-name: Windows non-ASCII profile ${{ inputs.tag || inputs.run_id || github.event.head_commit.message }}
 
-# slopus/happy-agent#90: installs a packaged win32-x64 Agent, creates a local administrator whose
-# name (and so profile path) holds non-ASCII characters, and runs the Agent as that user to prove
-# its credential folders are denied to sandboxed commands and named correctly in the deny-read
-# ACL state. Pushes to a security/windows-nonascii-* branch test PUSH_TAG or PUSH_RUN_ID below.
+# slopus/happy-agent#90: installs a packaged win32-x64 Agent and proves that credential folders in
+# a non-ASCII profile are named correctly in the deny-read ACL state and denied to sandboxed
+# commands. The runner user first runs commands with USERPROFILE at a non-ASCII folder; then a
+# local administrator with a non-ASCII name runs the Agent from a scheduled task, whose batch
+# session cannot start sandboxed commands, to check the state and ACLs of a real profile.
+# Pushes to a security/windows-nonascii-* branch test PUSH_TAG or PUSH_RUN_ID below.
 
 on:
     push:
@@ -71,31 +73,43 @@ jobs:
                   Copy-Item packages/happy-agent/scripts/repro-windows-nonascii-profile.mjs "$root\repro.mjs"
                   icacls $root /grant '*S-1-1-0:(OI)(CI)F' /T /Q | Out-Null
                   & "$root\agent\happy-agent-win32-x64.exe" --version >> $env:GITHUB_STEP_SUMMARY
+            - name: Run sandboxed commands with USERPROFILE at a non-ASCII folder
+              id: override
+              run: |
+                  # "Łukasz_Пример用户", spelled with code points so no file encoding can alter it.
+                  $name = -join ([char[]]@(0x0141,0x75,0x6B,0x61,0x73,0x7A,0x5F,0x041F,0x0440,0x0438,0x043C,0x0435,0x0440,0x7528,0x6237))
+                  $env:HAPPY_REPRO_PROFILE = "C:\Users\$name"
+                  New-Item -ItemType Directory -Force $env:HAPPY_REPRO_PROFILE | Out-Null
+                  $env:HAPPY_REPRO_SUMMARY = $env:GITHUB_STEP_SUMMARY
+                  node packages/happy-agent/scripts/repro-windows-nonascii-profile.mjs C:\happy-repro\agent\happy-agent-win32-x64.exe C:\happy-repro\results\override C:\happy-repro\work-override
             - name: Run the Agent as a user with a non-ASCII profile
+              if: ${{ !cancelled() }}
               run: |
                   # "Wiesław_Тест用户", spelled with code points so no file encoding can alter it.
-                  $name = -join ([char[]]@(0x57,0x69,0x65,0x73,0x6C,0x61,0x0142,0x5F,0x0422,0x0435,0x0441,0x0442,0x7528,0x6237))
+                  $name = -join ([char[]]@(0x57,0x69,0x65,0x73,0x0142,0x61,0x77,0x5F,0x0422,0x0435,0x0441,0x0442,0x7528,0x6237))
                   $password = 'Rp-' + [guid]::NewGuid().ToString('N') + '!a1'
                   $secure = ConvertTo-SecureString $password -AsPlainText -Force
                   New-LocalUser -Name $name -Password $secure -PasswordNeverExpires | Out-Null
                   Add-LocalGroupMember -Group (Get-LocalGroup -SID 'S-1-5-32-544') -Member $name
                   $root = 'C:\happy-repro'
-                  $summary = "$root\results\summary.md"
-                  $command = "/d /v:on /c set HAPPY_REPRO_SUMMARY=$summary&& `"$root\node.exe`" `"$root\repro.mjs`" `"$root\agent\happy-agent-win32-x64.exe`" `"$root\results`" `"$root\work`" > `"$root\results\task.log`" 2>&1 & echo !ERRORLEVEL! > `"$root\results\exit-code.txt`""
+                  $results = "$root\results\profile"
+                  New-Item -ItemType Directory -Force $results | Out-Null
+                  $summary = "$results\summary.md"
+                  $command = "/d /v:on /c set HAPPY_REPRO_SUMMARY=$summary&& set HAPPY_REPRO_SKIP_READS=1&& `"$root\node.exe`" `"$root\repro.mjs`" `"$root\agent\happy-agent-win32-x64.exe`" `"$results`" `"$root\work`" > `"$results\task.log`" 2>&1 & echo !ERRORLEVEL! > `"$results\exit-code.txt`""
                   $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument $command -WorkingDirectory $root
                   $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 45)
                   Register-ScheduledTask -TaskName HappyNonAsciiRepro -Action $action -Settings $settings -User "$env:COMPUTERNAME\$name" -Password $password -RunLevel Highest | Out-Null
                   Start-ScheduledTask -TaskName HappyNonAsciiRepro
                   $deadline = (Get-Date).AddMinutes(45)
-                  while (-not (Test-Path "$root\results\exit-code.txt") -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 10 }
+                  while (-not (Test-Path "$results\exit-code.txt") -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 10 }
                   Start-Sleep -Seconds 2
-                  Get-Content "$root\results\task.log" -Encoding utf8 -ErrorAction SilentlyContinue
+                  Get-Content "$results\task.log" -Encoding utf8 -ErrorAction SilentlyContinue
                   Get-Content $summary -Encoding utf8 -ErrorAction SilentlyContinue >> $env:GITHUB_STEP_SUMMARY
-                  if (-not (Test-Path "$root\results\exit-code.txt")) {
+                  if (-not (Test-Path "$results\exit-code.txt")) {
                       Get-ScheduledTaskInfo -TaskName HappyNonAsciiRepro | Format-List | Out-String | Write-Output
                       throw 'The task did not finish.'
                   }
-                  $code = (Get-Content "$root\results\exit-code.txt").Trim()
+                  $code = (Get-Content "$results\exit-code.txt").Trim()
                   if ($code -ne '0') { throw "The reproduction failed with exit code $code." }
             - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               if: ${{ always() }}
