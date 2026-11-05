@@ -122,6 +122,14 @@ apps, not documents or dashboards, which use `happy-page-width: full`, and tell 
 viewport, keep clear of the insets, take touch and keyboard, and never build an exit of their own,
 because one the page draws can be missing or broken while the host's always works.
 
+Games then needed the corner the "×" took, and some wanted an exit in their own menus. The page
+moves the button with `<meta name="happy-app-close">` (`top-start` by default, any corner, or
+`none`), learns where it is from `data-happy-app-close`, the 48px it reserves in the inset on its
+edge, and the `--happy-app-close-x`/`-y`/`-width`/`-height` box, and closes itself with
+`window.happyApp.close()`. The docs steer agents to move the button rather than hide it: `none` is
+only for a page with its own always-visible exit, and the host still keeps back, Esc and ⌘W, the
+desktop header, and a swipe down from the top edge that brings the "×" back.
+
 ## Agents write artifacts with artifact tools, straight in the catalog
 
 Kirill's master plan for inline artifacts replaced sending whole files through `create_artifact`

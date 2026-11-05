@@ -95,8 +95,13 @@ with Happy Agent too:
   full screen and edge to edge, with no scrolling or zoom, opens it from a card instead of running
   it inline, and owns the close control. The page fills the viewport, handles resize and rotation,
   keeps its controls clear of `env(safe-area-inset-*)` and `--happy-app-inset-*`, takes touch and
-  mouse and keyboard, and never builds its own exit. A document or dashboard meant to be read is
-  not an app; use `happy-page-width: full` for it. `../DESIGN.md` §1.8 has the details, and
+  mouse and keyboard, and needs no exit of its own. The host's "×" sits top-start, and the 48 px
+  it takes is in the inset on that edge; `<meta name="happy-app-close" content="top-end">` moves it
+  to another corner the game does not use (`top-start`, `top-end`, `bottom-start`, `bottom-end`).
+  The root's `data-happy-app-close` names the corner and `--happy-app-close-x`, `-y`, `-width`, and
+  `-height` give its exact box. An exit the page draws, such as Quit in a pause menu, calls
+  `window.happyApp.close()`. `none` hides the "×" and is discouraged: use it only with an exit of
+  your own that is always clearly visible. A document or dashboard meant to be read is not an app; use `happy-page-width: full` for it. `../DESIGN.md` §1.8 has the details, and
   [An app-mode game](#an-app-mode-game) below is a skeleton.
 - `/api/v1/components.js`, last. It defines five elements that read what they show from the page.
   In Happy Desktop, diffs and code are drawn with the renderer and styling it uses for them;
@@ -391,9 +396,12 @@ duplicates.
 ## An app-mode game
 
 A full-screen page that does not scroll: a dot you steer by dragging or with the arrow keys. It
-sizes its canvas to the viewport on every resize and rotation, keeps its hint clear of the insets,
-and has no exit of its own, because the host provides one. Add the SDK as above if it should share
-data, such as a high score.
+sizes its canvas to the viewport on every resize and rotation and keeps its HUD in the top-right
+corner, inside the insets: the top inset already holds the 48 px of the host's "×", so the HUD sits
+clear of it in any top corner. The host's "×" is the way
+out; the pause menu's Quit is an optional second one, and calls `happyApp.close()`. Pausing is on
+P, not Esc, which the host keeps for leaving. Add the SDK as above if it should share data, such
+as a high score.
 
 ```html
 <!doctype html>
@@ -412,23 +420,53 @@ data, such as a high score.
                 height: 100%;
                 touch-action: none;
             }
-            #hint {
+            .hud {
                 position: fixed;
                 top: max(env(safe-area-inset-top), var(--happy-app-inset-top, 0px));
                 right: max(env(safe-area-inset-right), var(--happy-app-inset-right, 0px));
+                display: flex;
+                align-items: center;
+                gap: 8px;
                 padding: 8px 16px;
                 color: var(--happy-muted);
+            }
+            #menu:not([hidden]) {
+                position: fixed;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
             }
         </style>
     </head>
     <body>
         <canvas id="game"></canvas>
-        <div id="hint">Drag, or use the arrow keys</div>
+        <div class="hud">
+            <span>Drag, or use the arrow keys</span>
+            <button id="pause" type="button">Pause</button>
+        </div>
+        <div id="menu" hidden>
+            <button id="resume" type="button">Resume</button>
+            <button id="quit" type="button">Quit</button>
+        </div>
         <script>
             const canvas = document.getElementById("game");
             const context = canvas.getContext("2d");
+            const menu = document.getElementById("menu");
             const dot = { x: 0.5, y: 0.5 };
             const keys = new Set();
+            let paused = false;
+
+            function setPaused(value) {
+                paused = value;
+                menu.hidden = !value;
+                keys.clear();
+            }
+            document.getElementById("pause").onclick = () => setPaused(true);
+            document.getElementById("resume").onclick = () => setPaused(false);
+            // The host defines happyApp only in app mode, so check before calling it.
+            document.getElementById("quit").onclick = () => window.happyApp?.close();
 
             function resize() {
                 const ratio = window.devicePixelRatio || 1;
@@ -439,14 +477,20 @@ data, such as a high score.
             new ResizeObserver(resize).observe(canvas);
 
             canvas.addEventListener("pointermove", (event) => {
+                if (paused) return;
                 if (event.buttons === 0 && event.pointerType === "mouse") return;
                 dot.x = event.offsetX / canvas.clientWidth;
                 dot.y = event.offsetY / canvas.clientHeight;
             });
-            addEventListener("keydown", (event) => keys.add(event.key));
+            addEventListener("keydown", (event) => {
+                if (event.key === "p") setPaused(!paused);
+                else keys.add(event.key);
+            });
             addEventListener("keyup", (event) => keys.delete(event.key));
 
             function frame() {
+                requestAnimationFrame(frame);
+                if (paused) return;
                 const step = 0.01;
                 if (keys.has("ArrowLeft")) dot.x -= step;
                 if (keys.has("ArrowRight")) dot.x += step;
@@ -463,7 +507,6 @@ data, such as a high score.
                 context.beginPath();
                 context.arc(dot.x * width, dot.y * height, 16, 0, Math.PI * 2);
                 context.fill();
-                requestAnimationFrame(frame);
             }
             requestAnimationFrame(frame);
         </script>

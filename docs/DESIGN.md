@@ -235,8 +235,9 @@ What the host does:
   selection callout, and long-press link previews.
 - It gives the page the safe-area insets as `env(safe-area-inset-*)`, and the
   same values as `--happy-app-inset-top`, `--happy-app-inset-right`,
-  `--happy-app-inset-bottom`, and `--happy-app-inset-left`, which also cover
-  the area the host's close button takes.
+  `--happy-app-inset-bottom`, and `--happy-app-inset-left`. These add 48 px
+  for the host's close button on the edge it sits on: the top inset for a
+  top corner, the bottom inset for a bottom corner.
 - It sets `data-happy-page-mode="app"` on the root element, for page CSS that
   wants to react.
 - Inline in the chat, an app-mode page is not run: it shows as a card that
@@ -245,10 +246,45 @@ What the host does:
   its header, and that header gains a Full screen action; Esc leaves full
   screen.
 
-The host owns the way out. On iOS and Android a round "×" sits in the
-top-start corner inside the safe area, fading after a few seconds and coming
-back when touched near it; on Android, system back closes the page too. On
-Happy Desktop the viewer's header and Esc do it.
+The host owns the way out. On iOS and Android a round "×" sits in a corner
+inside the safe area, fading after a few seconds and coming back when touched
+near it; on Android, system back closes the page too. On Happy Desktop the
+viewer's header and Esc do it, and there is no "×".
+
+The "×" sits in the top-start corner unless the page moves it with
+`<meta name="happy-app-close" content="…">` in its `<head>`, read with
+`happy-page-mode`. The values are `top-start`, the default, `top-end`,
+`bottom-start`, `bottom-end`, and `none`; start and end are logical, so they
+flip in right-to-left languages, and an unknown value means `top-start`. If
+the game uses the top-start corner, for a score or a control, move the button
+to a corner it does not use.
+
+The page can find the button without guessing:
+
+- The root element carries `data-happy-app-close` with the resolved value,
+  such as `data-happy-app-close="top-end"`.
+- The 48 px reserved for the button goes into the inset on its edge, so
+  padding by `--happy-app-inset-*` keeps clear of it. With `none`, all four
+  insets are the plain safe-area insets.
+- The button's exact hit box, in CSS pixels in viewport coordinates, is
+  `--happy-app-close-x`, `--happy-app-close-y`, `--happy-app-close-width`, and
+  `--happy-app-close-height` on the root: a 48 × 48 box, the 32 px button and
+  an 8 px margin on each side. They update on resize and rotation, and are all
+  0 with `none` and on Happy Desktop.
+
+In app mode the host also defines `window.happyApp.close()`, which closes the
+page exactly as the host's own controls do: it dismisses it on iOS and
+Android, and on Happy Desktop leaves full screen, or goes back from the viewer
+when not full screen. A page that has its own exit, such as Quit in a pause
+menu, calls it; it works whatever `happy-app-close` says.
+
+`none` hides the "×", and is discouraged. Use it only when the page draws its
+own clearly visible exit that calls `happyApp.close()`; moving the button to
+a corner the game does not use is almost always better. Even with `none`, the
+host keeps ways out the page cannot turn off: system back on Android; Esc and
+⌘W with any keyboard; the header's back arrow, and Esc out of full screen, on
+Happy Desktop; and on iOS and Android a downward swipe from the top 24 pt of
+the screen, which shows the "×" in the top-start corner for 3 seconds.
 
 What the page must do:
 
@@ -263,8 +299,9 @@ What the page must do:
   `touch-action: none` on the surface that takes drags, and keys for a game.
 - Never rely on page scrolling. A long list inside the app scrolls in a region
   of its own (§4.4).
-- Never build a close, exit, or back control of its own, and never trap Esc or
-  the back gesture.
+- Rely on the host's "×" to leave. An exit the page draws itself, such as
+  Quit in a pause menu, is optional and calls `happyApp.close()`; never trap
+  Esc or the back gesture.
 
 ```html
 <head>
@@ -289,6 +326,9 @@ What the page must do:
     </style>
 </head>
 ```
+
+`recipe/artifact-apps.md` has a whole game, with a pause menu that quits
+through `happyApp.close()`.
 
 ---
 
@@ -2278,7 +2318,9 @@ in **both** light and dark, at **three** container widths: **400**, **640**, and
       viewport after a resize and a rotation with no page scrollbar, keeps
       its controls clear of `env(safe-area-inset-*)` and
       `--happy-app-inset-*`, works by touch and by mouse and keyboard, and
-      has no close or exit control of its own (§1.8).
+      keeps clear of the host's "×" or moves it with `happy-app-close`; any
+      exit it draws calls `happyApp.close()`, and it uses `none` only with
+      such an exit clearly visible (§1.8).
 - [ ] At 400 px wide nothing overflows horizontally
       (`document.documentElement.scrollWidth <= clientWidth`).
 - [ ] A row with a 200-character title ellipsizes and its trailing controls stay
