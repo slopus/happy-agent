@@ -8,6 +8,7 @@ import {
     artifactPathSchema,
     artifactResponseSchema,
     artifactSchema,
+    artifactSummarySchema,
     artifactUploadResponseSchema,
     artifactVersionListResponseSchema,
     artifactVersionSchema,
@@ -343,6 +344,56 @@ describe("artifacts protocol", () => {
                 },
                 previousVersion: version,
                 version: nextVersion,
+            }),
+        ).toBe(true);
+    });
+
+    it("carries a raster cover with its size and a one-line summary, absent on older daemons", () => {
+        const cover = {
+            path: "cover.png",
+            mimeType: "image/png",
+            width: 1600,
+            height: 900,
+            aspect: "wide",
+        };
+        expect(
+            Value.Check(artifactSchema, { ...artifact, cover: { ...cover, aspect: "tall" } }),
+        ).toBe(true);
+        const summary = "Revenue up 18% QoQ, driven by enterprise seats.";
+        expect(Value.Check(artifactSchema, { ...artifact, cover, summary })).toBe(true);
+        expect(Value.Check(artifactSchema, { ...artifact, cover: null, summary: null })).toBe(true);
+        expect(Value.Check(artifactSchema, artifact)).toBe(true);
+        expect(Value.Check(artifactVersionSchema, { ...firstVersion, cover, summary })).toBe(true);
+        expect(
+            Value.Check(artifactVersionSchema, { ...firstVersion, cover: { path: "c.png" } }),
+        ).toBe(false);
+        for (const bad of ["", " ", "two\nlines", "a".repeat(281), "tab\there"]) {
+            expect(Value.Check(artifactSummarySchema, bad)).toBe(false);
+        }
+        expect(Value.Check(artifactSummarySchema, "a".repeat(280))).toBe(true);
+        expect(
+            Value.Check(createArtifactRequestSchema, {
+                type: "markdown",
+                title: "Q3",
+                files: [{ path: "index.md", text: "# Q3" }],
+                cover: "cover.png",
+                summary,
+            }),
+        ).toBe(true);
+        expect(Value.Check(updateArtifactRequestSchema, { cover: null, summary: null })).toBe(true);
+        expect(Value.Check(updateArtifactRequestSchema, { cover: "../escape.png" })).toBe(false);
+        expect(
+            Value.Check(artifactUpdatedChangesSchema, {
+                entry,
+                fileCount: 2,
+                latestVersion: 2,
+                size: artifact.size,
+                title: artifact.title,
+                updatedAt: createdAt + 1,
+                updatedBy: artifact.updatedBy,
+                updatedSource: artifact.updatedSource,
+                cover,
+                summary: null,
             }),
         ).toBe(true);
     });

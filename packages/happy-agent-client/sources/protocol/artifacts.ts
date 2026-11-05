@@ -87,6 +87,44 @@ export const artifactLiveSchema = Type.Object({
 });
 export type ArtifactLive = Static<typeof artifactLiveSchema>;
 
+/**
+ * One plain-text line a client shows under the title: 1–280 characters, not only blank, with no
+ * control characters or line breaks.
+ */
+export const artifactSummarySchema = Type.String({
+    maxLength: 280,
+    minLength: 1,
+    pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]+$",
+});
+export type ArtifactSummary = Static<typeof artifactSummarySchema>;
+
+/**
+ * A cover's standard shape: `"wide"` (16:9) or `"square"` (1:1). The set may grow; a client that
+ * meets a shape it does not know shows the artifact without its cover.
+ */
+export const artifactCoverAspectSchema = Type.Union([
+    Type.Literal("wide"),
+    Type.Literal("square"),
+    Type.String(),
+]);
+export type ArtifactCoverAspect = Static<typeof artifactCoverAspectSchema>;
+
+/**
+ * The image a feed shows for a version, full width: one of the version's files, served by the
+ * file route, with its intrinsic size in pixels decoded by the daemon and the standard shape that
+ * size matches. Always a raster image, at most 4096 pixels a side.
+ */
+export const artifactCoverSchema = Type.Object({
+    /** One of `image/png`, `image/jpeg`, `image/webp`, or `image/gif`. */
+    mimeType: Type.String(),
+    /** The file's `path` in the same version. */
+    path: artifactPathSchema,
+    width: Type.Integer({ minimum: 1 }),
+    height: Type.Integer({ minimum: 1 }),
+    aspect: artifactCoverAspectSchema,
+});
+export type ArtifactCover = Static<typeof artifactCoverSchema>;
+
 /** A background as a request names it: the same colours in either case, or `null` for none. */
 export const artifactBackgroundInputSchema = Nullable(
     Type.String({ pattern: "^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$" }),
@@ -180,6 +218,8 @@ export type ArtifactAuthorKind = ArtifactAuthor["kind"];
 export const artifactSchema = Type.Object({
     /** The latest version's background; `null` for a transparent slot, absent on older daemons. */
     background: Type.Optional(Nullable(artifactBackgroundSchema)),
+    /** The latest version's cover; `null` for none, absent on older daemons. */
+    cover: Type.Optional(Nullable(artifactCoverSchema)),
     createdAt: timestampSchema,
     createdBy: artifactAuthorSchema,
     deletedAt: Nullable(timestampSchema),
@@ -205,6 +245,8 @@ export const artifactSchema = Type.Object({
     /** Where the artifact was created. */
     source: Nullable(artifactSourceSchema),
     status: Type.Union([Type.Literal("active"), Type.Literal("deleted")]),
+    /** The latest version's summary; `null` for none, absent on older daemons. */
+    summary: Type.Optional(Nullable(artifactSummarySchema)),
     title: artifactTitleSchema,
     type: artifactTypeSchema,
     updatedAt: timestampSchema,
@@ -220,6 +262,8 @@ export const artifactVersionSchema = Type.Object({
     artifactId: cuid2Schema,
     /** The colour behind this version's content; `null` for a transparent slot, absent on older daemons. */
     background: Type.Optional(Nullable(artifactBackgroundSchema)),
+    /** The image a feed shows for this version; `null` for none, absent on older daemons. */
+    cover: Type.Optional(Nullable(artifactCoverSchema)),
     createdAt: timestampSchema,
     createdBy: artifactAuthorSchema,
     /** How this version's author wants it shown; `null` leaves it to the client, absent on older daemons. */
@@ -237,6 +281,8 @@ export const artifactVersionSchema = Type.Object({
     /** The version's identity within its artifact, from 1, whatever its label. */
     number: Type.Integer({ minimum: 1 }),
     source: Nullable(artifactSourceSchema),
+    /** One line shown under the title; `null` for none, absent on older daemons. */
+    summary: Type.Optional(Nullable(artifactSummarySchema)),
     title: artifactTitleSchema,
 });
 export type ArtifactVersion = Static<typeof artifactVersionSchema>;
@@ -351,12 +397,19 @@ export type ArtifactFileInput = Static<typeof artifactFileInputSchema>;
 export const createArtifactRequestSchema = Type.Object({
     /** The first version's background. Leave it out unless the content needs one fixed canvas. */
     background: Type.Optional(artifactBackgroundInputSchema),
+    /**
+     * The path of the first version's cover among `files`, or `null` for none. Absent takes the
+     * type's default: an image's own file or an image series' first, and none for other types.
+     */
+    cover: Type.Optional(Nullable(artifactPathSchema)),
     /** Every file of the first version, in any order. */
     files: Type.Array(artifactFileInputSchema, { maxItems: 256, minItems: 1 }),
     /** The retry key: repeating it returns the existing artifact unchanged. */
     id: Type.Optional(cuid2Schema),
     mutationId: Type.Optional(mutationIdSchema),
     source: Type.Optional(artifactSourceInputSchema),
+    /** The first version's summary; absent or `null` for none. */
+    summary: Type.Optional(Nullable(artifactSummarySchema)),
     title: artifactTitleSchema,
     type: artifactTypeSchema,
 });
@@ -364,13 +417,18 @@ export type CreateArtifactRequest = Static<typeof createArtifactRequestSchema>;
 
 /**
  * `PATCH /v0/artifacts/:artifactId` — requires `If-Match` and at least one of `title`,
- * `background`, `files`, `remove`, `replaceAll`, and `major`. The new version starts from the
+ * `background`, `cover`, `summary`, `files`, `remove`, `replaceAll`, and `major`. The new version starts from the
  * latest one's files, or from none with `replaceAll`; `files` adds or replaces paths and `remove`
  * takes paths out.
  */
 export const updateArtifactRequestSchema = Type.Object({
     /** A colour sets the new version's background, `null` clears it, and absent keeps it. */
     background: Type.Optional(artifactBackgroundInputSchema),
+    /**
+     * A path in the new version sets its cover, `null` clears it, and absent keeps it; the kept
+     * cover's file must stay in the version.
+     */
+    cover: Type.Optional(Nullable(artifactPathSchema)),
     files: Type.Optional(Type.Array(artifactFileInputSchema, { maxItems: 256 })),
     /**
      * Make the new version this major version, `major.0`: exactly one more than the latest
@@ -382,6 +440,8 @@ export const updateArtifactRequestSchema = Type.Object({
     replaceAll: Type.Optional(Type.Boolean()),
     /** Where this change is being made. */
     source: Type.Optional(artifactSourceInputSchema),
+    /** A line sets the new version's summary, `null` clears it, and absent keeps it. */
+    summary: Type.Optional(Nullable(artifactSummarySchema)),
     title: Type.Optional(artifactTitleSchema),
 });
 export type UpdateArtifactRequest = Static<typeof updateArtifactRequestSchema>;

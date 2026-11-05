@@ -209,6 +209,54 @@ describe("feed protocol", () => {
         ]);
     });
 
+    it("filters a page and read-all to subject types", async () => {
+        const { client, requests } = recordingClient({
+            items: [],
+            unread: 4,
+            filteredUnread: 1,
+            hasMore: false,
+            cursor,
+        });
+        const page = await client.getFeed({ subjects: ["artifact", "task"], limit: 20 });
+        expect(page.filteredUnread).toBe(1);
+        await client.markFeedReadAll({ through: itemCursor, subjects: ["artifact", "task"] });
+        expect(requests).toEqual([
+            {
+                method: "GET",
+                url: "http://agent.local/v0/feed?limit=20&subjects=artifact%2Ctask",
+                body: null,
+            },
+            {
+                method: "POST",
+                url: "http://agent.local/v0/feed/read-all",
+                body: JSON.stringify({ through: itemCursor, subjects: ["artifact", "task"] }),
+            },
+        ]);
+        expect(
+            Value.Check(feedResponseSchema, {
+                items: [],
+                unread: 4,
+                filteredUnread: 1,
+                hasMore: false,
+                cursor,
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(feedResponseSchema, { items: [], unread: 4, hasMore: false, cursor }),
+        ).toBe(true);
+        expect(Value.Check(feedReadAllRequestSchema, { subjects: ["artifact"] })).toBe(true);
+        expect(Value.Check(feedReadAllRequestSchema, { subjects: [""] })).toBe(false);
+        expect(
+            Value.Check(healthResponseSchema, {
+                healthy: true,
+                ready: true,
+                status: "ready",
+                version: { protocol: 33, daemon: "1.0.0" },
+                capabilities: { feed: true, feedSubjectFilter: true, artifactCovers: true },
+            }),
+        ).toBe(true);
+    });
+
     it("encodes cluster names as one path segment", async () => {
         const { client, requests } = recordingClient({ cluster: {}, entries: [], clusters: [] });
         await client.listFeedClusters();

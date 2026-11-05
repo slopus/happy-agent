@@ -1274,7 +1274,11 @@ export class HappyAgentClient {
         return await this.#json({
             method: "GET",
             path: "v0/feed",
-            query: { before: query.before, limit: query.limit },
+            query: {
+                before: query.before,
+                limit: query.limit,
+                subjects: query.subjects?.join(","),
+            },
             signal: options.signal,
         });
     }
@@ -1295,7 +1299,10 @@ export class HappyAgentClient {
         });
     }
 
-    /** `POST /v0/feed/read-all` — closes every open entry, or those not newer than `through`. */
+    /**
+     * `POST /v0/feed/read-all` — closes every open entry, or those not newer than `through`, or
+     * only those about the subject types in `subjects`.
+     */
     async markFeedReadAll(
         request: FeedReadAllRequest = {},
         options: RequestOptions = {},

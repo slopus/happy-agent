@@ -23,11 +23,13 @@ import type { DaemonDrain } from "./daemon.js";
 import {
     artifactAuthorSchema,
     artifactBackgroundSchema,
+    artifactCoverSchema,
     artifactDisplaySchema,
     artifactFileSchema,
     artifactLiveSchema,
     artifactSchema,
     artifactSourceSchema,
+    artifactSummarySchema,
     artifactTitleSchema,
 } from "./artifacts.js";
 import { botSchema } from "./bots.js";
@@ -388,6 +390,8 @@ export const artifactUpdatedChangesSchema = Type.Object({
     /** Absent on older daemons. */
     background: Type.Optional(Nullable(artifactBackgroundSchema)),
     /** Absent on older daemons. */
+    cover: Type.Optional(Nullable(artifactCoverSchema)),
+    /** Absent on older daemons. */
     display: Type.Optional(Nullable(artifactDisplaySchema)),
     entry: artifactFileSchema,
     fileCount: Type.Integer({ minimum: 1 }),
@@ -399,6 +403,8 @@ export const artifactUpdatedChangesSchema = Type.Object({
     /** The new version's live content, or `null` for files; absent on older daemons. */
     live: Type.Optional(Nullable(artifactLiveSchema)),
     size: Type.Integer({ minimum: 1 }),
+    /** Absent on older daemons. */
+    summary: Type.Optional(Nullable(artifactSummarySchema)),
     title: artifactTitleSchema,
     updatedAt: timestampSchema,
     updatedBy: artifactAuthorSchema,
