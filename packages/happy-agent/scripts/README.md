@@ -165,6 +165,16 @@ Happy-scoped ACL/network rules. A failed or cancelled attempt is retained; repea
 commands do not retry UAC. After addressing the reported error,
 `happy-agent sandbox setup --retry` deliberately permits one more attempt.
 
+Desktop launchers use `sandbox status --json` before starting their managed daemon
+and `sandbox setup [--retry] --json` only for a user-requested setup action. Both
+print one JSON line and exit 0 for a complete result. Status has `status`
+(`ready` or `required`), `setupVersion`, and optional `previousAttempt`
+(`cancelled` or `failed`). Setup has `status` (`ready`, `cancelled` or `failed`)
+and `setupVersion`. Windows cancellation error 1223 is reported as `cancelled`;
+pending/interrupted records report `previousAttempt: "failed"`. Native helper
+launch or protocol failures use version 0 and `required`/`failed`. Other platforms
+report `ready` with version 0. See the package README for the full CLI contract.
+
 The default sandbox state is `.happy/windows-sandbox` under the actual Windows
 profile resolved by native code, independent of `HAPPY_HOME_DIR`, `HOME` and
 `USERPROFILE`. Isolated daemon homes still share that provisioning. An absolute

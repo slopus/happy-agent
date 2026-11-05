@@ -1459,7 +1459,7 @@ new file mode 100644
 index 0000000..cca41ff
 --- /dev/null
 +++ b/codex-rs/windows-sandbox-rs/src/happy_setup_gate.rs
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,506 @@
 +//! One installation setup attempt, shared by every supervisor process.
 +//! A failed or interrupted UAC attempt stays latched until an explicit retry.
 +
@@ -1494,7 +1494,54 @@ index 0000000..cca41ff
 +struct Attempt {
 +    boot_id: u32,
 +    completed_failure: bool,
++    #[serde(default)]
++    cancelled: bool,
 +}
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
++#[serde(rename_all = "lowercase")]
++pub enum SetupAttemptOutcome {
++    Cancelled,
++    Failed,
++}
++
++/// Read the same canonical record that suppresses automatic setup, without taking a lock
++/// or creating anything. Pending, interrupted and unreadable records require deliberate retry.
++pub fn previous_setup_attempt() -> Result<Option<SetupAttemptOutcome>> {
++    previous_setup_attempt_at(&default_state_directory()?)
++}
++
++fn previous_setup_attempt_at(home: &Path) -> Result<Option<SetupAttemptOutcome>> {
++    let bytes = match fs::read(home.join(".sandbox/setup-attempt.json")) {
++        Ok(bytes) => bytes,
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
++        Err(_) => return Ok(Some(SetupAttemptOutcome::Failed)),
++    };
++    let previous = serde_json::from_slice::<Attempt>(&bytes).ok();
++    Ok(Some(if previous.is_some_and(|record| record.completed_failure && record.cancelled) {
++        SetupAttemptOutcome::Cancelled
++    } else {
++        SetupAttemptOutcome::Failed
++    }))
++}
++
++/// Preserve the operating system's cancellation result; never infer it from error text.
++pub fn setup_was_cancelled(error: &anyhow::Error) -> bool {
++    crate::setup_error::extract_failure(error).is_some_and(|failure| {
++        failure.code == crate::setup_error::SetupErrorCode::OrchestratorHelperLaunchCanceled
++    }) || error.chain().any(|cause| {
++        cause.downcast_ref::<std::io::Error>().is_some_and(|error| error.raw_os_error() == Some(1223))
++    })
++}
++
++#[derive(Debug)]
++pub struct SetupRequired;
++impl std::fmt::Display for SetupRequired {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.write_str("Happy Windows sandbox setup is required. Automatic provisioning is disabled for this execution; run `happy-agent sandbox setup` deliberately.")
++    }
++}
++impl std::error::Error for SetupRequired {}
 +
 +// This outcome cannot be retried until completion or a different Windows boot is proven.
 +#[derive(Debug)]
@@ -1585,9 +1632,7 @@ index 0000000..cca41ff
 +        );
 +    }
 +    if intent == SetupIntent::Disabled {
-+        bail!(
-+            "Happy Windows sandbox setup is required. Automatic provisioning is disabled for this execution; run `happy-agent sandbox setup` deliberately."
-+        );
++        return Err(SetupRequired.into());
 +    }
 +    let _lock = crate::setup_mutex::acquire_sandbox_setup_request_lock()?;
 +    // The caller may have decided setup was missing before another process completed it.
@@ -1620,12 +1665,14 @@ index 0000000..cca41ff
 +    let mut record = Attempt {
 +        boot_id,
 +        completed_failure: false,
++        cancelled: false,
 +    };
 +    save_attempt(&attempt, &record)?;
 +    // Keep the durable record on failure or process termination. The OS releases the request mutex.
 +    if let Err(error) = provision() {
 +        if error.downcast_ref::<SetupStillPending>().is_none() {
 +            record.completed_failure = true;
++            record.cancelled = setup_was_cancelled(&error);
 +            save_attempt(&attempt, &record)?;
 +        }
 +        return Err(error);
@@ -1648,6 +1695,35 @@ index 0000000..cca41ff
 +        Arc, Barrier,
 +        atomic::{AtomicBool, AtomicUsize, Ordering},
 +    };
++
++    #[test]
++    fn status_reads_cancelled_failed_and_interrupted_attempts_without_provisioning() -> Result<()> {
++        let home = tempfile::tempdir()?;
++        assert_eq!(previous_setup_attempt_at(home.path())?, None);
++        fs::create_dir_all(home.path().join(".sandbox"))?;
++        let path = home.path().join(".sandbox/setup-attempt.json");
++        for (record, expected) in [
++            (r#"{"boot_id":1,"completed_failure":true,"cancelled":true}"#, SetupAttemptOutcome::Cancelled),
++            (r#"{"boot_id":1,"completed_failure":true}"#, SetupAttemptOutcome::Failed),
++            (r#"{"boot_id":1,"completed_failure":false}"#, SetupAttemptOutcome::Failed),
++            ("interrupted write", SetupAttemptOutcome::Failed),
++        ] {
++            fs::write(&path, record)?;
++            assert_eq!(previous_setup_attempt_at(home.path())?, Some(expected));
++        }
++        Ok(())
++    }
++
++    #[test]
++    fn cancellation_uses_typed_launch_failure_or_windows_error_1223() {
++        let cancelled = crate::setup_error::failure(
++            crate::setup_error::SetupErrorCode::OrchestratorHelperLaunchCanceled, "UAC declined",
++        ).context("setup");
++        assert!(setup_was_cancelled(&cancelled));
++        assert!(setup_was_cancelled(&anyhow::Error::new(std::io::Error::from_raw_os_error(1223))));
++        assert!(!setup_was_cancelled(&anyhow::anyhow!("failed 1223")));
++        assert!(!setup_was_cancelled(&anyhow::Error::new(std::io::Error::from_raw_os_error(5))));
++    }
 +
 +    #[test]
 +    fn canceled_attempt_does_not_repeat_until_explicit_retry() -> Result<()> {
@@ -1767,6 +1843,7 @@ index 0000000..cca41ff
 +            &Attempt {
 +                boot_id: current_boot_id()?,
 +                completed_failure: false,
++                cancelled: false,
 +            },
 +        )?;
 +        assert!(
@@ -1855,6 +1932,7 @@ index 0000000..cca41ff
 +            &Attempt {
 +                boot_id: old_boot,
 +                completed_failure: false,
++                cancelled: false,
 +            },
 +        )?;
 +        let ready = AtomicBool::new(false);
@@ -2141,13 +2219,15 @@ index e83a42a..ee49c67 100644
  mod logging;
  #[cfg(target_os = "windows")]
  mod no_reparse_dir;
-@@ -227,6 +229,10 @@ pub use identity::require_logon_sandbox_creds;
+@@ -227,6 +229,12 @@ pub use identity::require_logon_sandbox_creds;
  #[cfg(target_os = "windows")]
  pub use identity::sandbox_setup_is_complete;
  #[cfg(target_os = "windows")]
 +pub use identity::happy_sandbox_setup_is_ready;
 +#[cfg(target_os = "windows")]
 +pub use happy_setup_gate::default_state_directory as happy_default_state_directory;
++#[cfg(target_os = "windows")]
++pub use happy_setup_gate::{previous_setup_attempt as happy_previous_setup_attempt, setup_was_cancelled as happy_setup_was_cancelled, SetupRequired as HappySandboxSetupRequired};
 +#[cfg(target_os = "windows")]
  pub use identity::sandbox_setup_is_complete_with_settings;
  #[cfg(target_os = "windows")]
@@ -2303,7 +2383,7 @@ index 1e84b6f..1e55468 100644
          mode: SetupMode::Full,
          refresh_only: true,
      };
-@@ -949,20 +953,19 @@ fn run_setup_exe_payload(
+@@ -949,27 +953,31 @@ fn run_setup_exe_payload(
      };
  
      if !needs_elevation {
@@ -2326,7 +2406,12 @@ index 1e84b6f..1e55468 100644
          }
          .map_err(|err| {
              failure(
-@@ -970,6 +973,7 @@ fn run_setup_exe_payload(
+-                SetupErrorCode::OrchestratorHelperLaunchFailed,
++                if err.raw_os_error() == Some(ERROR_CANCELLED as i32) {
++                    SetupErrorCode::OrchestratorHelperLaunchCanceled
++                } else {
++                    SetupErrorCode::OrchestratorHelperLaunchFailed
++                },
                  format!("failed to launch setup helper (non-elevated): {err}"),
              )
          })?;

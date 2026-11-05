@@ -42,6 +42,22 @@ provision the sandbox. First execution requires one-time native setup; host allo
 and independent listener policies currently fail closed until their Windows implementation
 is complete. The matching Windows supervisor and helpers are published starting with `0.0.9`.
 
+The Windows adapter accepts `--setup-status --json` for read-only readiness and
+`--setup [--retry] --json` for explicit provisioning. Status emits one JSON line
+with `status` (`ready` or `required`), `setupVersion`, and optional `previousAttempt`
+(`cancelled` or `failed`) from the canonical per-user attempt record. Pending or
+interrupted attempts report `failed`. Setup emits `ready`, `cancelled`, or `failed`
+with `setupVersion`; typed Windows cancellation error 1223 is distinct from other
+failures. Native setup failures still exit 125, including JSON mode. The public
+`happy-agent sandbox ... --json` CLI normalizes a complete result to exit 0.
+
+`HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1` or `--no-provision` prevents setup before any
+elevation is attempted. An already ready sandbox remains usable. A command needing
+setup fails closed with exit 125 and a stderr JSON error with code
+`windows_sandbox_setup_required`, followed by no workload execution. Explicit setup
+also respects the environment guard. It must be removed only from the separately
+launched, user-requested setup process.
+
 Windows retains Codex's native restricted-token model. A folder granting write access to
 `Everyone` can satisfy that token's write check even outside the selected writable roots.
 This release does not include Codex TUI's additional world-writable-folder audit; use normal

@@ -23,6 +23,7 @@ describe("Windows sandbox command", () => {
         vi.stubEnv("HAPPY_WINDOWS_SANDBOX_NO_PROVISION", undefined);
         vi.stubEnv("HAPPY_WINDOWS_SANDBOX_HOME", undefined);
         vi.spyOn(console, "log").mockImplementation(() => {});
+        vi.spyOn(console, "error").mockImplementation(() => {});
         resolveSupervisorBinary.mockReturnValue("C:/cache/Happy Supervisor.exe");
         execFile.mockImplementation((_file, _args, _options, callback) =>
             callback(null, JSON.stringify(ready), ""),
@@ -48,6 +49,121 @@ describe("Windows sandbox command", () => {
         );
         expect(console.log).toHaveBeenCalledWith("Happy's Windows sandbox is configured.");
     });
+
+    it.each([
+        { status: "ready", setupVersion: 9 },
+        { status: "required", setupVersion: 9 },
+        { status: "required", setupVersion: 9, previousAttempt: "cancelled" },
+        { status: "required", setupVersion: 9, previousAttempt: "failed" },
+    ])("prints one JSON status line for %j without requesting setup", async (status) => {
+        vi.stubEnv("HAPPY_WINDOWS_SANDBOX_NO_PROVISION", "1");
+        execFile.mockImplementation((_file, _args, _options, callback) =>
+            callback(null, JSON.stringify(status) + "\n", ""),
+        );
+        await runSandboxCommand(["status", "--json"]);
+        expect(execFile.mock.calls[0]?.[1]).toEqual(["--setup-status", "--json"]);
+        expect(console.log).toHaveBeenCalledExactlyOnceWith(JSON.stringify(status));
+    });
+
+    it.each(["ready", "cancelled", "failed"])(
+        "prints a typed setup result %s even when the native helper exits 125",
+        async (status) => {
+            const result = { status, setupVersion: 9 };
+            execFile.mockImplementation((_file, _args, _options, callback) =>
+                callback(
+                    status === "ready" ? null : new Error("exit 125"),
+                    JSON.stringify(result),
+                    status === "cancelled" ? "UAC error 1223" : "",
+                ),
+            );
+            await runSandboxCommand(["setup", "--retry", "--json"]);
+            expect(execFile.mock.calls[0]?.[1]).toEqual(["--setup", "--retry", "--json"]);
+            expect(console.log).toHaveBeenCalledExactlyOnceWith(JSON.stringify(result));
+        },
+    );
+
+    it("accepts JSON before the explicit retry option", async () => {
+        execFile.mockImplementation((_file, _args, _options, callback) =>
+            callback(null, '{"status":"ready","setupVersion":9}', ""),
+        );
+        await runSandboxCommand(["setup", "--json", "--retry"]);
+        expect(execFile.mock.calls[0]?.[1]).toEqual(["--setup", "--retry", "--json"]);
+    });
+
+    it.each(["setup", "status"] as const)(
+        "reports JSON %s conservatively when the helper cannot be launched",
+        async (command) => {
+            resolveSupervisorBinary.mockImplementation(() => {
+                throw new Error("Matching Windows helper is unavailable");
+            });
+            await runSandboxCommand([command, "--json"]);
+            expect(console.log).toHaveBeenCalledExactlyOnceWith(
+                JSON.stringify({
+                    status: command === "status" ? "required" : "failed",
+                    setupVersion: 0,
+                }),
+            );
+            expect(execFile).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each(["setup", "status"])(
+        "prints one JSON result when the %s helper process cannot spawn",
+        async (command) => {
+            execFile.mockImplementation((_file, _args, _options, callback) =>
+                callback(new Error("spawn ENOENT"), "", ""),
+            );
+            await runSandboxCommand([command, "--json"]);
+            expect(console.log).toHaveBeenCalledExactlyOnceWith(
+                JSON.stringify({
+                    status: command === "status" ? "required" : "failed",
+                    setupVersion: 0,
+                }),
+            );
+        },
+    );
+
+    it.each([
+        "not JSON",
+        '{"status":"ready","setupVersion":9}\n{"status":"failed","setupVersion":9}',
+        '{"status":"pending","setupVersion":9}',
+        '{"status":"ready","setupVersion":-1}',
+        '{"status":"ready","setupVersion":9,"extra":"unexpected"}',
+    ])("keeps malformed native output out of the JSON contract: %s", async (stdout) => {
+        execFile.mockImplementation((_file, _args, _options, callback) =>
+            callback(null, stdout, ""),
+        );
+        await runSandboxCommand(["setup", "--json"]);
+        expect(console.log).toHaveBeenCalledExactlyOnceWith(
+            '{"status":"failed","setupVersion":0}',
+        );
+    });
+
+    it.each([["setup", "--json"], ["setup", "--retry", "--json"]])(
+        "returns JSON failure without launching prohibited setup: %j",
+        async (...args) => {
+            vi.stubEnv("HAPPY_WINDOWS_SANDBOX_NO_PROVISION", "1");
+            await runSandboxCommand(args);
+            expect(console.log).toHaveBeenCalledExactlyOnceWith(
+                '{"status":"failed","setupVersion":0}',
+            );
+            expect(resolveSupervisorBinary).not.toHaveBeenCalled();
+            expect(execFile).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each(["setup", "status"])(
+        "reports %s ready without Windows provisioning on Linux",
+        async (command) => {
+            Object.defineProperty(process, "platform", { value: "linux" });
+            await runSandboxCommand([command, "--json"]);
+            expect(console.log).toHaveBeenCalledExactlyOnceWith(
+                '{"status":"ready","setupVersion":0}',
+            );
+            expect(resolveSupervisorBinary).not.toHaveBeenCalled();
+            expect(execFile).not.toHaveBeenCalled();
+        },
+    );
 
     it("forwards retry only when explicitly requested and preserves a spaced state path", async () => {
         vi.stubEnv("HAPPY_WINDOWS_SANDBOX_HOME", "  C:/Happy Shared/state  ");
@@ -90,6 +206,8 @@ describe("Windows sandbox command", () => {
         [],
         ["status", "--retry"],
         ["setup", "--retry", "--retry"],
+        ["status", "--json", "--json"],
+        ["status", "--retry", "--json"],
         ["setup", "--force"],
         ["reset"],
     ])("rejects invalid commands before resolution: %j", async (...args) => {

@@ -10,9 +10,18 @@ use std::{collections::HashMap, path::PathBuf};
 
 use codex_windows_sandbox::happy_default_state_directory as default_state_directory;
 
-fn setup_status(state: &std::path::Path) -> serde_json::Value {
+fn setup_status(state: &std::path::Path, json_output: bool) -> Result<serde_json::Value> {
     let ready = codex_windows_sandbox::happy_sandbox_setup_is_ready(state, &codex_windows_sandbox::WindowsSandboxProvisioningSettings::default());
-    json!({"ready": ready, "stateDirectory": state, "setupVersion": codex_windows_sandbox::SETUP_VERSION})
+    if !json_output {
+        return Ok(json!({"ready": ready, "stateDirectory": state, "setupVersion": codex_windows_sandbox::SETUP_VERSION}));
+    }
+    let mut result = json!({"status": if ready {"ready"} else {"required"}, "setupVersion": codex_windows_sandbox::SETUP_VERSION});
+    if !ready {
+        if let Some(previous) = codex_windows_sandbox::happy_previous_setup_attempt()? {
+            result["previousAttempt"] = serde_json::to_value(previous)?;
+        }
+    }
+    Ok(result)
 }
 
 #[derive(Deserialize)]
@@ -49,6 +58,7 @@ async fn run() -> Result<i32> {
     let mut status=false;
     let mut retry=false;
     let mut no_provision=false;
+    let mut json_output=false;
     let mut command=Vec::new();
     while let Some(arg)=args.next() {
         match arg.as_str() {
@@ -60,6 +70,7 @@ async fn run() -> Result<i32> {
             "--setup-status" => status=true,
             "--retry" => retry=true,
             "--no-provision" => no_provision=true,
+            "--json" => json_output=true,
             "--" => {command.extend(args);break;},
             _ => bail!("unknown supervisor argument: {arg}"),
         }
@@ -79,9 +90,14 @@ async fn run() -> Result<i32> {
                 permissions:&permissions, command_cwd:&state, env_map:&env, codex_home:&state, proxy_enforced:false,
             }, retry)?;
         }
-        println!("{}",setup_status(&state));
+        if setup && json_output {
+            println!("{}",json!({"status":"ready", "setupVersion":codex_windows_sandbox::SETUP_VERSION}));
+        } else {
+            println!("{}",setup_status(&state, json_output)?);
+        }
         return Ok(0);
     }
+    if json_output {bail!("--json requires --setup or --setup-status")}
     if retry {bail!("--retry requires --setup")}
     let mut p=policy.context("--policy is required")?;
     // The installation state is never part of a project command's writable surface.
@@ -174,6 +190,9 @@ async fn run() -> Result<i32> {
 }
 
 fn main() {
+    let arguments: Vec<String> = std::env::args().skip(1).take_while(|arg| arg != "--").collect();
+    let json_setup = arguments.iter().any(|arg| arg == "--json") && arguments.iter().any(|arg| arg == "--setup");
+    let json_status = arguments.iter().any(|arg| arg == "--json") && arguments.iter().any(|arg| arg == "--setup-status");
     let outcome = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(runtime) => {
             let outcome = runtime.block_on(run());
@@ -186,5 +205,19 @@ fn main() {
         }
         Err(error) => Err(anyhow::Error::new(error).context("create runtime")),
     };
-    match outcome {Ok(code)=>std::process::exit(code),Err(err)=>{eprintln!("Happy Windows sandbox: {err:#}");std::process::exit(125)}}
+    match outcome {
+        Ok(code) => std::process::exit(code),
+        Err(err) => {
+            if json_setup || json_status {
+                let status = if json_status { "required" } else if codex_windows_sandbox::happy_setup_was_cancelled(&err) { "cancelled" } else { "failed" };
+                println!("{}", json!({"status":status, "setupVersion":codex_windows_sandbox::SETUP_VERSION}));
+            }
+            if err.downcast_ref::<codex_windows_sandbox::HappySandboxSetupRequired>().is_some() {
+                eprintln!("{}", json!({"error":"windows_sandbox_setup_required", "message":format!("{err:#}")}));
+            } else {
+                eprintln!("Happy Windows sandbox: {err:#}");
+            }
+            std::process::exit(125)
+        }
+    }
 }

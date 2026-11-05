@@ -37,6 +37,8 @@ happy-agent artifact snapshot <id>  # print a dump of an artifact's data for art
 happy-agent sandbox status          # inspect configuration without provisioning
 happy-agent sandbox setup           # explicitly initialize the sandbox
 happy-agent sandbox setup --retry   # retry a failed setup deliberately
+happy-agent sandbox status --json   # machine-readable readiness without provisioning
+happy-agent sandbox setup --retry --json # deliberate setup with a typed result
 ```
 
 Run `reload` from an independent terminal or supervisor. A caller owned by the target daemon
@@ -119,6 +121,36 @@ Sandbox status checks the setup version, saved identities and enabled accounts.
 A restricted command verifies that those credentials can actually log on and execute.
 Explicit development state overrides still refer to the same global Happy accounts;
 they are not independent sandbox installations.
+
+Launchers can use the sandbox CLI without starting or connecting to the daemon:
+
+```json
+{"status":"required","setupVersion":9,"previousAttempt":"cancelled"}
+```
+
+`sandbox status --json` prints exactly one JSON line with `status` (`ready` or
+`required`) and numeric `setupVersion`. When a recorded attempt prevents automatic
+prompts, it includes `previousAttempt` (`cancelled` or `failed`), so an explicit
+setup action can pass `--retry`. Pending, interrupted, malformed and older failed
+records report `failed`; a retry cannot overlap a helper still pending in this boot.
+The field is omitted when setup is ready or no suppressing record exists.
+
+`sandbox setup [--retry] --json` prints exactly one JSON line with `status`
+(`ready`, `cancelled` or `failed`) and `setupVersion`. Windows error 1223 from
+helper elevation or launch reports `cancelled`; other setup failures report
+`failed`. JSON commands exit 0 after producing their result, including cancellation
+or failure. They put diagnostics on stderr when needed. If the native helper is
+unavailable or returns invalid output, status reports `required`, setup reports
+`failed`, and `setupVersion` is 0 (unknown). On non-Windows platforms both JSON
+commands report `ready` with version 0 (not applicable). Without `--json`, existing
+human-readable output and exit 125 for native helper failures remain unchanged.
+
+A managed daemon can inherit `HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1` to prevent
+lazy provisioning from opening UAC. Restricted commands that still need setup fail
+closed with exit 125 and a native stderr JSON error whose `error` code is
+`windows_sandbox_setup_required`. An already prepared sandbox continues to work.
+Explicit setup also respects the guard; launch a separate user-requested setup
+process without it. Keep the daemon's guard set afterward.
 
 ## Standalone binaries
 

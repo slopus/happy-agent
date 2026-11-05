@@ -33,8 +33,16 @@ Commands:
            --stdio               Serve the daemon that started this process over standard
                                  input and output, as the user it runs as. A daemon with
                                  [execution] user starts this itself through sudo.
-  sandbox setup [--retry]  Set up the Windows sandbox, or explicitly retry setup.
-  sandbox status          Report Windows sandbox configuration without changing it.
+  sandbox setup [--retry] [--json]
+                          Set up the Windows sandbox, or explicitly retry setup.
+                          JSON status: ready, cancelled, or failed, plus setupVersion.
+  sandbox status [--json] Report Windows sandbox configuration without changing it.
+                          JSON status: ready or required, plus setupVersion and optional
+                          previousAttempt (cancelled or failed; use setup --retry).
+                          JSON emits one line and exits 0; version 0 means unknown or
+                          not applicable. Other platforms report ready in JSON mode.
+                          HAPPY_WINDOWS_SANDBOX_NO_PROVISION=1 prevents all setup,
+                          including lazy UAC prompts; read-only status still works.
   bun <arguments>         Run the Bun runtime built into the standalone binary, as bun would,
                           such as happy-agent bun run script.ts.
   artifact dev <folder>   Serve an HTML artifact's folder with a local artifact data API,
@@ -78,6 +86,10 @@ async function main(): Promise<void> {
         return;
     }
     if (command === "sandbox") {
+        if (rest.includes("--help") || rest.includes("-h")) {
+            console.log(USAGE);
+            return;
+        }
         const { runSandboxCommand } = await import("./lifecycle/runSandboxCommand.js");
         await runSandboxCommand(rest);
         return;
