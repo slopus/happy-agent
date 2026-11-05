@@ -339,8 +339,13 @@ const secrets = {
     claude: { path: join(profile, ".claude", "repro-secret.txt"), value: `claude-${nonce}` },
     codex: { path: join(profile, ".codex", "repro-auth.json"), value: `codex-${nonce}` },
 };
+// The same non-ASCII name outside every denied folder proves the path reaches the command intact.
+const visible = {
+    path: join(work, win32.basename(profile), "repro-visible.txt"),
+    value: `visible-${nonce}`,
+};
 const stateFile = join(
-    profile,
+    realProfile,
     ".happy",
     "windows-sandbox",
     ".sandbox",
@@ -353,7 +358,7 @@ try {
     report.realProfile = describe(realProfile);
     report.userProfileVariable = describe(process.env.USERPROFILE ?? "");
     check(/[^\x00-\x7f]/u.test(profile), `The profile ${profile} has no non-ASCII character.`);
-    for (const secret of Object.values(secrets)) {
+    for (const secret of [...Object.values(secrets), visible]) {
         await mkdir(join(secret.path, ".."), { recursive: true });
         await writeFile(secret.path, secret.value);
     }
@@ -382,26 +387,33 @@ try {
         try {
             await mkdir(workspace.path, { recursive: true });
             // Markers are assembled at runtime so the command text itself never matches them.
-            const cmd = Object.entries(secrets)
+            const cmd = Object.entries({ ...secrets, visible })
                 .map(
                     ([name, secret]) =>
                         `try { $v = [IO.File]::ReadAllText(${literal(secret.path)}); Write-Output ('${name}-' + 'read-' + 'allowed:' + $v) } ` +
-                        `catch { Write-Output ('${name}-' + 'read-' + 'denied:' + $_.Exception.GetType().Name) }`,
+                        `catch { $e = $_.Exception; while ($e.InnerException) { $e = $e.InnerException }; Write-Output ('${name}-' + 'read-' + 'failed:' + $e.GetType().Name) }`,
                 )
                 .join("; ");
             const run = await runSandboxedCommand(daemon, workspace.path, cmd);
             const outcome = { runStatus: run.runStatus };
+            for (const name of ["visible", ...Object.keys(secrets)]) {
+                outcome[name] =
+                    /(?<=-read-)(allowed|failed:\w+)/u.exec(
+                        run.transcript.slice(run.transcript.indexOf(`${name}-read-`)),
+                    )?.[0] ?? "no result";
+            }
+            check(
+                outcome.visible === "allowed" || !checkReads,
+                `The control read of ${visible.path} in the ${workspace.label} workspace was ${outcome.visible}: ${run.transcript.slice(-1500)}`,
+            );
             for (const [name, secret] of Object.entries(secrets)) {
-                const allowed = run.transcript.includes(`${name}-read-allowed:`);
-                const denied = run.transcript.includes(`${name}-read-denied:`);
-                outcome[name] = allowed ? "allowed" : denied ? "denied" : "no result";
                 check(
-                    !allowed && !run.transcript.includes(secret.value),
+                    outcome[name] !== "allowed" && !run.transcript.includes(secret.value),
                     `A sandboxed command in the ${workspace.label} workspace read ${secret.path}.`,
                 );
                 check(
-                    denied || !checkReads,
-                    `The ${name} read in the ${workspace.label} workspace reported no denial: ${run.transcript.slice(-1500)}`,
+                    outcome[name] === "failed:UnauthorizedAccessException" || !checkReads,
+                    `The ${name} read in the ${workspace.label} workspace was ${outcome[name]}, not access denied.`,
                 );
             }
             report.command[workspace.label] = outcome;
