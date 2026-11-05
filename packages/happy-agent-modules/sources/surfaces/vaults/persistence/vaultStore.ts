@@ -10,22 +10,37 @@ import type { Context } from "@steve.kite/stdlib";
 import { sql, type SQL } from "drizzle-orm";
 
 import { vaultNameKey } from "../vaultNames.js";
+import {
+    deleteVaultName,
+    deleteVaultTextWords,
+    indexVaultName,
+    indexVaultNamesBelow,
+    indexVaultTextWords,
+} from "./vaultSearchIndex.js";
 
-/** Vault rows as stored. Every function joins the caller's transaction through `ctx.db`. */
+/**
+ * Vault rows as stored, with the search indexes kept in step. Every function joins the caller's
+ * transaction through `ctx.db`.
+ */
 const rows = <Row>(ctx: Context, query: SQL) => agentDatabaseRows<Row>(ctx.db, query);
 const run = (ctx: Context, query: SQL) => agentDatabaseRun(ctx.db, query);
 const entries = (list: readonly { entry_json: string }[]) =>
     list.map((row) => JSON.parse(row.entry_json) as VaultItem);
 
-/** The live entries of one vault, or of the subtree below `rootId`, as a recursive CTE. */
-function liveTree(surfaceId: string, rootId: string | null): SQL {
+/**
+ * The live entries of one vault, of every vault when `surfaceId` is null, or of the subtree below
+ * `rootId`, as a recursive CTE.
+ */
+function liveTree(surfaceId: string | null, rootId: string | null): SQL {
+    const inVault = (column: SQL) =>
+        surfaceId === null ? sql`` : sql`${column} = ${surfaceId} AND`;
     return sql`WITH RECURSIVE live(id, path_key, depth) AS (
         SELECT id, '/' || name_key, 1 FROM happy_agent_vault_entries
-            WHERE surface_id = ${surfaceId} AND parent_id IS ${rootId} AND deleted_at IS NULL
+            WHERE ${inVault(sql`surface_id`)} parent_id IS ${rootId} AND deleted_at IS NULL
         UNION ALL
         SELECT e.id, live.path_key || '/' || e.name_key, live.depth + 1
             FROM happy_agent_vault_entries e JOIN live ON e.parent_id = live.id
-            WHERE e.surface_id = ${surfaceId} AND e.deleted_at IS NULL
+            WHERE ${inVault(sql`e.surface_id`)} e.deleted_at IS NULL
     )`;
 }
 
@@ -61,13 +76,18 @@ export async function insertVaultEntry(ctx: Context, entry: VaultItem): Promise<
         ctx,
         sql`INSERT INTO happy_agent_vault_entries (id, surface_id, parent_id, name_key, kind, size, updated_at, deleted_at, entry_json) VALUES (${entry.id}, ${entry.surfaceId}, ${entry.parentId}, ${vaultNameKey(entry.name)}, ${entry.kind}, ${sizeOf(entry)}, ${entry.updatedAt}, ${entry.deletedAt}, ${JSON.stringify(entry)})`,
     );
+    await indexVaultName(ctx, entry);
 }
 
 export async function updateVaultEntry(ctx: Context, entry: VaultItem): Promise<void> {
+    const previous = await readVaultEntry(ctx, entry.id);
     await run(
         ctx,
         sql`UPDATE happy_agent_vault_entries SET parent_id = ${entry.parentId}, name_key = ${vaultNameKey(entry.name)}, size = ${sizeOf(entry)}, updated_at = ${entry.updatedAt}, deleted_at = ${entry.deletedAt}, entry_json = ${JSON.stringify(entry)} WHERE id = ${entry.id}`,
     );
+    if (previous?.name === entry.name && previous.parentId === entry.parentId) return;
+    await indexVaultName(ctx, entry);
+    if (entry.kind === "folder") await indexVaultNamesBelow(ctx, entry);
 }
 
 /** A folder has no size; listings sorted by size keep folders first anyway. */
@@ -247,7 +267,7 @@ export async function isVaultAncestor(
  */
 export async function searchVaultNames(
     ctx: Context,
-    surfaceId: string,
+    surfaceId: string | null,
     rootId: string | null,
     key: string,
     limit: number,
@@ -261,10 +281,13 @@ export async function searchVaultNames(
     );
 }
 
-/** Indexed texts matching `query` in a vault, scanning at most `limit` rows after `afterId`. */
+/**
+ * Indexed texts holding `query` as a substring in one vault, or every vault when `surfaceId` is
+ * null, scanning at most `limit` rows after `afterId`.
+ */
 export async function searchVaultTexts(
     ctx: Context,
-    surfaceId: string,
+    surfaceId: string | null,
     query: string,
     afterId: number,
     limit: number,
@@ -277,7 +300,7 @@ export async function searchVaultTexts(
         text: string;
     }>(
         ctx,
-        sql`SELECT t.id, t.entry_id, t.inner_path, i.text FROM happy_agent_vault_text_index i JOIN happy_agent_vault_texts t ON t.id = i.rowid WHERE happy_agent_vault_text_index MATCH ${phrase} AND t.surface_id = ${surfaceId} AND t.id > ${afterId} ORDER BY t.id LIMIT ${limit}`,
+        sql`SELECT t.id, t.entry_id, t.inner_path, i.text FROM happy_agent_vault_text_index i JOIN happy_agent_vault_texts t ON t.id = i.rowid WHERE happy_agent_vault_text_index MATCH ${phrase} ${surfaceId === null ? sql`` : sql`AND t.surface_id = ${surfaceId}`} AND t.id > ${afterId} ORDER BY t.id LIMIT ${limit}`,
     );
     return found.map((row) => ({
         id: Number(row.id),
@@ -324,10 +347,12 @@ export async function replaceVaultTexts(
             ctx,
             sql`INSERT INTO happy_agent_vault_text_index (rowid, text) VALUES (${Number(row!.id)}, ${text.text})`,
         );
+        await indexVaultTextWords(ctx, Number(row!.id), text.text);
     }
 }
 
 export async function deleteVaultTexts(ctx: Context, entryId: string): Promise<void> {
+    await deleteVaultTextWords(ctx, entryId);
     await run(
         ctx,
         sql`DELETE FROM happy_agent_vault_text_index WHERE rowid IN (SELECT id FROM happy_agent_vault_texts WHERE entry_id = ${entryId})`,
@@ -473,6 +498,7 @@ export async function listVaultSurfaces(ctx: Context): Promise<string[]> {
 
 export async function deleteVaultEntryRows(ctx: Context, id: string): Promise<void> {
     await deleteVaultTexts(ctx, id);
+    await deleteVaultName(ctx, id);
     await run(ctx, sql`DELETE FROM happy_agent_vault_activity WHERE entry_id = ${id}`);
     await run(ctx, sql`DELETE FROM happy_agent_vault_operations WHERE entry_id = ${id}`);
     await run(ctx, sql`DELETE FROM happy_agent_vault_entries WHERE id = ${id}`);

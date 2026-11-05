@@ -38,6 +38,7 @@ import type { ConfigModule } from "../../config/index.js";
 import type { DurableFunctionsModule } from "../../durableFunctions/index.js";
 import { createUuidV7Factory } from "../../utils/createUuidV7.js";
 import { SurfaceError } from "../SurfaceError.js";
+import * as searchIndex from "./persistence/vaultSearchIndex.js";
 import * as store from "./persistence/vaultStore.js";
 import { retentionTiersIncrease, selectPrunedVersions } from "./selectPrunedVersions.js";
 import { artifactManifestBytes, checkVaultBundle } from "./vaultBundle.js";
@@ -51,6 +52,7 @@ import {
     vaultPathSegments,
 } from "./vaultNames.js";
 import { decodePageCursor, encodePageCursor } from "./vaultPageCursor.js";
+import { vaultQueryWords, vaultWordIndex, vaultWordMatch } from "./vaultSearchWords.js";
 import { VaultUploads } from "./VaultUploads.js";
 import { readZipBundle } from "./zip/readZipBundle.js";
 import type { ZipItem } from "./zip/writeZip.js";
@@ -63,6 +65,8 @@ const COLLECT = "surfaces.vaults.collect";
 export const MAX_AGENT_VAULT_VERSIONS_PER_HOUR = 100;
 /** How many rows one maintenance transaction touches before releasing the database. */
 const BATCH = 100;
+/** How many index rows one search tier looks through before giving up on more matches. */
+const SEARCH_SCAN = 2_000;
 
 /** Who changed something, and through which door. */
 export interface VaultChange {
@@ -393,6 +397,7 @@ export class SurfaceVaults {
         });
     }
 
+    /** One vault's search, ranked as described under Search. */
     async search(
         ctx: Context,
         surfaceId: string,
@@ -403,8 +408,6 @@ export class SurfaceVaults {
             limit?: number | undefined;
         },
     ): Promise<{ results: VaultSearchResult[]; truncated: boolean }> {
-        const kind = query.kind ?? "all";
-        const limit = query.limit ?? 50;
         return ctx.inTx(async (tx) => {
             await this.#catalogOf().requireVault(tx, surfaceId);
             const rootId = query.parentId ?? null;
@@ -413,86 +416,173 @@ export class SurfaceVaults {
                 if (root.entry.kind !== "folder" || root.inTrash)
                     throw notFound("The folder was not found.");
             }
-            const results: VaultSearchResult[] = [];
-            if (kind !== "content") {
-                for (const entry of await store.searchVaultNames(
-                    tx,
-                    surfaceId,
-                    rootId,
-                    vaultNameKey(query.q),
-                    limit + 1,
-                ))
-                    results.push({
-                        item: entry,
-                        path: (await this.#location(tx, entry)).path,
-                        match: "name",
-                        innerPath: null,
-                        line: null,
-                        snippet: null,
-                    });
-            }
-            if (kind !== "name" && [...query.q].length >= 3 && results.length <= limit) {
-                for (const hit of await this.#contentMatches(
-                    tx,
-                    surfaceId,
-                    rootId,
-                    query.q,
-                    limit + 1 - results.length,
-                ))
-                    results.push(hit);
-            }
-            return { results: results.slice(0, limit), truncated: results.length > limit };
+            return this.#search(tx, surfaceId, rootId, query);
         });
     }
 
-    async #contentMatches(
+    /** Every vault's search, ranked as one vault's is. */
+    async searchAll(
         ctx: Context,
-        surfaceId: string,
+        query: {
+            q: string;
+            kind?: "name" | "content" | "all" | undefined;
+            limit?: number | undefined;
+        },
+    ): Promise<{ results: VaultSearchResult[]; truncated: boolean }> {
+        return ctx.inTx((tx) => this.#search(tx, null, null, query));
+    }
+
+    /**
+     * Name, content, and path word matches ranked by BM25, then substring matches, each tier
+     * leaving out what an earlier one returned. Matches in the Trash, outside the folder, or in a
+     * Surface that is no longer a vault are skipped; every tier's scan is bounded.
+     */
+    async #search(
+        ctx: Context,
+        surfaceId: string | null,
         rootId: string | null,
-        q: string,
-        wanted: number,
-    ): Promise<VaultSearchResult[]> {
-        const pattern = new RegExp(escapeRegExp(q), "iu");
+        query: {
+            q: string;
+            kind?: "name" | "content" | "all" | undefined;
+            limit?: number | undefined;
+        },
+    ): Promise<{ results: VaultSearchResult[]; truncated: boolean }> {
+        const kind = query.kind ?? "all";
+        const limit = query.limit ?? 50;
+        const words = vaultQueryWords(query.q);
+        const match = words.length === 0 ? undefined : vaultWordMatch(words);
         const results: VaultSearchResult[] = [];
-        const locations = new Map<string, VaultLocation | undefined>();
-        let after = 0;
-        // Matches in the Trash or outside the folder are skipped; the scan is bounded.
-        for (let scanned = 0; scanned < 2_000 && results.length < wanted; ) {
-            const hits = await store.searchVaultTexts(ctx, surfaceId, q, after, 200);
-            if (hits.length === 0) break;
-            scanned += hits.length;
-            after = hits.at(-1)!.id;
-            for (const hit of hits) {
-                if (results.length >= wanted) break;
-                if (!locations.has(hit.entryId)) {
-                    const entry = await store.readVaultEntry(ctx, hit.entryId);
-                    const location =
-                        entry === undefined ? undefined : await this.#location(ctx, entry);
-                    locations.set(
-                        hit.entryId,
-                        location === undefined ||
-                            location.inTrash ||
-                            (rootId !== null &&
-                                !location.ancestors.some((ancestor) => ancestor.id === rootId))
-                            ? undefined
-                            : location,
-                    );
+        const listed = new Set<string>();
+        const live = this.#liveSearchItems(ctx, rootId);
+        const full = () => results.length > limit;
+        const addName = async (entryId: string) => {
+            const location = await live(entryId);
+            if (location === undefined || listed.has(entryId) || full()) return;
+            listed.add(entryId);
+            results.push({
+                item: location.entry,
+                path: location.path,
+                match: "name",
+                innerPath: null,
+                line: null,
+                snippet: null,
+            });
+        };
+        const addContent = async (
+            hit: { entryId: string; innerPath: string | null },
+            text: string | undefined,
+            at: number | undefined,
+        ) => {
+            const key = `${hit.entryId}\n${hit.innerPath ?? ""}`;
+            if (text === undefined || listed.has(key) || full()) return;
+            const location = await live(hit.entryId);
+            if (location === undefined || location.entry.kind === "folder") return;
+            listed.add(key);
+            results.push({
+                item: location.entry,
+                path: location.path,
+                match: "content",
+                innerPath: hit.innerPath,
+                ...lineAt(text, at ?? 0),
+            });
+        };
+        if (match !== undefined && kind !== "content")
+            for (const id of await searchIndex.queryVaultNameWords(
+                ctx,
+                surfaceId,
+                match,
+                "name",
+                SEARCH_SCAN,
+            ))
+                await addName(id);
+        if (match !== undefined && kind !== "name")
+            for (const hit of await searchIndex.queryVaultTextWords(
+                ctx,
+                surfaceId,
+                match,
+                SEARCH_SCAN,
+            )) {
+                if (full()) break;
+                const text = await searchIndex.readVaultText(ctx, hit.id);
+                await addContent(
+                    hit,
+                    text,
+                    text === undefined ? undefined : vaultWordIndex(text, words),
+                );
+            }
+        if (match !== undefined && kind !== "content")
+            for (const id of await searchIndex.queryVaultNameWords(
+                ctx,
+                surfaceId,
+                match,
+                "folders",
+                SEARCH_SCAN,
+            ))
+                await addName(id);
+        if (kind !== "content" && !full())
+            for (const entry of await store.searchVaultNames(
+                ctx,
+                surfaceId,
+                rootId,
+                vaultNameKey(query.q),
+                limit + 1,
+            ))
+                await addName(entry.id);
+        if (kind !== "name" && [...query.q].length >= 3) {
+            const pattern = new RegExp(escapeRegExp(query.q), "iu");
+            let after = 0;
+            for (let scanned = 0; scanned < SEARCH_SCAN && !full(); ) {
+                const hits = await store.searchVaultTexts(ctx, surfaceId, query.q, after, 200);
+                if (hits.length === 0) break;
+                scanned += hits.length;
+                after = hits.at(-1)!.id;
+                for (const hit of hits) {
+                    const at = pattern.exec(hit.text)?.index;
+                    if (at !== undefined) await addContent(hit, hit.text, at);
                 }
-                const location = locations.get(hit.entryId);
-                if (location === undefined || location.entry.kind === "folder") continue;
-                const found = locateMatch(hit.text, pattern);
-                if (found === undefined) continue;
-                results.push({
-                    item: location.entry,
-                    path: location.path,
-                    match: "content",
-                    innerPath: hit.innerPath,
-                    line: found.line,
-                    snippet: found.snippet,
-                });
             }
         }
-        return results;
+        return { results: results.slice(0, limit), truncated: results.length > limit };
+    }
+
+    /** Where a search hit's entry is, when it is live, below `rootId`, and in a vault. */
+    #liveSearchItems(
+        ctx: Context,
+        rootId: string | null,
+    ): (entryId: string) => Promise<VaultLocation | undefined> {
+        const locations = new Map<string, VaultLocation | undefined>();
+        const vaults = new Map<string, boolean>();
+        return async (entryId) => {
+            if (locations.has(entryId)) return locations.get(entryId);
+            const entry = await store.readVaultEntry(ctx, entryId);
+            let location = entry === undefined ? undefined : await this.#location(ctx, entry);
+            if (
+                location !== undefined &&
+                (location.inTrash ||
+                    (rootId !== null &&
+                        !location.ancestors.some((ancestor) => ancestor.id === rootId)))
+            )
+                location = undefined;
+            if (location !== undefined) {
+                const surfaceId = location.entry.surfaceId;
+                if (!vaults.has(surfaceId))
+                    vaults.set(
+                        surfaceId,
+                        await this.#catalogOf()
+                            .requireVault(ctx, surfaceId)
+                            .then(
+                                () => true,
+                                (error: unknown) => {
+                                    if (error instanceof SurfaceError) return false;
+                                    throw error;
+                                },
+                            ),
+                    );
+                if (!vaults.get(surfaceId)) location = undefined;
+            }
+            locations.set(entryId, location);
+            return location;
+        };
     }
 
     async versions(
@@ -1299,6 +1389,11 @@ export class SurfaceVaults {
      * unreferenced content and stray upload files. Each batch is its own transaction.
      */
     async maintain(ctx: Context, now: number): Promise<void> {
+        // Items made before the word indexes existed are indexed first, in bounded transactions.
+        for (;;) {
+            ctx.lifetime?.throwIfAborted();
+            if (!(await ctx.inTx((tx) => searchIndex.backfillVaultSearch(tx, BATCH)))) break;
+        }
         await this.uploads.expire(ctx, now);
         let after = "";
         for (;;) {
@@ -1934,16 +2029,15 @@ function checkRetention(retention: VaultRetention): void {
 }
 
 /** The 1-based line of the first match and up to 200 characters around it. */
-function locateMatch(text: string, pattern: RegExp): { line: number; snippet: string } | undefined {
-    const match = pattern.exec(text);
-    if (match === null) return undefined;
-    const lineStart = text.lastIndexOf("\n", match.index) + 1;
-    const lineEndAt = text.indexOf("\n", match.index);
+/** The 1-based line holding `index`, and at most 200 characters of it around that point. */
+function lineAt(text: string, index: number): { line: number; snippet: string } {
+    const lineStart = text.lastIndexOf("\n", index - 1) + 1;
+    const lineEndAt = text.indexOf("\n", index);
     const lineEnd = lineEndAt < 0 ? text.length : lineEndAt;
-    const line = text.slice(0, match.index).split("\n").length;
+    const line = text.slice(0, index).split("\n").length;
     const content = text.slice(lineStart, lineEnd).replace(/\r$/, "");
     if (content.length <= 200) return { line, snippet: content };
-    const at = match.index - lineStart;
+    const at = index - lineStart;
     const start = Math.max(0, Math.min(at - 80, content.length - 200));
     return { line, snippet: content.slice(start, start + 200) };
 }

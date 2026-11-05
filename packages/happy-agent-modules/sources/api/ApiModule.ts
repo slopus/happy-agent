@@ -74,6 +74,7 @@ import {
     vaultItemListQuerySchema,
     vaultMutationRequestSchema,
     vaultSearchQuerySchema,
+    vaultGlobalSearchQuerySchema,
     vaultTrashQuerySchema,
     vaultTreeQuerySchema,
     vaultVersionPageQuerySchema,
@@ -2050,6 +2051,7 @@ export class ApiModule implements AgentModule {
             if (await this.#handleFeedRoute(ctx, request, response, url)) return;
             if (await this.#handleSurfaceRoute(ctx, request, response, url)) return;
             if (await this.#handleVaultUploadRoute(ctx, request, response, url)) return;
+            if (await this.#handleVaultSearchRoute(ctx, request, url, response)) return;
             if (await this.#handleArtifactRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/projects") {
                 const projects = await this.#allProjects(ctx, true);
@@ -7539,6 +7541,31 @@ export class ApiModule implements AgentModule {
         });
     }
 
+    /** `GET /v0/vault-search`: every vault's search, ranked as one vault's is. */
+    async #handleVaultSearchRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        url: URL,
+        response: ServerResponse,
+    ): Promise<boolean> {
+        const surfaces = this.#surfaces;
+        if (surfaces === undefined || url.pathname !== "/v0/vault-search") return false;
+        if (request.method !== "GET") return false;
+        try {
+            await surfaces.owner(ctx);
+            const query = queryAs(
+                numericVaultQuery(vaultQuery(url, ["q", "kind", "limit"])),
+                vaultGlobalSearchQuerySchema,
+                "vault search",
+            );
+            sendJson(response, 200, await surfaces.vaults.searchAll(ctx, query));
+            return true;
+        } catch (error) {
+            if (!(error instanceof SurfaceError)) throw error;
+            throw surfaceApiError(error);
+        }
+    }
+
     /** `/v0/vault-uploads` and `/v0/vault-uploads/:uploadId`. */
     async #handleVaultUploadRoute(
         ctx: Context,
@@ -10541,6 +10568,7 @@ export class ApiModule implements AgentModule {
                           systemMonitorSurfaces: true,
                           surfaceEditing: true,
                           vaults: true,
+                          vaultSearch: true,
                       }),
             },
             version: {

@@ -327,6 +327,22 @@ the upload is looked at, so it uses up nothing and emits no event. A differing b
 silently, as creation ids are: one ID per attempt is the client's contract. IDs are scoped per
 file. Vault tools send `tool:<callId>`, so a call repeated after a restart finds its version.
 
+## Vault search ranks words with BM25, and global search covers every vault
+
+Steve asked for global search to find vault files by name and by content, ranked with BM25.
+Substring search through the trigram index found text but ranked it poorly, so search now ranks
+words with FTS5 bm25() over two unicode61 indexes, which fold case and diacritics: one row per item
+with its name and the folders above it, and one row per text that keeps no copy of the text.
+Results come in tiers: words in the item's own name, then words in content, then words found only
+in the folders above, then the old substring matches. Path-only matches come after content,
+because a word in a folder name such as "Docs" would otherwise rank every file below it above real
+content hits. Query words match by prefix and are never stemmed, so a half-typed word keeps
+matching (porter would index "planning" as "plan" and lose "planni"). The indexes change in the
+same transaction as entries and texts, and renaming or moving a folder rewrites the folder paths
+below it. `GET /v0/vault-search` runs the same search over every vault rather than leaving clients
+to send one request per vault. Vaults made before the indexes are filled by the maintenance pass in
+bounded transactions, which copy text out of the trigram index instead of reading files.
+
 ## The default vault retention is Time Machine
 
 Steve chose Time Machine's schedule as the default: every version for a day, one a day until 30
