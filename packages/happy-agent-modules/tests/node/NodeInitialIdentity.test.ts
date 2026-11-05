@@ -212,6 +212,24 @@ it.each<[string, Command]>([
         async () => dsclHex("JPEGPhoto", Buffer.from([0xff, 0xd8, 0xff, 0, 1, 2, 3])),
     ],
     [
+        "the Picture file is in a privacy-protected folder",
+        async (file: string, args: readonly string[]) => {
+            if (file === "/usr/bin/sips") throw new Error("A protected file must not be opened");
+            return args.at(-1) === "JPEGPhoto"
+                ? missing("JPEGPhoto")
+                : "Picture:\n /Users/steve/Downloads/me.heic\n";
+        },
+    ],
+    [
+        "the Picture path escapes the picture library",
+        async (file: string, args: readonly string[]) => {
+            if (file === "/usr/bin/sips") throw new Error("A protected file must not be opened");
+            return args.at(-1) === "JPEGPhoto"
+                ? missing("JPEGPhoto")
+                : "Picture:\n /Library/User Pictures/../../Users/steve/Documents/me.png\n";
+        },
+    ],
+    [
         "the Picture path is relative",
         async (_file: string, args: readonly string[]) =>
             args.at(-1) === "JPEGPhoto" ? missing("JPEGPhoto") : "Picture: relative.heic\n",

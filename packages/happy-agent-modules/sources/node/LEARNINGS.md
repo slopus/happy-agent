@@ -33,3 +33,12 @@ is the cropped image the system shows, over the original `Picture` file) and con
 formats with `sips`. This is a convenience default, so every failure is silent and yields no
 avatar, detection never runs once the row exists, and the seeding insert stays conditional so a
 concurrent start cannot overwrite the first.
+
+## Account-picture detection must not trigger a privacy prompt
+
+Kirill pointed out that reading the account `Picture` file could ask for Desktop, Documents, or
+Downloads access, since macOS protects those folders and the record may point anywhere. A first
+start must never surprise the person with a permission prompt for a cosmetic default. Directory
+reads go through Open Directory rather than the protected folders, and the `JPEGPhoto` bytes are
+converted only in a temporary directory; the `Picture` fallback is read only when its normalized
+path is under `/Library/User Pictures/` or `/System/Library/`, and is otherwise skipped.

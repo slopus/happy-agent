@@ -1,18 +1,20 @@
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { promisify } from "node:util";
 import { MAX_MANAGED_IMAGE_BYTES } from "../../impl/images/normalizeManagedImage.js";
 
 const COMMAND_TIMEOUT_MS = 2_000;
 // dscl prints binary attributes as hex in space-separated groups of four bytes.
 const MAX_PHOTO_OUTPUT = Math.ceil(MAX_MANAGED_IMAGE_BYTES * 2.25) + 4_096;
+const SYSTEM_PICTURE_DIRECTORIES = ["/Library/User Pictures/", "/System/Library/"];
 
 /**
  * Bounded, best-effort detection of the current macOS account picture as PNG, JPEG, or WebP
- * bytes. The cropped `JPEGPhoto` the system shows is preferred over the original `Picture` file;
- * other formats such as HEIC and TIFF are converted with `sips`. Every failure means no picture.
+ * bytes. The cropped `JPEGPhoto` the system shows is preferred over the `Picture` file, which is
+ * read only from the system picture library; other formats such as HEIC and TIFF are converted
+ * with `sips`. Every failure means no picture.
  */
 export async function readMacAccountPicture(): Promise<Uint8Array | null> {
     if (process.platform !== "darwin") return null;
@@ -50,8 +52,11 @@ async function readPhotoAttribute(record: string): Promise<Uint8Array | null> {
 }
 
 async function readPictureAttribute(record: string): Promise<Uint8Array | null> {
-    const path = attributeValue(await readAttribute(record, "Picture", 4_096)).split("\n")[0]!;
-    if (!path.startsWith("/")) return null;
+    const value = attributeValue(await readAttribute(record, "Picture", 4_096)).split("\n")[0]!;
+    const path = normalize(value);
+    // Opening a file in a privacy-protected location such as Desktop, Documents, or Downloads
+    // shows a macOS permission prompt, so only the system's own picture library is read.
+    if (!SYSTEM_PICTURE_DIRECTORIES.some((directory) => path.startsWith(directory))) return null;
     return await withTemporaryDirectory((directory) => convertToPng(path, directory));
 }
 
