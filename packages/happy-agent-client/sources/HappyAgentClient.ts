@@ -127,18 +127,21 @@ import type {
     UpdateTodoRequest,
 } from "./protocol/surfaces.js";
 import type {
-    CreateVaultEntryRequest,
+    CreateVaultFileRequest,
+    CreateVaultFolderRequest,
     CreateVaultUploadRequest,
     CreateVaultVersionRequest,
     CreateVaultVersionResponse,
-    RestoreVaultEntryRequest,
-    UpdateVaultEntryRequest,
+    RestoreVaultItemRequest,
+    UpdateVaultItemRequest,
     UpdateVaultSettingsRequest,
     VaultActivityPageResponse,
-    VaultEntryListQuery,
-    VaultEntryLocationResponse,
-    VaultEntryPageResponse,
-    VaultEntryResponse,
+    VaultFileLocationResponse,
+    VaultFileResponse,
+    VaultFolderLocationResponse,
+    VaultFolderResponse,
+    VaultItemListQuery,
+    VaultItemPageResponse,
     VaultMutationRequest,
     VaultPath,
     VaultResolveResponse,
@@ -2569,36 +2572,49 @@ export class HappyAgentClient {
         });
     }
 
-    /** One page of a folder's live children, the root without `parentId`; folders come first. */
-    async listVaultEntries(
+    /** One page of a folder's live folders and files, the root without `parentId`; folders first. */
+    async listVaultItems(
         surfaceId: SurfaceId,
-        query: VaultEntryListQuery = {},
+        query: VaultItemListQuery = {},
         options: RequestOptions = {},
-    ): Promise<VaultEntryPageResponse> {
+    ): Promise<VaultItemPageResponse> {
         return await this.#json({
             method: "GET",
-            path: vaultPath(surfaceId, "entries"),
+            path: vaultPath(surfaceId, "items"),
             query: { ...query },
             signal: options.signal,
         });
     }
 
-    /** One entry with its path and ancestors; Trash items and what is inside them included. */
-    async getVaultEntry(
+    /** One folder with its path and ancestors; Trash items and what is inside them included. */
+    async getVaultFolder(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        folderId: Cuid2,
         options: RequestOptions = {},
-    ): Promise<VaultEntryLocationResponse> {
+    ): Promise<VaultFolderLocationResponse> {
         return await this.#json({
             method: "GET",
-            path: vaultEntryPath(surfaceId, entryId),
+            path: vaultFolderPath(surfaceId, folderId),
+            signal: options.signal,
+        });
+    }
+
+    /** One file with its path and ancestors; Trash items and what is inside them included. */
+    async getVaultFile(
+        surfaceId: SurfaceId,
+        fileId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<VaultFileLocationResponse> {
+        return await this.#json({
+            method: "GET",
+            path: vaultFilePath(surfaceId, fileId),
             signal: options.signal,
         });
     }
 
     /**
-     * A live path to its entry, case-insensitively. A path running on past an artifact answers
-     * with the artifact and the rest as `innerPath`.
+     * A live path to its folder or file, case-insensitively. A path running on past an artifact
+     * answers with the artifact and the rest as `innerPath`.
      */
     async resolveVaultPath(
         surfaceId: SurfaceId,
@@ -2613,12 +2629,12 @@ export class HappyAgentClient {
         });
     }
 
-    /** Every live entry in ID order; follow events from the first page's `cursor`. */
+    /** Every live folder and file in ID order; follow events from the first page's `cursor`. */
     async listVaultTree(
         surfaceId: SurfaceId,
         query: VaultTreeQuery = {},
         options: RequestOptions = {},
-    ): Promise<VaultEntryPageResponse> {
+    ): Promise<VaultItemPageResponse> {
         return await this.#json({
             method: "GET",
             path: vaultPath(surfaceId, "tree"),
@@ -2641,7 +2657,7 @@ export class HappyAgentClient {
         });
     }
 
-    /** Trash items, most recently deleted first, with where each one was. */
+    /** Trash items, folders and files, most recently deleted first, with where each one was. */
     async listVaultTrash(
         surfaceId: SurfaceId,
         query: VaultTrashQuery = {},
@@ -2655,61 +2671,125 @@ export class HappyAgentClient {
         });
     }
 
-    /** A folder, or a file or artifact from an upload or a copy; a supplied ID is the retry key. */
-    async createVaultEntry(
+    /** A new, empty folder; a supplied ID is the retry key. */
+    async createVaultFolder(
         surfaceId: SurfaceId,
-        request: CreateVaultEntryRequest,
+        request: CreateVaultFolderRequest,
         options: RequestOptions = {},
-    ): Promise<VaultEntryResponse> {
+    ): Promise<VaultFolderResponse> {
         return await this.#json({
             method: "POST",
-            path: vaultPath(surfaceId, "entries"),
+            path: vaultPath(surfaceId, "folders"),
             json: request,
             signal: options.signal,
         });
     }
 
-    /** Renames or moves; a name taken in the destination answers `name_taken`. */
-    async updateVaultEntry(
+    /**
+     * A file from an upload or a copy; a name ending in `.artifact` makes an artifact. A supplied
+     * ID is the retry key.
+     */
+    async createVaultFile(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
-        request: UpdateVaultEntryRequest,
+        request: CreateVaultFileRequest,
+        options: RequestOptions = {},
+    ): Promise<VaultFileResponse> {
+        return await this.#json({
+            method: "POST",
+            path: vaultPath(surfaceId, "files"),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Renames or moves a folder; a name taken in the destination answers `name_taken`. */
+    async updateVaultFolder(
+        surfaceId: SurfaceId,
+        folderId: Cuid2,
+        request: UpdateVaultItemRequest,
         options: VersionedRequestOptions,
-    ): Promise<VaultEntryResponse> {
+    ): Promise<VaultFolderResponse> {
         return await this.#json({
             method: "PATCH",
-            path: vaultEntryPath(surfaceId, entryId),
+            path: vaultFolderPath(surfaceId, folderId),
             json: request,
             ifMatch: options.ifMatch,
             signal: options.signal,
         });
     }
 
-    /** Moves the entry, and everything inside a folder, to the Trash. */
-    async deleteVaultEntry(
+    /** Renames or moves a file; a name taken in the destination answers `name_taken`. */
+    async updateVaultFile(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
+        request: UpdateVaultItemRequest,
+        options: VersionedRequestOptions,
+    ): Promise<VaultFileResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: vaultFilePath(surfaceId, fileId),
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Moves a folder, with everything inside it, to the Trash. */
+    async deleteVaultFolder(
+        surfaceId: SurfaceId,
+        folderId: Cuid2,
         options: VersionedRequestOptions & VaultMutationRequest,
-    ): Promise<VaultEntryResponse> {
+    ): Promise<VaultFolderResponse> {
         return await this.#json({
             method: "POST",
-            path: `${vaultEntryPath(surfaceId, entryId)}/delete`,
+            path: `${vaultFolderPath(surfaceId, folderId)}/delete`,
             json: bodyOf(options),
             ifMatch: options.ifMatch,
             signal: options.signal,
         });
     }
 
-    /** Restores a Trash item where it was, or into another live folder under another name. */
-    async restoreVaultEntry(
+    /** Moves a file to the Trash. */
+    async deleteVaultFile(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
-        request: RestoreVaultEntryRequest,
-        options: VersionedRequestOptions,
-    ): Promise<VaultEntryResponse> {
+        fileId: Cuid2,
+        options: VersionedRequestOptions & VaultMutationRequest,
+    ): Promise<VaultFileResponse> {
         return await this.#json({
             method: "POST",
-            path: `${vaultEntryPath(surfaceId, entryId)}/restore`,
+            path: `${vaultFilePath(surfaceId, fileId)}/delete`,
+            json: bodyOf(options),
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Restores a folder from the Trash where it was, or into another live folder under another name. */
+    async restoreVaultFolder(
+        surfaceId: SurfaceId,
+        folderId: Cuid2,
+        request: RestoreVaultItemRequest,
+        options: VersionedRequestOptions,
+    ): Promise<VaultFolderResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `${vaultFolderPath(surfaceId, folderId)}/restore`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Restores a file from the Trash where it was, or into another live folder under another name. */
+    async restoreVaultFile(
+        surfaceId: SurfaceId,
+        fileId: Cuid2,
+        request: RestoreVaultItemRequest,
+        options: VersionedRequestOptions,
+    ): Promise<VaultFileResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `${vaultFilePath(surfaceId, fileId)}/restore`,
             json: request,
             ifMatch: options.ifMatch,
             signal: options.signal,
@@ -2719,13 +2799,13 @@ export class HappyAgentClient {
     /** Surviving versions, newest first, without artifact manifests. */
     async listVaultVersions(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
         query: VaultVersionPageQuery = {},
         options: RequestOptions = {},
     ): Promise<VaultVersionPageResponse> {
         return await this.#json({
             method: "GET",
-            path: `${vaultEntryPath(surfaceId, entryId)}/versions`,
+            path: `${vaultFilePath(surfaceId, fileId)}/versions`,
             query: { ...query },
             signal: options.signal,
         });
@@ -2734,13 +2814,13 @@ export class HappyAgentClient {
     /** One version; an artifact version carries its whole manifest. Pruned versions are `404`. */
     async getVaultVersion(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
         version: VaultVersionSelector,
         options: RequestOptions = {},
     ): Promise<VaultVersionDetailResponse> {
         return await this.#json({
             method: "GET",
-            path: vaultVersionPath(surfaceId, entryId, version),
+            path: vaultVersionPath(surfaceId, fileId, version),
             signal: options.signal,
         });
     }
@@ -2751,13 +2831,13 @@ export class HappyAgentClient {
      */
     async createVaultVersion(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
         request: CreateVaultVersionRequest,
         options: VersionedRequestOptions,
     ): Promise<CreateVaultVersionResponse> {
         return await this.#json({
             method: "POST",
-            path: `${vaultEntryPath(surfaceId, entryId)}/versions`,
+            path: `${vaultFilePath(surfaceId, fileId)}/versions`,
             json: request,
             ifMatch: options.ifMatch,
             signal: options.signal,
@@ -2767,13 +2847,13 @@ export class HappyAgentClient {
     /** Pinned versions are never pruned. Pinning changes neither the entry nor its `version`. */
     async pinVaultVersion(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
         version: number,
         options: RequestOptions & VaultMutationRequest = {},
     ): Promise<VaultVersionResponse> {
         return await this.#json({
             method: "POST",
-            path: `${vaultVersionPath(surfaceId, entryId, version)}/pin`,
+            path: `${vaultVersionPath(surfaceId, fileId, version)}/pin`,
             json: bodyOf(options),
             signal: options.signal,
         });
@@ -2781,28 +2861,43 @@ export class HappyAgentClient {
 
     async unpinVaultVersion(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
         version: number,
         options: RequestOptions & VaultMutationRequest = {},
     ): Promise<VaultVersionResponse> {
         return await this.#json({
             method: "POST",
-            path: `${vaultVersionPath(surfaceId, entryId, version)}/unpin`,
+            path: `${vaultVersionPath(surfaceId, fileId, version)}/unpin`,
             json: bodyOf(options),
             signal: options.signal,
         });
     }
 
-    /** The entry's append-only activity, newest first. */
-    async listVaultActivity(
+    /** A folder's append-only activity, newest first. */
+    async listVaultFolderActivity(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        folderId: Cuid2,
         query: VaultVersionPageQuery = {},
         options: RequestOptions = {},
     ): Promise<VaultActivityPageResponse> {
         return await this.#json({
             method: "GET",
-            path: `${vaultEntryPath(surfaceId, entryId)}/activity`,
+            path: `${vaultFolderPath(surfaceId, folderId)}/activity`,
+            query: { ...query },
+            signal: options.signal,
+        });
+    }
+
+    /** A file's append-only activity, newest first. */
+    async listVaultFileActivity(
+        surfaceId: SurfaceId,
+        fileId: Cuid2,
+        query: VaultVersionPageQuery = {},
+        options: RequestOptions = {},
+    ): Promise<VaultActivityPageResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `${vaultFilePath(surfaceId, fileId)}/activity`,
             query: { ...query },
             signal: options.signal,
         });
@@ -2811,12 +2906,12 @@ export class HappyAgentClient {
     /** A file version's bytes, or one range of them; `null` when `ifNoneMatch` still matches. */
     async getVaultFileContent(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
         version: VaultVersionSelector,
         options: VaultFileRequestOptions = {},
     ): Promise<VaultFileContent | null> {
         return await this.#fileContent(
-            `${vaultVersionPath(surfaceId, entryId, version)}/content`,
+            `${vaultVersionPath(surfaceId, fileId, version)}/content`,
             options,
         );
     }
@@ -2827,27 +2922,27 @@ export class HappyAgentClient {
      */
     vaultFileContentUrl(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
         version: VaultVersionSelector,
         options: { readonly download?: boolean } = {},
     ): string {
         return endpointUrl(
             this.#endpoint,
-            `${vaultVersionPath(surfaceId, entryId, version)}/content`,
+            `${vaultVersionPath(surfaceId, fileId, version)}/content`,
             { download: options.download === true ? true : undefined },
         );
     }
 
-    /** One file of an artifact version, by its exact manifest path. */
+    /** One file of an artifact version, by its exact path in the version's file list. */
     async getVaultArtifactFile(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
         version: VaultVersionSelector,
         path: ArtifactPath,
         options: VaultFileRequestOptions = {},
     ): Promise<VaultFileContent | null> {
         return await this.#fileContent(
-            vaultArtifactFilePath(surfaceId, entryId, version, path),
+            vaultArtifactFilePath(surfaceId, fileId, version, path),
             options,
         );
     }
@@ -2858,32 +2953,32 @@ export class HappyAgentClient {
      */
     vaultArtifactFileUrl(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
         version: VaultVersionSelector,
         path: ArtifactPath,
     ): string {
-        return endpointUrl(
-            this.#endpoint,
-            vaultArtifactFilePath(surfaceId, entryId, version, path),
-        );
+        return endpointUrl(this.#endpoint, vaultArtifactFilePath(surfaceId, fileId, version, path));
     }
 
-    /** The URL of an artifact version as a streamed zip. */
+    /**
+     * The URL of an artifact version as its `.artifact` file, the same bytes on every download;
+     * save it under `vaultArtifactDownloadName(file)`.
+     */
     vaultArtifactZipUrl(
         surfaceId: SurfaceId,
-        entryId: Cuid2,
+        fileId: Cuid2,
         version: VaultVersionSelector,
     ): string {
-        return endpointUrl(this.#endpoint, `${vaultVersionPath(surfaceId, entryId, version)}/zip`);
+        return endpointUrl(this.#endpoint, `${vaultVersionPath(surfaceId, fileId, version)}/zip`);
     }
 
-    /** The URL of a live folder as a streamed zip, or of the whole vault without `entryId`. */
-    vaultFolderZipUrl(surfaceId: SurfaceId, entryId?: Cuid2): string {
+    /** The URL of a live folder as a streamed zip, or of the whole vault without `folderId`. */
+    vaultFolderZipUrl(surfaceId: SurfaceId, folderId?: Cuid2): string {
         return endpointUrl(
             this.#endpoint,
-            entryId === undefined
+            folderId === undefined
                 ? vaultPath(surfaceId, "zip")
-                : `${vaultEntryPath(surfaceId, entryId)}/zip`,
+                : `${vaultFolderPath(surfaceId, folderId)}/zip`,
         );
     }
 
@@ -4184,27 +4279,31 @@ function vaultPath(surfaceId: SurfaceId, rest: string): string {
     return `v0/surfaces/vault/${encodeURIComponent(surfaceId)}/${rest}`;
 }
 
-function vaultEntryPath(surfaceId: SurfaceId, entryId: Cuid2): string {
-    return vaultPath(surfaceId, `entries/${encodeURIComponent(entryId)}`);
+function vaultFolderPath(surfaceId: SurfaceId, folderId: Cuid2): string {
+    return vaultPath(surfaceId, `folders/${encodeURIComponent(folderId)}`);
+}
+
+function vaultFilePath(surfaceId: SurfaceId, fileId: Cuid2): string {
+    return vaultPath(surfaceId, `files/${encodeURIComponent(fileId)}`);
 }
 
 function vaultVersionPath(
     surfaceId: SurfaceId,
-    entryId: Cuid2,
+    fileId: Cuid2,
     version: VaultVersionSelector,
 ): string {
-    return `${vaultEntryPath(surfaceId, entryId)}/versions/${String(version)}`;
+    return `${vaultFilePath(surfaceId, fileId)}/versions/${String(version)}`;
 }
 
-/** An artifact entry's file route, with each segment of its path percent-encoded. */
+/** An artifact's inner-file route, with each segment of its path percent-encoded. */
 function vaultArtifactFilePath(
     surfaceId: SurfaceId,
-    entryId: Cuid2,
+    fileId: Cuid2,
     version: VaultVersionSelector,
     path: ArtifactPath,
 ): string {
     const encoded = path.split("/").map(encodeURIComponent).join("/");
-    return `${vaultVersionPath(surfaceId, entryId, version)}/files/${encoded}`;
+    return `${vaultVersionPath(surfaceId, fileId, version)}/artifact/${encoded}`;
 }
 
 function vaultUploadPath(uploadId: Cuid2): string {

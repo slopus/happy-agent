@@ -59,19 +59,24 @@ oldest first; continue older with `beforeSeq: nextBeforeSeq` or forward with `af
 Follow `surface_message.created` and `surface_message.updated`; when a created message's `seq` is
 not one past the newest held, read forward with `afterSeq`.
 
-Vault Surfaces are shared file trees, served at `/v0/surfaces/vault/:surfaceId` when health
-reports `capabilities.vaults`. `listVaultEntries()` pages one folder, folders first;
-`listVaultTree()` pages every live entry for a client that keeps the whole tree, and
-`resolveVaultPath()` and `searchVault()` find entries by path, name, or text. Files and artifact
-sites arrive as resumable uploads: `createVaultUpload({ size })`, then `uploadVaultChunk()` from
-the upload's `received` until it is complete; a `conflict` error carries the current upload to
-resume from. Place an upload with `createVaultEntry()` or `createVaultVersion()` (a zip for an
-artifact). Renames, moves, Trash, restore, and new versions take `ifMatch`; a name used in the
+Vault Surfaces are shared trees of folders and files, served at `/v0/surfaces/vault/:surfaceId`
+when health reports `capabilities.vaults`. Folders and files are separate resources told apart by
+`kind`: `createVaultFolder()` makes an empty folder, and a file is a plain file or an artifact, a
+small web site whose name ends in `.artifact` (`isVaultArtifactName()`). `listVaultItems()` pages
+one folder, folders first; `listVaultTree()` pages every live item for a client that keeps the
+whole tree, and `resolveVaultPath()` and `searchVault()` find items by path, name, or text. Bytes
+arrive as resumable uploads: `createVaultUpload({ size })`, then `uploadVaultChunk()` from the
+upload's `received` until it is complete; a `conflict` error carries the current upload to resume
+from. Place an upload with `createVaultFile()` or `createVaultVersion()`; an artifact's upload is a
+`.artifact` file, a zip with `artifact.json` (`vaultArtifactManifestSchema`) beside the site's
+files. Renames, moves, Trash, restore, and new versions take `ifMatch`; a name used in the
 destination folder is refused with `name_taken`. Versions are pruned by the vault's retention
 policy (`getVaultSettings()`, `updateVaultSettings()`), except pinned ones, so a version that
 answers `404` was pruned. Show bytes through `vaultFileContentUrl()` and artifact pages through
-`vaultArtifactFileUrl()` at a numbered version. Follow `vault.entry.*`, `vault.version.updated`,
-and `vault.settings.updated`; deleting or restoring a folder announces only the folder.
+`vaultArtifactFileUrl()` at a numbered version; `vaultArtifactZipUrl()` downloads the `.artifact`
+file, saved as `vaultArtifactDownloadName(file)`. Follow `vault.folder.*`, `vault.file.*`,
+`vault.version.updated`, and `vault.settings.updated`; deleting or restoring a folder announces
+only the folder.
 
 The Feed is each person's list of what happened, served when health reports
 `capabilities.feed`. `getFeed({ before, limit })` reads entries newest `cursor` first; pass the

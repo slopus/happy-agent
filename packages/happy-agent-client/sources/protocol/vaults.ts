@@ -1,6 +1,6 @@
 /**
- * Vault Surfaces: a shared tree of folders, files, and static-site artifacts with numbered
- * versions kept under the vault's retention policy, a Trash, an activity log, and search. Bytes
+ * Vault Surfaces: a shared tree of folders and files, plain or static-site artifacts, whose files
+ * have numbered versions kept under the vault's retention policy, a Trash, an activity log, and search. Bytes
  * arrive as resumable uploads and are stored once per SHA-256.
  */
 
@@ -24,19 +24,12 @@ import { vaultRetentionSchema } from "./vaultRetention.js";
 
 const strict = { additionalProperties: false } as const;
 
-export const vaultEntryKindSchema = Type.Union([
-    Type.Literal("folder"),
-    Type.Literal("file"),
-    Type.Literal("artifact"),
-]);
-export type VaultEntryKind = Static<typeof vaultEntryKindSchema>;
-
 /**
  * One path segment: no `/`, `\`, or control character, and not `.` or `..`. The daemon also
  * NFC-normalizes it, limits it to 255 bytes of UTF-8, and keeps it unique among a folder's live
- * children case-insensitively.
+ * children, folders and files together, case-insensitively.
  */
-export const vaultEntryNameSchema = Type.String({
+export const vaultNameSchema = Type.String({
     minLength: 1,
     maxLength: 255,
     pattern: "^(?!\\.\\.?$)[^/\\\\\\x00-\\x1f\\x7f]+$",
@@ -53,7 +46,15 @@ export type VaultActor = Static<typeof vaultActorSchema>;
 export const vaultChangeSourceSchema = surfaceRevisionSourceSchema;
 export type VaultChangeSource = Static<typeof vaultChangeSourceSchema>;
 
-/** An artifact entry's site: `html` when `index.html` sits at its root, otherwise `markdown`. */
+/** Every artifact's name ends in this, matched case-insensitively, and no other item's does. */
+export const VAULT_ARTIFACT_SUFFIX = ".artifact";
+
+/** Whether a name is an artifact's: whether it ends in `.artifact`, case-insensitively. */
+export function isVaultArtifactName(name: string): boolean {
+    return name.toLowerCase().endsWith(VAULT_ARTIFACT_SUFFIX);
+}
+
+/** An artifact's site: `html` when `index.html` sits at its root, otherwise `markdown`. */
 export const vaultArtifactTypeSchema = Type.Union([Type.Literal("html"), Type.Literal("markdown")]);
 export type VaultArtifactType = Static<typeof vaultArtifactTypeSchema>;
 
@@ -65,20 +66,41 @@ export const vaultArtifactSummarySchema = Type.Object({
 export type VaultArtifactSummary = Static<typeof vaultArtifactSummarySchema>;
 
 /** A version's whole bundle: every file in path order, as the artifact file object. */
-export const vaultArtifactManifestSchema = Type.Object({
+export const vaultArtifactContentsSchema = Type.Object({
     ...vaultArtifactSummarySchema.properties,
     files: Type.Array(artifactFileSchema, { minItems: 1, maxItems: 256 }),
 });
+export type VaultArtifactContents = Static<typeof vaultArtifactContentsSchema>;
+
+/** Where a `.artifact` file keeps its manifest: at the zip's root, beside the site's files. */
+export const VAULT_ARTIFACT_MANIFEST_PATH = "artifact.json";
+
+/**
+ * `artifact.json` in a `.artifact` file. `entry` is the file `type` names, `index.html` or
+ * `index.md`; fields not described here are ignored.
+ */
+export const vaultArtifactManifestSchema = Type.Object({
+    entry: Type.Union([Type.Literal("index.html"), Type.Literal("index.md")]),
+    format: Type.Literal("happy.artifact"),
+    formatVersion: Type.Literal(1),
+    type: vaultArtifactTypeSchema,
+});
 export type VaultArtifactManifest = Static<typeof vaultArtifactManifestSchema>;
 
-const vaultEntryFields = {
+/** The name a downloaded artifact is saved under: its own, which ends in `.artifact`. */
+export function vaultArtifactDownloadName(file: { readonly name: string }): string {
+    return isVaultArtifactName(file.name) ? file.name : `${file.name}${VAULT_ARTIFACT_SUFFIX}`;
+}
+
+const vaultItemFields = {
     createdAt: timestampSchema,
     createdBy: vaultActorSchema,
-    /** When this entry itself went to the Trash; entries inside a deleted folder keep `null`. */
+    /** When this item itself went to the Trash; items inside a deleted folder keep `null`. */
     deletedAt: Nullable(timestampSchema),
+    /** Unique across the vault's folders and files. */
     id: cuid2Schema,
-    name: vaultEntryNameSchema,
-    /** `null` at the vault's root, which is not an entry. */
+    name: vaultNameSchema,
+    /** `null` at the vault's root, which is not a folder. */
     parentId: Nullable(cuid2Schema),
     surfaceId: surfaceIdSchema,
     /** The latest change of any kind: content, rename, move, Trash, or restore. */
@@ -88,19 +110,14 @@ const vaultEntryFields = {
     version: resourceVersionSchema,
 };
 
-/** One node of the tree. Paths are derived from names; the ID is the identity. */
-export const vaultEntrySchema = Type.Union([
+/** A folder: it holds other items, may be empty, and has no versions. */
+export const vaultFolderSchema = Type.Object({ ...vaultItemFields, kind: Type.Literal("folder") });
+export type VaultFolder = Static<typeof vaultFolderSchema>;
+
+/** A plain file or an artifact, with numbered versions. */
+export const vaultFileSchema = Type.Union([
     Type.Object({
-        ...vaultEntryFields,
-        artifact: Type.Null(),
-        kind: Type.Literal("folder"),
-        latestVersion: Type.Null(),
-        mediaType: Type.Null(),
-        sha256: Type.Null(),
-        size: Type.Null(),
-    }),
-    Type.Object({
-        ...vaultEntryFields,
+        ...vaultItemFields,
         artifact: Type.Null(),
         kind: Type.Literal("file"),
         latestVersion: Type.Integer({ minimum: 1 }),
@@ -110,7 +127,7 @@ export const vaultEntrySchema = Type.Union([
         size: Type.Integer({ minimum: 0 }),
     }),
     Type.Object({
-        ...vaultEntryFields,
+        ...vaultItemFields,
         artifact: vaultArtifactSummarySchema,
         kind: Type.Literal("artifact"),
         latestVersion: Type.Integer({ minimum: 1 }),
@@ -119,68 +136,89 @@ export const vaultEntrySchema = Type.Union([
         size: Type.Integer({ minimum: 1 }),
     }),
 ]);
-export type VaultEntry = Static<typeof vaultEntrySchema>;
+export type VaultFile = Static<typeof vaultFileSchema>;
 
-export const vaultEntryResponseSchema = Type.Object({ entry: vaultEntrySchema });
-export type VaultEntryResponse = Static<typeof vaultEntryResponseSchema>;
+/** A folder or a file, told apart by `kind`; what listings, the tree, and search return. */
+export const vaultItemSchema = Type.Union([vaultFolderSchema, ...vaultFileSchema.anyOf]);
+export type VaultItem = Static<typeof vaultItemSchema>;
+export type VaultItemKind = VaultItem["kind"];
 
-export const vaultAncestorSchema = Type.Object({ id: cuid2Schema, name: vaultEntryNameSchema });
+export const vaultFolderResponseSchema = Type.Object({ folder: vaultFolderSchema });
+export type VaultFolderResponse = Static<typeof vaultFolderResponseSchema>;
+
+export const vaultFileResponseSchema = Type.Object({ file: vaultFileSchema });
+export type VaultFileResponse = Static<typeof vaultFileResponseSchema>;
+
+export const vaultAncestorSchema = Type.Object({ id: cuid2Schema, name: vaultNameSchema });
 export type VaultAncestor = Static<typeof vaultAncestorSchema>;
 
-/** `GET /entries/:entryId` — the entry with where it is; `ancestors` run from the root down. */
-export const vaultEntryLocationResponseSchema = Type.Object({
+const vaultLocationFields = {
+    /** From the root down to the item's folder. */
     ancestors: Type.Array(vaultAncestorSchema),
-    entry: vaultEntrySchema,
-    /** Whether the entry or a folder above it is deleted. */
+    /** Whether the item or a folder above it is deleted. */
     inTrash: Type.Boolean(),
     path: vaultPathSchema,
+};
+
+/** `GET /folders/:folderId` — the folder with where it is. */
+export const vaultFolderLocationResponseSchema = Type.Object({
+    ...vaultLocationFields,
+    folder: vaultFolderSchema,
 });
-export type VaultEntryLocationResponse = Static<typeof vaultEntryLocationResponseSchema>;
+export type VaultFolderLocationResponse = Static<typeof vaultFolderLocationResponseSchema>;
+
+/** `GET /files/:fileId` — the file with where it is. */
+export const vaultFileLocationResponseSchema = Type.Object({
+    ...vaultLocationFields,
+    file: vaultFileSchema,
+});
+export type VaultFileLocationResponse = Static<typeof vaultFileLocationResponseSchema>;
 
 /** `GET /resolve` — `innerPath` names a file inside the artifact the path ran into, or is `null`. */
 export const vaultResolveResponseSchema = Type.Object({
-    ...vaultEntryLocationResponseSchema.properties,
+    ...vaultLocationFields,
     innerPath: Nullable(Type.String({ minLength: 1 })),
+    item: vaultItemSchema,
 });
 export type VaultResolveResponse = Static<typeof vaultResolveResponseSchema>;
 
-/** A listing page; `cursor` is the event cursor captured before the first read. */
-export const vaultEntryPageResponseSchema = Type.Object({
+/** A listing page of folders and files; `cursor` is the event cursor captured before the first read. */
+export const vaultItemPageResponseSchema = Type.Object({
     cursor: eventCursorSchema,
-    entries: Type.Array(vaultEntrySchema),
+    items: Type.Array(vaultItemSchema),
     nextPageCursor: Nullable(Type.String()),
 });
-export type VaultEntryPageResponse = Static<typeof vaultEntryPageResponseSchema>;
+export type VaultItemPageResponse = Static<typeof vaultItemPageResponseSchema>;
 
-export const vaultEntrySortSchema = Type.Union([
+export const vaultItemSortSchema = Type.Union([
     Type.Literal("name"),
     Type.Literal("updatedAt"),
     Type.Literal("size"),
 ]);
-export type VaultEntrySort = Static<typeof vaultEntrySortSchema>;
+export type VaultItemSort = Static<typeof vaultItemSortSchema>;
 
 export const vaultSortOrderSchema = Type.Union([Type.Literal("asc"), Type.Literal("desc")]);
 export type VaultSortOrder = Static<typeof vaultSortOrderSchema>;
 
-/** `GET /entries` query; folders always come first. */
-export const vaultEntryListQuerySchema = Type.Object({
+/** `GET /items` query; folders always come first. */
+export const vaultItemListQuerySchema = Type.Object({
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 500 })),
     order: Type.Optional(vaultSortOrderSchema),
     pageCursor: Type.Optional(Type.String()),
     parentId: Type.Optional(cuid2Schema),
-    sort: Type.Optional(vaultEntrySortSchema),
+    sort: Type.Optional(vaultItemSortSchema),
 });
-export type VaultEntryListQuery = Static<typeof vaultEntryListQuerySchema>;
+export type VaultItemListQuery = Static<typeof vaultItemListQuerySchema>;
 
-/** `GET /tree` query: every live entry, in ID order. */
+/** `GET /tree` query: every live folder and file, in ID order. */
 export const vaultTreeQuerySchema = Type.Object({
     limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 1_000 })),
     pageCursor: Type.Optional(Type.String()),
 });
 export type VaultTreeQuery = Static<typeof vaultTreeQuerySchema>;
 
-/** A Trash item: a deleted entry whose folders are all live, and where it was. */
-export const vaultTrashItemSchema = Type.Object({ entry: vaultEntrySchema, path: vaultPathSchema });
+/** A Trash item: a deleted folder or file whose folders are all live, and where it was. */
+export const vaultTrashItemSchema = Type.Object({ item: vaultItemSchema, path: vaultPathSchema });
 export type VaultTrashItem = Static<typeof vaultTrashItemSchema>;
 
 export const vaultTrashPageResponseSchema = Type.Object({
@@ -199,7 +237,7 @@ export type VaultTrashQuery = Static<typeof vaultTrashQuerySchema>;
 const vaultVersionFields = {
     actor: vaultActorSchema,
     createdAt: timestampSchema,
-    entryId: cuid2Schema,
+    fileId: cuid2Schema,
     number: Type.Integer({ minimum: 1 }),
     /** Pinned versions are never pruned; the only field that changes after creation. */
     pinned: Type.Boolean(),
@@ -226,12 +264,12 @@ export const vaultVersionSchema = Type.Union([
 ]);
 export type VaultVersion = Static<typeof vaultVersionSchema>;
 
-/** A single-version read: an artifact version carries its whole manifest. */
+/** A single-version read: an artifact version carries its whole file list. */
 export const vaultVersionDetailSchema = Type.Union([
     vaultVersionSchema.anyOf[0],
     Type.Object({
         ...vaultVersionFields,
-        artifact: vaultArtifactManifestSchema,
+        artifact: vaultArtifactContentsSchema,
         sha256: Type.Null(),
         size: Type.Integer({ minimum: 1 }),
     }),
@@ -241,7 +279,7 @@ export type VaultVersionDetail = Static<typeof vaultVersionDetailSchema>;
 /** A version number, or `latest` for whichever version is newest when the daemon answers. */
 export type VaultVersionSelector = number | "latest";
 
-/** `GET /entries/:entryId/versions` — surviving versions, newest first, without manifests. */
+/** `GET /files/:fileId/versions` — surviving versions, newest first, without their files. */
 export const vaultVersionPageResponseSchema = Type.Object({
     nextPageCursor: Nullable(Type.String()),
     versions: Type.Array(vaultVersionSchema),
@@ -264,9 +302,10 @@ export type VaultVersionResponse = Static<typeof vaultVersionResponseSchema>;
 const vaultActivityFields = {
     actor: vaultActorSchema,
     at: timestampSchema,
-    entryId: cuid2Schema,
     /** A UUIDv7. */
     id: Type.String(),
+    /** The folder or file the record belongs to. */
+    itemId: cuid2Schema,
     source: vaultChangeSourceSchema,
 };
 
@@ -276,22 +315,22 @@ export const vaultActivitySchema = Type.Union([
         ...vaultActivityFields,
         copiedFrom: Nullable(cuid2Schema),
         kind: Type.Literal("created"),
-        name: vaultEntryNameSchema,
+        name: vaultNameSchema,
         parentId: Nullable(cuid2Schema),
     }),
     Type.Object({
         ...vaultActivityFields,
-        fromName: vaultEntryNameSchema,
+        fromName: vaultNameSchema,
         fromParentId: Nullable(cuid2Schema),
         kind: Type.Literal("moved"),
-        toName: vaultEntryNameSchema,
+        toName: vaultNameSchema,
         toParentId: Nullable(cuid2Schema),
     }),
     Type.Object({ ...vaultActivityFields, kind: Type.Literal("deleted") }),
     Type.Object({
         ...vaultActivityFields,
         kind: Type.Literal("restored"),
-        name: vaultEntryNameSchema,
+        name: vaultNameSchema,
         parentId: Nullable(cuid2Schema),
     }),
     Type.Object({
@@ -332,17 +371,18 @@ export type VaultSearchQuery = Static<typeof vaultSearchQuerySchema>;
 
 export const vaultSearchResultSchema = Type.Union([
     Type.Object({
-        entry: vaultEntrySchema,
         innerPath: Type.Null(),
+        item: vaultItemSchema,
         line: Type.Null(),
         match: Type.Literal("name"),
         path: vaultPathSchema,
         snippet: Type.Null(),
     }),
     Type.Object({
-        entry: vaultEntrySchema,
         /** The artifact file holding the text, or `null` for a plain file. */
         innerPath: Nullable(Type.String({ minLength: 1 })),
+        /** A content match is always a file. */
+        item: vaultFileSchema,
         line: Type.Integer({ minimum: 1 }),
         match: Type.Literal("content"),
         path: vaultPathSchema,
@@ -424,37 +464,41 @@ export const vaultUploadResponseSchema = Type.Object({ upload: vaultUploadSchema
 export type VaultUploadResponse = Static<typeof vaultUploadResponseSchema>;
 
 const vaultCreationFields = {
-    /** The creation retry key: repeating it returns the existing entry unchanged. */
+    /** The creation retry key: repeating it returns the existing folder or file unchanged. */
     id: Type.Optional(cuid2Schema),
     mutationId: Type.Optional(mutationIdSchema),
-    name: vaultEntryNameSchema,
+    name: vaultNameSchema,
     parentId: Nullable(cuid2Schema),
 };
-const contentKindSchema = Type.Union([Type.Literal("file"), Type.Literal("artifact")]);
 
-/** A folder, or a file or artifact from an upload (a zip for an artifact) or a copy. */
-export const createVaultEntryRequestSchema = Type.Union([
-    Type.Object({ ...vaultCreationFields, kind: Type.Literal("folder") }, strict),
-    Type.Object({ ...vaultCreationFields, kind: contentKindSchema, uploadId: cuid2Schema }, strict),
+/** `POST /folders`: a new, empty folder. */
+export const createVaultFolderRequestSchema = Type.Object(vaultCreationFields, strict);
+export type CreateVaultFolderRequest = Static<typeof createVaultFolderRequestSchema>;
+
+/**
+ * `POST /files`: a file from an upload or a copy. A name ending in `.artifact` makes an artifact,
+ * whose upload is a `.artifact` file; any other name makes a plain file.
+ */
+export const createVaultFileRequestSchema = Type.Union([
+    Type.Object({ ...vaultCreationFields, uploadId: cuid2Schema }, strict),
     Type.Object(
         {
             ...vaultCreationFields,
-            fromEntryId: cuid2Schema,
+            fromFileId: cuid2Schema,
             /** Defaults to the source's newest version. */
             fromVersion: Type.Optional(Type.Integer({ minimum: 1 })),
-            kind: contentKindSchema,
         },
         strict,
     ),
 ]);
-export type CreateVaultEntryRequest = Static<typeof createVaultEntryRequestSchema>;
+export type CreateVaultFileRequest = Static<typeof createVaultFileRequestSchema>;
 
-/** Rename, move (`parentId: null` is the root), or both; requires `If-Match`. */
-export const updateVaultEntryRequestSchema = Type.Union([
+/** Rename, move (`parentId: null` is the root), or both, a folder or a file; requires `If-Match`. */
+export const updateVaultItemRequestSchema = Type.Union([
     Type.Object(
         {
             mutationId: Type.Optional(mutationIdSchema),
-            name: vaultEntryNameSchema,
+            name: vaultNameSchema,
             parentId: Type.Optional(Nullable(cuid2Schema)),
         },
         strict,
@@ -462,24 +506,24 @@ export const updateVaultEntryRequestSchema = Type.Union([
     Type.Object(
         {
             mutationId: Type.Optional(mutationIdSchema),
-            name: Type.Optional(vaultEntryNameSchema),
+            name: Type.Optional(vaultNameSchema),
             parentId: Nullable(cuid2Schema),
         },
         strict,
     ),
 ]);
-export type UpdateVaultEntryRequest = Static<typeof updateVaultEntryRequestSchema>;
+export type UpdateVaultItemRequest = Static<typeof updateVaultItemRequestSchema>;
 
 /** Restores a Trash item where it was, or into another live folder and under another name. */
-export const restoreVaultEntryRequestSchema = Type.Object(
+export const restoreVaultItemRequestSchema = Type.Object(
     {
         mutationId: Type.Optional(mutationIdSchema),
-        name: Type.Optional(vaultEntryNameSchema),
+        name: Type.Optional(vaultNameSchema),
         parentId: Type.Optional(Nullable(cuid2Schema)),
     },
     strict,
 );
-export type RestoreVaultEntryRequest = Static<typeof restoreVaultEntryRequestSchema>;
+export type RestoreVaultItemRequest = Static<typeof restoreVaultItemRequestSchema>;
 
 /** Delete, pin, and unpin accept this optional echo-only body. */
 export const vaultMutationRequestSchema = Type.Object(
@@ -488,7 +532,7 @@ export const vaultMutationRequestSchema = Type.Object(
 );
 export type VaultMutationRequest = Static<typeof vaultMutationRequestSchema>;
 
-/** New content from an upload (a zip of the whole bundle for an artifact) or an earlier version. */
+/** New content from an upload (a `.artifact` file for an artifact) or an earlier version. */
 export const createVaultVersionRequestSchema = Type.Union([
     Type.Object({ mutationId: Type.Optional(mutationIdSchema), uploadId: cuid2Schema }, strict),
     Type.Object(
@@ -503,7 +547,7 @@ export type CreateVaultVersionRequest = Static<typeof createVaultVersionRequestS
 
 /** `version` is `null` when the content equalled the newest version and nothing changed. */
 export const createVaultVersionResponseSchema = Type.Object({
-    entry: vaultEntrySchema,
+    file: vaultFileSchema,
     version: Nullable(vaultVersionSchema),
 });
 export type CreateVaultVersionResponse = Static<typeof createVaultVersionResponseSchema>;

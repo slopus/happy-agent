@@ -5,9 +5,12 @@ import { HappyAgentClient } from "../sources/HappyAgentClient.js";
 import { HappyAgentApiError } from "../sources/HappyAgentApiError.js";
 import { healthResponseSchema } from "../sources/protocol/daemon.js";
 import {
-    vaultEntryCreatedPayloadSchema,
-    vaultEntryRemovedPayloadSchema,
-    vaultEntryUpdatedPayloadSchema,
+    vaultFileCreatedPayloadSchema,
+    vaultFileRemovedPayloadSchema,
+    vaultFileUpdatedPayloadSchema,
+    vaultFolderCreatedPayloadSchema,
+    vaultFolderRemovedPayloadSchema,
+    vaultFolderUpdatedPayloadSchema,
     vaultSettingsUpdatedPayloadSchema,
     vaultVersionUpdatedPayloadSchema,
 } from "../sources/protocol/events.js";
@@ -17,22 +20,34 @@ import {
     vaultRetentionSchema,
 } from "../sources/protocol/vaultRetention.js";
 import {
-    createVaultEntryRequestSchema,
+    VAULT_ARTIFACT_MANIFEST_PATH,
+    VAULT_ARTIFACT_SUFFIX,
+    createVaultFileRequestSchema,
+    createVaultFolderRequestSchema,
     createVaultUploadRequestSchema,
     createVaultVersionRequestSchema,
-    restoreVaultEntryRequestSchema,
-    updateVaultEntryRequestSchema,
+    isVaultArtifactName,
+    restoreVaultItemRequestSchema,
+    updateVaultItemRequestSchema,
     updateVaultSettingsRequestSchema,
     vaultActivitySchema,
-    vaultEntryLocationResponseSchema,
-    vaultEntryNameSchema,
-    vaultEntrySchema,
+    vaultArtifactDownloadName,
+    vaultArtifactManifestSchema,
+    vaultFileLocationResponseSchema,
+    vaultFileSchema,
+    vaultFolderLocationResponseSchema,
+    vaultFolderSchema,
+    vaultItemPageResponseSchema,
+    vaultItemSchema,
+    vaultNameSchema,
     vaultResolveResponseSchema,
     vaultSearchResponseSchema,
+    vaultTrashPageResponseSchema,
     vaultUploadSchema,
     vaultVersionDetailSchema,
     vaultVersionSchema,
-    type VaultEntry,
+    type VaultFile,
+    type VaultFolder,
     type VaultVersion,
 } from "../sources/protocol/vaults.js";
 
@@ -55,7 +70,7 @@ const common = {
     deletedAt: null,
     version,
 };
-const file: VaultEntry = {
+const file: VaultFile = {
     ...common,
     name: "summary.pdf",
     kind: "file",
@@ -65,21 +80,16 @@ const file: VaultEntry = {
     mediaType: "application/pdf",
     artifact: null,
 };
-const folder: VaultEntry = {
+const folder: VaultFolder = {
     ...common,
     id: "f7k2m9q4w1e5t8y3u6i0o2p5",
     parentId: null,
     name: "Reports",
     kind: "folder",
-    latestVersion: null,
-    size: null,
-    sha256: null,
-    mediaType: null,
-    artifact: null,
 };
-const site: VaultEntry = {
+const site: VaultFile = {
     ...common,
-    name: "launch",
+    name: "launch.artifact",
     kind: "artifact",
     latestVersion: 1,
     size: 4096,
@@ -88,7 +98,7 @@ const site: VaultEntry = {
     artifact: { type: "html", entry: "index.html", fileCount: 2 },
 };
 const fileVersion: VaultVersion = {
-    entryId: file.id,
+    fileId: file.id,
     surfaceId,
     number: 3,
     size: 48_213,
@@ -170,51 +180,110 @@ describe("vault Surface protocol", () => {
 
     it("refuses names that cannot be one path segment", () => {
         for (const name of ["summary.pdf", "Q3", "Résumé", ".hidden", "..a", "a b"])
-            expect(Value.Check(vaultEntryNameSchema, name)).toBe(true);
+            expect(Value.Check(vaultNameSchema, name)).toBe(true);
         for (const name of ["", ".", "..", "a/b", "a\\b", "a\u0000b", "a\nb", "x".repeat(256)])
-            expect(Value.Check(vaultEntryNameSchema, name)).toBe(false);
+            expect(Value.Check(vaultNameSchema, name)).toBe(false);
     });
 
-    it("ties each entry kind to the fields it carries", () => {
-        for (const entry of [file, folder, site])
-            expect(Value.Check(vaultEntrySchema, entry)).toBe(true);
-        expect(Value.Check(vaultEntrySchema, { ...file, size: 0 })).toBe(true);
-        expect(Value.Check(vaultEntrySchema, { ...file, deletedAt: now })).toBe(true);
-        expect(Value.Check(vaultEntrySchema, { ...folder, latestVersion: 1 })).toBe(false);
-        expect(Value.Check(vaultEntrySchema, { ...file, sha256: null })).toBe(false);
-        expect(Value.Check(vaultEntrySchema, { ...file, artifact: site.artifact })).toBe(false);
-        expect(Value.Check(vaultEntrySchema, { ...site, mediaType: "text/html" })).toBe(false);
-        expect(Value.Check(vaultEntrySchema, { ...site, artifact: null })).toBe(false);
+    it("tells folders and files apart and ties each kind to its fields", () => {
+        expect(Value.Check(vaultFolderSchema, folder)).toBe(true);
+        expect(Value.Check(vaultFolderSchema, file)).toBe(false);
+        for (const each of [file, site]) expect(Value.Check(vaultFileSchema, each)).toBe(true);
+        expect(Value.Check(vaultFileSchema, folder)).toBe(false);
+        for (const each of [folder, file, site])
+            expect(Value.Check(vaultItemSchema, each)).toBe(true);
+        expect(Value.Check(vaultFileSchema, { ...file, size: 0 })).toBe(true);
+        expect(Value.Check(vaultFileSchema, { ...file, deletedAt: now })).toBe(true);
+        expect(Value.Check(vaultFileSchema, { ...file, sha256: null })).toBe(false);
+        expect(Value.Check(vaultFileSchema, { ...file, artifact: site.artifact })).toBe(false);
+        expect(Value.Check(vaultFileSchema, { ...site, mediaType: "text/html" })).toBe(false);
+        expect(Value.Check(vaultFileSchema, { ...site, artifact: null })).toBe(false);
         expect(
-            Value.Check(vaultEntrySchema, {
+            Value.Check(vaultFileSchema, {
                 ...site,
                 artifact: { type: "html", entry: "main.html", fileCount: 1 },
             }),
         ).toBe(false);
+        const where = { ancestors: [{ id: folder.id, name: "Reports" }], inTrash: false };
         expect(
-            Value.Check(vaultEntryLocationResponseSchema, {
-                entry: file,
+            Value.Check(vaultFileLocationResponseSchema, {
+                ...where,
+                file,
                 path: "/Reports/summary.pdf",
-                ancestors: [{ id: folder.id, name: "Reports" }],
-                inTrash: false,
             }),
         ).toBe(true);
         expect(
-            Value.Check(vaultResolveResponseSchema, {
-                entry: site,
-                path: "/Reports/launch",
-                ancestors: [{ id: folder.id, name: "Reports" }],
+            Value.Check(vaultFolderLocationResponseSchema, {
+                ancestors: [],
                 inTrash: false,
+                folder,
+                path: "/Reports",
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(vaultFolderLocationResponseSchema, { ...where, folder: file, path: "/a" }),
+        ).toBe(false);
+        expect(
+            Value.Check(vaultResolveResponseSchema, {
+                ...where,
+                item: site,
+                path: "/Reports/launch.artifact",
                 innerPath: "img/hero.png",
             }),
         ).toBe(true);
+        expect(
+            Value.Check(vaultItemPageResponseSchema, {
+                items: [folder, file, site],
+                nextPageCursor: null,
+                cursor: "c",
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(vaultTrashPageResponseSchema, {
+                items: [
+                    { item: folder, path: "/Reports" },
+                    { item: file, path: "/Reports/summary.pdf" },
+                ],
+                nextPageCursor: null,
+                cursor: "c",
+            }),
+        ).toBe(true);
+    });
+
+    it("recognizes artifacts by their suffix and reads their manifest", () => {
+        expect(VAULT_ARTIFACT_SUFFIX).toBe(".artifact");
+        expect(VAULT_ARTIFACT_MANIFEST_PATH).toBe("artifact.json");
+        for (const name of ["launch.artifact", "Launch.ARTIFACT", ".artifact"])
+            expect(isVaultArtifactName(name)).toBe(true);
+        for (const name of ["launch.zip", "launch.artifact.zip", "artifact", "launch.artifacts"])
+            expect(isVaultArtifactName(name)).toBe(false);
+        expect(vaultArtifactDownloadName(site)).toBe("launch.artifact");
+        const manifest = {
+            format: "happy.artifact",
+            formatVersion: 1,
+            type: "html",
+            entry: "index.html",
+        };
+        expect(Value.Check(vaultArtifactManifestSchema, manifest)).toBe(true);
+        expect(
+            Value.Check(vaultArtifactManifestSchema, { ...manifest, title: "ignored extra" }),
+        ).toBe(true);
+        for (const invalid of [
+            { format: "other" },
+            { formatVersion: 2 },
+            { type: "pdf" },
+            { entry: "main.html" },
+        ])
+            expect(Value.Check(vaultArtifactManifestSchema, { ...manifest, ...invalid })).toBe(
+                false,
+            );
     });
 
     it("models versions, manifests, activity, and search results", () => {
         expect(Value.Check(vaultVersionSchema, fileVersion)).toBe(true);
         const siteVersion = {
             ...fileVersion,
-            entryId: site.id,
+            fileId: site.id,
             number: 1,
             size: 4096,
             sha256: null,
@@ -238,7 +307,7 @@ describe("vault Surface protocol", () => {
         expect(Value.Check(vaultVersionDetailSchema, fileVersion)).toBe(true);
         expect(Value.Check(vaultVersionSchema, { ...fileVersion, number: 0 })).toBe(false);
 
-        const activity = { id: version, entryId: file.id, at: now, actor: person, source: "api" };
+        const activity = { id: version, itemId: file.id, at: now, actor: person, source: "api" };
         for (const item of [
             { ...activity, kind: "created", name: "a.txt", parentId: null, copiedFrom: null },
             {
@@ -262,7 +331,15 @@ describe("vault Surface protocol", () => {
             Value.Check(vaultSearchResponseSchema, {
                 results: [
                     {
-                        entry: file,
+                        item: folder,
+                        path: "/Reports",
+                        match: "name",
+                        innerPath: null,
+                        line: null,
+                        snippet: null,
+                    },
+                    {
+                        item: file,
                         path: "/Reports/summary.pdf",
                         match: "name",
                         innerPath: null,
@@ -270,8 +347,8 @@ describe("vault Surface protocol", () => {
                         snippet: null,
                     },
                     {
-                        entry: site,
-                        path: "/Reports/launch",
+                        item: site,
+                        path: "/Reports/launch.artifact",
                         match: "content",
                         innerPath: "index.html",
                         line: 12,
@@ -283,7 +360,7 @@ describe("vault Surface protocol", () => {
         ).toBe(true);
         expect(
             Value.Check(vaultSearchResponseSchema.properties.results.items, {
-                entry: file,
+                item: file,
                 path: "/a",
                 match: "content",
                 innerPath: null,
@@ -291,41 +368,55 @@ describe("vault Surface protocol", () => {
                 snippet: "x",
             }),
         ).toBe(false);
+        expect(
+            Value.Check(vaultSearchResponseSchema.properties.results.items, {
+                item: folder,
+                path: "/Reports",
+                match: "content",
+                innerPath: null,
+                line: 1,
+                snippet: "x",
+            }),
+        ).toBe(false);
     });
 
     it("accepts exactly one content source and never a client-supplied author", () => {
         const base = { parentId: null, name: "Q3" };
-        expect(Value.Check(createVaultEntryRequestSchema, { ...base, kind: "folder" })).toBe(true);
+        expect(Value.Check(createVaultFolderRequestSchema, base)).toBe(true);
+        expect(Value.Check(createVaultFolderRequestSchema, { ...base, id: folder.id })).toBe(true);
+        expect(Value.Check(createVaultFolderRequestSchema, { ...base, uploadId: "u" })).toBe(false);
+        expect(Value.Check(createVaultFolderRequestSchema, { ...base, kind: "folder" })).toBe(
+            false,
+        );
         expect(
-            Value.Check(createVaultEntryRequestSchema, {
+            Value.Check(createVaultFileRequestSchema, {
                 ...base,
-                kind: "file",
                 uploadId: "u8p2l4o6a1d3e5f7g9h0j2k4",
                 id: file.id,
                 mutationId: "m",
             }),
         ).toBe(true);
         expect(
-            Value.Check(createVaultEntryRequestSchema, {
+            Value.Check(createVaultFileRequestSchema, {
                 ...base,
-                kind: "artifact",
-                fromEntryId: site.id,
+                name: "launch.artifact",
+                fromFileId: site.id,
                 fromVersion: 1,
             }),
         ).toBe(true);
         for (const invalid of [
-            { ...base, kind: "folder", uploadId: "u8p2" },
-            { ...base, kind: "file" },
-            { ...base, kind: "file", uploadId: "u", fromEntryId: "e" },
-            { ...base, kind: "file", uploadId: "u", createdBy: person },
-            { name: "Q3", kind: "folder" },
+            base,
+            { ...base, kind: "file", uploadId: "u" },
+            { ...base, uploadId: "u", fromFileId: "e" },
+            { ...base, uploadId: "u", createdBy: person },
+            { name: "Q3", uploadId: "u" },
         ])
-            expect(Value.Check(createVaultEntryRequestSchema, invalid)).toBe(false);
+            expect(Value.Check(createVaultFileRequestSchema, invalid)).toBe(false);
 
-        expect(Value.Check(updateVaultEntryRequestSchema, { name: "b" })).toBe(true);
-        expect(Value.Check(updateVaultEntryRequestSchema, { parentId: null })).toBe(true);
-        expect(Value.Check(updateVaultEntryRequestSchema, { mutationId: "m" })).toBe(false);
-        expect(Value.Check(restoreVaultEntryRequestSchema, {})).toBe(true);
+        expect(Value.Check(updateVaultItemRequestSchema, { name: "b" })).toBe(true);
+        expect(Value.Check(updateVaultItemRequestSchema, { parentId: null })).toBe(true);
+        expect(Value.Check(updateVaultItemRequestSchema, { mutationId: "m" })).toBe(false);
+        expect(Value.Check(restoreVaultItemRequestSchema, {})).toBe(true);
         expect(Value.Check(createVaultVersionRequestSchema, { uploadId: "u" })).toBe(true);
         expect(Value.Check(createVaultVersionRequestSchema, { fromVersion: 2 })).toBe(true);
         expect(
@@ -360,18 +451,29 @@ describe("vault Surface protocol", () => {
         expect(Value.Check(createVaultUploadRequestSchema, { size: 1, sha256: "ABC" })).toBe(false);
     });
 
-    it("carries shared entry, version, removal, and settings events", () => {
-        expect(Value.Check(vaultEntryCreatedPayloadSchema, { entry: file, mutationId: "m" })).toBe(
-            true,
-        );
+    it("carries shared folder, file, version, removal, and settings events", () => {
+        expect(Value.Check(vaultFileCreatedPayloadSchema, { file, mutationId: "m" })).toBe(true);
+        expect(Value.Check(vaultFileCreatedPayloadSchema, { file: folder })).toBe(false);
+        expect(Value.Check(vaultFolderCreatedPayloadSchema, { folder })).toBe(true);
+        const moved = {
+            surfaceId,
+            folderId: folder.id,
+            previousVersion: version,
+            version: nextVersion,
+            changes: { name: "Q4", deletedAt: null, updatedAt: now, updatedBy: person },
+        };
+        expect(Value.Check(vaultFolderUpdatedPayloadSchema, moved)).toBe(true);
+        expect(
+            Value.Check(vaultFolderRemovedPayloadSchema, { surfaceId, folderId: folder.id }),
+        ).toBe(true);
         const updated = {
             surfaceId,
-            entryId: file.id,
+            fileId: file.id,
             previousVersion: version,
             version: nextVersion,
         };
         expect(
-            Value.Check(vaultEntryUpdatedPayloadSchema, {
+            Value.Check(vaultFileUpdatedPayloadSchema, {
                 ...updated,
                 changes: {
                     name: "b.pdf",
@@ -382,24 +484,24 @@ describe("vault Surface protocol", () => {
             }),
         ).toBe(true);
         expect(
-            Value.Check(vaultEntryUpdatedPayloadSchema, {
+            Value.Check(vaultFileUpdatedPayloadSchema, {
                 ...updated,
                 changes: { latestVersion: 4, size: 1, sha256, updatedAt: now, updatedBy: agent },
             }),
         ).toBe(true);
         expect(
-            Value.Check(vaultEntryUpdatedPayloadSchema, {
+            Value.Check(vaultFileUpdatedPayloadSchema, {
                 ...updated,
                 changes: { deletedAt: now, updatedAt: now },
             }),
         ).toBe(false);
-        expect(Value.Check(vaultEntryRemovedPayloadSchema, { surfaceId, entryId: file.id })).toBe(
+        expect(Value.Check(vaultFileRemovedPayloadSchema, { surfaceId, fileId: file.id })).toBe(
             true,
         );
         expect(
             Value.Check(vaultVersionUpdatedPayloadSchema, {
                 surfaceId,
-                entryId: file.id,
+                fileId: file.id,
                 number: 2,
                 pinned: true,
             }),
@@ -436,33 +538,39 @@ describe("vault Surface protocol", () => {
                 ifMatch: headers.get("if-match"),
                 contentRange: headers.get("content-range"),
             });
-            return new Response(JSON.stringify({ entry: file }), { status: 200 });
+            return new Response(JSON.stringify({ file }), { status: 200 });
         };
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
-        const entryId = file.id;
+        const fileId = file.id;
         await client.getVaultSettings(surfaceId);
         await client.updateVaultSettings(surfaceId, { retention: DEFAULT_VAULT_RETENTION });
-        await client.listVaultEntries(surfaceId, { parentId: folder.id, sort: "size", limit: 2 });
-        await client.getVaultEntry(surfaceId, "entry/1");
+        await client.listVaultItems(surfaceId, { parentId: folder.id, sort: "size", limit: 2 });
+        await client.getVaultFile(surfaceId, "file/1");
+        await client.getVaultFolder(surfaceId, folder.id);
         await client.resolveVaultPath(surfaceId, "/Reports/Q3 & co/summary.pdf");
         await client.listVaultTree(surfaceId, { pageCursor: "p1" });
         await client.searchVault(surfaceId, { q: "launch day", kind: "content" });
         await client.listVaultTrash(surfaceId);
-        await client.createVaultEntry(surfaceId, { parentId: null, name: "Q3", kind: "folder" });
-        await client.updateVaultEntry(surfaceId, entryId, { name: "b.pdf" }, { ifMatch: version });
-        await client.deleteVaultEntry(surfaceId, entryId, { ifMatch: version, mutationId: "d" });
-        await client.restoreVaultEntry(surfaceId, entryId, {}, { ifMatch: nextVersion });
-        await client.listVaultVersions(surfaceId, entryId, { limit: 5 });
-        await client.getVaultVersion(surfaceId, entryId, "latest");
+        await client.createVaultFolder(surfaceId, { parentId: null, name: "Q3" });
+        await client.createVaultFile(surfaceId, { parentId: null, name: "a.txt", uploadId: "u1" });
+        await client.updateVaultFolder(surfaceId, folder.id, { name: "Q4" }, { ifMatch: version });
+        await client.deleteVaultFolder(surfaceId, folder.id, { ifMatch: version });
+        await client.restoreVaultFolder(surfaceId, folder.id, {}, { ifMatch: nextVersion });
+        await client.updateVaultFile(surfaceId, fileId, { name: "b.pdf" }, { ifMatch: version });
+        await client.deleteVaultFile(surfaceId, fileId, { ifMatch: version, mutationId: "d" });
+        await client.restoreVaultFile(surfaceId, fileId, {}, { ifMatch: nextVersion });
+        await client.listVaultVersions(surfaceId, fileId, { limit: 5 });
+        await client.getVaultVersion(surfaceId, fileId, "latest");
         await client.createVaultVersion(
             surfaceId,
-            entryId,
+            fileId,
             { fromVersion: 1 },
             { ifMatch: version },
         );
-        await client.pinVaultVersion(surfaceId, entryId, 2);
-        await client.unpinVaultVersion(surfaceId, entryId, 2, { mutationId: "u" });
-        await client.listVaultActivity(surfaceId, entryId);
+        await client.pinVaultVersion(surfaceId, fileId, 2);
+        await client.unpinVaultVersion(surfaceId, fileId, 2, { mutationId: "u" });
+        await client.listVaultFileActivity(surfaceId, fileId);
+        await client.listVaultFolderActivity(surfaceId, folder.id);
         await client.createVaultUpload({ size: 3 });
         await client.uploadVaultChunk("upload1", {
             data: new Uint8Array([1, 2]),
@@ -474,7 +582,15 @@ describe("vault Surface protocol", () => {
         await client.cancelVaultUpload("upload1");
 
         const base = `http://agent.local/v0/surfaces/vault/${surfaceId}`;
-        const entry = `${base}/entries/${entryId}`;
+        const entry = `${base}/files/${fileId}`;
+        const dir = `${base}/folders/${folder.id}`;
+        const post = (url: string, body: unknown, ifMatch: string | null = null) => ({
+            method: "POST",
+            url,
+            body,
+            ifMatch,
+            contentRange: null,
+        });
         const get = (url: string) => ({
             method: "GET",
             url,
@@ -491,19 +607,24 @@ describe("vault Surface protocol", () => {
                 ifMatch: null,
                 contentRange: null,
             },
-            get(`${base}/entries?parentId=${folder.id}&sort=size&limit=2`),
-            get(`${base}/entries/entry%2F1`),
+            get(`${base}/items?parentId=${folder.id}&sort=size&limit=2`),
+            get(`${base}/files/file%2F1`),
+            get(dir),
             get(`${base}/resolve?path=%2FReports%2FQ3+%26+co%2Fsummary.pdf`),
             get(`${base}/tree?pageCursor=p1`),
             get(`${base}/search?q=launch+day&kind=content`),
             get(`${base}/trash`),
+            post(`${base}/folders`, { parentId: null, name: "Q3" }),
+            post(`${base}/files`, { parentId: null, name: "a.txt", uploadId: "u1" }),
             {
-                method: "POST",
-                url: `${base}/entries`,
-                body: { parentId: null, name: "Q3", kind: "folder" },
-                ifMatch: null,
+                method: "PATCH",
+                url: dir,
+                body: { name: "Q4" },
+                ifMatch: version,
                 contentRange: null,
             },
+            post(`${dir}/delete`, {}, version),
+            post(`${dir}/restore`, {}, nextVersion),
             {
                 method: "PATCH",
                 url: entry,
@@ -549,6 +670,7 @@ describe("vault Surface protocol", () => {
                 contentRange: null,
             },
             get(`${entry}/activity`),
+            get(`${dir}/activity`),
             {
                 method: "POST",
                 url: "http://agent.local/v0/vault-uploads",
@@ -598,7 +720,7 @@ describe("vault Surface protocol", () => {
             });
         };
         const client = new HappyAgentClient({ endpoint: "http://agent.local/", token: "t", fetch });
-        const entry = `http://agent.local/v0/surfaces/vault/${surfaceId}/entries/${file.id}`;
+        const entry = `http://agent.local/v0/surfaces/vault/${surfaceId}/files/${file.id}`;
 
         expect(client.vaultFileContentUrl(surfaceId, file.id, 3)).toBe(
             `${entry}/versions/3/content`,
@@ -607,10 +729,12 @@ describe("vault Surface protocol", () => {
             `${entry}/versions/latest/content?download=true`,
         );
         expect(client.vaultArtifactFileUrl(surfaceId, site.id, 1, "img/hero #1.png")).toBe(
-            `http://agent.local/v0/surfaces/vault/${surfaceId}/entries/${site.id}/versions/1/files/img/hero%20%231.png`,
+            `http://agent.local/v0/surfaces/vault/${surfaceId}/files/${site.id}/versions/1/artifact/img/hero%20%231.png`,
         );
         expect(client.vaultArtifactZipUrl(surfaceId, file.id, 2)).toBe(`${entry}/versions/2/zip`);
-        expect(client.vaultFolderZipUrl(surfaceId, file.id)).toBe(`${entry}/zip`);
+        expect(client.vaultFolderZipUrl(surfaceId, folder.id)).toBe(
+            `http://agent.local/v0/surfaces/vault/${surfaceId}/folders/${folder.id}/zip`,
+        );
         expect(client.vaultFolderZipUrl(surfaceId)).toBe(
             `http://agent.local/v0/surfaces/vault/${surfaceId}/zip`,
         );
@@ -630,18 +754,18 @@ describe("vault Surface protocol", () => {
             }),
         ).toBeNull();
         expect(requests[2]?.url).toBe(
-            `http://agent.local/v0/surfaces/vault/${surfaceId}/entries/${site.id}/versions/1/files/index.html`,
+            `http://agent.local/v0/surfaces/vault/${surfaceId}/files/${site.id}/versions/1/artifact/index.html`,
         );
     });
 
-    it("surfaces name and version conflicts with the entry they concern", async () => {
+    it("surfaces name and version conflicts with the item they concern", async () => {
         const replies = [
             {
                 status: 409,
                 body: {
                     error: "A file with this name already exists.",
                     code: "name_taken",
-                    entry: file,
+                    item: file,
                 },
             },
             {
@@ -669,11 +793,11 @@ describe("vault Surface protocol", () => {
         };
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
         const taken = await client
-            .updateVaultEntry(surfaceId, site.id, { name: "summary.pdf" }, { ifMatch: version })
+            .updateVaultFile(surfaceId, site.id, { name: "summary.pdf" }, { ifMatch: version })
             .catch((error: unknown) => error);
         expect(taken).toBeInstanceOf(HappyAgentApiError);
         expect((taken as HappyAgentApiError).code).toBe("name_taken");
-        expect((taken as HappyAgentApiError).body).toMatchObject({ entry: { id: file.id } });
+        expect((taken as HappyAgentApiError).body).toMatchObject({ item: { id: file.id } });
         const behind = await client
             .uploadVaultChunk("upload1", { data: new Uint8Array([1]), start: 4, size: 6 })
             .catch((error: unknown) => error);

@@ -77,8 +77,9 @@ import { Nullable } from "./common.js";
 import {
     vaultArtifactSummarySchema,
     vaultActorSchema,
-    vaultEntryNameSchema,
-    vaultEntrySchema,
+    vaultFileSchema,
+    vaultFolderSchema,
+    vaultNameSchema,
 } from "./vaults.js";
 import { vaultRetentionSchema } from "./vaultRetention.js";
 import type { Terminal } from "./terminals.js";
@@ -371,48 +372,82 @@ export const surfaceMessageUpdatedPayloadSchema = Type.Object({
 });
 export type SurfaceMessageUpdatedPayload = Static<typeof surfaceMessageUpdatedPayloadSchema>;
 
-/** A vault entry was created: a folder, or a file or artifact with its version 1. */
-export const vaultEntryCreatedPayloadSchema = Type.Object({
-    entry: vaultEntrySchema,
+/** A vault folder was created, empty. */
+export const vaultFolderCreatedPayloadSchema = Type.Object({
+    folder: vaultFolderSchema,
     mutationId: Type.Optional(mutationIdSchema),
 });
-export type VaultEntryCreatedPayload = Static<typeof vaultEntryCreatedPayloadSchema>;
+export type VaultFolderCreatedPayload = Static<typeof vaultFolderCreatedPayloadSchema>;
 
 /**
- * Rename, move, new version, Trash, or restore; only the changed fields, always with `updatedAt`
+ * Rename, move, Trash, or restore of a folder; only the changed fields, always with `updatedAt`
  * and `updatedBy`. Deleting or restoring a folder announces the folder alone.
  */
-export const vaultEntryUpdatedPayloadSchema = Type.Object({
+export const vaultFolderUpdatedPayloadSchema = Type.Object({
+    changes: Type.Object({
+        deletedAt: Type.Optional(Nullable(timestampSchema)),
+        name: Type.Optional(vaultNameSchema),
+        parentId: Type.Optional(Nullable(cuid2Schema)),
+        updatedAt: timestampSchema,
+        updatedBy: vaultActorSchema,
+    }),
+    folderId: cuid2Schema,
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    surfaceId: surfaceIdSchema,
+    version: resourceVersionSchema,
+});
+export type VaultFolderUpdatedPayload = Static<typeof vaultFolderUpdatedPayloadSchema>;
+
+/** A folder in the Trash was removed for good, with everything inside it; drop all of it. */
+export const vaultFolderRemovedPayloadSchema = Type.Object({
+    folderId: cuid2Schema,
+    surfaceId: surfaceIdSchema,
+});
+export type VaultFolderRemovedPayload = Static<typeof vaultFolderRemovedPayloadSchema>;
+
+/** A vault file was created: a plain file or an artifact, with its version 1. */
+export const vaultFileCreatedPayloadSchema = Type.Object({
+    file: vaultFileSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type VaultFileCreatedPayload = Static<typeof vaultFileCreatedPayloadSchema>;
+
+/**
+ * Rename, move, new version, Trash, or restore of a file; only the changed fields, always with
+ * `updatedAt` and `updatedBy`.
+ */
+export const vaultFileUpdatedPayloadSchema = Type.Object({
     changes: Type.Object({
         artifact: Type.Optional(Nullable(vaultArtifactSummarySchema)),
         deletedAt: Type.Optional(Nullable(timestampSchema)),
         latestVersion: Type.Optional(Type.Integer({ minimum: 1 })),
         mediaType: Type.Optional(Nullable(Type.String({ minLength: 1 }))),
-        name: Type.Optional(vaultEntryNameSchema),
+        name: Type.Optional(vaultNameSchema),
         parentId: Type.Optional(Nullable(cuid2Schema)),
         sha256: Type.Optional(Nullable(artifactSha256Schema)),
         size: Type.Optional(Type.Integer({ minimum: 0 })),
         updatedAt: timestampSchema,
         updatedBy: vaultActorSchema,
     }),
-    entryId: cuid2Schema,
+    fileId: cuid2Schema,
     mutationId: Type.Optional(mutationIdSchema),
     previousVersion: resourceVersionSchema,
     surfaceId: surfaceIdSchema,
     version: resourceVersionSchema,
 });
-export type VaultEntryUpdatedPayload = Static<typeof vaultEntryUpdatedPayloadSchema>;
+export type VaultFileUpdatedPayload = Static<typeof vaultFileUpdatedPayloadSchema>;
 
-/** A Trash item was removed for good; drop it and every entry below it. */
-export const vaultEntryRemovedPayloadSchema = Type.Object({
-    entryId: cuid2Schema,
+/** A file in the Trash was removed for good, with its versions. */
+export const vaultFileRemovedPayloadSchema = Type.Object({
+    fileId: cuid2Schema,
     surfaceId: surfaceIdSchema,
 });
-export type VaultEntryRemovedPayload = Static<typeof vaultEntryRemovedPayloadSchema>;
+export type VaultFileRemovedPayload = Static<typeof vaultFileRemovedPayloadSchema>;
 
-/** A version was pinned or unpinned; the entry and its `version` are unchanged. */
+/** A version was pinned or unpinned; the vault file and its `version` are unchanged. */
 export const vaultVersionUpdatedPayloadSchema = Type.Object({
-    entryId: cuid2Schema,
+    fileId: cuid2Schema,
     mutationId: Type.Optional(mutationIdSchema),
     number: Type.Integer({ minimum: 1 }),
     pinned: Type.Boolean(),
@@ -728,9 +763,12 @@ export type HappyAgentEvent =
     | EventEnvelope<"surface_message.created", SurfaceMessageCreatedPayload>
     | EventEnvelope<"surface_message.updated", SurfaceMessageUpdatedPayload>
     | EventEnvelope<"surface.document.updated", SurfaceDocumentUpdatedPayload>
-    | EventEnvelope<"vault.entry.created", VaultEntryCreatedPayload>
-    | EventEnvelope<"vault.entry.updated", VaultEntryUpdatedPayload>
-    | EventEnvelope<"vault.entry.removed", VaultEntryRemovedPayload>
+    | EventEnvelope<"vault.folder.created", VaultFolderCreatedPayload>
+    | EventEnvelope<"vault.folder.updated", VaultFolderUpdatedPayload>
+    | EventEnvelope<"vault.folder.removed", VaultFolderRemovedPayload>
+    | EventEnvelope<"vault.file.created", VaultFileCreatedPayload>
+    | EventEnvelope<"vault.file.updated", VaultFileUpdatedPayload>
+    | EventEnvelope<"vault.file.removed", VaultFileRemovedPayload>
     | EventEnvelope<"vault.version.updated", VaultVersionUpdatedPayload>
     | EventEnvelope<"vault.settings.updated", VaultSettingsUpdatedPayload>
     | EventEnvelope<"artifact.created", ArtifactCreatedPayload>
