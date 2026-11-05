@@ -132,6 +132,21 @@ describe("artifacts protocol", () => {
                 Value.Check(artifactUpdatedChangesSchema, { ...changes, live: liveContent }),
             ).toBe(true);
         }
+        // A cover in the changes is the whole cover object, its preview included.
+        expect(
+            Value.Check(artifactUpdatedChangesSchema, {
+                ...changes,
+                cover: {
+                    path: "cover.png",
+                    mimeType: "image/png",
+                    width: 1600,
+                    height: 900,
+                    aspect: "wide",
+                    thumbhash: "1QcSHQRnh493V4dIh4eXh1h4kJUI",
+                    preview: { width: 640, height: 360 },
+                },
+            }),
+        ).toBe(true);
         for (const invalidLive of [
             {},
             { url: live.url },
@@ -365,6 +380,17 @@ describe("artifacts protocol", () => {
         expect(
             Value.Check(artifactSchema, { ...artifact, cover: { ...cover, aspect: "tall" } }),
         ).toBe(true);
+        const previewed = { ...cover, preview: { width: 640, height: 360 } };
+        expect(Value.Check(artifactSchema, { ...artifact, cover: previewed })).toBe(true);
+        expect(Value.Check(artifactVersionSchema, { ...firstVersion, cover: previewed })).toBe(
+            true,
+        );
+        expect(
+            Value.Check(artifactSchema, {
+                ...artifact,
+                cover: { ...cover, preview: { width: 0 } },
+            }),
+        ).toBe(false);
         const summary = "Revenue up 18% QoQ, driven by enterprise seats.";
         expect(Value.Check(artifactSchema, { ...artifact, cover, summary })).toBe(true);
         expect(Value.Check(artifactSchema, { ...artifact, cover: null, summary: null })).toBe(true);

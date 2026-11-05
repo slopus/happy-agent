@@ -706,9 +706,9 @@ artifact without a cover or summary.
 Artifact media metadata and previews are additive and do not increment the protocol version. A
 daemon that has them includes `width`, `height`, `durationMs`, `thumbhash`, and `preview` on the
 artifact file objects it measured, as described under "Media metadata" in Artifacts, and serves
-`GET /v0/artifacts/:artifactId/versions/:number/previews/*path`. Older compatible daemons omit the
-fields and answer the preview route `404`; a client then falls back to the whole file or the type's
-glyph.
+`GET /v0/artifacts/:artifactId/versions/:number/previews/*path`. A cover with a preview repeats
+it as the cover object's own `preview`. Older compatible daemons omit the fields and answer the
+preview route `404`; a client then falls back to the whole file or the type's glyph.
 
 The Feed subject filter is additive and does not increment the protocol version. A daemon that has
 it reports `capabilities.feedSubjectFilter: true` from health, accepts `subjects` on `GET /v0/feed`
@@ -12126,7 +12126,10 @@ post-like plain text a client shows under the title.
   loads the image. It also records a `thumbhash` of the first frame, base64 in the same format as
   chat media and pictures, which a client draws until the image loads; it is `null` when the daemon
   could not decode the pixels, which is not an error. A client loads it through the file route,
-  `GET /v0/artifacts/:artifactId/versions/:number/files/<path>`, at the version it shows.
+  `GET /v0/artifacts/:artifactId/versions/:number/files/<path>`, at the version it shows. A cover
+  may also carry `preview`, `{ "width", "height" }`: the same still preview its file object
+  describes, served by `GET /v0/artifacts/:artifactId/versions/:number/previews/<path>`, which a
+  list or grid loads instead of the whole cover. It is absent when the cover's file has no preview.
 - A cover has one of two standard shapes, so it looks the same everywhere:
 
     | `aspect`   | Shape | Recommended size | Smallest |
@@ -12215,7 +12218,8 @@ updating or deleting an artifact requires `If-Match` with it.
         "width": 1600,
         "height": 900,
         "aspect": "wide",
-        "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI"
+        "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI",
+        "preview": { "width": 640, "height": 360 }
     },
     "summary": "Revenue up 18% QoQ, driven by enterprise seats.",
     "live": null,
@@ -12253,8 +12257,8 @@ Fields:
 - `background` — the latest version's background, or `null` for a transparent slot.
 - `display` — the latest version's display preference, or `null` to leave it to the client.
 - `cover` — the latest version's cover, `{ "path", "mimeType", "width", "height", "aspect",
-"thumbhash" }`, or
-  `null` for none; see "Covers and summaries". Absent on older daemons.
+"thumbhash", "preview"? }`, or `null` for none; see "Covers and summaries". Absent on older
+  daemons.
 - `summary` — the latest version's summary, or `null` for none. Absent on older daemons.
 - `live` — the latest version's `{ "url", "networkId" }`, or `null` for file content. Absent on
   older daemons. When present and non-null, it takes precedence over `entry`; see "Live URLs".
@@ -12290,7 +12294,8 @@ Fields:
         "width": 1600,
         "height": 900,
         "aspect": "wide",
-        "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI"
+        "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI",
+        "preview": { "width": 640, "height": 360 }
     },
     "summary": "Revenue up 18% QoQ, driven by enterprise seats.",
     "live": null,
@@ -12311,8 +12316,10 @@ Fields:
   `"wide"` or `"square"`, a set that may grow, and `thumbhash` is the base64 ThumbHash of its first
   frame or `null` when it could not be decoded. The daemon computes the ThumbHash when the version is
   made and reuses it while the cover's path and digest are unchanged; versions made before ThumbHashes
-  existed keep `null` until the next version. `thumbhash` is absent on older daemons, and `cover`
-  itself is absent on still older ones.
+  existed keep `null` until the next version. `preview` is optional: the `{ "width", "height" }` of
+  the cover file's still preview, exactly as on its file object, and absent when it has none.
+  `thumbhash` and `preview` are absent on older daemons, and `cover` itself is absent on still older
+  ones.
 - `summary` — this version's summary, post-like plain text with `\n` line breaks, or `null` for
   none. Absent on older daemons.
 - `live` — this version's `{ "url", "networkId" }`, or `null` for file content. Absent on older
@@ -14139,8 +14146,9 @@ agent's change carries none.
     - `changes` always holds `latestVersion`, `latestMajor`, `latestMinor`, `title`, `entry`,
       `fileCount`, `size`, `background`, `display`, `cover`, `summary`, `live`, `updatedBy`,
       `updatedSource`, and `updatedAt`; older daemons leave out `latestMajor` and `latestMinor`, and
-      daemons predating covers leave out `cover` and `summary`. Read the new version's files through
-      the version routes.
+      daemons predating covers leave out `cover` and `summary`. `cover` is the whole cover object,
+      its `thumbhash` and any `preview` included. Read the new version's files through the version
+      routes.
       Daemons predating live-URL artifacts omit `live`; current daemons include the new version's
       `{ "url", "networkId" }`, or `null` for file content.
 - `artifact.deleted` — the artifact was deleted and is now a tombstone.

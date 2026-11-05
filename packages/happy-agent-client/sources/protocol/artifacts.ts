@@ -116,6 +116,13 @@ export const artifactCoverAspectSchema = Type.Union([
 ]);
 export type ArtifactCoverAspect = Static<typeof artifactCoverAspectSchema>;
 
+/** The pixel size of a file's still preview, served by the preview route. */
+export const artifactFilePreviewSchema = Type.Object({
+    width: Type.Integer({ minimum: 1 }),
+    height: Type.Integer({ minimum: 1 }),
+});
+export type ArtifactFilePreview = Static<typeof artifactFilePreviewSchema>;
+
 /**
  * The image a feed shows for a version, full width: one of the version's files, served by the
  * file route, with its intrinsic size in pixels decoded by the daemon and the standard shape that
@@ -134,6 +141,11 @@ export const artifactCoverSchema = Type.Object({
      * could not decode it, and absent on older daemons.
      */
     thumbhash: Type.Optional(Nullable(Type.String())),
+    /**
+     * The cover file's still preview, as its file object's `preview`, for a list or grid to load
+     * instead of the whole cover; absent when it has none and on older daemons.
+     */
+    preview: Type.Optional(artifactFilePreviewSchema),
 });
 export type ArtifactCover = Static<typeof artifactCoverSchema>;
 
@@ -144,13 +156,6 @@ export const artifactBackgroundInputSchema = Nullable(
 
 /** A lowercase hexadecimal SHA-256 digest. */
 export const artifactSha256Schema = Type.String({ pattern: "^[0-9a-f]{64}$" });
-
-/** The pixel size of a file's still preview, served by the preview route. */
-export const artifactFilePreviewSchema = Type.Object({
-    width: Type.Integer({ minimum: 1 }),
-    height: Type.Integer({ minimum: 1 }),
-});
-export type ArtifactFilePreview = Static<typeof artifactFilePreviewSchema>;
 
 /**
  * One file of one version. Equal digests mean equal content. The daemon measures the pictures of
