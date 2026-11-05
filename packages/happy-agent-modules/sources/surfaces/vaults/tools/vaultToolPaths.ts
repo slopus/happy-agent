@@ -71,7 +71,7 @@ export async function vaultToolFile(
         if (entry.kind === "artifact")
             throw new SurfaceError(
                 "invalid_request",
-                `${JSON.stringify(path)} is an artifact, a small web site. List its files with list_vault and read one by its path, such as ${JSON.stringify(`${path.replace(/\/$/, "")}/${entry.artifact.entry}`)}.`,
+                `${JSON.stringify(path)} is an artifact, a vault app. List its files with list_vault and read one by its path, such as ${JSON.stringify(`${path.replace(/\/$/, "")}/${entry.artifact.entry}`)}.`,
             );
         const stored = await vaults.fileContent(ctx, surfaceId, entry.id, selector);
         return {

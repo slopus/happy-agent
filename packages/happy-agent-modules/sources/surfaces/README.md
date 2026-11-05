@@ -52,8 +52,8 @@ from the event's own timing. Every change also appends an immutable full revisio
 earlier state is restored by sending its fields through ordinary update. Tools speak local ISO
 8601 date-times with an IANA zone, so models never convert instants or expand repeats.
 
-Vault Surfaces are shared trees of folders and files; some files are artifacts, small static
-sites kept as one file named `*.artifact`. `vaults/` owns them in its own tables: items with a
+Vault Surfaces are shared trees of folders and files; some files are artifacts, vault apps:
+small web apps kept as one file named `*.artifact` and served from its zip bundle. `vaults/` owns them in its own tables: items with a
 live-name unique index, immutable numbered file versions, artifact version manifests, an
 append-only activity log, and per-vault retention settings. Folders and files are two kinds with
 their own routes, events, and tools; an empty folder is an ordinary folder that stays until it is

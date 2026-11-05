@@ -83,7 +83,7 @@ export function checkVaultBundle(
     const entry = files.find((file) => file.path === ENTRY_OF[type]);
     if (entry === undefined)
         throw refused(
-            `The manifest says the artifact is ${type === "html" ? "an HTML" : "a Markdown"} site, but it has no "${ENTRY_OF[type]}" at its root.`,
+            `The manifest says the artifact is ${type === "html" ? "an HTML" : "a Markdown"} app, but it has no "${ENTRY_OF[type]}" at its root.`,
         );
     const limit = MAX_ENTRY_BYTES[type];
     if (entry.size > limit)
@@ -120,7 +120,7 @@ export function parseArtifactManifest(bytes: Uint8Array): VaultArtifactManifest 
         );
     if (value.entry !== ENTRY_OF[value.type])
         throw refused(
-            `The manifest's entry must be "${ENTRY_OF[value.type]}" for ${value.type === "html" ? "an HTML" : "a Markdown"} site.`,
+            `The manifest's entry must be "${ENTRY_OF[value.type]}" for ${value.type === "html" ? "an HTML" : "a Markdown"} app.`,
         );
     return value;
 }

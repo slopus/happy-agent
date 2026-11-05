@@ -301,12 +301,20 @@ and every create, rename, restore, and copy refuses a name that disagrees with i
 suffix alone tells people, clients, and agents what an item is, and the name decides the kind of
 a new file. An artifact travels as a `.artifact` file: a zip with `artifact.json`
 (`format: "happy.artifact"`, `formatVersion: 1`, `type`, `entry`) beside its files. The manifest
-is never stored as a site file; the daemon keeps type and entry on the version and writes the
+is never stored as an app file; the daemon keeps type and entry on the version and writes the
 manifest again on download, with every record at the version's creation time, so a downloaded
 `.artifact` file uploads back as identical content and makes no new version. Uploads must carry a
 manifest; a higher format version is refused as made by a newer Happy. Agent bundles from a
 folder or plain zip may leave it out and take their type from `index.html` or `index.md`, and a
 file written into an artifact keeps the artifact's type.
+
+## An artifact is a vault app, not a site
+
+Steve corrected the wording: "it is not site it is app". Every description, error, tool, and prompt
+calls an artifact a vault app, a small web app kept as one `.artifact` file and served from its
+zip bundle. Only the prose changed: `kind: "artifact"`, the `artifact` fields, the routes, and the
+`.artifact` suffix of the stored name stay. Clients hide that suffix and tell a vault app apart by
+its preview and name, but the daemon and its API always carry the full name.
 
 ## The default vault retention is Time Machine
 

@@ -10420,7 +10420,7 @@ attribution, creator join rules, image handling, durable replay, and permission 
 ### Vault Surfaces
 
 A `vault` Surface is a shared file store shaped like a file system without being one: a tree of
-folders, files, and artifacts that people browse like a Finder window or search, and that
+folders, files, and vault apps that people browse like a Finder window or search, and that
 keeps earlier versions of every file under a retention policy the vault's people choose. A daemon
 that serves vaults reports `capabilities.vaults: true` from health.
 
@@ -10442,7 +10442,7 @@ onboarded authenticated person may read and change every vault, and guests never
 #### Folders and files
 
 A vault holds **folders** and **files**; together they are its **items**. A folder holds other
-items and may be empty. A file is either a plain file or an artifact, a small web site kept as one
+items and may be empty. A file is either a plain file or an artifact, a vault app kept as one
 file, and every file has numbered versions; folders have none. Storage is flat: an item names its
 parent folder, and the vault's root is not a folder. Every item has a `kind`, `"folder"`, `"file"`,
 or `"artifact"`, so a list holding both tells them apart, and an item's kind never changes.
@@ -10688,9 +10688,9 @@ removed only with its item.
 
 #### Artifacts
 
-An artifact is a small static web site kept as one file: a bundle of files, each named by
-a relative `path` under the artifact file object's path rules, served under one URL prefix so
-relative references resolve without rewriting. Its inner files are not items of the tree, and its
+An artifact is a vault app: a small web app kept as one file. Its `.artifact` file is a zip bundle
+served as a web app, its files each named by a relative `path` under the artifact file object's path
+rules and served under one URL prefix so relative references resolve without rewriting. Its inner files are not items of the tree, and its
 versions are whole bundles. A version's `artifact` summary is `{ "type", "entry", "fileCount" }`:
 
 | `type`     | `entry`             | Rules                                               |
@@ -10700,12 +10700,12 @@ versions are whole bundles. A version's `artifact` summary is `{ "type", "entry"
 
 A bundle holding `index.html` at its root is `html`, otherwise one holding `index.md` is
 `markdown`, otherwise it is refused. The type may differ between versions. `artifact.json` at a
-bundle's root is reserved for its manifest and is never a site file. Every file holds at
+bundle's root is reserved for its manifest and is never one of the app's files. Every file holds at
 least one byte, file media types come from the artifact extension table, paths are case-sensitive,
 and no path is also a folder of another. A single-version read carries `files`, the whole file list
 in path order, each `{ "path", "mimeType", "size", "sha256" }` exactly as the artifact file object.
 
-An artifact travels as a **`.artifact` file**: a zip holding the site's files at its root beside
+An artifact travels as a **`.artifact` file**: a zip holding the app's files at its root beside
 `artifact.json`, its manifest.
 
 ```json
@@ -10714,8 +10714,8 @@ An artifact travels as a **`.artifact` file**: a zip holding the site's files at
 
 `format` is always `happy.artifact`. `formatVersion` is `1`; a higher one is refused as made by a
 newer Happy. `type` and `entry` are the version's summary, and `entry` must be the file the type
-names in the table above. Fields not described here are ignored. The manifest is not stored as a
-site file: the daemon keeps `type` and `entry` on the version and writes the manifest again on
+names in the table above. Fields not described here are ignored. The manifest is not stored as an
+app file: the daemon keeps `type` and `entry` on the version and writes the manifest again on
 download, so a downloaded `.artifact` file uploads back as the same content.
 
 People make artifact versions by uploading a `.artifact` file. A client uploading a file whose name
@@ -10964,8 +10964,8 @@ bootstrap.
 Agents read and change vaults only through fixed common tools, available to every ordinary agent
 model, shaped like the file tools they already know. Each takes the vault's `surfaceId` and
 addresses folders and files by vault path, resolved case-insensitively. A path that runs on past an
-artifact addresses a file inside it: `/Sites/launch.artifact/index.html` is the entry file of the
-artifact `launch.artifact`, and `/Sites/launch.artifact/img/hero.png` is one of its files. Writing
+artifact addresses a file inside it: `/Apps/launch.artifact/index.html` is the entry file of the
+vault app `launch.artifact`, and `/Apps/launch.artifact/img/hero.png` is one of its files. Writing
 such a path makes a new version of the artifact with that file added or replaced.
 
 - `list_vault` accepts `surfaceId`, optional `path` (default `/`), and optional `depth` from 1

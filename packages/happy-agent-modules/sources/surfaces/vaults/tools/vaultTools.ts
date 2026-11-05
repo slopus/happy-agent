@@ -39,7 +39,7 @@ import {
 
 /** The one capability every vault tool contributes to the model's instructions. */
 const CAPABILITY =
-    "Read, search, write, and organize files, folders, and small web sites in shared vault Surfaces, with every earlier version kept.";
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept.";
 const MAX_LINES_TO_READ = 2_000;
 const MAX_CHARACTERS = 60_000;
 const MAX_IMAGE_DIMENSION = 2048;
@@ -171,7 +171,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             capabilities: [CAPABILITY],
             searchKeywords: ["list vault", "vault folder", "browse vault", "vault ls"],
             description:
-                'Lists a vault folder like ls: its live folders, first and ending in /, then its files with their kinds, sizes, newest version numbers, and change times. depth (1–10, default 1) also lists what is inside the folders below. An artifact is a small web site kept as one file whose name ends in ".artifact"; listing one lists the files of its newest version. At most 1,000 lines. Paths start with / at the vault\'s root and match names case-insensitively.',
+                'Lists a vault folder like ls: its live folders, first and ending in /, then its files with their kinds, sizes, newest version numbers, and change times. depth (1–10, default 1) also lists what is inside the folders below. An artifact is a vault app, a small web app kept as one file whose name ends in ".artifact"; listing one lists the files of its newest version. At most 1,000 lines. Paths start with / at the vault\'s root and match names case-insensitively.',
             parameters: Type.Object(
                 {
                     surfaceId,
@@ -262,7 +262,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 "vault image",
                 "vault version",
             ],
-            description: `Reads a vault file by its path, or a file inside an artifact, such as "/Sites/launch.artifact/index.html" where launch.artifact is an artifact. Text comes back as numbered lines: a line number, then a tab, then the line, numbered from 1, up to ${String(MAX_LINES_TO_READ)} lines from offset. Raster images are shown to you; other binary files are described without their bytes. version reads an earlier version of the file, or of the artifact holding it; list them with list_vault_versions.`,
+            description: `Reads a vault file by its path, or a file inside an artifact, such as "/Apps/launch.artifact/index.html" where launch.artifact is a vault app. Text comes back as numbered lines: a line number, then a tab, then the line, numbered from 1, up to ${String(MAX_LINES_TO_READ)} lines from offset. Raster images are shown to you; other binary files are described without their bytes. version reads an earlier version of the file, or of the artifact holding it; list them with list_vault_versions.`,
             parameters: Type.Object(
                 {
                     surfaceId,
@@ -390,7 +390,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 "Writes a whole text file in a vault, creating it and any missing folders above it, or making the next version of the file already there. Every earlier version is kept.",
                 "Usage:",
                 "- Pass exactly one of content, the file's whole UTF-8 text, and fromVersion, which restores an earlier version of the file or artifact at path as its newest version.",
-                '- A path that runs into an artifact, such as "/Sites/launch.artifact/style.css", adds or replaces that file in the artifact\'s next version. Make a new artifact with write_vault_artifact.',
+                '- A path that runs into an artifact, such as "/Apps/launch.artifact/style.css", adds or replaces that file in the artifact\'s next version. Make a new artifact with write_vault_artifact.',
                 "- Prefer edit_vault_file to change part of an existing file. Copy binary files in with import_vault_file. Make an empty folder with create_vault_folder.",
                 "- Writing content identical to the newest version makes no version.",
             ].join("\n"),
@@ -1137,17 +1137,17 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             capabilities: [CAPABILITY],
             searchKeywords: [
                 "vault artifact",
-                "vault web site",
+                "vault app",
                 "publish html to vault",
-                "zip site to vault",
+                "zip app to vault",
             ],
             description:
-                'Creates an artifact, a small static web site kept as one vault file, at path, which must end in ".artifact", or makes the next version of the artifact there whose files are exactly those given. Pass files, a list of {"path", "content"} UTF-8 text files, or fromPath, a folder, a .zip, or a .artifact file on your machine. The bundle needs "index.html" (an html site) or "index.md" (a Markdown document) at its root; up to 256 files and 256 MiB, every file at least one byte. "artifact.json" at the root is the manifest of a .artifact file: it is refused in files, and read as the manifest from a folder or zip. Missing folders above path are created.',
+                'Creates an artifact, a vault app: a small web app kept as one vault file and served from its bundle, at path, which must end in ".artifact", or makes the next version of the artifact there whose files are exactly those given. Pass files, a list of {"path", "content"} UTF-8 text files, or fromPath, a folder, a .zip, or a .artifact file on your machine. The bundle needs "index.html" (an HTML app) or "index.md" (a Markdown document) at its root; up to 256 files and 256 MiB, every file at least one byte. "artifact.json" at the root is the manifest of a .artifact file: it is refused in files, and read as the manifest from a folder or zip. Missing folders above path are created.',
             parameters: Type.Object(
                 {
                     surfaceId,
                     path: vaultPathParameter(
-                        'The artifact\'s path, such as "/Sites/launch.artifact"',
+                        'The artifact\'s path, such as "/Apps/launch.artifact"',
                     ),
                     files: Type.Optional(
                         Type.Array(
@@ -1186,7 +1186,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 if (names.length === 0 || !isVaultArtifactName(names.at(-1)!))
                     throw new SurfaceError(
                         "invalid_request",
-                        'An artifact\'s path ends in ".artifact", such as "/Sites/launch.artifact".',
+                        'An artifact\'s path ends in ".artifact", such as "/Apps/launch.artifact".',
                     );
                 const found = await vaults.walk(ctx, input.surfaceId, input.path);
                 if (found.rest.length > 0 && found.entry !== undefined)
