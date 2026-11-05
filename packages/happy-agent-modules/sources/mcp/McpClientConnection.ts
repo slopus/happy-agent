@@ -86,22 +86,15 @@ export class McpClientConnection {
     /**
      * @param runner Where a stdio server runs when it is not this machine: a runner's machine and
      * the context its process lives in. HTTP servers are always reached from this machine.
+     * @param authorizedFetch For an HTTP server with a saved login, the fetch that presents and
+     * refreshes its token. It never starts a login.
      */
     static async connect(
         name: string,
         config: ServerConfig,
         runner?: { readonly ctx: Context; readonly machine: Compute },
+        authorizedFetch?: FetchLike,
     ): Promise<McpClientConnection> {
-        if (
-            config.transport === "http" &&
-            (config.oauthClientIdEnvVar !== undefined ||
-                config.oauthClientSecretEnvVar !== undefined ||
-                config.oauthScopes !== undefined)
-        ) {
-            throw new Error(
-                "Interactive MCP OAuth is not configured; use HTTP headers or bearer_token_env_var.",
-            );
-        }
         const client = new Client(
             { name: "happy-agent", version: "1.0.0" },
             { capabilities: { elicitation: { form: {} } } },
@@ -134,7 +127,7 @@ export class McpClientConnection {
                     })
                   : new StreamableHTTPClientTransport(new URL(config.url), {
                         requestInit: { headers: httpHeaders(config) },
-                        fetch: connection.#watchChallenges(fetch),
+                        fetch: connection.#watchChallenges(authorizedFetch ?? fetch),
                     });
         if (transport instanceof StdioClientTransport) {
             transport.stderr?.on("data", () => undefined);

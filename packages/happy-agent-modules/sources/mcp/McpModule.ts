@@ -1,7 +1,11 @@
+import { createHash, randomBytes } from "node:crypto";
+
 import { ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { sql } from "drizzle-orm";
 import {
+    agentDatabase,
     agentDatabaseRun,
+    withAgentDatabase,
     type AgentDatabase,
     type AgentModuleAgentLifecycle,
     type AgentModule,
@@ -46,7 +50,9 @@ import {
     mcpToolSchema,
     mcpToolResultSchema,
     mcpAgentIdSchema,
+    MAX_MCP_ERROR_MESSAGE_LENGTH,
     MAX_MCP_SERVER_NAME_LENGTH,
+    type McpAuthResult,
     type McpCallToolInput,
     type McpGetPromptInput,
     type McpGetPromptResult,
@@ -70,7 +76,18 @@ import {
     type McpUserInputRequest,
     type McpUserInputResponse,
 } from "./Mcp.js";
-import { McpClientConnection } from "./McpClientConnection.js";
+import { hasConfiguredAuthorization, McpClientConnection } from "./McpClientConnection.js";
+import { beginMcpLogin, McpLoginError } from "./impl/beginMcpLogin.js";
+import { McpLoginCallback } from "./impl/McpLoginCallback.js";
+import { McpLoginSession, type McpLoginClient } from "./impl/McpLoginSession.js";
+import {
+    mcpLoginKeyId,
+    mcpLoginMigration,
+    readMcpLogins,
+    writeMcpLogin,
+    type McpLogin,
+    type McpLoginKey,
+} from "./impl/McpLoginStore.js";
 import { McpNeedsAuthError } from "./impl/McpNeedsAuthError.js";
 import { createMcpConfigurationTools } from "./createMcpConfigurationTools.js";
 import { createMcpProtocolTools } from "./createMcpProtocolTools.js";
@@ -85,6 +102,7 @@ import {
     assertToolPage,
 } from "./mcpPageAssertions.js";
 import { listMcpServersTool } from "./tools/list_mcp_servers.js";
+import { startMcpAuthTool } from "./tools/start_mcp_auth.js";
 import { mcpResultToContentBlocks } from "./mcpResultToContentBlocks.js";
 import { mergeMcpTools } from "./mergeMcpTools.js";
 import { mcpConnectionFingerprint } from "./mcpConnectionFingerprint.js";
@@ -96,6 +114,11 @@ const DEFAULT_OUTPUT_CHARACTERS = 12_000;
  * active agents gets its own copy (`runnerGlobalCatalog`) whose stdio servers run on that runner.
  */
 const GLOBAL_CATALOG = "global";
+/**
+ * The catalog of logins made for user-wide servers. HTTP servers are reached from this machine, so
+ * every copy of the user-wide catalog shares them.
+ */
+const USER_LOGIN_CATALOG = "user";
 /** A failed server is retried after this delay, doubling while it keeps failing. */
 const RETRY_FIRST_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 5 * 60_000;
@@ -144,6 +167,11 @@ interface McpCatalogServer {
      * machine runs it for that agent is not known yet, so it is reported as connecting.
      */
     readonly awaitingFolder?: true;
+    /**
+     * For an HTTP server, the catalog a login to it belongs to: `user` for the user-wide catalog
+     * on every machine, or the folder catalog's ID, so a folder's login reaches that folder alone.
+     */
+    readonly loginCatalog?: string;
 }
 
 /**
@@ -170,6 +198,8 @@ interface McpConnectionInput {
     readonly config: McpServerConfig;
     readonly name: string;
     readonly runnerId: string | undefined;
+    /** The saved login this connection presents, which makes it its catalog's own. */
+    readonly login?: McpLoginKey;
 }
 
 /**
@@ -246,7 +276,7 @@ interface McpActivation {
  */
 export class McpModule implements AgentModule {
     readonly name = "mcp";
-    readonly migrations = [mcpMigration];
+    readonly migrations = [mcpMigration, mcpLoginMigration];
 
     readonly #compute: ComputeModule;
     readonly #config: ConfigModule;
@@ -266,6 +296,14 @@ export class McpModule implements AgentModule {
     readonly #activations = new Map<string, McpActivation>();
     /** Agents with no working directory, which use only the user-wide catalog on this machine. */
     readonly #folderless = new Set<string>();
+    /** Saved logins by key, loaded once from the module's own table. */
+    readonly #logins = new Map<string, { readonly key: McpLoginKey; login: McpLogin }>();
+    #loginsLoaded: Promise<void> | undefined;
+    /** One token presenter per login, so refreshes of one login never overlap. */
+    readonly #loginSessions = new Map<string, McpLoginSession>();
+    /** Logins waiting on a person, by key, so a second request does not start another. */
+    readonly #loginsInProgress = new Set<string>();
+    #loginsContext: Context | undefined;
     readonly #agentWorkspaces = new Map<string, string>();
     readonly #workspaceAgents = new Map<string, Set<string>>();
     readonly #archivedWorkspaces = new Set<string>();
@@ -278,6 +316,7 @@ export class McpModule implements AgentModule {
     /** The Linux user each active agent's own work runs as, while some bots have their own. */
     readonly #agentUsers = new Map<string, string>();
     #context: Context | undefined;
+    #database: AgentDatabase | undefined;
     #serversContext: Context | undefined;
     #retriesContext: Context | undefined;
     #initialReload: Promise<void> | undefined;
@@ -447,6 +486,7 @@ export class McpModule implements AgentModule {
             return [
                 listMcpServersTool(this, agentId, scope.agent.permissionMode, quarantined),
                 ...createMcpConfigurationTools(this, agentId),
+                startMcpAuthTool(this, agentId),
                 ...merged.tools,
                 ...protocolTools,
             ];
@@ -481,6 +521,7 @@ export class McpModule implements AgentModule {
     readonly beforeStart = (ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
         this.#agents = agents;
         this.#context ??= ctx;
+        this.#database ??= agentDatabase(ctx);
         this.#initialReload ??= this.reload(ctx).catch((error: unknown) => {
             ctx.log.warn(`Initial MCP discovery failed: ${errorMessage(error)}`);
         });
@@ -618,6 +659,287 @@ export class McpModule implements AgentModule {
         return runnerId === undefined
             ? file
             : `${file} on the runner ${this.#runners.displayName(runnerId)}`;
+    }
+
+    /**
+     * Log in to one HTTP server in the calling agent's catalog, for everyone using that catalog:
+     * the user-wide catalog, or the agent's folder. The person gets the sign-in link in a question
+     * only they can answer, and finishes by pasting back the address their browser landed on, or
+     * by landing on it in a browser on this machine. The result says how it went and never carries
+     * a token, a code, or anything the authorization server said.
+     */
+    async startAuth(ctx: Context, agentId: string, name: string): Promise<McpAuthResult> {
+        this.#rememberContext(ctx);
+        this.#assertOpen();
+        assertAgentId(agentId);
+        await this.#ensureAgentWorkspace(agentId);
+        const result = (status: McpAuthResult["status"], message: string): McpAuthResult => ({
+            server: name,
+            status,
+            message: message.slice(0, MAX_MCP_ERROR_MESSAGE_LENGTH),
+        });
+        const server = this.#effectiveServers(agentId).get(name);
+        if (server === undefined) {
+            return result("failed", `No MCP server named "${name}" is configured for this agent.`);
+        }
+        const { config } = server;
+        if (config.transport === "stdio") return result("not_needed", stdioLoginMessage(name));
+        if (config.enabled === false) {
+            return result("not_needed", `MCP server "${name}" is disabled in its mcp.toml.`);
+        }
+        if (hasConfiguredAuthorization(config)) {
+            return result(
+                "not_needed",
+                `MCP server "${name}" signs in with the credential configured for it in mcp.toml, so Happy does not log in to it. If that credential is refused, it has to be changed there.`,
+            );
+        }
+        if (server.unavailable !== undefined) return result("failed", server.unavailable);
+        const loginCatalog = server.loginCatalog;
+        const pooled =
+            server.connectionId === undefined ? undefined : this.#pool.get(server.connectionId);
+        if (loginCatalog === undefined)
+            return result("failed", `MCP server "${name}" is not ready.`);
+        if (pooled?.state.kind === "connected") {
+            return result(
+                "not_needed",
+                `MCP server "${name}" is connected and is not asking for a login.`,
+            );
+        }
+        const key: McpLoginKey = { catalog: loginCatalog, name, url: config.url };
+        const keyId = mcpLoginKeyId(key);
+        if (this.#loginsInProgress.has(keyId)) {
+            return result(
+                "failed",
+                `A sign-in to "${name}" is already waiting for the person. They can finish or dismiss that one first.`,
+            );
+        }
+        this.#loginsInProgress.add(keyId);
+        try {
+            const challenge =
+                pooled?.state.kind === "needs_auth" ? pooled.state.challenge : undefined;
+            const state = randomBytes(32).toString("base64url");
+            const callback = await McpLoginCallback.open(state);
+            try {
+                const pending = await beginMcpLogin({
+                    serverUrl: new URL(config.url),
+                    redirectUri: callback.redirectUri,
+                    state,
+                    scope: config.oauthScopes?.join(" ") ?? challenge?.scope,
+                    resourceMetadataUrl: challenge?.resourceMetadataUrl,
+                    configuredClient: configuredLoginClient(config),
+                });
+                const pasted = await this.#askToSignIn(
+                    ctx,
+                    agentId,
+                    name,
+                    pending.authorizationUrl,
+                    callback,
+                    loginCatalog,
+                );
+                if (pasted === undefined) {
+                    return result(
+                        "cancelled",
+                        `The sign-in to "${name}" was not finished: the person dismissed it, was away, or the turn stopped. Nothing was saved.`,
+                    );
+                }
+                const login = await pending.complete(pasted);
+                await writeMcpLogin(ctx, key, login);
+                const saved = this.#logins.get(keyId);
+                if (saved === undefined) this.#logins.set(keyId, { key, login });
+                else saved.login = login;
+            } finally {
+                callback.close();
+            }
+        } catch (error) {
+            if (error instanceof McpLoginError) {
+                return result("failed", `The login to "${name}" did not work: ${error.message}`);
+            }
+            ctx.log.warn(`The MCP login to ${name} failed: ${errorMessage(error)}`);
+            return result("failed", `The login to "${name}" did not work.`);
+        } finally {
+            this.#loginsInProgress.delete(keyId);
+        }
+
+        await this.#reconnectLoginCatalog(ctx, loginCatalog);
+        const after = this.#effectiveServers(agentId).get(name);
+        const summary = after === undefined ? undefined : this.#serverSummary(name, after);
+        if (summary?.status === "connected") {
+            return result(
+                "logged_in",
+                `Logged in to "${name}". Its tools reach the next request, and the login is shared by ${loginAudience(loginCatalog)}.`,
+            );
+        }
+        return result(
+            "saved",
+            `The login to "${name}" was saved for ${loginAudience(loginCatalog)}, but the server is ${summary?.status ?? "not connected"}${summary?.errorMessage === undefined ? "." : `: ${summary.errorMessage}`}`,
+        );
+    }
+
+    /** What an approval of a login says it does, naming the server, its host, and who shares it. */
+    describeAuthAction(agentId: string, name: string): string {
+        const server = this.#effectiveServers(agentId).get(name);
+        if (server?.config.transport !== "http" || server.loginCatalog === undefined) {
+            return `explaining how to log in to MCP server “${name}”`;
+        }
+        return `logging in to MCP server “${name}” at ${new URL(server.config.url).origin} through the authorization server it names; the person signs in in their own browser, and the saved login is used for ${loginAudience(server.loginCatalog)}`;
+    }
+
+    /**
+     * Ask the person to sign in, and return the address their browser landed on, or undefined
+     * when they dismissed the question, were away, or the turn stopped. Only the person can answer
+     * it: no agent tool answers a question.
+     */
+    async #askToSignIn(
+        ctx: Context,
+        agentId: string,
+        name: string,
+        link: URL,
+        callback: McpLoginCallback,
+        loginCatalog: string,
+    ): Promise<string | undefined> {
+        const title = humanizeMcpName(name);
+        const pending = await this.#userInput.askForPermission(
+            ctx,
+            agentId,
+            {
+                context: [
+                    `**${title}** is an MCP server that needs you to sign in. The sign-in page is on **${link.host}**.`,
+                    "",
+                    `1. Open this link and sign in: ${link.href}`,
+                    `2. Your browser then opens an address that starts with \`${callback.redirectUri}\`. That page may not load, which is expected.`,
+                    "3. Copy the whole address from the browser's address bar and paste it here.",
+                    "",
+                    `The login is saved for ${loginAudience(loginCatalog)}. If you did not ask to log in, dismiss this.`,
+                ].join("\n"),
+                questions: [
+                    {
+                        id: "address",
+                        header: "Sign-in address",
+                        question: `After signing in to ${title}, paste the full address your browser opened.`,
+                    },
+                ],
+            },
+            {
+                source: "mcp_elicitation",
+                server: name,
+                serverTitle: boundServerTitle(title),
+            },
+        );
+        const withdraw = (reason: string): void => {
+            this.#userInput
+                .cancel(ctx, agentId, { requestId: pending.id, reason })
+                .catch((error: unknown) => {
+                    ctx.log.warn(
+                        `Could not withdraw the sign-in question for ${name}: ${errorMessage(error)}`,
+                    );
+                });
+        };
+        const stopped = (): void => withdraw("The sign-in was stopped.");
+        ctx.lifetime?.addEventListener("abort", stopped, { once: true });
+        if (ctx.lifetime?.aborted === true) stopped();
+        try {
+            return await Promise.race([
+                callback.received.then((address) => {
+                    withdraw("Signed in from a browser on this machine.");
+                    return address;
+                }),
+                this.#userInput
+                    .wait(ctx, agentId, pending.id)
+                    .then((settled) =>
+                        settled.status === "answered"
+                            ? userInputAnswerStrings(settled.answers?.address).join(" ") ||
+                              undefined
+                            : undefined,
+                    ),
+            ]);
+        } finally {
+            ctx.lifetime?.removeEventListener("abort", stopped);
+        }
+    }
+
+    /** Reconcile every catalog a login belongs to, checking its servers again, and wait for them. */
+    async #reconnectLoginCatalog(ctx: Context, loginCatalog: string): Promise<void> {
+        const started = await this.#reloadLock.runInLock(ctx, async () => {
+            this.#assertOpen();
+            const catalogs = new Map(
+                [...this.#catalogs.entries()]
+                    .filter(([catalogId]) => loginCatalogOf(catalogId) === loginCatalog)
+                    .map(([catalogId, catalog]) => [catalogId, catalogServerConfigs(catalog)]),
+            );
+            return await this.#reconcileCatalogs(ctx, catalogs, { recheck: true });
+        });
+        await this.#settled(started);
+    }
+
+    /** Read the saved logins once, before the first catalog with an HTTP server is reconciled. */
+    async #loadLogins(): Promise<void> {
+        // A module started without storage has no saved logins to read.
+        if (this.#database === undefined) return;
+        this.#loginsLoaded ??= (async () => {
+            for (const [id, entry] of await readMcpLogins(this.#loginsLifetime())) {
+                if (!this.#logins.has(id)) this.#logins.set(id, { ...entry });
+            }
+        })().catch((error: unknown) => {
+            this.#loginsLoaded = undefined;
+            this.#loginsLifetime().log.warn(
+                `Saved MCP logins could not be read: ${errorMessage(error)}`,
+            );
+        });
+        await this.#loginsLoaded;
+    }
+
+    /** The one token presenter of a login, shared by every connection that uses it. */
+    #loginSession(
+        key: McpLoginKey,
+        config: Extract<McpServerConfig, { transport: "http" }>,
+    ): McpLoginSession {
+        const id = mcpLoginKeyId(key);
+        let session = this.#loginSessions.get(id);
+        if (session !== undefined) return session;
+        session = new McpLoginSession({
+            serverUrl: new URL(config.url),
+            read: () => this.#logins.get(id)?.login,
+            // The new login is used at once; saving it is for the next daemon, so a failure to
+            // save is logged rather than failing the request that refreshed it.
+            save: async (login) => {
+                const saved = this.#logins.get(id);
+                if (saved === undefined) this.#logins.set(id, { key, login });
+                else saved.login = login;
+                await writeMcpLogin(this.#loginsLifetime(), key, login).catch((error: unknown) => {
+                    this.#loginsLifetime().log.warn(
+                        `The refreshed MCP login for ${key.name} could not be saved: ${errorMessage(error)}`,
+                    );
+                });
+            },
+            client: (login) =>
+                login.client.kind === "registered"
+                    ? {
+                          client_id: login.client.clientId,
+                          ...(login.client.clientSecret === undefined
+                              ? {}
+                              : { client_secret: login.client.clientSecret }),
+                      }
+                    : configuredLoginClientOrUndefined(config),
+        });
+        this.#loginSessions.set(id, session);
+        return session;
+    }
+
+    /**
+     * The lifetime saved logins are read and refreshed logins written in. Detaching drops the
+     * database, so the one the daemon started with is handed back deliberately.
+     */
+    #loginsLifetime(): Context {
+        const root = this.#context;
+        if (root === undefined) throw new Error("The MCP module has not started.");
+        if (this.#loginsContext === undefined) {
+            const lifetime = detach(root).named("mcp-logins");
+            this.#loginsContext =
+                this.#database === undefined
+                    ? lifetime
+                    : withAgentDatabase(lifetime, this.#database);
+        }
+        return this.#loginsContext;
     }
 
     async close(): Promise<void> {
@@ -1492,6 +1814,13 @@ export class McpModule implements AgentModule {
         catalogs: ReadonlyMap<string, HappyAgentConfigValues["mcpServers"]>,
         options: McpReconcileOptions,
     ): Promise<readonly McpStartedConnection[]> {
+        if (
+            [...catalogs.values()].some((servers) =>
+                Object.values(servers).some((config) => config.transport === "http"),
+            )
+        ) {
+            await this.#loadLogins();
+        }
         const desiredCatalogs = new Map<string, McpCatalog>();
         const connectionInputs = new Map<string, McpConnectionInput>();
         for (const [catalogId, servers] of catalogs) {
@@ -1514,6 +1843,24 @@ export class McpModule implements AgentModule {
                 const runnerId =
                     config.transport === "stdio" ? this.#catalogRunner(catalogId) : undefined;
                 const fingerprint = mcpConnectionFingerprint(config);
+                if (config.transport === "http") {
+                    // Anonymous servers are shared across catalogs as before; a server with a
+                    // login is its catalog's own, so the login reaches only that catalog.
+                    const loginCatalog = loginCatalogOf(catalogId);
+                    const login: McpLoginKey = { catalog: loginCatalog, name, url: config.url };
+                    const loggedIn = this.#logins.has(mcpLoginKeyId(login));
+                    const connectionId = loggedIn
+                        ? `login:${shortHash(mcpLoginKeyId(login))}:${fingerprint}`
+                        : fingerprint;
+                    desired.set(name, { config, connectionId, loginCatalog });
+                    connectionInputs.set(connectionId, {
+                        config,
+                        name,
+                        runnerId,
+                        ...(loggedIn ? { login } : {}),
+                    });
+                    continue;
+                }
                 const connectionId =
                     runnerId === undefined ? fingerprint : `runner:${runnerId}:${fingerprint}`;
                 desired.set(name, { config, connectionId });
@@ -1620,6 +1967,14 @@ export class McpModule implements AgentModule {
 
     /** Start one pooled server, on its runner when it has one. */
     async #connect(ctx: Context, input: McpConnectionInput): Promise<McpClientConnection> {
+        if (input.login !== undefined && input.config.transport === "http") {
+            return await McpClientConnection.connect(
+                input.name,
+                input.config,
+                undefined,
+                this.#loginSession(input.login, input.config).fetch,
+            );
+        }
         return this.#runners.native(input.runnerId)
             ? await McpClientConnection.connect(input.name, input.config)
             : await McpClientConnection.connect(input.name, input.config, {
@@ -2252,7 +2607,67 @@ function needsAuthMessage(name: string, challenge: McpNeedsAuthError): string {
     const need = challenge.insufficientScope
         ? `MCP server "${name}" needs a login with more access than the current one.`
         : `MCP server "${name}" needs a login.`;
-    return `${need} The person can ask you to log in to it. It is not retried on its own; reloading or reconfiguring the MCP servers checks it again.`;
+    return `${need} The person can ask you to log in to it; when they do, call start_mcp_auth with server "${name}", which sends them a sign-in link. It is not retried on its own; a login, a reload, or a configuration change checks it again.`;
+}
+
+/** Who a login made in this catalog serves, in words a person reads. */
+function loginAudience(loginCatalog: string): string {
+    if (loginCatalog === USER_LOGIN_CATALOG) {
+        return "every agent that uses your user-wide MCP servers";
+    }
+    const { path } = parseWorkspaceKey(loginCatalog.slice(WORKSPACE_CATALOG_PREFIX.length));
+    return `every agent working in ${path}`;
+}
+
+/** Why Happy does not log in to a stdio server, and how the person can. */
+function stdioLoginMessage(name: string): string {
+    return `MCP server "${name}" is a stdio server: Happy starts its program, and the program signs in by itself, as wrappers such as mcp-remote do. Log in by running that same command once in a terminal on the machine that runs it, outside Happy, and complete the sign-in it opens. Happy starts a server that stopped or failed again in the background, so the login is picked up on its next start; reloading the MCP servers starts it at once.`;
+}
+
+/** The OAuth client mcp.toml configures for a server, read from its environment variables. */
+function configuredLoginClient(
+    config: Extract<McpServerConfig, { transport: "http" }>,
+): McpLoginClient | undefined {
+    if (config.oauthClientIdEnvVar === undefined) return undefined;
+    const clientId = process.env[config.oauthClientIdEnvVar]?.trim();
+    if (clientId === undefined || clientId.length === 0) {
+        throw new McpLoginError(
+            `The environment variable ${config.oauthClientIdEnvVar}, which mcp.toml names for this server's OAuth client ID, is not set.`,
+        );
+    }
+    const secretVariable = config.oauthClientSecretEnvVar;
+    const clientSecret =
+        secretVariable === undefined ? undefined : process.env[secretVariable]?.trim();
+    if (secretVariable !== undefined && (clientSecret === undefined || clientSecret.length === 0)) {
+        throw new McpLoginError(
+            `The environment variable ${secretVariable}, which mcp.toml names for this server's OAuth client secret, is not set.`,
+        );
+    }
+    return {
+        client_id: clientId,
+        ...(clientSecret === undefined ? {} : { client_secret: clientSecret }),
+    };
+}
+
+function configuredLoginClientOrUndefined(
+    config: Extract<McpServerConfig, { transport: "http" }>,
+): McpLoginClient | undefined {
+    try {
+        return configuredLoginClient(config);
+    } catch {
+        return undefined;
+    }
+}
+
+/** The catalog a login to an HTTP server in this catalog belongs to. */
+function loginCatalogOf(catalogId: string): string {
+    return catalogId === GLOBAL_CATALOG || runnerOfGlobalCatalog(catalogId) !== undefined
+        ? USER_LOGIN_CATALOG
+        : catalogId;
+}
+
+function shortHash(value: string): string {
+    return createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
 function errorMessage(error: unknown): string {

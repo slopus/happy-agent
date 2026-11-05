@@ -57,6 +57,8 @@ export {
     mcpListPromptsInputSchema,
     mcpListResourcesInputSchema,
     mcpListToolsInputSchema,
+    mcpAuthInputSchema,
+    mcpAuthResultSchema,
     mcpPermissionModeSchema,
     mcpPromptArgumentSchema,
     mcpPromptMessageSchema,
@@ -97,6 +99,8 @@ export {
     mcpContextSchema,
     mcpServerTrustRequestSchema,
     type McpAgentId,
+    type McpAuthInput,
+    type McpAuthResult,
     type McpCallToolInput,
     type McpConnectedServer,
     type McpContentBlock,
@@ -163,3 +167,4 @@ export { mergeMcpTools, type McpToolContribution } from "./mergeMcpTools.js";
 export { boundedMcpJsonStringify, mcpResultToContentBlocks } from "./mcpResultToContentBlocks.js";
 export { MCP_RESULT_MAXIMUM_TEXT_BYTES } from "./mcpResultMaximumTextBytes.js";
 export { listMcpServersTool } from "./tools/list_mcp_servers.js";
+export { startMcpAuthTool } from "./tools/start_mcp_auth.js";

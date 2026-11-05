@@ -33,7 +33,9 @@ describe("an HTTP MCP server that needs a login", () => {
             .poll(async () => (await module.listServerPage(ctx, "agent-a")).servers)
             .toMatchObject([{ name: "docs", status: "needs_auth", toolCount: 0 }]);
         const [server] = (await module.listServerPage(ctx, "agent-a")).servers;
-        expect(server?.errorMessage).toContain("The person can ask you to log in to it.");
+        expect(server?.errorMessage).toContain(
+            "The person can ask you to log in to it; when they do, call start_mcp_auth",
+        );
         await expect(
             module.callTool(ctx, "agent-a", { server: "docs", name: "echo" }),
         ).rejects.toThrow('MCP server "docs" needs a login.');

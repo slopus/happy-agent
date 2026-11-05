@@ -415,6 +415,42 @@ export const mcpConnectedServerListSchema = Type.Array(mcpConnectedServerSchema,
 });
 export type McpConnectedServer = Static<typeof mcpConnectedServerSchema>;
 
+export const mcpAuthInputSchema = Type.Object(
+    {
+        server: Type.String({
+            minLength: 1,
+            maxLength: MAX_MCP_SERVER_NAME_LENGTH,
+            description: "The name of the MCP server to log in to, as list_mcp_servers shows it.",
+        }),
+    },
+    { additionalProperties: false },
+);
+export type McpAuthInput = Static<typeof mcpAuthInputSchema>;
+
+/**
+ * How a login ended. It carries a status and a message only: never a token, a code, a verifier, or
+ * anything the authorization server said.
+ */
+export const mcpAuthResultSchema = Type.Object(
+    {
+        server: mcpServerNameSchema,
+        status: Type.Union([
+            /** Logged in, and the server connected with the new login. */
+            Type.Literal("logged_in"),
+            /** Logged in, but the server has not connected yet or failed for another reason. */
+            Type.Literal("saved"),
+            /** Nothing to do here: the server does not need a Happy login, or does its own. */
+            Type.Literal("not_needed"),
+            /** The person dismissed the sign-in, was away, or the turn stopped. */
+            Type.Literal("cancelled"),
+            Type.Literal("failed"),
+        ]),
+        message: Type.String({ minLength: 1, maxLength: MAX_MCP_ERROR_MESSAGE_LENGTH }),
+    },
+    { additionalProperties: false },
+);
+export type McpAuthResult = Static<typeof mcpAuthResultSchema>;
+
 export const mcpServerPageQuerySchema = Type.Object(
     {
         cursor: Type.Optional(mcpCursorSchema),
