@@ -234,6 +234,22 @@ describe("installation-owned Surface state", () => {
     });
 
     it("checks actual tool policies and revokes admin access at execution", async () => {
+        const VAULT_TOOLS = [
+            "list_vault",
+            "read_vault_file",
+            "write_vault_file",
+            "edit_vault_file",
+            "glob_vault",
+            "grep_vault",
+            "move_vault_entry",
+            "delete_vault_entry",
+            "list_vault_trash",
+            "restore_vault_entry",
+            "list_vault_versions",
+            "import_vault_file",
+            "export_vault_file",
+            "write_vault_artifact",
+        ];
         const f = await fixture();
         const ctx = f.db.context;
         const ordinary = await f.hooks.tools!(ctx, {
@@ -257,8 +273,20 @@ describe("installation-owned Surface state", () => {
             "update_calendar_event",
             "delete_calendar_event",
             "list_calendar_event_versions",
+            ...VAULT_TOOLS,
         ]);
-        for (const tool of ordinary.filter((tool) => tool.name !== "update_surface")) {
+        // Vault writes keep their history and Trash, so they are not reviewed; only copies across
+        // the machine boundary consult the agent's filesystem policy.
+        for (const tool of ordinary.filter((tool) => VAULT_TOOLS.includes(tool.name))) {
+            expect(
+                await tool.shouldReviewInAutoMode!({ fromPath: "/w/a", toPath: "/w/b" }, ctx),
+                tool.name,
+            ).toBe(false);
+            expect(tool.requiresAutoOrFullAccess, tool.name).toBeUndefined();
+        }
+        for (const tool of ordinary.filter(
+            (tool) => tool.name !== "update_surface" && !VAULT_TOOLS.includes(tool.name),
+        )) {
             const read =
                 tool.name.startsWith("list_") ||
                 tool.name === "read_document" ||

@@ -37,6 +37,17 @@ export function artifactFileRequest(target: string | undefined): ArtifactFileReq
     ];
     const selector = version === "latest" ? "latest" : Number(version);
     if (selector !== "latest" && !Number.isSafeInteger(selector)) return undefined;
+    const path = decodeArtifactFilePath(encodedPath);
+    if (path === undefined) return undefined;
+    return { artifactId, selector, path };
+}
+
+/**
+ * A file path inside an artifact from its percent-encoded segments. Each segment is decoded on
+ * its own, so an encoded `/` cannot join two segments, and a segment that is empty, `.`, or `..`
+ * names no file. `undefined` means no file of any version.
+ */
+export function decodeArtifactFilePath(encodedPath: string): string | undefined {
     const segments: string[] = [];
     for (const encoded of encodedPath.split("/")) {
         let segment: string;
@@ -51,8 +62,7 @@ export function artifactFileRequest(target: string | undefined): ArtifactFileReq
         segments.push(segment);
     }
     const path = segments.join("/");
-    if (!Value.Check(artifactPathSchema, path)) return undefined;
-    return { artifactId, selector, path };
+    return Value.Check(artifactPathSchema, path) ? path : undefined;
 }
 
 /**

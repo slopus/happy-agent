@@ -20,6 +20,8 @@ export interface StoredFile {
     /** The file name a download is offered under. */
     readonly name: string;
     readonly cacheControl: string;
+    /** `attachment` asks the client to save the file instead of showing it; `inline` by default. */
+    readonly disposition?: "inline" | "attachment";
 }
 
 /**
@@ -63,7 +65,7 @@ export async function sendStoredFile(
     response.writeHead(range === undefined ? 200 : 206, {
         ...caching,
         "accept-ranges": "bytes",
-        "content-disposition": inlineDisposition(file.name),
+        "content-disposition": contentDisposition(file.disposition ?? "inline", file.name),
         "content-length": end - start + 1,
         ...(range === undefined
             ? {}
@@ -108,12 +110,12 @@ function byteRange(
     return { start, end };
 }
 
-/** `inline`, named by the file's name, with an ASCII fallback for older readers. */
-function inlineDisposition(name: string): string {
+/** A disposition named by the file's name, with an ASCII fallback for older readers. */
+export function contentDisposition(kind: "inline" | "attachment", name: string): string {
     const fallback = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
     const encoded = encodeURIComponent(name).replace(
         /['()*]/g,
         (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
     );
-    return `inline; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+    return `${kind}; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }

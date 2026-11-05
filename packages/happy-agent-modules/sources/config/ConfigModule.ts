@@ -2047,6 +2047,27 @@ export class ConfigModule implements AgentModule {
         return join(this.artifactsHome, "content", sha256.slice(0, 2), sha256);
     }
 
+    /** The private root holding every vault's stored content, beside the database. */
+    get vaultsHome(): string {
+        return join(this.configuration.paths.agentHome, "vaults");
+    }
+
+    /** One stored vault file, named by the SHA-256 of its bytes and shared by every vault. */
+    vaultContentPath(sha256: string): string {
+        if (!/^[0-9a-f]{64}$/.test(sha256)) {
+            throw new Error("The vault content digest cannot name a file.");
+        }
+        return join(this.vaultsHome, "content", sha256.slice(0, 2), sha256);
+    }
+
+    /** Where one resumable vault upload's bytes accumulate before they are stored. */
+    vaultUploadPath(uploadId: string): string {
+        if (!Value.Check(cuid2Schema, uploadId)) {
+            throw new Error("The vault upload ID cannot name a file.");
+        }
+        return join(this.vaultsHome, "uploads", uploadId);
+    }
+
     /**
      * One snapshot of media shown in a chat, named by the SHA-256 of its bytes and never
      * rewritten, in the private root beside the database rather than in history.

@@ -14,6 +14,7 @@ export const apiErrorCodeSchema = Type.Union([
     Type.Literal("internal"),
     Type.Literal("invalid_request"),
     Type.Literal("method_not_allowed"),
+    Type.Literal("name_taken"),
     Type.Literal("not_found"),
     Type.Literal("not_initialized"),
     Type.Literal("range_not_satisfiable"),

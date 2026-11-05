@@ -10,6 +10,8 @@ import {
 import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 
+import { migrateVaults } from "../vaults/persistence/migrateVaults.js";
+
 /** Module-owned AgentKV storage. Current values and immutable revisions use disjoint prefixes. */
 export class SurfacesPersistence implements AgentPersistence {
     constructor(readonly database: AgentDatabase) {}
@@ -242,4 +244,5 @@ export const surfacesMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    ["006-surface-vaults", migrateVaults],
 ];

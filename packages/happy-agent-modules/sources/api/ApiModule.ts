@@ -63,6 +63,19 @@ import {
     createCalendarEventRequestSchema,
     updateCalendarEventRequestSchema,
     calendarEventMutationRequestSchema,
+    createVaultEntryRequestSchema,
+    createVaultUploadRequestSchema,
+    createVaultVersionRequestSchema,
+    restoreVaultEntryRequestSchema,
+    updateVaultEntryRequestSchema,
+    updateVaultSettingsRequestSchema,
+    vaultEntryListQuerySchema,
+    vaultMutationRequestSchema,
+    vaultSearchQuerySchema,
+    vaultTrashQuerySchema,
+    vaultTreeQuerySchema,
+    vaultVersionPageQuerySchema,
+    type VaultVersionSelector,
     WORKSPACE_BRIDGE_MAX_BINARY_MESSAGE_BYTES,
     createLiveSessionRequestSchema,
     closeLiveSessionRequestSchema,
@@ -314,6 +327,7 @@ import {
     type SseWriter,
     type TunnelWebSocket,
     WEBSOCKET_TUNNEL_MAX_MESSAGE_BYTES,
+    streamToOutgoing,
     WebSocketDuplex,
     WebSocketTunnel,
 } from "../transport/index.js";
@@ -336,8 +350,14 @@ import {
     type WorkspaceEvent,
 } from "../workspaces/index.js";
 import { ApiArtifactData, ARTIFACT_DATA_ROUTE } from "./ApiArtifactData.js";
-import { ARTIFACT_FILE_ROUTE, artifactFileRequest, sendArtifactFile } from "./ApiArtifactFiles.js";
-import { sendStoredFile } from "./sendStoredFile.js";
+import {
+    ARTIFACT_FILE_ROUTE,
+    artifactFileRequest,
+    decodeArtifactFilePath,
+    sendArtifactFile,
+} from "./ApiArtifactFiles.js";
+import { contentDisposition, sendStoredFile } from "./sendStoredFile.js";
+import { writeZip, type ZipItem } from "../surfaces/vaults/zip/writeZip.js";
 import { ApiError, invalidRequest, notFound, unsupported, type ApiErrorCode } from "./ApiError.js";
 import { ApiEventJournal, type ApiEvent } from "./ApiEventJournal.js";
 import {
@@ -2020,6 +2040,7 @@ export class ApiModule implements AgentModule {
             if (await this.#handleStoryRoute(ctx, request, response, url)) return;
             if (await this.#handleFeedRoute(ctx, request, response, url)) return;
             if (await this.#handleSurfaceRoute(ctx, request, response, url)) return;
+            if (await this.#handleVaultUploadRoute(ctx, request, response, url)) return;
             if (await this.#handleArtifactRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/projects") {
                 const projects = await this.#allProjects(ctx, true);
@@ -7001,6 +7022,20 @@ export class ApiModule implements AgentModule {
                 sendJson(response, 200, await surfaces.systemMonitor(ctx, surfaceId));
                 return true;
             }
+            const vaultMatch = /^\/v0\/surfaces\/vault\/([a-z][a-z0-9]*)(\/.*)?$/.exec(
+                url.pathname,
+            );
+            if (vaultMatch !== null) {
+                if (!Value.Check(surfaceIdSchema, vaultMatch[1])) return false;
+                return await this.#handleVaultRoute(
+                    ctx,
+                    request,
+                    response,
+                    url,
+                    vaultMatch[1]!,
+                    vaultMatch[2] ?? "",
+                );
+            }
             const calendarMatch =
                 /^\/v0\/surfaces\/calendar\/([a-z][a-z0-9]*)(?:\/([a-z][a-z0-9]*)(?:\/(versions)(?:\/([^/]+))?)?)?$/.exec(
                     url.pathname,
@@ -7130,28 +7165,380 @@ export class ApiModule implements AgentModule {
             return true;
         } catch (error) {
             if (!(error instanceof SurfaceError)) throw error;
-            throw new ApiError(
-                error.code === "not_found"
-                    ? 404
-                    : error.code === "conflict"
-                      ? 409
-                      : error.code === "forbidden"
-                        ? 403
-                        : error.code === "not_initialized"
-                          ? 503
-                          : 400,
-                error.code,
-                error.message,
-                error.current === undefined
-                    ? {}
-                    : {
-                          ...error.current,
-                          currentVersion: ("todo" in error.current
-                              ? error.current.todo
-                              : error.current.event
-                          ).version,
-                      },
+            throw surfaceApiError(error);
+        }
+    }
+
+    /** `/v0/surfaces/vault/:surfaceId/...` routes; Surface errors map in the caller's handler. */
+    async #handleVaultRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+        surfaceId: string,
+        rest: string,
+    ): Promise<boolean> {
+        const surfaces = this.#surfaces!;
+        const vaults = surfaces.vaults;
+        // Only onboarded people reach vault data; guests are refused here.
+        const change = {
+            actor: { userId: await surfaces.owner(ctx), agentId: null },
+            source: "api" as const,
+        };
+        const method = request.method;
+        const segments = rest === "" ? [] : rest.slice(1).split("/");
+        const [first, entryId, action, selected, sub] = segments;
+        if (first === "settings" && segments.length === 1) {
+            if (method === "GET") {
+                vaultQuery(url, []);
+                const cursor = this.#journal.cursor();
+                sendJson(response, 200, {
+                    settings: await vaults.settings(ctx, surfaceId),
+                    cursor,
+                });
+                return true;
+            }
+            if (method !== "PATCH") return false;
+            const body = await bodyAs(request, updateVaultSettingsRequestSchema, "vault settings");
+            sendJson(response, 200, {
+                settings: await vaults.updateSettings(
+                    ctx,
+                    surfaceId,
+                    body.retention,
+                    body.mutationId,
+                ),
+            });
+            return true;
+        }
+        if (segments.length === 1 && method === "GET" && first !== "entries") {
+            if (first === "resolve") {
+                const { path } = vaultQuery(url, ["path"]);
+                if (path === undefined) throw invalidRequest("The path is required.");
+                sendJson(response, 200, await vaults.resolve(ctx, surfaceId, path));
+                return true;
+            }
+            if (first === "tree") {
+                const query = queryAs(
+                    numericVaultQuery(vaultQuery(url, ["limit", "pageCursor"])),
+                    vaultTreeQuerySchema,
+                    "vault tree",
+                );
+                const cursor = this.#journal.cursor();
+                sendJson(response, 200, { ...(await vaults.tree(ctx, surfaceId, query)), cursor });
+                return true;
+            }
+            if (first === "search") {
+                const query = queryAs(
+                    numericVaultQuery(vaultQuery(url, ["q", "kind", "parentId", "limit"])),
+                    vaultSearchQuerySchema,
+                    "vault search",
+                );
+                sendJson(response, 200, await vaults.search(ctx, surfaceId, query));
+                return true;
+            }
+            if (first === "trash") {
+                const query = queryAs(
+                    numericVaultQuery(vaultQuery(url, ["limit", "pageCursor"])),
+                    vaultTrashQuerySchema,
+                    "vault Trash",
+                );
+                const cursor = this.#journal.cursor();
+                sendJson(response, 200, { ...(await vaults.trash(ctx, surfaceId, query)), cursor });
+                return true;
+            }
+            if (first === "zip") {
+                vaultQuery(url, []);
+                await sendVaultZip(response, await vaults.zip(ctx, surfaceId, { type: "vault" }));
+                return true;
+            }
+            return false;
+        }
+        if (first !== "entries") return false;
+        if (entryId === undefined) {
+            if (method === "GET") {
+                const query = queryAs(
+                    numericVaultQuery(
+                        vaultQuery(url, ["parentId", "sort", "order", "limit", "pageCursor"]),
+                    ),
+                    vaultEntryListQuerySchema,
+                    "vault listing",
+                );
+                const cursor = this.#journal.cursor();
+                sendJson(response, 200, { ...(await vaults.list(ctx, surfaceId, query)), cursor });
+                return true;
+            }
+            if (method !== "POST") return false;
+            const body = await bodyAs(
+                request,
+                createVaultEntryRequestSchema,
+                "vault entry creation",
             );
+            if (body.id !== undefined) {
+                const existing = await vaults.existing(ctx, surfaceId, body.id);
+                if (existing !== undefined) {
+                    sendJson(response, 201, { entry: existing });
+                    return true;
+                }
+            }
+            const content =
+                body.kind === "folder"
+                    ? undefined
+                    : "uploadId" in body
+                      ? {
+                            type: "upload" as const,
+                            uploadId: body.uploadId,
+                            ...(body.kind === "artifact"
+                                ? {
+                                      prepared: await vaults.prepareArtifactUpload(
+                                          ctx,
+                                          body.uploadId,
+                                      ),
+                                  }
+                                : {}),
+                        }
+                      : {
+                            type: "copy" as const,
+                            entryId: body.fromEntryId,
+                            version: body.fromVersion ?? ("latest" as const),
+                        };
+            const { entry } = await vaults.createEntry(
+                ctx,
+                surfaceId,
+                {
+                    ...(body.id === undefined ? {} : { id: body.id }),
+                    parentId: body.parentId,
+                    name: body.name,
+                    kind: body.kind,
+                    content,
+                },
+                { ...change, mutationId: body.mutationId },
+            );
+            sendJson(response, 201, { entry });
+            return true;
+        }
+        if (!Value.Check(cuid2Schema, entryId)) return false;
+        if (action === undefined) {
+            if (method === "GET") {
+                vaultQuery(url, []);
+                sendJson(response, 200, await vaults.location(ctx, surfaceId, entryId));
+                return true;
+            }
+            if (method !== "PATCH") return false;
+            const version = await this.#vaultIfMatch(ctx, request, surfaceId, entryId);
+            const body = await bodyAs(request, updateVaultEntryRequestSchema, "vault entry update");
+            sendJson(response, 200, {
+                entry: await vaults.moveEntry(ctx, surfaceId, entryId, version, body, {
+                    ...change,
+                    mutationId: body.mutationId,
+                }),
+            });
+            return true;
+        }
+        if ((action === "delete" || action === "restore") && segments.length === 3) {
+            if (method !== "POST") return false;
+            const version = await this.#vaultIfMatch(ctx, request, surfaceId, entryId);
+            if (action === "delete") {
+                const body = await optionalBodyAs(
+                    request,
+                    vaultMutationRequestSchema,
+                    "vault deletion",
+                    2048,
+                );
+                sendJson(response, 200, {
+                    entry: await vaults.deleteEntry(ctx, surfaceId, entryId, version, {
+                        ...change,
+                        mutationId: body.mutationId,
+                    }),
+                });
+                return true;
+            }
+            const body = await optionalBodyAs(
+                request,
+                restoreVaultEntryRequestSchema,
+                "vault restore",
+                4096,
+            );
+            sendJson(response, 200, {
+                entry: await vaults.restoreEntry(ctx, surfaceId, entryId, version, body, {
+                    ...change,
+                    mutationId: body.mutationId,
+                }),
+            });
+            return true;
+        }
+        if (action === "activity" && segments.length === 3) {
+            if (method !== "GET") return false;
+            const query = queryAs(
+                numericVaultQuery(vaultQuery(url, ["limit", "pageCursor"])),
+                vaultVersionPageQuerySchema,
+                "vault activity",
+            );
+            sendJson(response, 200, await vaults.activity(ctx, surfaceId, entryId, query));
+            return true;
+        }
+        if (action === "zip" && segments.length === 3) {
+            if (method !== "GET") return false;
+            vaultQuery(url, []);
+            await sendVaultZip(
+                response,
+                await vaults.zip(ctx, surfaceId, { type: "folder", entryId }),
+            );
+            return true;
+        }
+        if (action !== "versions") return false;
+        if (selected === undefined) {
+            if (method === "GET") {
+                const query = queryAs(
+                    numericVaultQuery(vaultQuery(url, ["limit", "pageCursor"])),
+                    vaultVersionPageQuerySchema,
+                    "vault version page",
+                );
+                sendJson(response, 200, await vaults.versions(ctx, surfaceId, entryId, query));
+                return true;
+            }
+            if (method !== "POST") return false;
+            const version = await this.#vaultIfMatch(ctx, request, surfaceId, entryId);
+            const body = await bodyAs(request, createVaultVersionRequestSchema, "vault version");
+            let source;
+            if ("uploadId" in body) {
+                const current = await vaults.location(ctx, surfaceId, entryId);
+                source = {
+                    type: "upload" as const,
+                    uploadId: body.uploadId,
+                    ...(current.entry.kind === "artifact"
+                        ? { prepared: await vaults.prepareArtifactUpload(ctx, body.uploadId) }
+                        : {}),
+                };
+            } else source = { type: "version" as const, number: body.fromVersion };
+            const result = await vaults.createVersion(ctx, surfaceId, entryId, version, source, {
+                ...change,
+                mutationId: body.mutationId,
+            });
+            sendJson(response, result.version === null ? 200 : 201, result);
+            return true;
+        }
+        const selector = vaultVersionSelector(selected);
+        if (selector === undefined) throw notFound("The version was not found.");
+        if (sub === undefined) {
+            if (method !== "GET") return false;
+            vaultQuery(url, []);
+            sendJson(response, 200, {
+                version: await vaults.version(ctx, surfaceId, entryId, selector),
+            });
+            return true;
+        }
+        if ((sub === "pin" || sub === "unpin") && segments.length === 5) {
+            if (method !== "POST") return false;
+            const body = await optionalBodyAs(
+                request,
+                vaultMutationRequestSchema,
+                "vault pin",
+                2048,
+            );
+            sendJson(response, 200, {
+                version: await vaults.setPinned(ctx, surfaceId, entryId, selector, sub === "pin", {
+                    ...change,
+                    mutationId: body.mutationId,
+                }),
+            });
+            return true;
+        }
+        if (method !== "GET") return false;
+        const immutable = selector !== "latest";
+        const cacheControl = immutable
+            ? "private, max-age=31536000, immutable"
+            : "private, no-cache";
+        if (sub === "content" && segments.length === 5) {
+            const { download } = vaultQuery(url, ["download"]);
+            if (download !== undefined && download !== "true" && download !== "false")
+                throw invalidRequest("download must be true or false.");
+            const file = await vaults.fileContent(ctx, surfaceId, entryId, selector);
+            await sendStoredFile(request, response, {
+                ...file,
+                cacheControl,
+                disposition: download === "true" ? "attachment" : "inline",
+            });
+            return true;
+        }
+        if (sub === "zip" && segments.length === 5) {
+            vaultQuery(url, []);
+            await sendVaultZip(
+                response,
+                await vaults.zip(ctx, surfaceId, { type: "version", entryId, selector }),
+            );
+            return true;
+        }
+        if (sub === "files" && segments.length > 5) {
+            const path = decodeArtifactFilePath(segments.slice(5).join("/"));
+            if (path === undefined) throw notFound("The artifact version has no such file.");
+            const file = await vaults.artifactFile(ctx, surfaceId, entryId, selector, path);
+            await sendStoredFile(request, response, { ...file, cacheControl });
+            return true;
+        }
+        return false;
+    }
+
+    /** The If-Match a vault entry change requires, checked before its body is read. */
+    async #vaultIfMatch(
+        ctx: Context,
+        request: IncomingMessage,
+        surfaceId: string,
+        entryId: string,
+    ): Promise<string> {
+        const { entry } = await this.#surfaces!.vaults.location(ctx, surfaceId, entryId);
+        return requireIfMatch(request, entry.version, { currentVersion: entry.version, entry });
+    }
+
+    /** `/v0/vault-uploads` and `/v0/vault-uploads/:uploadId`. */
+    async #handleVaultUploadRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<boolean> {
+        const surfaces = this.#surfaces;
+        if (surfaces === undefined || !url.pathname.startsWith("/v0/vault-uploads")) return false;
+        const match = /^\/v0\/vault-uploads(?:\/([^/]+))?$/.exec(url.pathname);
+        if (match === null) return false;
+        const uploads = surfaces.vaults.uploads;
+        try {
+            await surfaces.owner(ctx);
+            const uploadId = match[1];
+            if (uploadId === undefined) {
+                if (request.method !== "POST") return false;
+                const body = await bodyAs(request, createVaultUploadRequestSchema, "vault upload");
+                sendJson(response, 201, { upload: await uploads.create(ctx, body) });
+                return true;
+            }
+            if (!Value.Check(cuid2Schema, uploadId)) throw notFound("The upload was not found.");
+            if (request.method === "GET") {
+                sendJson(response, 200, { upload: await uploads.get(ctx, uploadId) });
+                return true;
+            }
+            if (request.method === "DELETE") {
+                await uploads.cancel(ctx, uploadId);
+                sendJson(response, 200, {});
+                return true;
+            }
+            if (request.method !== "PUT") return false;
+            const header = request.headers["content-range"];
+            let range: { start: number; end: number; size: number } | undefined;
+            if (header !== undefined) {
+                const parsed = /^bytes (\d{1,15})-(\d{1,15})\/(\d{1,15})$/.exec(header.trim());
+                if (parsed === null) throw invalidRequest("The Content-Range header is invalid.");
+                range = {
+                    start: Number(parsed[1]),
+                    end: Number(parsed[2]),
+                    size: Number(parsed[3]),
+                };
+            }
+            sendJson(response, 200, {
+                upload: await uploads.receive(ctx, uploadId, range, request),
+            });
+            return true;
+        } catch (error) {
+            if (!(error instanceof SurfaceError)) throw error;
+            throw surfaceApiError(error);
         }
     }
 
@@ -10083,6 +10470,7 @@ export class ApiModule implements AgentModule {
                           calendarSurfaces: true,
                           systemMonitorSurfaces: true,
                           surfaceEditing: true,
+                          vaults: true,
                       }),
             },
             version: {
@@ -11011,6 +11399,83 @@ export class MutationAwareApiEventJournal extends ApiEventJournal {
     appendOutsideMutation(type: string, payload: unknown, occurredAt?: number): ApiEvent {
         return this.#mutationIds.exit(() => this.append(type, payload, occurredAt));
     }
+}
+
+/**
+ * A vault route's query: only the named fields, each at most once. Anything else is refused, so
+ * a misspelled parameter never silently falls back to a default.
+ */
+function vaultQuery<const Key extends string>(
+    url: URL,
+    allowed: readonly Key[],
+): Partial<Record<Key, string>> {
+    const query: Partial<Record<Key, string>> = {};
+    for (const key of new Set(url.searchParams.keys())) {
+        const values = url.searchParams.getAll(key);
+        if (!allowed.includes(key as Key) || values.length > 1)
+            throw invalidRequest(
+                `The query parameter ${JSON.stringify(key)} is not supported here.`,
+            );
+        query[key as Key] = values[0]!;
+    }
+    return query;
+}
+
+/** `limit` as a number, when it is written as one; anything else fails the schema check. */
+function numericVaultQuery(query: Record<string, string | undefined>): Record<string, unknown> {
+    const { limit, ...rest } = query;
+    if (limit === undefined) return rest;
+    return { ...rest, limit: /^[1-9][0-9]{0,5}$/.test(limit) ? Number(limit) : limit };
+}
+
+function vaultVersionSelector(value: string): VaultVersionSelector | undefined {
+    if (value === "latest") return "latest";
+    if (!/^[1-9][0-9]{0,15}$/.test(value)) return undefined;
+    const number = Number(value);
+    return Number.isSafeInteger(number) ? number : undefined;
+}
+
+/** Stream a zip made on request; it has no length and is never stored. */
+async function sendVaultZip(
+    response: ServerResponse,
+    zip: { readonly name: string; readonly items: readonly ZipItem[] },
+): Promise<void> {
+    response.writeHead(200, {
+        "cache-control": "no-store",
+        "content-disposition": contentDisposition("attachment", `${zip.name}.zip`),
+        "content-type": "application/zip",
+        "x-content-type-options": "nosniff",
+    });
+    await streamToOutgoing(Readable.from(writeZip(zip.items)), response);
+}
+
+/** A Surface failure as the HTTP error its routes answer with. */
+function surfaceApiError(error: SurfaceError): ApiError {
+    const status =
+        error.code === "not_found"
+            ? 404
+            : error.code === "conflict" ||
+                error.code === "name_taken" ||
+                error.code === "hash_mismatch"
+              ? 409
+              : error.code === "forbidden"
+                ? 403
+                : error.code === "not_initialized"
+                  ? 503
+                  : error.code === "too_large"
+                    ? 413
+                    : 400;
+    const current = error.current;
+    if (current === undefined) return new ApiError(status, error.code, error.message);
+    // A taken name reports the sibling holding it, and an upload has no resource version.
+    if ("upload" in current || error.code === "name_taken")
+        return new ApiError(status, error.code, error.message, { ...current });
+    const record =
+        "todo" in current ? current.todo : "event" in current ? current.event : current.entry;
+    return new ApiError(status, error.code, error.message, {
+        ...current,
+        currentVersion: record.version,
+    });
 }
 
 function requireIfMatch(

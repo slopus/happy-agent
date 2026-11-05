@@ -23,11 +23,13 @@ import {
     surfaceDocumentChangeListResponseSchema,
     resourceVersionSchema,
     systemMonitorSnapshotSchema,
+    vaultRetentionSchema,
     type Surface,
 } from "@slopus/happy-agent-client";
 import type { SurfacesModule } from "../SurfacesModule.js";
 import { SurfaceError } from "../SurfaceError.js";
 import { calendarTools } from "./calendarTools.js";
+import { vaultTools } from "../vaults/tools/vaultTools.js";
 import { formatSystemMonitor } from "../systemMonitor/formatSystemMonitor.js";
 import { listPromptDocumentsTool } from "../promptDocuments/tools/list_prompt_documents.js";
 import { markPromptDocumentTool } from "../promptDocuments/tools/mark_prompt_document.js";
@@ -527,6 +529,44 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             toLLM: textResult,
         }),
         defineAgentTool({
+            name: "create_vault_surface",
+            defer: true,
+            capabilities: ["Create a named shared vault Surface for files as an admin bot."],
+            searchKeywords: ["create vault surface", "new shared file vault", "vault retention"],
+            description:
+                "Admin bots only: create a named vault Surface, a shared tree of folders, files, and small web sites that keeps earlier versions of every file. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The immutable creator joins their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum) and a retention policy; without one the vault keeps every version for a day, one a day until 30 days, one a week after that, and holds deleted entries in its Trash for 30 days.",
+            parameters: Type.Object(
+                {
+                    name: surfaceNameSchema,
+                    creatorUserId: surfaceMemberSchema.properties.userId,
+                    imagePath,
+                    retention: Type.Optional(vaultRetentionSchema),
+                },
+                { additionalProperties: false },
+            ),
+            returnType: surfaceSchema,
+            durable: true,
+            requiresAutoOrFullAccess: true,
+            shouldReviewInAutoMode: () => true,
+            shouldRunInFullAccessInAutoMode: (input, ctx) =>
+                surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath),
+            describeAutoPermissionAction: (input) =>
+                `creating a shared vault Surface${fromImage(input.imagePath)}. ${imageAccess}`,
+            execute: async (ctx, input, call) =>
+                surfaces.create(
+                    ctx,
+                    {
+                        ...(await creation(ctx, call, input.imagePath)),
+                        type: "vault",
+                        name: input.name,
+                        ...(input.retention === undefined ? {} : { retention: input.retention }),
+                    },
+                    input.creatorUserId,
+                    scope.agent.id,
+                ),
+            toLLM: textResult,
+        }),
+        defineAgentTool({
             name: "create_todo_surface",
             defer: true,
             capabilities: ["Create a named shared todo-list Surface as an admin bot."],
@@ -801,7 +841,8 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
         unmarkPromptDocumentTool(surfaces, scope.agent.id),
     ];
     const calendars = calendarTools(surfaces, actor);
+    const vaults = vaultTools(surfaces, scope);
     return admin
-        ? [...ordinary, ...documents, ...calendars, ...administration]
-        : [...ordinary, ...documents, ...calendars];
+        ? [...ordinary, ...documents, ...calendars, ...vaults, ...administration]
+        : [...ordinary, ...documents, ...calendars, ...vaults];
 }

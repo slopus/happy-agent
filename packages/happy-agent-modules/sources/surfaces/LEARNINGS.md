@@ -261,3 +261,31 @@ Steve asked for a stable order: by first mark time, oldest first, ties broken by
 Re-marking replaces the description and name but keeps the first mark time, so rewording never
 reshuffles every prompt. A stored name is null unless the admin gives one, and a null name is
 read from the Surface on every request, so renaming the document is reflected without copying.
+
+## Vault writes are reversible, so they are not Auto-reviewed
+
+Every vault write makes a new version, and deletion goes to a Trash that keeps the entry for the
+retention's `trashDays`, so an agent's change is always recoverable from the vault itself. Agent
+writes therefore skip Auto review. Only `import_vault_file`, `export_vault_file`, and
+`write_vault_artifact` with `fromPath` read or write the agent's machine, so they go through
+Compute's filesystem review and elevation for that path, like any other file tool. A burst
+budget of 100 agent versions per hour per agent is the one guard against a looping agent filling
+the history.
+
+## Vault content is addressed by digest and collected later, never in the writing transaction
+
+Content files are named by their SHA-256 and shared across vaults, so a copy or restore records a
+new version row pointing at the same digest instead of moving bytes. Deletion happens only in the
+collector: a digest whose last reference goes away is queued with a not-before time an hour out,
+and the collector deletes the file only if nothing names it when that time passes. Bytes written
+before their version commits are queued the same way, so a failed transaction leaves no orphan.
+Post-commit background work must not start from the commit callback, because that callback runs
+inside the committing operation and a new transaction there collides with it; the collector is a
+durable function invoked inside the transaction instead.
+
+## The default vault retention is Time Machine
+
+Steve chose Time Machine's schedule as the default: every version for a day, one a day until 30
+days, one a week after that, and 30 days in the Trash. Pinned versions and the newest version
+are never pruned. A vault's settings replace the whole policy, and pruning runs when a version is
+made and in the hourly maintenance pass.

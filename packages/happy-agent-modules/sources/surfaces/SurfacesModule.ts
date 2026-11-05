@@ -90,6 +90,8 @@ import { SurfaceDocuments, type DocumentProjection } from "./documents/SurfaceDo
 import { SurfaceCalendars, type CalendarRange } from "./calendar/SurfaceCalendars.js";
 import { SystemMonitorSampler } from "./systemMonitor/SystemMonitorSampler.js";
 import { SurfacePromptDocuments } from "./promptDocuments/SurfacePromptDocuments.js";
+import { SurfaceVaults } from "./vaults/SurfaceVaults.js";
+import { vaultEventSchemas } from "./vaults/VaultEvent.js";
 import { formatPromptDocumentsInstructions } from "./promptDocuments/formatPromptDocumentsInstructions.js";
 import type {
     MarkPromptDocumentInput,
@@ -111,6 +113,7 @@ const eventSchema = Type.Union([
         type: Type.Literal("calendar_event.updated"),
         payload: calendarEventUpdatedPayloadSchema,
     }),
+    ...vaultEventSchemas,
 ]);
 export type SurfaceEvent = Static<typeof eventSchema>;
 type Listener = (ctx: Context, event: SurfaceEvent) => void | Promise<void>;
@@ -144,6 +147,7 @@ const CHAT_TYPES: ReadonlySet<string> = new Set([
     "artifact",
     "bot",
     "task",
+    "vault",
 ]);
 const PREPARE_CHAT = "surfaces.prepareChat";
 /** How long a person's request waits for a chat's folder and agent before reporting 503. */
@@ -174,6 +178,8 @@ export class SurfacesModule implements AgentModule {
     );
     #systemMonitor!: SystemMonitorSampler;
     #agents: AgentSystemRef | undefined;
+    /** Vault Surfaces' tree, versions, uploads, and maintenance. */
+    readonly vaults: SurfaceVaults;
     constructor(
         readonly durable: DurableFunctionsModule,
         readonly team: TeamModule,
@@ -184,6 +190,7 @@ export class SurfacesModule implements AgentModule {
         readonly config: ConfigModule,
         readonly runners: RunnersModule,
     ) {
+        this.vaults = new SurfaceVaults(durable, config);
         durable.register({
             name: "surfaces.notify",
             argumentsSchema: eventSchema,
@@ -214,7 +221,12 @@ export class SurfacesModule implements AgentModule {
             this.#event(eventCtx, event),
         );
         this.#agents = agents;
+        this.vaults.start({
+            requireVault: (vaultCtx, surfaceId) => this.#surface(vaultCtx, surfaceId, "vault"),
+            notify: (eventCtx, event) => this.#event(eventCtx, event),
+        });
         return {
+            afterStart: (startCtx) => this.vaults.afterStart(startCtx),
             instructions: async (hookCtx, scope) => {
                 const chat = await this.chatForAgent(hookCtx, scope.agent.id);
                 const important = formatPromptDocumentsInstructions(
@@ -443,6 +455,7 @@ export class SurfacesModule implements AgentModule {
                     actor ?? { userId: await this.owner(tx), agentId: adminAgentId ?? null },
                     input.mutationId ?? null,
                 );
+            if (input.type === "vault") await this.vaults.createSettings(tx, id, input.retention);
             await this.#event(
                 tx,
                 { type: "surface.created", payload: { surface, ...echo(input.mutationId) } },

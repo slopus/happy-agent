@@ -85,6 +85,19 @@ const GUIDES: Readonly<Record<string, SurfaceChatGuide>> = {
             "Do not stop processes, delete files, or otherwise change the machine unless someone explicitly asks you to.",
         ],
     },
+    vault: {
+        noun: "vault",
+        read: 'Call list_vault with this Surface ID and the folder the question is about, "/" for the whole vault, with depth to look further down. Find files by name with glob_vault and by their text with grep_vault, and read one with read_vault_file.',
+        heading: "Working in the vault",
+        rules: [
+            "A vault is a shared tree of folders, files, and artifacts, small web sites kept as one entry. Paths start with / at its root and match names ignoring case. You reach it only through the vault tools; the shell and your own file tools cannot see it.",
+            "Keep the structure people built: put new files where similar ones already are, and create folders only when nothing fits. Name files plainly, the way the person would.",
+            "Every write keeps the earlier versions, so change files directly when asked rather than asking whether to. Prefer edit_vault_file for part of a text file and write_vault_file for a whole one; copy binary files in from your machine with import_vault_file and out with export_vault_file.",
+            "Deleting moves an entry to the Trash, where it stays restorable for a while. Delete only what someone asked you to remove.",
+            "To bring back an earlier version, find it with list_vault_versions and restore it with write_vault_file and fromVersion, which keeps the newer versions too.",
+            "Say which paths you changed in your reply.",
+        ],
+    },
     artifact: {
         noun: "artifact Surface",
         read: `${findTarget("artifact", "artifactId and live title")} Then read it with read_artifact, and any single file with read_artifact_file.`,
