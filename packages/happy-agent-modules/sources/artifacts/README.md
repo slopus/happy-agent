@@ -217,6 +217,8 @@ type accepts before it is read.
   `storedPreview` does the same for a file's still preview, and refuses a file without one.
 - `actorFor(ctx, agentId)` decides an agent's author and source; `resolveSource(ctx, input)` checks
   a source a person names and fills a workspace's project.
+- `search(ctx, q, limit)` finds artifacts that are not deleted by their title first, then by
+  their summary and the text of their newest version, for the node's search.
 - `onEvent(listener)` reports `artifact_created`, `artifact_updated`, and `artifact_deleted` after
   commit, each with the artifact, and with the previous artifact and the new version where they
   apply.
@@ -239,6 +241,12 @@ source, and the operation ID that made it; one row per
 version file keyed by path, indexed by digest, with its measurements; and one row per upload, whose size, digest, and
 UTF-8 flag stay empty until its bytes arrive. The artifact and version rows carry the `major.minor`
 labels.
+
+Search keeps an FTS5 word index of every artifact that is not deleted: its title, and its summary
+followed by the text of its newest version's entry, Markdown as written and HTML without tags,
+scripts, styles, or comments, for entries up to 1 MiB. It changes in the same transaction as the version or deletion.
+Artifacts made before the index are indexed after upgrade by the durable
+`artifacts.search.backfill` job, twenty per transaction.
 
 An upload is recorded together with the durable call that removes it before any of its bytes are
 written. The bytes are written, synced, hashed, and checked for UTF-8; the digest is recorded; and

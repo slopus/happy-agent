@@ -6,6 +6,8 @@ import {
 import { sql } from "drizzle-orm";
 import type { Context } from "@steve.kite/stdlib";
 
+import { migrateArtifactSearch } from "./search/migrateArtifactSearch.js";
+
 export const ARTIFACTS_TABLE = "happy_agent_module_artifacts";
 export const ARTIFACT_VERSIONS_TABLE = "happy_agent_module_artifact_versions";
 export const ARTIFACT_FILES_TABLE = "happy_agent_module_artifact_files";
@@ -259,6 +261,7 @@ export const artifactMigrations = [
             );
         },
     ],
+    ["010-artifact-search", migrateArtifactSearch],
 ] as const;
 
 /**

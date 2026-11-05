@@ -23,7 +23,16 @@ import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { ProjectsModule } from "../projects/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { WorkspacesModule } from "../workspaces/index.js";
+import type { SearchHit } from "../utils/searchHit.js";
+import {
+    firstSearchWordIndex,
+    searchLineAt,
+    searchQueryWords,
+    searchWordMatch,
+} from "../utils/searchWords.js";
 import {} from "./ArtifactStore.js";
+import * as searchIndex from "./search/artifactSearchIndex.js";
+import { artifactSearchText } from "./search/artifactSearchText.js";
 
 import {
     ARTIFACT_UPLOAD_EXPIRY_FUNCTION,
@@ -217,6 +226,15 @@ export class ArtifactsModule implements AgentModule {
                 return null;
             },
         });
+        durableFunctions.register({
+            name: SEARCH_BACKFILL_FUNCTION,
+            argumentsSchema: Type.Null(),
+            resultSchema: Type.Null(),
+            executor: async (ctx) => {
+                await this.#backfillSearch(ctx);
+                return null;
+            },
+        });
     }
 
     readonly #hooks: AgentModuleHooks = {
@@ -231,6 +249,18 @@ export class ArtifactsModule implements AgentModule {
             readArtifactFileTool(this),
             deleteArtifactTool(this, scope.agent.id),
         ],
+        // Index the artifacts made before search, unless that is done.
+        afterStart: async (ctx: Context) => {
+            await ctx.inTx(async (txCtx) => {
+                if ((await searchIndex.queryArtifactSearchBackfill(txCtx)) !== undefined)
+                    await this.#durableFunctions.invoke(txCtx, {
+                        function: SEARCH_BACKFILL_FUNCTION,
+                        arguments: null,
+                        operationId: SEARCH_BACKFILL_FUNCTION,
+                        lockKeys: [SEARCH_BACKFILL_FUNCTION],
+                    });
+            });
+        },
     };
 
     readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
@@ -1414,6 +1444,7 @@ export class ArtifactsModule implements AgentModule {
         if (!Value.Check(artifactEventSchema, event)) {
             throw new Error("The artifact event is invalid.");
         }
+        await this.#indexSearch(ctx, event.type === "artifact_deleted" ? null : event.artifact);
         const frozen = deepFreeze(structuredClone(event));
         afterCommit(ctx, async (eventCtx) => {
             for (const listener of [...this.#listeners]) {
@@ -1429,6 +1460,94 @@ export class ArtifactsModule implements AgentModule {
             }
         });
         for (const listener of [...this.#transactionalListeners]) await listener(ctx, frozen);
+    }
+
+    /**
+     * Artifacts that are not deleted whose title holds every query word, best first, then those
+     * whose summary or newest text does, with the line where a word first appears.
+     */
+    async search(ctx: Context, q: string, limit: number): Promise<SearchHit<"artifact">[]> {
+        const words = searchQueryWords(q);
+        if (words.length === 0) return [];
+        const match = searchWordMatch(words);
+        const hits: SearchHit<"artifact">[] = [];
+        const seen = new Set<string>();
+        for (const column of ["title", "text"] as const) {
+            for (const found of await searchIndex.queryArtifactSearch(
+                ctx,
+                column,
+                match,
+                limit + 1,
+            )) {
+                if (hits.length > limit) return hits;
+                if (seen.has(found.artifactId)) continue;
+                const artifact = await queryArtifact(ctx, found.artifactId);
+                if (artifact?.status !== "active") continue;
+                seen.add(artifact.id);
+                hits.push({
+                    type: "artifact",
+                    key: `artifact:${artifact.id}`,
+                    artifactId: artifact.id,
+                    title: artifact.title,
+                    artifactType: artifact.type,
+                    match: column === "title" ? "name" : "content",
+                    snippet:
+                        column === "title"
+                            ? null
+                            : searchLineAt(
+                                  found.text,
+                                  firstSearchWordIndex(found.text, words) ?? 0,
+                              ).snippet.trim(),
+                });
+            }
+        }
+        return hits;
+    }
+
+    /** Keep an artifact's title, summary, and newest text searchable; null removes a deleted one. */
+    async #indexSearch(ctx: Context, artifact: ArtifactRecord | null | undefined): Promise<void> {
+        if (artifact === undefined) return;
+        if (artifact === null || artifact.status !== "active") {
+            if (artifact !== null) await searchIndex.indexArtifactSearch(ctx, artifact.id, null);
+            return;
+        }
+        await searchIndex.indexArtifactSearch(ctx, artifact.id, {
+            title: artifact.title,
+            // The summary leads, so a match in it reads as a line of its own.
+            text: [
+                artifact.summary,
+                await artifactSearchText(
+                    artifact,
+                    this.#config.artifactContentPath(artifact.entry.sha256),
+                ),
+            ]
+                .filter((part) => part !== undefined && part.length > 0)
+                .join("\n"),
+        });
+    }
+
+    /** Index the artifacts made before search, a bounded batch per transaction. */
+    async #backfillSearch(ctx: Context): Promise<void> {
+        for (;;) {
+            ctx.lifetime?.throwIfAborted();
+            const more = await ctx.inTx(async (txCtx) => {
+                const after = await searchIndex.queryArtifactSearchBackfill(txCtx);
+                if (after === undefined) return false;
+                const ids = await searchIndex.queryActiveArtifactIdsAfter(
+                    txCtx,
+                    after,
+                    SEARCH_BACKFILL_BATCH,
+                );
+                for (const id of ids)
+                    await this.#indexSearch(txCtx, await queryArtifact(txCtx, id));
+                await searchIndex.updateArtifactSearchBackfill(
+                    txCtx,
+                    ids.length < SEARCH_BACKFILL_BATCH ? null : ids.at(-1)!,
+                );
+                return ids.length === SEARCH_BACKFILL_BATCH;
+            });
+            if (!more) return;
+        }
     }
 
     #requireAgents(): AgentSystemRef {
@@ -1478,6 +1597,11 @@ function hasMedia(media: ArtifactFileMedia): boolean {
 function coversByDefault(type: ArtifactType): boolean {
     return type === "image" || type === "image_series";
 }
+
+/** The durable job indexing artifacts made before search. */
+const SEARCH_BACKFILL_FUNCTION = "artifacts.search.backfill";
+/** How many artifacts one backfill transaction indexes; each may read up to 1 MiB of text. */
+const SEARCH_BACKFILL_BATCH = 20;
 
 /** The durable removal of one upload, cancelled when the upload is used. */
 function uploadOperationId(uploadId: string): string {

@@ -360,3 +360,12 @@ validates a record throw, so a migration deletes those artifacts with their vers
 and inline text no remaining file uses. Content files on disk stay, as they do for any deleted
 artifact. History still parses an older call's presentation of a withdrawn type, and the API shows
 that call as a plain tool instead of a card no client can open.
+
+## Search finds artifacts by title, summary, and newest text
+
+Steve asked for one search over everything in the node. Artifacts take part through their own word
+index: a title match ranks before a content match, content being the summary followed by the
+newest version's entry (Markdown as written, HTML without its markup), so a match in the summary
+reads as a line of its own, and the index changes in the same transaction as
+the version or deletion, so a deleted artifact is never found. Older artifacts are indexed after
+upgrade by a bounded durable backfill rather than at startup.

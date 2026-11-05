@@ -64,6 +64,7 @@ import type { RunnersModule } from "../runners/index.js";
 import { apiResourceVersion } from "../utils/apiResourceVersion.js";
 import { isUserOriginMetadata } from "../impl/messageOrigin.js";
 import { SurfacesPersistence, surfacesMigrations } from "./persistence/SurfacesPersistence.js";
+import { SurfaceSearch } from "./search/SurfaceSearch.js";
 import {
     clearSurfaceLeave,
     queryAutomaticSurfaceIds,
@@ -180,6 +181,8 @@ export class SurfacesModule implements AgentModule {
     #agents: AgentSystemRef | undefined;
     /** Vault Surfaces' tree, versions, uploads, and maintenance. */
     readonly vaults: SurfaceVaults;
+    /** Search over the catalog, todos, calendar events, and documents. */
+    readonly search: SurfaceSearch;
     constructor(
         readonly durable: DurableFunctionsModule,
         readonly team: TeamModule,
@@ -191,6 +194,7 @@ export class SurfacesModule implements AgentModule {
         readonly runners: RunnersModule,
     ) {
         this.vaults = new SurfaceVaults(durable, config);
+        this.search = new SurfaceSearch(durable);
         durable.register({
             name: "surfaces.notify",
             argumentsSchema: eventSchema,
@@ -217,16 +221,29 @@ export class SurfacesModule implements AgentModule {
         this.#store = new SurfacesPersistence(agentDatabase(ctx)!);
         this.#kv = this.#store.kv();
         this.#documents = new SurfaceDocuments(this.#store, this.#kv, this.#live);
-        this.#calendars = new SurfaceCalendars(this.#store, this.#kv, (eventCtx, event) =>
-            this.#event(eventCtx, event),
+        this.#calendars = new SurfaceCalendars(
+            this.#store,
+            this.#kv,
+            (eventCtx, event) => this.#event(eventCtx, event),
+            this.search,
         );
         this.#agents = agents;
         this.vaults.start({
             requireVault: (vaultCtx, surfaceId) => this.#surface(vaultCtx, surfaceId, "vault"),
             notify: (eventCtx, event) => this.#event(eventCtx, event),
         });
+        this.search.start({
+            store: this.#store,
+            kv: this.#kv,
+            catalog: (searchCtx) => this.#stored(searchCtx),
+            documentText: async (searchCtx, surface) =>
+                await this.#documents.searchText(searchCtx, surface),
+        });
         return {
-            afterStart: (startCtx) => this.vaults.afterStart(startCtx),
+            afterStart: async (startCtx) => {
+                await this.vaults.afterStart(startCtx);
+                await this.search.afterStart(startCtx);
+            },
             instructions: async (hookCtx, scope) => {
                 const chat = await this.chatForAgent(hookCtx, scope.agent.id);
                 const important = formatPromptDocumentsInstructions(
@@ -455,6 +472,7 @@ export class SurfacesModule implements AgentModule {
                     actor ?? { userId: await this.owner(tx), agentId: adminAgentId ?? null },
                     input.mutationId ?? null,
                 );
+            if (input.type === "document") await this.search.documentChanged(tx, id, 0);
             if (input.type === "vault") await this.vaults.createSettings(tx, id, input.retention);
             await this.#event(
                 tx,
@@ -1365,6 +1383,7 @@ export class SurfacesModule implements AgentModule {
         )
             throw new Error("A todo revision cannot be overwritten.");
         await this.#kv.write(ctx, `todo.${todo.surfaceId}.${todo.id}`, todo);
+        await this.search.indexTodo(ctx, todo);
     }
     async #event(ctx: Context, event: SurfaceEvent, actor?: SurfaceActor): Promise<void> {
         // Reserve the initiating event before transactional listeners enqueue derived changes.
@@ -1383,6 +1402,7 @@ export class SurfacesModule implements AgentModule {
         actor: SurfaceActor,
     ): Promise<void> {
         const change = { surfaceId, seq, actor: { ...actor }, at: Date.now() };
+        await this.search.documentChanged(ctx, surfaceId, seq);
         for (const listener of this.#documentChanged) await listener(ctx, change);
     }
 }

@@ -327,21 +327,35 @@ the upload is looked at, so it uses up nothing and emits no event. A differing b
 silently, as creation ids are: one ID per attempt is the client's contract. IDs are scoped per
 file. Vault tools send `tool:<callId>`, so a call repeated after a restart finds its version.
 
-## Vault search ranks words with BM25, and global search covers every vault
+## Vault search ranks words with BM25 in tiers
 
-Steve asked for global search to find vault files by name and by content, ranked with BM25.
-Substring search through the trigram index found text but ranked it poorly, so search now ranks
-words with FTS5 bm25() over two unicode61 indexes, which fold case and diacritics: one row per item
-with its name and the folders above it, and one row per text that keeps no copy of the text.
-Results come in tiers: words in the item's own name, then words in content, then words found only
-in the folders above, then the old substring matches. Path-only matches come after content,
-because a word in a folder name such as "Docs" would otherwise rank every file below it above real
-content hits. Query words match by prefix and are never stemmed, so a half-typed word keeps
-matching (porter would index "planning" as "plan" and lose "planni"). The indexes change in the
-same transaction as entries and texts, and renaming or moving a folder rewrites the folder paths
-below it. `GET /v0/vault-search` runs the same search over every vault rather than leaving clients
-to send one request per vault. Vaults made before the indexes are filled by the maintenance pass in
-bounded transactions, which copy text out of the trigram index instead of reading files.
+Steve asked for search to find vault files by name and by content, ranked with BM25. Substring
+search through the trigram index found text but ranked it poorly, so search now ranks words with
+FTS5 bm25() over two unicode61 indexes, which fold case and diacritics: one row per item with its
+name and the folders above it, and one row per text that keeps no copy of the text. Results come in
+tiers: words in the item's own name, then words in content, then words found only in the folders
+above, then the old substring matches. Path-only matches come after content, because a word in a
+folder name such as "Docs" would otherwise rank every file below it above real content hits. Query
+words match by prefix and are never stemmed, so a half-typed word keeps matching (porter would
+index "planning" as "plan" and lose "planni"). The indexes change in the same transaction as
+entries and texts, and renaming or moving a folder rewrites the folder paths below it. Vaults made
+before the indexes are filled by the maintenance pass in bounded transactions, which copy text out
+of the trigram index instead of reading files.
+
+## Vaults are searched only through the node's one search
+
+Steve asked for one search over everything in the node, `POST /v0/search`, which clients run
+locally and fuse with the daemon's answer, and then for vault search to go entirely. There is no
+per-vault search route and no vault-wide one; `glob_vault` and `grep_vault` keep the trigram
+index. `SurfaceVaults.search` is the vault provider: every vault's live items, each once under its
+best tier, reported as `match: "path"` when only the folders above matched (and for a substring
+found only in the path). Surfaces search their catalog's names in memory; todo text, and calendar
+event titles beside their location and notes, live in contentless word indexes changed in the same
+transaction; a document's Markdown and the text of its live comments are indexed in a durable job
+just after each edit, so typing never waits for the projection to be rebuilt. A comment match has
+a snippet and no line. A document marked while that job finishes runs it again from its
+`onSuccess`. Existing todos, events, and documents are indexed by a bounded durable backfill after
+upgrade.
 
 ## The default vault retention is Time Machine
 

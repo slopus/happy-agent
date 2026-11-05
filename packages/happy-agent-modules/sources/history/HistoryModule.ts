@@ -51,7 +51,15 @@ import {
 import { decodeRequestProfile } from "../impl/requestProfile.js";
 import { storyQuoteOf } from "../impl/storyQuote.js";
 import type { BotSettingsModule } from "../botSettings/index.js";
+import type { DurableFunctionsModule } from "../durableFunctions/index.js";
 import type { EventsModule } from "../events/index.js";
+import type { SearchHit } from "../utils/searchHit.js";
+import {
+    firstSearchWordIndex,
+    searchLineAt,
+    searchQueryWords,
+    searchWordMatch,
+} from "../utils/searchWords.js";
 import type {
     ConfigModule,
     ProviderExecutionAttempt,
@@ -149,6 +157,17 @@ import {
     summarizeHistory,
     type HistoryStats,
 } from "./impl/summarizeHistory.js";
+import {
+    eraseHistoryWords,
+    historyWordRole,
+    historyWordText,
+    indexHistoryWords,
+    migrateHistoryWords,
+    queryHistoryRowsForWords,
+    queryHistoryWordBackfill,
+    queryHistoryWords,
+    updateHistoryWordBackfill,
+} from "./persistence/historyWords.js";
 import { readAgentHistoryTool } from "./tools/read_agent_history.js";
 
 type HistoryToolArguments = Static<typeof historyToolArgumentsSchema>;
@@ -189,6 +208,12 @@ const HISTORY_TABLE = "happy_agent_module_history";
 const HISTORY_RUNS_TABLE = "happy_agent_module_history_runs";
 const HISTORY_PENDING_TABLE = "happy_agent_module_history_pending";
 const HISTORY_TOOL_CALLS_TABLE = "happy_agent_module_history_tool_calls";
+/** The durable job indexing the words of messages archived before the word index. */
+const HISTORY_WORDS_BACKFILL = "history.words.backfill";
+/** How many messages one backfill transaction indexes. */
+const HISTORY_WORDS_BATCH = 200;
+/** How many index rows one search looks through for messages the caller may see. */
+const HISTORY_WORDS_SCAN = 1_000;
 
 /**
  * What a subscriber is handed once an append has committed.
@@ -239,6 +264,7 @@ export class HistoryModule implements AgentModule {
     readonly #botSettings: BotSettingsModule | undefined;
     readonly #config: ConfigModule | undefined;
     readonly #providerUsage: ProviderUsageModule | undefined;
+    readonly #durableFunctions: DurableFunctionsModule | undefined;
     readonly #executionReservations = new ExecutionConfigurationReservations();
     readonly #activeProviderResultStarts = new Map<string, Set<string>>();
 
@@ -257,11 +283,23 @@ export class HistoryModule implements AgentModule {
         botSettings?: BotSettingsModule,
         config?: ConfigModule,
         providerUsage?: ProviderUsageModule,
+        durableFunctions?: DurableFunctionsModule,
     ) {
         this.#events = events;
         this.#botSettings = botSettings;
         this.#config = config;
         this.#providerUsage = providerUsage;
+        this.#durableFunctions = durableFunctions;
+        // Messages archived before the word index are indexed once, in bounded transactions.
+        durableFunctions?.register({
+            name: HISTORY_WORDS_BACKFILL,
+            argumentsSchema: Type.Null(),
+            resultSchema: Type.Null(),
+            executor: async (ctx) => {
+                await this.#backfillWords(ctx);
+                return null;
+            },
+        });
         // Compile during module construction, not while the first history request owns the
         // database transaction. The cache contains fixed schemas, never transcript content.
         for (const schema of [
@@ -408,6 +446,7 @@ export class HistoryModule implements AgentModule {
                 await rewriteInlineActionMessages(database, HISTORY_PENDING_TABLE, false);
             },
         ],
+        ["005-history-words", migrateHistoryWords],
     ];
 
     /**
@@ -516,6 +555,7 @@ export class HistoryModule implements AgentModule {
                     WHERE agent_id = ${agentId} AND record_id = ${message.recordId}`,
             );
             await indexHistoryToolCalls(txCtx.db, agentId, message);
+            await indexHistoryWords(txCtx, agentId, message);
         });
     }
 
@@ -2172,6 +2212,7 @@ export class HistoryModule implements AgentModule {
                     )`,
             );
             await indexHistoryToolCalls(ctx.db, agentId, message);
+            await indexHistoryWords(ctx, agentId, message);
             position += 1;
         }
         this.#scheduleAppendNotification(ctx, agentId, messages);
@@ -2365,6 +2406,72 @@ export class HistoryModule implements AgentModule {
         return page;
     }
 
+    /**
+     * Messages people and agents wrote whose text holds every query word, best BM25 first, among
+     * the conversations in `agentIds` only. The caller decides which conversations the person may
+     * see; a message outside them is never read.
+     */
+    async searchMessages(
+        ctx: Context,
+        q: string,
+        agentIds: ReadonlySet<string>,
+        limit: number,
+    ): Promise<Omit<SearchHit<"message">, "workspaceId" | "projectId">[]> {
+        const words = searchQueryWords(q);
+        if (words.length === 0) return [];
+        return await ctx.inTx(async (txCtx) => {
+            const hits: Omit<SearchHit<"message">, "workspaceId" | "projectId">[] = [];
+            for (const found of await queryHistoryWords(
+                txCtx,
+                searchWordMatch(words),
+                HISTORY_WORDS_SCAN,
+            )) {
+                if (hits.length > limit) break;
+                if (!agentIds.has(found.agentId)) continue;
+                const message = await this.message(txCtx, found.agentId, found.recordId);
+                const role = message === undefined ? null : historyWordRole(message);
+                if (message === undefined || role === null) continue;
+                const text = historyWordText(message);
+                hits.push({
+                    type: "message",
+                    key: `message:${message.recordId}`,
+                    agentId: found.agentId,
+                    messageId: message.recordId,
+                    role,
+                    snippet: searchLineAt(text, firstSearchWordIndex(text, words) ?? 0).snippet,
+                    createdAt: message.at ?? 0,
+                });
+            }
+            return hits;
+        });
+    }
+
+    /** Index the messages archived before the word index, a bounded batch per transaction. */
+    async #backfillWords(ctx: Context): Promise<void> {
+        for (;;) {
+            ctx.lifetime?.throwIfAborted();
+            const more = await ctx.inTx(async (txCtx) => {
+                const state = await queryHistoryWordBackfill(txCtx);
+                if (state === undefined) return false;
+                const batch = await queryHistoryRowsForWords(
+                    txCtx,
+                    state.after,
+                    state.until,
+                    HISTORY_WORDS_BATCH,
+                );
+                for (const row of batch) {
+                    const message = JSON.parse(row.messageJson) as unknown;
+                    if (historyValidator(historyMessageSchema).Check(message))
+                        await indexHistoryWords(txCtx, row.agentId, message);
+                }
+                const done = batch.length < HISTORY_WORDS_BATCH;
+                await updateHistoryWordBackfill(txCtx, done ? null : batch.at(-1)!.rowid);
+                return !done;
+            });
+            if (!more) return;
+        }
+    }
+
     /** Remove every message, run, pending message, and tool-call index row of one agent. */
     async #erase(ctx: Context, agentId: string): Promise<void> {
         for (const table of [
@@ -2378,6 +2485,7 @@ export class HistoryModule implements AgentModule {
                 sql`DELETE FROM ${sql.raw(table)} WHERE agent_id = ${agentId}`,
             );
         }
+        await eraseHistoryWords(ctx, agentId);
     }
 
     async #direct<Result>(
@@ -2437,6 +2545,21 @@ export class HistoryModule implements AgentModule {
         tools: (_ctx: Context, scope: AgentModuleScope): readonly AnyAgentTool[] => [
             readAgentHistoryTool(this, scope.agent.id),
         ],
+
+        // Index the messages archived before the word index, unless that is done.
+        afterStart: async (ctx: Context): Promise<void> => {
+            const durableFunctions = this.#durableFunctions;
+            if (durableFunctions === undefined) return;
+            await ctx.inTx(async (txCtx) => {
+                if ((await queryHistoryWordBackfill(txCtx)) !== undefined)
+                    await durableFunctions.invoke(txCtx, {
+                        function: HISTORY_WORDS_BACKFILL,
+                        arguments: null,
+                        operationId: HISTORY_WORDS_BACKFILL,
+                        lockKeys: [HISTORY_WORDS_BACKFILL],
+                    });
+            });
+        },
 
         /** An agent deleted for good takes its conversation with it, in the same transaction. */
         agentErasedTransact: async (

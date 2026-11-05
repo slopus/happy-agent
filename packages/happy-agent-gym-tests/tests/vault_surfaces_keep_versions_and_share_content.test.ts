@@ -169,16 +169,22 @@ describe("vault Surfaces through the real daemon", () => {
             status: 404,
         });
 
-        const search = await client.searchVault(vault.id, { q: "draft" });
-        expect(search.results).toEqual([
+        // Search finds vault items, in this vault and every other.
+        const inVault = async (q: string) =>
+            (await client.search({ q, types: ["vault_file", "vault_folder"] })).results.filter(
+                (result) => "surfaceId" in result && result.surfaceId === vault.id,
+            );
+        expect(await inVault("draft")).toEqual([
             expect.objectContaining({
+                type: "vault_file",
+                fileId: plan.id,
                 match: "content",
                 path: "/Docs/Plan.md",
                 line: 1,
                 snippet: "fourth draft",
             }),
         ]);
-        expect((await client.searchVault(vault.id, { q: "pla" })).results[0]).toMatchObject({
+        expect((await inVault("pla"))[0]).toMatchObject({
             match: "name",
             path: "/Docs/Plan.md",
         });
@@ -202,7 +208,7 @@ describe("vault Surfaces through the real daemon", () => {
             docs.id,
         ]);
         expect((await client.getVaultFile(vault.id, plan.id)).inTrash).toBe(true);
-        expect((await client.searchVault(vault.id, { q: "draft" })).results).toEqual([]);
+        expect(await inVault("draft")).toEqual([]);
         await client.restoreVaultFolder(vault.id, docs.id, {}, { ifMatch: deleted.version });
         expect((await client.getVaultFile(vault.id, plan.id)).inTrash).toBe(false);
 

@@ -44,6 +44,7 @@ import {
 } from "../providerRoutes/index.js";
 import { StoriesModule, StoryInputError } from "../stories/index.js";
 import { FeedError, FeedModule } from "../feed/index.js";
+import { NodeSearchModule } from "../nodeSearch/index.js";
 import {
     closeWorkspaceBridgeRequestSchema,
     createSurfaceRequestSchema,
@@ -73,8 +74,7 @@ import {
     updateVaultSettingsRequestSchema,
     vaultItemListQuerySchema,
     vaultMutationRequestSchema,
-    vaultSearchQuerySchema,
-    vaultGlobalSearchQuerySchema,
+    searchRequestSchema,
     vaultTrashQuerySchema,
     vaultTreeQuerySchema,
     vaultVersionPageQuerySchema,
@@ -679,6 +679,7 @@ export class ApiModule implements AgentModule {
     readonly #providerRoutes: ProviderRoutesModule | undefined;
     readonly #stories: StoriesModule | undefined;
     readonly #feed: FeedModule | undefined;
+    readonly #nodeSearch: NodeSearchModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -852,6 +853,7 @@ export class ApiModule implements AgentModule {
         providerRoutes?: ProviderRoutesModule,
         stories?: StoriesModule,
         feed?: FeedModule,
+        nodeSearch?: NodeSearchModule,
     ) {
         this.#abort = abort;
         this.#config = config;
@@ -899,6 +901,7 @@ export class ApiModule implements AgentModule {
         this.#providerRoutes = providerRoutes;
         this.#stories = stories;
         this.#feed = feed;
+        this.#nodeSearch = nodeSearch;
     }
 
     readonly beforeStart = async (
@@ -2051,7 +2054,7 @@ export class ApiModule implements AgentModule {
             if (await this.#handleFeedRoute(ctx, request, response, url)) return;
             if (await this.#handleSurfaceRoute(ctx, request, response, url)) return;
             if (await this.#handleVaultUploadRoute(ctx, request, response, url)) return;
-            if (await this.#handleVaultSearchRoute(ctx, request, url, response)) return;
+            if (await this.#handleSearchRoute(ctx, request, url, response)) return;
             if (await this.#handleArtifactRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/projects") {
                 const projects = await this.#allProjects(ctx, true);
@@ -7251,15 +7254,6 @@ export class ApiModule implements AgentModule {
                 sendJson(response, 200, { ...(await vaults.tree(ctx, surfaceId, query)), cursor });
                 return true;
             }
-            if (first === "search") {
-                const query = queryAs(
-                    numericVaultQuery(vaultQuery(url, ["q", "kind", "parentId", "limit"])),
-                    vaultSearchQuerySchema,
-                    "vault search",
-                );
-                sendJson(response, 200, await vaults.search(ctx, surfaceId, query));
-                return true;
-            }
             if (first === "trash") {
                 const query = queryAs(
                     numericVaultQuery(vaultQuery(url, ["limit", "pageCursor"])),
@@ -7541,29 +7535,25 @@ export class ApiModule implements AgentModule {
         });
     }
 
-    /** `GET /v0/vault-search`: every vault's search, ranked as one vault's is. */
-    async #handleVaultSearchRoute(
+    /** `POST /v0/search`; see "Search" in API.md. */
+    async #handleSearchRoute(
         ctx: Context,
         request: IncomingMessage,
         url: URL,
         response: ServerResponse,
     ): Promise<boolean> {
-        const surfaces = this.#surfaces;
-        if (surfaces === undefined || url.pathname !== "/v0/vault-search") return false;
-        if (request.method !== "GET") return false;
+        const nodeSearch = this.#nodeSearch;
+        if (nodeSearch === undefined || url.pathname !== "/v0/search") return false;
+        if (request.method !== "POST") return false;
+        const body = await bodyAs(request, searchRequestSchema, "search request");
         try {
-            await surfaces.owner(ctx);
-            const query = queryAs(
-                numericVaultQuery(vaultQuery(url, ["q", "kind", "limit"])),
-                vaultGlobalSearchQuerySchema,
-                "vault search",
-            );
-            sendJson(response, 200, await surfaces.vaults.searchAll(ctx, query));
-            return true;
+            await this.#surfaces?.owner(ctx);
         } catch (error) {
             if (!(error instanceof SurfaceError)) throw error;
             throw surfaceApiError(error);
         }
+        sendJson(response, 200, await nodeSearch.search(ctx, body));
+        return true;
     }
 
     /** `/v0/vault-uploads` and `/v0/vault-uploads/:uploadId`. */
@@ -10568,8 +10558,8 @@ export class ApiModule implements AgentModule {
                           systemMonitorSurfaces: true,
                           surfaceEditing: true,
                           vaults: true,
-                          vaultSearch: true,
                       }),
+                ...(this.#nodeSearch === undefined ? {} : { search: true }),
             },
             version: {
                 protocol: API_PROTOCOL_VERSION,

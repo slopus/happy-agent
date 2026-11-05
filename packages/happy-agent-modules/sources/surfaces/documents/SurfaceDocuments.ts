@@ -17,6 +17,7 @@ import { apiResourceVersion } from "../../utils/apiResourceVersion.js";
 import type { SurfacesPersistence } from "../persistence/SurfacesPersistence.js";
 import { SurfaceError } from "../SurfaceError.js";
 import { agentDocumentChange } from "./agentDocumentChange.js";
+import { documentCommentText } from "./documentCommentText.js";
 import {
     markdownLengthBound,
     markdownToUpdate,
@@ -142,6 +143,16 @@ export class SurfaceDocuments {
                 seq: at,
             },
             omitted: reading.omitted,
+        };
+    }
+
+    /** What search finds a document by: its Markdown text, and its comments' text. */
+    async searchText(ctx: Context, surface: Surface): Promise<{ text: string; comments: string }> {
+        const head = await this.head(ctx, surface);
+        const doc = await this.#current(ctx, head);
+        return {
+            text: readDocument(Y.encodeStateAsUpdate(doc)).text,
+            comments: documentCommentText(doc),
         };
     }
 

@@ -43,6 +43,7 @@ import { ExportedBotsModule } from "../exportedBots/index.js";
 import { BotSettingsModule } from "../botSettings/index.js";
 import { CollaborationModule } from "../collaboration/index.js";
 import { SubtasksModule } from "../subtasks/index.js";
+import { NodeSearchModule } from "../nodeSearch/index.js";
 import { CompactionsModule } from "../compactions/index.js";
 import { CloudModule } from "../cloud/index.js";
 import { CodeModeModule } from "../codeMode/index.js";
@@ -226,6 +227,7 @@ export interface HappyAgentRuntimeModules {
     readonly userSettings: UserSettingsModule;
     readonly surfaces: SurfacesModule;
     readonly feed: FeedModule;
+    readonly nodeSearch: NodeSearchModule;
     readonly workflows: WorkflowsModule;
     readonly workspaces: WorkspacesModule;
 }
@@ -451,7 +453,14 @@ export async function startHappyAgentRuntime(
         const events = new EventsModule();
         const providerUsage = new ProviderUsageModule(config);
         registerShutdown("provider-usage", async () => await providerUsage.close());
-        const history = new HistoryModule(events, botSettings, config, providerUsage);
+        const durableFunctions = new DurableFunctionsModule();
+        const history = new HistoryModule(
+            events,
+            botSettings,
+            config,
+            providerUsage,
+            durableFunctions,
+        );
         history.onAppend(observation.recordHistory);
         // The machine's tools show what they read in the chat, so chat media comes first.
         const chatMedia = new ChatMediaModule(config, history);
@@ -471,7 +480,6 @@ export async function startHappyAgentRuntime(
                       botSettings,
                       chatMedia,
                   );
-        const durableFunctions = new DurableFunctionsModule();
         const providerClis = new ProviderClisModule(config, providerScan, durableFunctions);
         const providerRoutes = new ProviderRoutesModule(config, providerClis, providerScan);
         const globalSkills = new GlobalSkillsModule(config, durableFunctions);
@@ -775,6 +783,18 @@ export async function startHappyAgentRuntime(
             projects,
             workspaces,
         );
+        const nodeSearch = new NodeSearchModule(
+            surfaces,
+            artifacts,
+            history,
+            projects,
+            workspaces,
+            tasks,
+            bots,
+            subtasks,
+            team,
+            globalSkills,
+        );
         const apiModule = new ApiModule(
             abort,
             config,
@@ -819,6 +839,7 @@ export async function startHappyAgentRuntime(
             providerRoutes,
             stories,
             feed,
+            nodeSearch,
         );
         api = apiModule;
 
@@ -891,6 +912,7 @@ export async function startHappyAgentRuntime(
             userSettings,
             surfaces,
             feed,
+            nodeSearch,
             workflows,
             workspaces,
         };
@@ -966,6 +988,7 @@ export async function startHappyAgentRuntime(
             imageGeneration,
             stories,
             feed,
+            nodeSearch,
             compute.skillsModule,
             compute.computeModule,
             happy,

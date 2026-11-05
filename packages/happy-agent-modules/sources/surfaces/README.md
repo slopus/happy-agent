@@ -61,7 +61,8 @@ deleted. Bytes live once under Configuration's `vaults/content/<2 hex>/<sha256>`
 vault and version, so copying a file, restoring a version, or uploading bytes already stored
 writes nothing. Resumable uploads accumulate in `vaults/uploads/<id>` with a running digest and
 are stored when the last byte arrives. A trigram FTS5 index holds the newest version's text of
-small UTF-8 files for search and `grep_vault`. The durable hourly `surfaces.vaults.maintain` pass
+small UTF-8 files for substring search and `grep_vault`, and word indexes rank names, paths, and
+text for the node's search, which is the only way vaults are searched. The durable hourly `surfaces.vaults.maintain` pass
 expires uploads, prunes versions by each vault's retention, purges expired Trash, and runs the
 durable `surfaces.vaults.collect` collector, which deletes a content file only after its grace
 time once no version, artifact file, or upload names it. Artifacts serve their files under the
@@ -97,6 +98,14 @@ agent or workspace belongs to a chat; the Surface, not those catalogs, owns its 
 agent receives the ordinary, non-admin Surface tools. Its context names the Surface, tells it to
 read the Surface's current state with that type's tools before every answer or change, keeps it on
 that Surface, and gives each type its own working rules.
+
+`search/` is search over Surfaces. The catalog's names are ranked in memory, documents under
+`document` and every other Surface under `surface`. Todo text, and calendar event titles beside
+their location and notes, live in contentless FTS5 word indexes changed in the same transaction as
+the item; a deleted one leaves them. A document's Markdown and its live comments' text are indexed
+by the durable `surfaces.search.documents` job just after each edit, so a content match may lag
+the newest edit briefly, and the durable
+`surfaces.search.backfill` job indexes what existed before the indexes in bounded batches.
 
 Document Surfaces can be the installation's important documents. `promptDocuments/` keeps one
 installation-wide list of marked documents in its own table, each with the admin's description,

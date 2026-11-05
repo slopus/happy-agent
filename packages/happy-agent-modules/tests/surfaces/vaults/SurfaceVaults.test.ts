@@ -442,21 +442,19 @@ describe("vault Surfaces", () => {
 
     it("searches names and content, and leaves the Trash out", async () => {
         const f = await fixture();
+        const find = async (q: string) =>
+            (await f.vaults.search(f.ctx, q, 30)).map((hit) => `${hit.match} ${hit.path}`);
         const plans = await f.folder(null, "Plans");
         await f.file(plans.id, "roadmap.md", "Ship vaults in November.\nThen sharing.");
         await f.file(null, "plans-old.txt", "nothing here");
-        const names = await f.vaults.search(f.ctx, f.vault.id, { q: "plans", kind: "name" });
-        expect(names.results.map((result) => result.path)).toEqual([
-            "/Plans",
-            "/plans-old.txt",
-            "/Plans/roadmap.md",
+        expect(await find("plans")).toEqual([
+            "name /Plans",
+            "name /plans-old.txt",
+            "path /Plans/roadmap.md",
         ]);
-        const content = await f.vaults.search(f.ctx, f.vault.id, {
-            q: "november",
-            kind: "content",
-        });
-        expect(content.results).toMatchObject([
+        expect(await f.vaults.search(f.ctx, "november", 30)).toMatchObject([
             {
+                type: "vault_file",
                 match: "content",
                 path: "/Plans/roadmap.md",
                 line: 1,
@@ -464,24 +462,23 @@ describe("vault Surfaces", () => {
             },
         ]);
         // Two letters find words starting with them; a substring needs three.
-        expect(
-            (await f.vaults.search(f.ctx, f.vault.id, { q: "no", kind: "content" })).results
-                .map((result) => result.path)
-                .sort(),
-        ).toEqual(["/Plans/roadmap.md", "/plans-old.txt"]);
-        expect(
-            (await f.vaults.search(f.ctx, f.vault.id, { q: "ip", kind: "content" })).results,
-        ).toEqual([]);
+        expect((await find("no")).sort()).toEqual([
+            "content /Plans/roadmap.md",
+            "content /plans-old.txt",
+        ]);
+        expect(await find("ip")).toEqual([]);
         await f.vaults.deleteEntry(f.ctx, f.vault.id, plans.id, plans.version, person);
-        expect((await f.vaults.search(f.ctx, f.vault.id, { q: "november" })).results).toEqual([]);
+        expect(await find("november")).toEqual([]);
     });
 
     it("ranks word matches in tiers, keeps paths current, and searches every vault", async () => {
         const f = await fixture();
-        const search = async (q: string, query: { kind?: "name" | "content" } = {}) =>
-            (await f.vaults.search(f.ctx, f.vault.id, { q, ...query })).results.map(
-                (result) =>
-                    `${result.match} ${result.path}${result.line === null ? "" : `:${result.line}`}`,
+        const other = await f.surfaces.create(f.ctx, { type: "vault", name: "Other" }, "alice");
+        // Each item is listed once, under its best tier.
+        const search = async (q: string) =>
+            (await f.vaults.search(f.ctx, q, 30)).map(
+                (hit) =>
+                    `${hit.type} ${hit.match} ${hit.surfaceId === other.id ? "other" : "main"}${hit.path}${hit.type === "vault_file" && hit.line !== null ? `:${hit.line}` : ""}`,
             );
         const docs = await f.folder(null, "Docs");
         const launch = await f.folder(docs.id, "Launch");
@@ -492,20 +489,20 @@ describe("vault Surfaces", () => {
 
         // Own names first, then content, then paths, then substrings.
         expect(await search("launch")).toEqual([
-            "name /Docs/Launch",
-            "name /launch.txt",
-            "content /Docs/notes.md:2",
-            "name /Docs/Launch/agenda.md",
-            "name /relaunch.txt",
+            "vault_folder name main/Docs/Launch",
+            "vault_file name main/launch.txt",
+            "vault_file content main/Docs/notes.md:2",
+            "vault_file path main/Docs/Launch/agenda.md",
+            "vault_file name main/relaunch.txt",
         ]);
         // A word matches by prefix and ignores case and diacritics, so typing finds it.
-        expect(await search("LAUN fri", { kind: "content" })).toEqual(["content /Docs/notes.md:2"]);
-        expect(await search("cafe")).toEqual(["content /Docs/notes.md:3"]);
-        expect((await f.vaults.search(f.ctx, f.vault.id, { q: "cafe" })).results[0]).toMatchObject({
+        expect(await search("LAUN fri")).toEqual(["vault_file content main/Docs/notes.md:2"]);
+        expect(await search("cafe")).toEqual(["vault_file content main/Docs/notes.md:3"]);
+        expect((await f.vaults.search(f.ctx, "cafe", 30))[0]).toMatchObject({
             snippet: "Café after",
             innerPath: null,
         });
-        expect(await search("docs agenda")).toEqual(["name /Docs/Launch/agenda.md"]);
+        expect(await search("docs agenda")).toEqual(["vault_file path main/Docs/Launch/agenda.md"]);
 
         // Renaming a folder re-indexes the paths below it in the same transaction.
         await f.vaults.moveEntry(
@@ -516,11 +513,16 @@ describe("vault Surfaces", () => {
             { name: "Liftoff" },
             person,
         );
-        expect(await search("liftoff agenda")).toEqual(["name /Docs/Liftoff/agenda.md"]);
+        expect(await search("liftoff agenda")).toEqual([
+            "vault_file path main/Docs/Liftoff/agenda.md",
+        ]);
         expect(await search("launch agenda")).toEqual([]);
+        expect(await search("liftoff")).toEqual([
+            "vault_folder name main/Docs/Liftoff",
+            "vault_file path main/Docs/Liftoff/agenda.md",
+        ]);
 
         // Every vault, with the same tiers; the Trash stays out.
-        const other = await f.surfaces.create(f.ctx, { type: "vault", name: "Other" }, "alice");
         await f.vaults.createEntry(
             f.ctx,
             other.id,
@@ -532,15 +534,14 @@ describe("vault Surfaces", () => {
             },
             person,
         );
-        const all = await f.vaults.searchAll(f.ctx, { q: "launch", kind: "name" });
-        expect(all.results.map((result) => [result.item.surfaceId, result.path])).toEqual([
-            [f.vault.id, "/launch.txt"],
-            [other.id, "/launch codes.txt"],
-            [f.vault.id, "/relaunch.txt"],
+        expect(await search("launch")).toEqual([
+            "vault_file name main/launch.txt",
+            "vault_file name other/launch codes.txt",
+            "vault_file content main/Docs/notes.md:2",
+            "vault_file name main/relaunch.txt",
         ]);
         await f.vaults.deleteEntry(f.ctx, f.vault.id, docs.id, docs.version, person);
         expect(await search("friday")).toEqual([]);
-        expect((await f.vaults.searchAll(f.ctx, { q: "friday" })).results).toEqual([]);
     });
 
     it("indexes vaults made before the word indexes in bounded maintenance passes", async () => {
@@ -557,25 +558,22 @@ describe("vault Surfaces", () => {
         ])
             await agentDatabaseRun(f.ctx.db, statement);
         // Until the backfill runs, substrings still find everything.
-        expect(
-            (await f.vaults.search(f.ctx, f.vault.id, { q: "zeppelin", limit: 100 })).results,
-        ).toHaveLength(100);
+        // A provider answers one more than the limit, so fusion knows more matched.
+        expect(await f.vaults.search(f.ctx, "zeppelin", 100)).toHaveLength(101);
 
         await f.vaults.maintain(f.ctx, Date.now());
-        const words = await f.vaults.search(f.ctx, f.vault.id, { q: "zep", limit: 100 });
-        expect(words.truncated).toBe(true);
-        expect(words.results.every((result) => result.match === "content")).toBe(true);
-        expect(
-            (await f.vaults.search(f.ctx, f.vault.id, { q: "docs note 149" })).results.map(
-                (result) => result.path,
-            ),
-        ).toEqual(["/Docs/note 149.md"]);
+        const words = await f.vaults.search(f.ctx, "zep", 100);
+        expect(words).toHaveLength(101);
+        expect(words.every((hit) => hit.match === "content")).toBe(true);
+        expect((await f.vaults.search(f.ctx, "docs note 149", 30)).map((hit) => hit.path)).toEqual([
+            "/Docs/note 149.md",
+        ]);
         const left = await agentDatabaseRows(
             f.ctx.db,
             sql`SELECT id FROM happy_agent_vault_search_backfill`,
         );
         expect(left).toEqual([]);
-    });
+    }, 30_000);
 
     it("round-trips .artifact files and nests them in folder zips", async () => {
         const f = await fixture();

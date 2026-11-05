@@ -302,3 +302,14 @@ for the stable release, those records would have failed run-page validation and 
 conversation unreadable for anyone who had tried it in a preview. Migration
 `004-history-inline-actions-as-text` rewrites each press as a text block holding the words on the
 control and drops the choices, reading only the rows whose JSON mentions either.
+
+## Search finds what people and agents wrote, never what they could not see
+
+Steve asked for one search over everything in the node, messages included. History owns the word
+index and indexes a message in the transaction that archives, replaces, or erases it, so a search
+never finds a message that is gone or misses one that was committed. It searches only what a
+person or an agent wrote, never reasoning, tool traffic, notices, or messages hidden from the
+person, because those are not what anyone remembers saying. The caller passes the conversations
+the person may see and History checks each match against them before reading the message, so a
+snippet can never leak from a conversation they cannot open. Older history is indexed by a bounded
+durable backfill after upgrade rather than at startup.

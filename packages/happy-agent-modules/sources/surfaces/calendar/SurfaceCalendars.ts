@@ -28,6 +28,7 @@ import {
 } from "./expandCalendarEvent.js";
 import { normalizeRecurrence, validateCalendarSeries } from "./validateCalendarSeries.js";
 import { isTimeZone } from "./zonedTime.js";
+import type { SurfaceSearch } from "../search/SurfaceSearch.js";
 
 type Actor = CalendarEventRevision["actor"];
 type Notify = (
@@ -56,6 +57,7 @@ export class SurfaceCalendars {
         readonly store: SurfacesPersistence,
         readonly kv: AgentKV,
         readonly notify: Notify,
+        readonly search: SurfaceSearch,
     ) {}
 
     /** Occurrences overlapping `[from, to)`, at most a bounded number, with their events. */
@@ -266,6 +268,7 @@ export class SurfaceCalendars {
             upper: bounds.upper,
             event,
         });
+        await this.search.indexCalendarEvent(ctx, event);
     }
 }
 
