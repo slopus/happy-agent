@@ -14074,8 +14074,9 @@ conversations are, marked as archived.
 ### Result types
 
 Keys are `<type>:<id>`, with the ID named below; a key is stable for as long as the thing exists.
-Types are listed in provider order. Clients ignore results whose `type` they do not know, so
-daemons may add types without a protocol change.
+Types are listed in provider order. Clients ignore results whose `type` they do not know, and
+fields they do not know on a result they keep, so daemons may add types and fields without a
+protocol change.
 
 | `type`           | Key ID        | Fields                                                                                                            |
 | ---------------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -14086,7 +14087,7 @@ daemons may add types without a protocol change.
 | `calendar_event` | `eventId`     | `surfaceId`, `eventId`, `title`, `allDay`, `start`                                                                |
 | `artifact`       | `artifactId`  | `artifactId`, `title`, `artifactType`, `match`, `snippet`                                                         |
 | `surface`        | `surfaceId`   | `surfaceId`, `surfaceType`, `name`                                                                                |
-| `agent`          | `agentId`     | `agentId`, `title`, `kind` (`"chat"`, `"task"`, `"subtask"`, or `"bot"`), `archived`                              |
+| `agent`          | `agentId`     | `agentId`, `title`, `kind` (`"chat"`, `"task"`, `"subtask"`, or `"bot"`), `archived`, `workspaceId`, `projectId`  |
 | `project`        | `projectId`   | `projectId`, `name`, `archived`                                                                                   |
 | `workspace`      | `workspaceId` | `workspaceId`, `projectId`, `name`, `archived`                                                                    |
 
@@ -14107,7 +14108,11 @@ daemons may add types without a protocol change.
   HTML without its tags. `artifactType` is the artifact's `type`.
 - An `agent` is a conversation people see: `"chat"` for a project or workspace conversation,
   `"task"` for a task's agent, `"subtask"` for a subtask, and `"bot"` for a bot's own agent. It
-  matches by `title`.
+  matches by `title`. `workspaceId` is the workspace holding the conversation, as
+  `GET /v0/agents` reports it: a bot's or task's own workspace, a project's root workspace (whose
+  ID is the project's) for a project conversation, the workspace for a workspace conversation, and
+  the nearest ancestor's for a subtask; `null` only when none is found. `projectId` is the project
+  owning that workspace, and `null` for bots, tasks, and their subtasks.
 - `project` and `workspace` match by name. A project is its root workspace, which is never also a
   `workspace` result.
 

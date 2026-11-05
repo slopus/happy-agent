@@ -73,7 +73,25 @@ describe("quick search", () => {
         expect(Value.Check(quickSearchResultSchema, vaultFile)).toBe(true);
         expect(Value.Check(quickSearchResultSchema, { ...todo, status: "deleted" })).toBe(false);
         expect(Value.Check(quickSearchResultSchema, { ...todo, rank: 0 })).toBe(false);
-        expect(Value.Check(quickSearchResultSchema, { ...todo, extra: 1 })).toBe(false);
+        // A newer daemon's extra fields never cost a client the result.
+        expect(Value.Check(quickSearchResultSchema, { ...todo, extra: 1 })).toBe(true);
+        const agent = {
+            type: "agent",
+            key: "agent:a1",
+            rank: 4,
+            agentId: "a1",
+            title: "Launch chat",
+            kind: "chat",
+            archived: false,
+            workspaceId: "w1",
+            projectId: "p1",
+        };
+        expect(Value.Check(quickSearchResultSchema, agent)).toBe(true);
+        expect(
+            Value.Check(quickSearchResultSchema, { ...agent, workspaceId: null, projectId: null }),
+        ).toBe(true);
+        const { workspaceId: _workspaceId, ...withoutWorkspace } = agent;
+        expect(Value.Check(quickSearchResultSchema, withoutWorkspace)).toBe(false);
         expect(
             Value.Check(quickSearchResultSchema, {
                 type: "calendar_event",

@@ -82,7 +82,9 @@ only the folder.
 `quickSearch({ q, types, limit })` searches everything at once when health reports
 `capabilities.quickSearch`: vault files and folders, Surfaces, documents, todos, calendar events,
 artifacts, conversations, projects, and workspaces, each result a typed variant with a stable `key`
-(`<type>:<id>`) and its fused `rank`; results of types this client does not know are dropped.
+(`<type>:<id>`) and its fused `rank`; results of types this client does not know are dropped,
+and fields it does not know are kept. Agent results name the `workspaceId` and `projectId` that
+open them.
 Search what the app already holds first, then fuse the two lists with
 `fuseQuickSearchResults(remote, local)`, Reciprocal Rank Fusion with k = 60 where the remote
 fields win on a shared key. `quickSearchFusion.fixtures.json`, shipped with the package, holds the

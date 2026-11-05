@@ -75,7 +75,8 @@ function variant<const Name extends QuickSearchType, Fields extends TProperties>
             rank: Type.Integer({ minimum: 1 }),
             ...fields,
         },
-        strict,
+        // A newer daemon may add fields; an older client keeps the result and ignores them.
+        { additionalProperties: true },
     );
 }
 
@@ -143,6 +144,13 @@ export const quickSearchAgentSchema = variant("agent", {
         Type.Literal("bot"),
     ]),
     archived: Type.Boolean(),
+    /**
+     * The workspace holding the conversation, as `GET /v0/agents` reports it; a project's root
+     * workspace has the project's ID.
+     */
+    workspaceId: Nullable(searchIdSchema),
+    /** The project owning that workspace; `null` for bots, tasks, and their subtasks. */
+    projectId: Nullable(searchIdSchema),
 });
 export const quickSearchProjectSchema = variant("project", {
     projectId: searchIdSchema,
