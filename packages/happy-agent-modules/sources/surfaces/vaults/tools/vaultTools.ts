@@ -126,9 +126,11 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
     const vaults = surfaces.vaults;
     const compute = surfaces.compute;
     const agentId = scope.agent.id;
-    const change = async (ctx: Context): Promise<VaultChange> => ({
+    // A version a call makes carries its call ID, so a repeated call finds that version.
+    const change = async (ctx: Context, call: { readonly id: string }): Promise<VaultChange> => ({
         actor: await surfaces.actor(ctx, agentId, scope.kv),
         source: "tool",
+        operationId: `tool:${call.id}`,
     });
     const machine = async (ctx: Context) => {
         const resolved = await compute.resolve(ctx, agentId);
@@ -439,7 +441,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                                 entry,
                                 input.path,
                                 { fromVersion },
-                                await change(tx),
+                                await change(tx, call),
                                 entry.version,
                             ),
                         ),
@@ -457,7 +459,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     input.surfaceId,
                     input.path,
                     bytes,
-                    await change(ctx),
+                    await change(ctx, call),
                     commit,
                 );
             },
@@ -519,7 +521,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     input.surfaceId,
                     input.path,
                     new TextEncoder().encode(edited),
-                    await change(ctx),
+                    await change(ctx, call),
                     (tx, result) => call.commit(tx, result),
                     file.entry.version,
                 );
@@ -742,7 +744,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     0,
                     vaultPathSegments(input.path).length - found.rest.length,
                 );
-                const actor = await change(ctx);
+                const actor = await change(ctx, call);
                 return ctx.inTx(async (tx) => {
                     const folderId = await vaults.ensureFolders(
                         tx,
@@ -822,7 +824,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                         "invalid_request",
                         `${JSON.stringify(found.entry.name)} is not a folder, so nothing can be copied inside it.`,
                     );
-                const actor = await change(ctx);
+                const actor = await change(ctx, call);
                 return ctx.inTx(async (tx) =>
                     call.commit(
                         tx,
@@ -982,7 +984,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                         : found.entry === undefined)
                 ) {
                     const content = await vaults.zipBundle(ctx, bytes, true);
-                    const actor = await change(ctx);
+                    const actor = await change(ctx, call);
                     const existing = found.entry;
                     return ctx.inTx(async (tx) =>
                         call.commit(
@@ -1017,7 +1019,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                     input.surfaceId,
                     input.path,
                     bytes,
-                    await change(ctx),
+                    await change(ctx, call),
                     (tx, result) => call.commit(tx, result),
                 );
             },
@@ -1204,7 +1206,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                                   bytes: new TextEncoder().encode(file.content),
                               })),
                           );
-                const actor = await change(ctx);
+                const actor = await change(ctx, call);
                 const existing = found.entry;
                 return ctx.inTx(async (tx) =>
                     call.commit(
@@ -1314,7 +1316,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                         item.id,
                         item.version,
                         { name: names.at(-1)!, parentId },
-                        await change(tx),
+                        await change(tx, call),
                     );
                     return call.commit(tx, {
                         item: moved,
@@ -1356,7 +1358,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                             input.surfaceId,
                             item.id,
                             item.version,
-                            await change(tx),
+                            await change(tx, call),
                         ),
                         path: input.path,
                     }),
@@ -1426,7 +1428,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                         entry.id,
                         entry.version,
                         target,
-                        await change(tx),
+                        await change(tx, call),
                     );
                     return call.commit(tx, {
                         item: restored,

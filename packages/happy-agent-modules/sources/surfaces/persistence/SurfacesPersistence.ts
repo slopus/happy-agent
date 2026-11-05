@@ -10,6 +10,7 @@ import {
 import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 
+import { migrateVaultOperations } from "../vaults/persistence/migrateVaultOperations.js";
 import { migrateVaults } from "../vaults/persistence/migrateVaults.js";
 
 /** Module-owned AgentKV storage. Current values and immutable revisions use disjoint prefixes. */
@@ -245,4 +246,5 @@ export const surfacesMigrations: readonly AgentModuleMigration[] = [
         },
     ],
     ["006-surface-vaults", migrateVaults],
+    ["007-surface-vault-operations", migrateVaultOperations],
 ];

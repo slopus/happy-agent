@@ -69,6 +69,15 @@ export interface VaultChange {
     readonly actor: VaultActor;
     readonly source: VaultChangeSource;
     readonly mutationId?: string | undefined;
+    /** Makes a new version safe to repeat; see `createVersion`. */
+    readonly operationId?: string | undefined;
+}
+
+/** What making a version did: the version, or null when none was made or it was pruned. */
+export interface VaultVersionOutcome {
+    readonly entry: VaultItem;
+    readonly version: VaultVersion | null;
+    readonly created: boolean;
 }
 
 /** Stored content a file version can take: one file's bytes, or an artifact bundle. */
@@ -926,7 +935,8 @@ export class SurfaceVaults {
 
     /**
      * Give a file new content. Content identical to the newest version makes no
-     * version and changes nothing, though an upload is still used up.
+     * version and changes nothing, though an upload is still used up. A change carrying an
+     * operation ID already used on the file is answered by `replayVersion` instead.
      */
     async createVersion(
         ctx: Context,
@@ -935,9 +945,10 @@ export class SurfaceVaults {
         expectedVersion: string,
         source: VaultContentSource,
         change: VaultChange,
-    ): Promise<{ entry: VaultItem; version: VaultVersion | null }> {
+    ): Promise<VaultVersionOutcome> {
         return ctx.inTx(async (tx) => {
-            await this.#catalogOf().requireVault(tx, surfaceId);
+            const repeated = await this.replayVersion(tx, surfaceId, entryId, change.operationId);
+            if (repeated !== undefined) return repeated;
             const current = await this.#current(tx, surfaceId, entryId, expectedVersion);
             if (current.kind === "folder")
                 throw new SurfaceError("conflict", "A folder has no versions.", currentOf(current));
@@ -948,8 +959,11 @@ export class SurfaceVaults {
                     currentOf(current),
                 );
             const { value, restoredFrom } = await this.#content(tx, current.kind, source, current);
-            if (await this.#sameContent(tx, current, value))
-                return { entry: current, version: null };
+            if (await this.#sameContent(tx, current, value)) {
+                if (change.operationId !== undefined)
+                    await store.insertVaultOperation(tx, current.id, change.operationId, null);
+                return { entry: current, version: null, created: false };
+            }
             if (change.source === "tool" && change.actor.agentId !== null)
                 await this.#requireBudget(tx, current.id, change.actor.agentId);
             const now = Date.now();
@@ -970,6 +984,8 @@ export class SurfaceVaults {
                 now,
                 change,
             );
+            if (change.operationId !== undefined)
+                await store.insertVaultOperation(tx, entry.id, change.operationId, number);
             await this.#activity(tx, entry.id, change, now, {
                 kind: "version_created",
                 number,
@@ -977,7 +993,30 @@ export class SurfaceVaults {
             });
             await this.#updated(tx, current, entry, change.mutationId);
             await this.#prune(tx, entry, await this.#settings(tx, surfaceId), now);
-            return { entry, version };
+            return { entry, version, created: true };
+        });
+    }
+
+    /**
+     * What an earlier `createVersion` with this operation ID did to the file, answered without
+     * checking its version or changing anything: the file as it is now and the version made, with
+     * its current pin, or null when none was made or it was pruned. Undefined when the ID is new.
+     */
+    async replayVersion(
+        ctx: Context,
+        surfaceId: string,
+        entryId: string,
+        operationId: string | undefined,
+    ): Promise<VaultVersionOutcome | undefined> {
+        return ctx.inTx(async (tx) => {
+            await this.#catalogOf().requireVault(tx, surfaceId);
+            if (operationId === undefined) return undefined;
+            const entry = await this.#entry(tx, surfaceId, entryId);
+            const done = await store.readVaultOperation(tx, entry.id, operationId);
+            if (done === undefined) return undefined;
+            if (done.number === null) return { entry, version: null, created: false };
+            const version = await store.readVaultVersion(tx, entry.id, done.number);
+            return { entry, version: version ?? null, created: true };
         });
     }
 

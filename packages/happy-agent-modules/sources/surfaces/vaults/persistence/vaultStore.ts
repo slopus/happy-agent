@@ -474,7 +474,34 @@ export async function listVaultSurfaces(ctx: Context): Promise<string[]> {
 export async function deleteVaultEntryRows(ctx: Context, id: string): Promise<void> {
     await deleteVaultTexts(ctx, id);
     await run(ctx, sql`DELETE FROM happy_agent_vault_activity WHERE entry_id = ${id}`);
+    await run(ctx, sql`DELETE FROM happy_agent_vault_operations WHERE entry_id = ${id}`);
     await run(ctx, sql`DELETE FROM happy_agent_vault_entries WHERE id = ${id}`);
+}
+
+/** What an operation ID used on an entry did: the version it made, or null for none. */
+export async function readVaultOperation(
+    ctx: Context,
+    entryId: string,
+    operationId: string,
+): Promise<{ number: number | null } | undefined> {
+    const [row] = await rows<{ number: number | null }>(
+        ctx,
+        sql`SELECT number FROM happy_agent_vault_operations WHERE entry_id = ${entryId} AND operation_id = ${operationId}`,
+    );
+    if (row === undefined) return undefined;
+    return { number: row.number === null ? null : Number(row.number) };
+}
+
+export async function insertVaultOperation(
+    ctx: Context,
+    entryId: string,
+    operationId: string,
+    number: number | null,
+): Promise<void> {
+    await run(
+        ctx,
+        sql`INSERT INTO happy_agent_vault_operations (entry_id, operation_id, number) VALUES (${entryId}, ${operationId}, ${number})`,
+    );
 }
 
 export async function insertVaultActivity(ctx: Context, activity: VaultActivity): Promise<void> {

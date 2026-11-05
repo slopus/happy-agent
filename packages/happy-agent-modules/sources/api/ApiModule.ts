@@ -7439,23 +7439,32 @@ export class ApiModule implements AgentModule {
                 return true;
             }
             if (method !== "POST") return false;
-            const version = this.#vaultIfMatch(request, located.entry);
             const body = await bodyAs(request, createVaultVersionRequestSchema, "vault version");
-            const source =
-                "uploadId" in body
-                    ? {
-                          type: "upload" as const,
-                          uploadId: body.uploadId,
-                          ...(located.entry.kind === "artifact"
-                              ? { prepared: await vaults.prepareArtifactUpload(ctx, body.uploadId) }
-                              : {}),
-                      }
-                    : { type: "version" as const, number: body.fromVersion };
-            const result = await vaults.createVersion(ctx, surfaceId, entryId, version, source, {
-                ...change,
-                mutationId: body.mutationId,
-            });
-            sendJson(response, result.version === null ? 200 : 201, {
+            // A repeated operation is answered before its If-Match or upload is looked at.
+            const result =
+                (await vaults.replayVersion(ctx, surfaceId, entryId, body.operationId)) ??
+                (await vaults.createVersion(
+                    ctx,
+                    surfaceId,
+                    entryId,
+                    this.#vaultIfMatch(request, located.entry),
+                    "uploadId" in body
+                        ? {
+                              type: "upload",
+                              uploadId: body.uploadId,
+                              ...(located.entry.kind === "artifact"
+                                  ? {
+                                        prepared: await vaults.prepareArtifactUpload(
+                                            ctx,
+                                            body.uploadId,
+                                        ),
+                                    }
+                                  : {}),
+                          }
+                        : { type: "version", number: body.fromVersion },
+                    { ...change, mutationId: body.mutationId, operationId: body.operationId },
+                ));
+            sendJson(response, result.created ? 201 : 200, {
                 ...keyed(result.entry),
                 version: result.version,
             });

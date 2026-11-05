@@ -327,6 +327,83 @@ describe("vault Surfaces", () => {
         await expect(stat(f.vaults.contentPath(sha(enc("one"))))).resolves.toBeDefined();
     });
 
+    it("answers a repeated operation ID with what it did the first time", async () => {
+        const f = await fixture();
+        const entry = await f.file(null, "notes.txt", "one");
+        const other = await f.file(null, "other.txt", "one");
+        const attempt = (id: string, text: string, expected = entry.version, on = entry.id) =>
+            f
+                .upload(enc(text))
+                .then((uploadId) =>
+                    f.vaults.createVersion(
+                        f.ctx,
+                        f.vault.id,
+                        on,
+                        expected,
+                        { type: "upload", uploadId },
+                        { ...person, operationId: id },
+                    ),
+                );
+        const first = await attempt("op-1", "two");
+        expect(first).toMatchObject({ created: true, version: { number: 2, pinned: false } });
+        const events = f.events.length;
+
+        // A stale If-Match and different content are both ignored, and the upload is kept.
+        const spare = await f.upload(enc("three"));
+        const repeat = await f.vaults.createVersion(
+            f.ctx,
+            f.vault.id,
+            entry.id,
+            "stale",
+            { type: "upload", uploadId: spare },
+            { ...person, operationId: "op-1" },
+        );
+        expect(repeat).toEqual(first);
+        expect(f.events.length).toBe(events);
+        expect((await f.vaults.versions(f.ctx, f.vault.id, entry.id, {})).versions).toHaveLength(2);
+        await expect(f.vaults.uploads.requireComplete(f.ctx, spare)).resolves.toBeDefined();
+
+        // The answer shows the file and the version as they are now.
+        await f.vaults.setPinned(f.ctx, f.vault.id, entry.id, 2, true, person);
+        const later = await attempt("op-2", "four", asFile(first.entry).version);
+        const replayed = await f.vaults.replayVersion(f.ctx, f.vault.id, entry.id, "op-1");
+        expect(replayed).toMatchObject({ created: true, version: { number: 2, pinned: true } });
+        expect(replayed?.entry.version).toBe(later.entry.version);
+
+        // Content matching the newest version is remembered as making none.
+        const none = await attempt("op-3", "four", later.entry.version);
+        expect(none).toMatchObject({ created: false, version: null });
+        expect(await attempt("op-3", "five", "stale")).toMatchObject({
+            created: false,
+            version: null,
+        });
+
+        // The same ID on another file is a new request.
+        expect(await attempt("op-1", "two", other.version, other.id)).toMatchObject({
+            created: true,
+            version: { number: 2, fileId: other.id },
+        });
+        expect(await f.vaults.replayVersion(f.ctx, f.vault.id, entry.id, "new")).toBeUndefined();
+        expect(
+            await f.vaults.replayVersion(f.ctx, f.vault.id, entry.id, undefined),
+        ).toBeUndefined();
+
+        // A pruned version is answered as null, still as made.
+        await f.vaults.setPinned(f.ctx, f.vault.id, entry.id, 2, false, person);
+        await f.vaults.updateSettings(f.ctx, f.vault.id, {
+            maxVersions: 1,
+            maxAgeDays: null,
+            keepAllDays: 0,
+            thinning: [],
+            trashDays: 30,
+        });
+        await f.vaults.maintain(f.ctx, Date.now() + DAY);
+        expect(await f.vaults.replayVersion(f.ctx, f.vault.id, entry.id, "op-1")).toMatchObject({
+            created: true,
+            version: null,
+        });
+    });
+
     it("searches names and content, and leaves the Trash out", async () => {
         const f = await fixture();
         const plans = await f.folder(null, "Plans");
@@ -802,6 +879,15 @@ describe("vault Surfaces", () => {
         const created = f.events.filter((event) => event.type === "vault.folder.created");
         expect(created).toHaveLength(2);
         await run("write_vault_file", { path: "/Reports/notes.md", content: "# Notes" });
+        // A version carries its call's ID, so the same call repeated finds it again.
+        const write = (content: string) =>
+            tool("write_vault_file").execute(
+                f.ctx,
+                { surfaceId: f.vault.id, path: "/Reports/notes.md", content } as never,
+                call("w1"),
+            );
+        expect(await write("# Notes, again")).toMatchObject({ version: 2 });
+        expect(await write("# Notes, a third time")).toMatchObject({ version: 2 });
         await expect(
             run("move_vault_file", { path: "/Reports/Q3", toPath: "/Q3" }),
         ).rejects.toThrow(/move_vault_folder/);

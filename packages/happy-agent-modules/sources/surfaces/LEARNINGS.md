@@ -316,6 +316,17 @@ zip bundle. Only the prose changed: `kind: "artifact"`, the `artifact` fields, t
 `.artifact` suffix of the stored name stay. Clients hide that suffix and tell a vault app apart by
 its preview and name, but the daemon and its API always carry the full name.
 
+## A new version is safe to repeat by its operation ID
+
+A client whose response to `POST /files/:fileId/versions` was lost could not tell whether its
+version was made, and a blind retry made a second one. Steve approved an optional `operationId`:
+the daemon records, in the version's own transaction, whether each ID used on a file made a version
+and which, and keeps the record until the file is purged. A repeat answers with that outcome,
+the original 201 or 200 and the version as it is now or null once pruned, before If-Match or
+the upload is looked at, so it uses up nothing and emits no event. A differing body is replayed
+silently, as creation ids are: one ID per attempt is the client's contract. IDs are scoped per
+file. Vault tools send `tool:<callId>`, so a call repeated after a restart finds its version.
+
 ## The default vault retention is Time Machine
 
 Steve chose Time Machine's schedule as the default: every version for a day, one a day until 30
