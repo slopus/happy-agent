@@ -103,6 +103,7 @@ import {
     type ArtifactContentSource,
 } from "./impl/artifactContentFiles.js";
 import { measureArtifactCover } from "./impl/measureArtifactCover.js";
+import { normalizeArtifactSummary } from "./impl/normalizeArtifactSummary.js";
 import { ARTIFACT_COVER_INSTRUCTIONS, ARTIFACT_REFERENCE_INSTRUCTIONS } from "./tools/common.js";
 import { connectArtifactNetwork, describeArtifactNetworkExposure } from "./impl/artifactNetwork.js";
 import {
@@ -538,7 +539,8 @@ export class ArtifactsModule implements AgentModule {
             }
             const background = input.background?.toLowerCase();
             const display = input.display;
-            const summary = input.summary ?? undefined;
+            const summary =
+                input.summary == null ? undefined : normalizeArtifactSummary(input.summary);
             const cover = await this.#resolveCover(
                 input.type,
                 input.live !== undefined,
@@ -674,7 +676,10 @@ export class ArtifactsModule implements AgentModule {
                     (input.background?.toLowerCase() ?? undefined) === current.background) &&
                 (input.display === undefined || (input.display ?? undefined) === current.display) &&
                 (input.cover === undefined || input.cover === null) &&
-                (input.summary === undefined || (input.summary ?? undefined) === current.summary)
+                (input.summary === undefined ||
+                    (input.summary === null
+                        ? undefined
+                        : normalizeArtifactSummary(input.summary)) === current.summary)
             ) {
                 return current;
             }
@@ -719,7 +724,11 @@ export class ArtifactsModule implements AgentModule {
             const display =
                 input.display === undefined ? current.display : (input.display ?? undefined);
             const summary =
-                input.summary === undefined ? current.summary : (input.summary ?? undefined);
+                input.summary === undefined
+                    ? current.summary
+                    : input.summary === null
+                      ? undefined
+                      : normalizeArtifactSummary(input.summary);
             const cover = await this.#resolveCover(
                 current.type,
                 current.live !== undefined,

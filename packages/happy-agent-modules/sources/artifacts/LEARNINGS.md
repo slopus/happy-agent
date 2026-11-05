@@ -301,7 +301,7 @@ wrap by default, because an inline page never scrolls inside, and `nowrap` scrol
 ## A cover is an image the artifact draws, in one of two shapes
 
 Steve wanted the Feed to show a good artifact as a post with a picture of what it found, not a
-type glyph. A version may name a `cover`, one of its own files, and a one-line `summary`; clients
+type glyph. A version may name a `cover`, one of its own files, and a `summary`; clients
 draw only the image, so the headline, key number, or chart lives in the picture itself. The daemon
 decodes the cover and records its size, so clients lay a post out without measuring. Steve then
 fixed the shapes to `wide` (16:9) and `square` (1:1), within 2%, with minimum sizes and a 4096px
@@ -317,6 +317,11 @@ Covers carry over like a background, but a kept cover is checked again on every 
 image's or series' default cover is marked as a default so it follows the picture when the file is
 replaced, instead of failing the way a named cover would. A live-URL artifact holds no files, so it
 refuses a cover.
+
+The summary began as one 280-character line. Steve made it a short post instead, like a tweet:
+what the artifact is and its key takeaway, in a few sentences. It is plain text up to 5,000
+characters with `\n` line breaks; the module turns CRLF into `\n` and trims it before checking,
+so the stored text is what every client shows, and it is never Markdown.
 
 ## Withdrawn types are removed from storage
 

@@ -5,7 +5,7 @@ import {
     artifactDisplaySchema,
     artifactPathSchema,
     artifactRecordSchema,
-    artifactSummarySchema,
+    artifactSummaryInputSchema,
     artifactTitleSchema,
     artifactTypeSchema,
     MAX_ARTIFACT_FILES,
@@ -28,7 +28,7 @@ export const ARTIFACT_REFERENCE_INSTRUCTIONS =
  * are deferred, so an agent may plan an artifact before it has read their descriptions.
  */
 export const ARTIFACT_COVER_INSTRUCTIONS =
-    "A good artifact has a cover: a PNG or WebP, either 16:9 (1600×900) or square (1200×1200), showing its headline, key number, or main chart, readable at feed size; the Feed shows it full width. Give one, with a one-line summary, to any report, analysis, or result people would want to see in the Feed: render it to PNG first with what you have, such as a headless browser screenshot, rsvg-convert, or matplotlib, then name that file as cover in create_artifact or update_artifact. Scratch and utility artifacts may go without.";
+    "A good artifact has a cover: a PNG or WebP, either 16:9 (1600×900) or square (1200×1200), showing its headline, key number, or main chart, readable at feed size; the Feed shows it full width. Give one, with a summary, a short post saying what it is and the key takeaway, to any report, analysis, or result people would want to see in the Feed: render it to PNG first with what you have, such as a headless browser screenshot, rsvg-convert, or matplotlib, then name that file as cover in create_artifact or update_artifact. Scratch and utility artifacts may go without.";
 
 /** How every writing tool describes `cover`. */
 const ARTIFACT_COVER_DESCRIPTION =
@@ -36,7 +36,7 @@ const ARTIFACT_COVER_DESCRIPTION =
 
 /** How every writing tool describes `summary`. */
 const ARTIFACT_SUMMARY_DESCRIPTION =
-    'One plain-text line, up to 280 characters, shown under the title: the finding, such as "Revenue up 18% QoQ, driven by enterprise seats.", not the title again.';
+    "A short post shown under the title, like a tweet: what this is and the key takeaway, in a few sentences of plain text. Line breaks are fine; no Markdown. At most 5,000 characters.";
 
 /** A new artifact's cover, or `null` for none. */
 export const artifactToolCoverSchema = Type.Union(
@@ -54,19 +54,19 @@ export const artifactToolCoverChangeSchema = Type.Union(
 
 /** A new artifact's summary. */
 export const artifactToolSummarySchema = Type.String({
-    ...artifactSummarySchema,
+    ...artifactSummaryInputSchema,
     description: ARTIFACT_SUMMARY_DESCRIPTION,
 });
 
 /** A new version's summary, or `null` to remove it. */
 export const artifactToolSummaryChangeSchema = Type.Union(
-    [Type.String({ ...artifactSummarySchema }), Type.Null()],
+    [Type.String({ ...artifactSummaryInputSchema }), Type.Null()],
     { description: `${ARTIFACT_SUMMARY_DESCRIPTION} null removes it; leaving it out keeps it.` },
 );
 
 /** How the writing tools explain covers. */
 export const ARTIFACT_COVER_GUIDANCE =
-    "A good artifact has a cover and a summary. The cover is a PNG or WebP, either 16:9 (1600×900) or square (1200×1200), showing the headline, key number, or main chart, readable at feed size; the Feed shows it full width and draws nothing over it. Add one to any report, analysis, or result people would want to see in the Feed; scratch and utility artifacts may go without. For a chart or diagram, render it to PNG first with what you have, such as a headless browser screenshot, rsvg-convert, or matplotlib, then publish that file and name it as cover. SVG covers are refused.";
+    "A good artifact has a cover and a summary. The summary is a short post under the title: what this is and the key takeaway, in a few sentences of plain text, line breaks fine, no Markdown. The cover is a PNG or WebP, either 16:9 (1600×900) or square (1200×1200), showing the headline, key number, or main chart, readable at feed size; the Feed shows it full width and draws nothing over it. Add one to any report, analysis, or result people would want to see in the Feed; scratch and utility artifacts may go without. For a chart or diagram, render it to PNG first with what you have, such as a headless browser screenshot, rsvg-convert, or matplotlib, then publish that file and name it as cover. SVG covers are refused.";
 
 /** How every writing tool describes `background`, which almost every artifact leaves out. */
 const ARTIFACT_BACKGROUND_DESCRIPTION =

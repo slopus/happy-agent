@@ -16,6 +16,7 @@ export {
     artifactSourceInputSchema,
     artifactSourceSchema,
     artifactStatusSchema,
+    artifactSummaryInputSchema,
     artifactSummarySchema,
     artifactTimestampSchema,
     artifactTitleSchema,

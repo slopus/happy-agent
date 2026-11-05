@@ -140,7 +140,8 @@ describe("artifact covers and the Highlights filter over the API", () => {
                 { files: [{ path: "cover.png", uploadId: await upload(gym, png(900, 100)) }] },
                 {},
             ),
-            covered({}, { summary: "two\nlines" }),
+            covered({}, { summary: "tab\there" }),
+            covered({}, { summary: "x".repeat(5001) }),
         ] as UpdateArtifactRequest[]) {
             await expect(
                 gym.client.updateArtifact(artifact.id, change, { ifMatch: retitled.version }),
@@ -152,13 +153,13 @@ describe("artifact covers and the Highlights filter over the API", () => {
             artifact.id,
             covered(
                 { files: [{ path: "square.png", uploadId: await upload(gym, png(1200, 1200)) }] },
-                { cover: "square.png", summary: null },
+                { cover: "square.png", summary: "  Revenue grew 21%.\r\n\r\nEnterprise led.  " },
             ),
             { ifMatch: retitled.version },
         );
         expect(square as Artifact & Covered).toMatchObject({
             cover: { path: "square.png", width: 1200, height: 1200, aspect: "square" },
-            summary: null,
+            summary: "Revenue grew 21%.\n\nEnterprise led.",
         });
         const updates = (await gym.client.getEvents({ after: before })).events.filter(
             (event) => event.type === "artifact.updated",
@@ -166,7 +167,11 @@ describe("artifact covers and the Highlights filter over the API", () => {
         expect(updates.map((event) => event.payload)).toMatchObject([
             { changes: { cover, summary, latestVersion: 2 } },
             {
-                changes: { cover: { path: "square.png" }, summary: null, latestVersion: 3 },
+                changes: {
+                    cover: { path: "square.png" },
+                    summary: "Revenue grew 21%.\n\nEnterprise led.",
+                    latestVersion: 3,
+                },
             },
         ]);
 

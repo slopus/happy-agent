@@ -88,15 +88,22 @@ export const artifactLiveSchema = Type.Object({
 export type ArtifactLive = Static<typeof artifactLiveSchema>;
 
 /**
- * One plain-text line a client shows under the title: 1–280 characters, not only blank, with no
- * control characters or line breaks.
+ * Post-like plain text a client shows under the title, like a tweet or a short post: trimmed, with
+ * `\n` line breaks and no other control characters, and no Markdown. At most 5,000 characters,
+ * counted as code points; the schema bounds UTF-16 units. Clients may linkify `http(s)` URLs.
  */
 export const artifactSummarySchema = Type.String({
-    maxLength: 280,
+    maxLength: 10_000,
     minLength: 1,
-    pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]+$",
+    pattern: "^(?!\\s)(?![\\s\\S]*\\s$)[^\\x00-\\x09\\x0b-\\x1f\\x7f-\\x9f\\u2028\\u2029]+$",
 });
 export type ArtifactSummary = Static<typeof artifactSummarySchema>;
+
+/**
+ * A summary as a request writes it. The daemon turns CRLF into `\n`, trims it, and refuses one
+ * that is then empty, over 5,000 characters, or holds another control character.
+ */
+export const artifactSummaryInputSchema = Type.String({ maxLength: 20_000, minLength: 1 });
 
 /**
  * A cover's standard shape: `"wide"` (16:9) or `"square"` (1:1). The set may grow; a client that
@@ -281,7 +288,7 @@ export const artifactVersionSchema = Type.Object({
     /** The version's identity within its artifact, from 1, whatever its label. */
     number: Type.Integer({ minimum: 1 }),
     source: Nullable(artifactSourceSchema),
-    /** One line shown under the title; `null` for none, absent on older daemons. */
+    /** Post-like text shown under the title; `null` for none, absent on older daemons. */
     summary: Type.Optional(Nullable(artifactSummarySchema)),
     title: artifactTitleSchema,
 });
@@ -409,7 +416,7 @@ export const createArtifactRequestSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
     source: Type.Optional(artifactSourceInputSchema),
     /** The first version's summary; absent or `null` for none. */
-    summary: Type.Optional(Nullable(artifactSummarySchema)),
+    summary: Type.Optional(Nullable(artifactSummaryInputSchema)),
     title: artifactTitleSchema,
     type: artifactTypeSchema,
 });
@@ -440,8 +447,8 @@ export const updateArtifactRequestSchema = Type.Object({
     replaceAll: Type.Optional(Type.Boolean()),
     /** Where this change is being made. */
     source: Type.Optional(artifactSourceInputSchema),
-    /** A line sets the new version's summary, `null` clears it, and absent keeps it. */
-    summary: Type.Optional(Nullable(artifactSummarySchema)),
+    /** Text sets the new version's summary, `null` clears it, and absent keeps it. */
+    summary: Type.Optional(Nullable(artifactSummaryInputSchema)),
     title: Type.Optional(artifactTitleSchema),
 });
 export type UpdateArtifactRequest = Static<typeof updateArtifactRequestSchema>;

@@ -344,7 +344,7 @@ Binary files go up first with `POST /v0/artifact-uploads` (raw bytes) and are th
 `{ "path": ..., "uploadId": ... }`. An update starts from the latest version's files; `remove`
 and `replaceAll` take files out. To show an artifact as a post in the Feed, upload a 16:9
 (1600×900) or square (1200×1200) PNG with it and name it with `"cover": "cover.png"`, plus a
-one-line `"summary"`. See Artifacts in `API.md` for types, limits, sources, and covers.
+`"summary"`, a short plain-text post saying what it is and the key takeaway. See Artifacts in `API.md` for types, limits, sources, and covers.
 
 ## Surfaces: todos, documents, and calendars
 

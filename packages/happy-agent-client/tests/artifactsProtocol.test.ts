@@ -367,10 +367,16 @@ describe("artifacts protocol", () => {
         expect(
             Value.Check(artifactVersionSchema, { ...firstVersion, cover: { path: "c.png" } }),
         ).toBe(false);
-        for (const bad of ["", " ", "two\nlines", "a".repeat(281), "tab\there"]) {
+        for (const bad of ["", " ", " padded", "trailing\n", "tab\there", "cr\r\nlf"]) {
             expect(Value.Check(artifactSummarySchema, bad)).toBe(false);
         }
-        expect(Value.Check(artifactSummarySchema, "a".repeat(280))).toBe(true);
+        expect(Value.Check(artifactSummarySchema, "Q3 grew 18%.\n\nChurn fell to 2.1%.")).toBe(
+            true,
+        );
+        expect(Value.Check(artifactSummarySchema, "a".repeat(5000))).toBe(true);
+        expect(
+            Value.Check(updateArtifactRequestSchema, { summary: "  Two lines\r\nof text  " }),
+        ).toBe(true);
         expect(
             Value.Check(createArtifactRequestSchema, {
                 type: "markdown",

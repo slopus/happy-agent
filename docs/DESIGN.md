@@ -336,8 +336,10 @@ through `happyApp.close()`.
 
 ### 1.9 Artifact covers
 
-The Feed shows an artifact with a cover as a post: its title, its one-line
-summary, and the cover full width beneath. The cover is a picture the artifact
+The Feed shows an artifact with a cover as a post: its title, its summary, and
+the cover full width beneath. The summary is a short plain-text post, like a
+tweet: what this is and the key takeaway, in a few sentences. Line breaks are
+fine; Markdown is not. The cover is a picture the artifact
 draws itself; clients put nothing on top of it. Give one to any report,
 analysis, or result people would want to see in the Feed.
 

@@ -78,7 +78,7 @@ on the catalog row. Only agents set it, through `create_artifact` and `update_ar
 ## Covers and summaries
 
 A version may name a `cover`, one of its own raster image files (PNG, JPEG, WebP, or GIF; never
-SVG) that clients show full width in the Feed, and a `summary`, one plain-text line shown under the
+SVG) that clients show full width in the Feed, and a `summary`, a short plain-text post shown under the
 title. The module decodes the cover with the shared image processor and records its pixel size and
 standard `aspect`: `wide` (16:9 within 2%, at least 960×540) or `square` (1:1 within 2%, at least
 720×720), at most 4096 pixels a side. Any other cover refuses the version. Both carry over like a

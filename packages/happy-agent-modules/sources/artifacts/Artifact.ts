@@ -59,14 +59,21 @@ export const artifactDisplaySchema = Type.Union([
     Type.Literal("side"),
 ]);
 /**
- * One line of plain text a client shows under the title: 1–280 characters, not only blank, with
- * no control characters or line breaks.
+ * A summary as stored: post-like plain text a client shows under the title, like a tweet or a
+ * short post. Trimmed, with `\n` line breaks and no other control characters, and at most 5,000
+ * characters, which `normalizeArtifactSummary` counts as code points; this bound is in UTF-16
+ * units.
  */
 export const artifactSummarySchema = Type.String({
     minLength: 1,
-    maxLength: 280,
-    pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f-\\x9f\\u2028\\u2029]+$",
+    maxLength: 10_000,
+    pattern: "^(?!\\s)(?![\\s\\S]*\\s$)[^\\x00-\\x09\\x0b-\\x1f\\x7f-\\x9f\\u2028\\u2029]+$",
 });
+/**
+ * A summary as someone writes it, before CRLF line ends are made `\n` and it is trimmed and
+ * checked.
+ */
+export const artifactSummaryInputSchema = Type.String({ minLength: 1, maxLength: 20_000 });
 /**
  * The image a feed shows for a version: one of its files, with the pixel size the daemon decoded
  * from it.
@@ -243,7 +250,7 @@ export const artifactVersionSchema = Type.Object(
          * may be absent when that file cannot be a cover.
          */
         coverDefault: Type.Optional(Type.Literal(true)),
-        /** One line a client shows under the title; absent when it has none. */
+        /** Post-like text a client shows under the title; absent when it has none. */
         summary: Type.Optional(artifactSummarySchema),
         live: Type.Optional(artifactLiveSchema),
         createdBy: artifactAuthorSchema,
@@ -303,7 +310,7 @@ export const createArtifactInputSchema = Type.Object(
          */
         cover: Type.Optional(Type.Union([artifactPathSchema, Type.Null()])),
         /** The first version's summary; absent or `null` for none. */
-        summary: Type.Optional(Type.Union([artifactSummarySchema, Type.Null()])),
+        summary: Type.Optional(Type.Union([artifactSummaryInputSchema, Type.Null()])),
         live: Type.Optional(artifactLiveSchema),
         author: artifactAuthorSchema,
         source: Type.Optional(artifactSourceSchema),
@@ -333,8 +340,8 @@ export const updateArtifactInputSchema = Type.Object(
         display: Type.Optional(Type.Union([artifactDisplaySchema, Type.Null()])),
         /** A path sets the new version's cover, `null` clears it, and absent keeps it. */
         cover: Type.Optional(Type.Union([artifactPathSchema, Type.Null()])),
-        /** A line sets the new version's summary, `null` clears it, and absent keeps it. */
-        summary: Type.Optional(Type.Union([artifactSummarySchema, Type.Null()])),
+        /** Text sets the new version's summary, `null` clears it, and absent keeps it. */
+        summary: Type.Optional(Type.Union([artifactSummaryInputSchema, Type.Null()])),
         /**
          * Make the new version this major one, `major.0`. It must be one more than the latest
          * major, and the latest version must be a minor one.

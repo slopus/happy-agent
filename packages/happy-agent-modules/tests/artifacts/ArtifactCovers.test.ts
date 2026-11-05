@@ -167,9 +167,16 @@ describe("artifact covers and summaries", () => {
         await expect(update(w, artifact, { cover: "index.md" })).rejects.toThrow(
             /must be a PNG, JPEG, WebP, or GIF/,
         );
-        await expect(update(w, artifact, { summary: "two\nlines" })).rejects.toBeInstanceOf(
-            ArtifactInputError,
-        );
+        for (const [summary, reason] of [
+            [" \r\n\t ", /needs some text/],
+            ["tab\there", /plain text/],
+            ["a".repeat(5001), /at most 5,000 characters; this one has 5,001/],
+        ] as const) {
+            await expect(update(w, artifact, { summary })).rejects.toThrow(reason);
+            await expect(update(w, artifact, { summary })).rejects.toBeInstanceOf(
+                ArtifactInputError,
+            );
+        }
         expect((await w.artifacts.get(w.ctx, artifact.id))?.latestVersion).toBe(1);
 
         // Removing the file together with the cover is fine.
@@ -185,6 +192,20 @@ describe("artifact covers and summaries", () => {
             height: 900,
             aspect: "wide",
         });
+    });
+
+    it("keeps a summary as a post: line breaks kept, CRLF made LF, and trimmed", async () => {
+        const w = await world("covers-summary-post");
+        const artifact = await report(w, {
+            summary: "  Q3 revenue grew 18%.\r\n\r\nChurn fell to 2.1% — see the cohort chart.\n",
+        });
+        expect(artifact.summary).toBe(
+            "Q3 revenue grew 18%.\n\nChurn fell to 2.1% — see the cohort chart.",
+        );
+        // Five thousand characters, counted as characters rather than UTF-16 units.
+        const long = await update(w, artifact, { summary: "😀".repeat(5000) });
+        expect([...(long.summary ?? "")]).toHaveLength(5000);
+        expect((await update(w, long, { summary: "Short again." })).summary).toBe("Short again.");
     });
 
     it("leaves other types without a cover unless one is named", async () => {

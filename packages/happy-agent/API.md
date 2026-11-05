@@ -11460,7 +11460,7 @@ scheme, light or dark, as its `color-scheme`. The standard styles below make tha
 are listed, such as the Feed, which shows it full width under the title as a post. The artifact
 draws everything into the image itself — a title card with the headline, the key number, or the
 main chart — and clients draw nothing of their own over it. A version may also have a `summary`,
-one plain-text line a client shows under the title.
+post-like plain text a client shows under the title.
 
 - A cover is one of the version's own files, named by its `path`. The daemon decodes it and
   records its `mimeType`, its intrinsic `width` and `height` in pixels, as shown after any EXIF
@@ -11482,8 +11482,12 @@ one plain-text line a client shows under the title.
 - A cover is a raster image: `image/png`, `image/jpeg`, `image/webp`, or `image/gif`, decided by
   its path's extension, and its bytes must decode as that format. SVG is refused, because not every
   client can draw one: render it to PNG or WebP first. The file is at most 32 MiB.
-- A summary is 1–280 characters of plain text that is not only blank, holding no control
-  characters (U+0000–U+001F, U+007F–U+009F) and no line or paragraph separator.
+- A summary is post-like plain text, as in a tweet or a short post: what the artifact is and its
+  key takeaway, in a few sentences. The daemon turns CRLF line ends into `\n` and trims the text;
+  it must then hold 1–5,000 characters, counted as Unicode code points, and no control characters
+  (U+0000–U+001F, U+007F–U+009F) other than `\n`, nor a Unicode line or paragraph separator.
+  It is never Markdown: clients show it as text, keeping its line breaks, and may linkify
+  `http(s)` URLs. The stored text is what every response returns.
 - A cover or summary that breaks these rules is `400 invalid_request` with a message saying which
   rule, and no version is made.
 - A new version keeps the latest version's cover path and summary unless the change names new ones
@@ -11637,7 +11641,8 @@ Fields:
 - `cover` — this version's cover, `{ "path", "mimeType", "width", "height", "aspect" }`, or `null`
   for none. `path` is one of `files`; `width` and `height` are the decoded pixel size, and `aspect`
   is `"wide"` or `"square"`, a set that may grow. Absent on older daemons.
-- `summary` — this version's one-line summary, or `null` for none. Absent on older daemons.
+- `summary` — this version's summary, post-like plain text with `\n` line breaks, or `null` for
+  none. Absent on older daemons.
 - `live` — this version's `{ "url", "networkId" }`, or `null` for file content. Absent on older
   daemons. The URL may change between versions; the artifact's network never does.
 - `createdBy`, `source`, `createdAt` — who made this version, where, and when.

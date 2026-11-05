@@ -157,7 +157,7 @@ import {
     ArtifactsModule,
     ArtifactTooLargeError,
     artifactPathSchema,
-    artifactSummarySchema,
+    artifactSummaryInputSchema as artifactSummaryTextSchema,
     artifactTypeSchema,
     DEFAULT_ARTIFACT_PAGE_SIZE,
     MAX_ARTIFACT_PAGE_SIZE,
@@ -418,7 +418,9 @@ import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 const API_PROTOCOL_VERSION = 33;
 /** A cover as a request names it: a path in the new version, or `null` for none. */
 const artifactCoverInputSchema = Type.Optional(Type.Union([artifactPathSchema, Type.Null()]));
-const artifactSummaryInputSchema = Type.Optional(Type.Union([artifactSummarySchema, Type.Null()]));
+const artifactSummaryInputSchema = Type.Optional(
+    Type.Union([artifactSummaryTextSchema, Type.Null()]),
+);
 const createArtifactRequestSchema = Type.Composite([
     Type.Omit(publishedCreateArtifactRequestSchema, ["type"]),
     Type.Object({
