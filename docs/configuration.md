@@ -906,9 +906,10 @@ bearer_token_env_var = "ISSUES_MCP_TOKEN"
 ```
 
 MCP tools, resources, resource templates, prompts, pagination, form elicitation,
-and bearer tokens are supported. Live tool discovery lets a session use tools
-added after startup. The OAuth keys are accepted but interactive OAuth is not
-implemented, so a server that sets them fails to connect.
+bearer tokens, and OAuth logins are supported. Live tool discovery lets a session
+use tools added after startup. An HTTP server that needs a login is shown as
+`needs_auth`; ask an agent to log in, and you get a sign-in link to finish in your
+browser. See [Logging in to an HTTP server](MCP.md#logging-in-to-an-http-server).
 
 When a server asks for input during a tool call, the request appears as a
 question on the agent that called the tool. It names the server, and only a

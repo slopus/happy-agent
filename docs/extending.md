@@ -460,10 +460,10 @@ as `"http"`; a `command` entry is stdio implicitly. Unknown keys in an
 MCP tools, resources, resource templates, prompts, pagination, and form
 elicitation are supported, and live tool discovery lets a session use tools
 added after startup. HTTP servers authenticate with `http_headers` or
-`bearer_token_env_var`. The `oauth_client_id_env_var`,
-`oauth_client_secret_env_var`, and `oauth_scopes` keys are accepted, but
-interactive OAuth is not implemented, so a server that sets them fails to
-connect.
+`bearer_token_env_var`, or with an OAuth login that an agent starts with
+`start_mcp_auth` when the person asks; `oauth_client_id_env_var`,
+`oauth_client_secret_env_var`, and `oauth_scopes` configure a preregistered
+client for it. See [Logging in to an HTTP server](MCP.md#logging-in-to-an-http-server).
 
 ### Elicitation
 

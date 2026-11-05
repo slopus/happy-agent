@@ -83,6 +83,14 @@ people whose access requests reach it. Changes apply at once, without a reload. 
 a guest whose messages never count as the user's instructions, but the bot works for them with
 whatever it can reach, so let each one in only once the user says so.
 
+## MCP servers
+
+Read [Add MCP servers and log in to them](mcp-servers.md) when the user wants an agent to use an
+MCP server, give a bot or task servers of its own, or sign in to one. Choose user-wide or folder,
+stdio or HTTP, and how it signs in. An agent logs in to an HTTP server only when the person asks:
+`start_mcp_auth` sends the person a sign-in link, and they paste back the address their browser
+landed on. Stdio wrappers log in by themselves, outside Happy.
+
 ## Bot settings
 
 Read [Restrict a bot with bot settings](bot-settings.md) when the user wants a bot limited to

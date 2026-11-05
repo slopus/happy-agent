@@ -7,8 +7,11 @@ user-wide `mcp.toml` (`~/Happy/Config` on macOS, `~/happy/config` on Linux, or
 for archival, and on `UserInputModule` for MCP elicitation. It does not inspect or import MCP
 configuration from Codex, Claude, or another model provider.
 
-The module connects enabled user-wide stdio and Streamable HTTP servers concurrently at startup.
-A workspace catalog is the root `mcp.toml` of an agent's working directory, so a project workspace,
+The module connects enabled user-wide stdio and Streamable HTTP servers concurrently at startup,
+in the background: neither startup, an agent's restoration, nor a turn waits for a server, and a
+server still starting is reported as `connecting`. The tools hook takes whatever each connection
+has listed so far and never waits for `tools/list`; a listing still loading reaches the next
+request. A workspace catalog is the root `mcp.toml` of an agent's working directory, so a project workspace,
 a bot's folder, and a task's folder each have one, shared by every agent working there. The first
 durable session in a folder activates its catalog; the last archived session or workspace archival
 releases it. Identical normalized configurations share one client
@@ -26,7 +29,8 @@ Every MCP operation remains on the shared permission surface. Catalog and resour
 intrinsically read-only but still declare the external boundary. Tool calls and prompt loading are
 reviewed in Auto mode regardless of untrusted server annotations. Configuration changes and live
 reloads are reviewed and request temporary Full access because they update user-wide or folder
-configuration and start external processes or network connections.
+configuration and start external processes or network connections. `start_mcp_auth` is reviewed
+and elevated the same way, and its approval names the server's host and who shares the login.
 
 ## Elicitation
 
@@ -67,3 +71,32 @@ When work runs as a separate Linux user, stdio servers start through that user's
 like a runner's. Only the default user has one product machine, so an agent of a bot that runs as
 a user of its own sees the user-wide and workspace stdio servers as failed, with a message saying
 why, rather than reaching processes that run as another user. HTTP servers are unaffected.
+
+## Logins
+
+An HTTP server that answers 401, or 403 with `insufficient_scope`, and has no configured
+`Authorization` header or bearer token, is `needs_auth`. It is not retried; a reload, a
+configuration change, or a login checks it again. Connecting never discovers, registers, or logs
+in: the SDK gets no auth provider, only a fetch that presents a saved login's token and refreshes
+it.
+
+`start_mcp_auth` logs in for the person, only when they ask. The flow lives in `impl/`:
+`beginMcpLogin` discovers the protected resource and authorization server metadata, registers a
+client dynamically unless `oauth_client_id_env_var` names one, and builds the S256 PKCE
+authorization URL with a random single-use state and `resource` set to the server URL.
+`mcpOAuthFetch` carries those requests without the server's configured headers, requires https
+(http only for a server configured with an http loopback URL), refuses private, loopback,
+link-local, and metadata addresses off the server's own host, and bounds time, redirects, and body
+size. The redirect is `http://127.0.0.1:<port>/callback`; `McpLoginCallback` listens there when it
+can. The person gets the link in a question through `UserInputModule.askForPermission`, so only
+they can answer it, and pastes back the landed address, which `parseMcpLoginRedirect` checks
+before the code is exchanged. The tool returns only an outcome and a plain message, never tokens,
+codes, the verifier, or the authorization server's error text.
+
+A login belongs to a login catalog: `user` for every copy of the user-wide catalog, or the folder
+catalog's ID. `McpLoginStore` keeps logins in the module's own `mcp_module_logins` table, keyed by
+login catalog, server name, and URL, not in the secrets catalog. A logged-in connection's pool key
+includes its login, so it is pooled within its catalog only; anonymous servers pool across
+catalogs as before. `McpLoginSession` is the one token presenter per login: it refreshes ahead of
+expiry and on 401, single-flight, and a refused refresh forgets the tokens so the server returns to
+`needs_auth`. Stdio servers sign in by themselves; the tool explains how to do that outside Happy.

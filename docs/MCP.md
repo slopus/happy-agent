@@ -70,25 +70,56 @@ tool_timeout_sec = 30
 an `Authorization: Bearer ...` header. This keeps the token itself out of `mcp.toml`. Static headers
 belong in `http_headers`.
 
-Interactive MCP OAuth is not currently supported. Configure static headers or a bearer-token
-environment variable for authenticated HTTP servers.
+A server with a configured `Authorization` header or bearer token signs in with that credential,
+and Happy never logs in to it. Any other HTTP server that answers `401 Unauthorized` (or `403` for
+too little access) is shown as `needs_auth`. It is not retried on its own; a login, a reload, or a
+configuration change checks it again.
+
+## Logging in to an HTTP server
+
+Ask an agent to log in, for example "log in to remote_docs". The agent calls `start_mcp_auth`, which
+needs Auto or Full access and is reviewed in Auto. Happy discovers the server's OAuth authorization
+server, registers itself there when the server allows it, and sends you a question with a sign-in
+link that names the domain it opens. Only you can answer it. Sign in in any browser; it then goes
+to an address starting with `http://127.0.0.1:<port>/callback`, which usually does not load on
+another machine. Copy that whole address and paste it as the answer. On the daemon's own machine
+the page loads and the question closes by itself. Happy checks the address belongs to this sign-in,
+saves the login, and reconnects the server.
+
+Discovery and registration requests never carry the server's configured headers. They must use
+`https`, except for a server configured with an `http` loopback address, and an authorization
+server on a private or loopback address is refused unless it is on the MCP server's own host.
+
+A login belongs to its catalog: a user-wide server's login is shared by every agent using the
+user-wide servers, and a folder server's login by the agents in that folder only. Happy keeps logins
+in its own database, refreshes them before they expire, and never shows a token to an agent. A
+login the provider revokes returns the server to `needs_auth`. When the provider needs a client
+registered in advance, name it with `oauth_client_id_env_var` and, for a confidential client,
+`oauth_client_secret_env_var`; `oauth_scopes` requests specific scopes.
+
+Happy does not log in to stdio servers. A wrapper that signs in by itself, such as `mcp-remote`,
+keeps its own login: run its command once in a terminal on the machine that runs it, complete the
+sign-in, and reload. The [MCP servers recipe](recipe/mcp-servers.md) walks through each case.
 
 ## Available settings
 
-| Setting                | Applies to | Meaning                                                                              |
-| ---------------------- | ---------- | ------------------------------------------------------------------------------------ |
-| `command`              | stdio      | Executable to start. A server must have exactly one of `command` or `url`.           |
-| `args`                 | stdio      | Arguments passed to the executable.                                                  |
-| `cwd`                  | stdio      | Working directory inherited by the server process.                                   |
-| `env`                  | stdio      | Additional environment variables for the process.                                    |
-| `url`                  | HTTP       | Streamable HTTP MCP endpoint.                                                        |
-| `http_headers`         | HTTP       | Static request headers.                                                              |
-| `bearer_token_env_var` | HTTP       | Environment variable containing a bearer token.                                      |
-| `enabled`              | both       | Set to `false` to retain the entry without connecting it. Defaults to enabled.       |
-| `startup_timeout_sec`  | both       | Connection timeout in seconds, greater than zero and at most 600. Defaults to 10.    |
-| `tool_timeout_sec`     | both       | Per-operation timeout in seconds, greater than zero and at most 600. Defaults to 60. |
-| `enabled_tools`        | both       | When present, only these named tools are available.                                  |
-| `disabled_tools`       | both       | Tools to hide. A disabled tool remains hidden even if it is also enabled.            |
+| Setting                       | Applies to | Meaning                                                                              |
+| ----------------------------- | ---------- | ------------------------------------------------------------------------------------ |
+| `command`                     | stdio      | Executable to start. A server must have exactly one of `command` or `url`.           |
+| `args`                        | stdio      | Arguments passed to the executable.                                                  |
+| `cwd`                         | stdio      | Working directory inherited by the server process.                                   |
+| `env`                         | stdio      | Additional environment variables for the process.                                    |
+| `url`                         | HTTP       | Streamable HTTP MCP endpoint.                                                        |
+| `http_headers`                | HTTP       | Static request headers.                                                              |
+| `bearer_token_env_var`        | HTTP       | Environment variable containing a bearer token.                                      |
+| `oauth_client_id_env_var`     | HTTP       | Environment variable containing a preregistered OAuth client ID for logins.          |
+| `oauth_client_secret_env_var` | HTTP       | Environment variable containing that client's secret.                                |
+| `oauth_scopes`                | HTTP       | Scopes to request when logging in.                                                   |
+| `enabled`                     | both       | Set to `false` to retain the entry without connecting it. Defaults to enabled.       |
+| `startup_timeout_sec`         | both       | Connection timeout in seconds, greater than zero and at most 600. Defaults to 10.    |
+| `tool_timeout_sec`            | both       | Per-operation timeout in seconds, greater than zero and at most 600. Defaults to 60. |
+| `enabled_tools`               | both       | When present, only these named tools are available.                                  |
+| `disabled_tools`              | both       | Tools to hide. A disabled tool remains hidden even if it is also enabled.            |
 
 ## Reloading without restarting
 
@@ -124,7 +155,9 @@ MCP operations are available only in Auto or Full access because an MCP server c
 local filesystem sandbox. Every MCP tool call and prompt load is reviewed in Auto; server-provided
 annotations such as `readOnlyHint` are metadata, not authorization.
 
-A server that fails to connect is reported as failed without preventing other servers from loading.
+Servers start in the background, so neither startup nor a turn waits for one. A server that is
+still starting is shown as `connecting`, and its tools join from the next model request after it
+connects. A server that fails to connect is reported as failed without preventing other servers from loading.
 Common causes are an unavailable command, a relative script path resolved from the wrong directory,
 a missing bearer-token environment variable, an unreachable URL, or a startup timeout that is too
 short.

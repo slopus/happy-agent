@@ -70,9 +70,64 @@ and enforces the bound.
 An outside report (slopus/happy-desktop#78) found every MCP server receiving `tools/list` every
 second or two while a few agents worked. The tools hook runs for every provider request and tool
 execution, and each run listed every server twice: once for the summary's tool count and once for
-its tools. The module now keeps one listing per connection, shared by every session. It is not
-bound to its caller, who only stops waiting for it. It is dropped on
-`notifications/tools/list_changed`, on any reload, and when it fails; a new connection starts empty.
+its tools. The module now keeps one listing per connection, shared by every session, and loads it
+single-flight. It is not bound to its caller. The tools hook and the server list never wait for
+it; they use the last listing and the next request sees the new one. Only an explicit tool-page
+request waits. A listing is marked stale on `notifications/tools/list_changed` and on any reload,
+and is retried after it fails; a new connection starts empty.
+
+## Nothing waits for an MCP server
+
+Startup, an agent's restoration, and the tools hook used to await the initial reload, the folder's
+catalog activation, and `tools/list`, so one slow or hanging server delayed the daemon and every
+turn by up to its startup timeout (issue #87). Connecting now runs in the background: a pooled
+server is `connecting` until its attempt finishes, and the attempt is adopted under the reload lock
+only if the server is still wanted, so the atomic catalog swap, retries, and archival keep their
+meaning. A folder's activation runs in its own lifetime, and a user-wide stdio server is shown as
+`connecting` while the agent's folder, and so its machine, is still being resolved. Deliberate
+reloads and `configure_mcp_server` still wait for their servers, outside the lock, because the
+caller asked for the result. The price is that the first turn after a start may not have every
+server's tools yet, which is better than no turn at all.
+
+## A server that needs a login waits for a person
+
+An HTTP server behind OAuth failed with an SDK error and was retried with backoff, and giving the
+SDK an auth provider would have discovered, registered, and tried to log in on every attempt,
+registering clients nobody asked for. Now a 401, or a 403 with `insufficient_scope`, from a server
+with no saved login and no configured credential is `needs_auth`, with a message telling the agent
+the person can ask it to log in. It is never retried; a reload, a configuration change, or a login
+checks it again. Connecting only presents and refreshes a saved login. A server whose configured
+`Authorization` header or bearer token is refused stays `failed`, because logging in would not fix
+it.
+
+## Logins are made for the person, through an agent
+
+Kirill chose explicit logins: an agent calls `start_mcp_auth` only when the person asks. The
+daemon is often remote, so the flow is paste-back: the redirect is `http://127.0.0.1:<port>/callback`,
+the person signs in in any browser and pastes the landed address into a question only they can
+answer, shown through `UserInputModule.askForPermission` with the link's real domain. A loopback
+listener finishes it by itself when the browser is on the daemon's machine. The state is random
+and single-use, and the code is exchanged with the PKCE verifier that never leaves the call. The
+tool returns only an outcome, never tokens, codes, or the authorization server's own text, which
+is untrusted.
+
+The MCP server names its authorization server, so a hostile server could point discovery at
+metadata or private addresses, or collect the API key configured for it. Discovery and
+registration therefore never carry configured headers, require https (http only for a server
+configured with an http loopback URL), refuse private, loopback, link-local, and metadata
+addresses off the server's own host, and are bounded in time, redirects, and size.
+
+A login belongs to its catalog, as the person sees it: one for the user-wide servers on every
+machine, and one per folder for that folder's servers. A logged-in connection is pooled within its
+catalog only, so a folder never presents another folder's login. Logins live in the module's own
+table, not the secrets catalog, because secrets can be attached to agents and exposed to commands.
+Each login has one token presenter, so refreshes never race, and a refused refresh returns the
+server to `needs_auth`. Stdio servers sign in by themselves, so the tool explains how to log in to
+one outside Happy instead.
+
+Detaching a context drops its agent database, so a login read in the module's own lifetime found
+no storage and a restarted daemon forgot every login. The module keeps the database from
+`beforeStart` and hands it to that lifetime deliberately.
 
 ## Configuration edits reload through the same bounded path
 
