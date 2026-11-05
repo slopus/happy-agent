@@ -20,6 +20,9 @@ import type {
     RequestOptions,
     ToolCallMediaContent,
     ToolCallMediaRequestOptions,
+    VaultFileContent,
+    VaultFileRequestOptions,
+    VaultUploadChunk,
     VersionedRequestOptions,
 } from "./requestOptions.js";
 import type {
@@ -123,6 +126,36 @@ import type {
     TodoVersionResponse,
     UpdateTodoRequest,
 } from "./protocol/surfaces.js";
+import type {
+    CreateVaultEntryRequest,
+    CreateVaultUploadRequest,
+    CreateVaultVersionRequest,
+    CreateVaultVersionResponse,
+    RestoreVaultEntryRequest,
+    UpdateVaultEntryRequest,
+    UpdateVaultSettingsRequest,
+    VaultActivityPageResponse,
+    VaultEntryListQuery,
+    VaultEntryLocationResponse,
+    VaultEntryPageResponse,
+    VaultEntryResponse,
+    VaultMutationRequest,
+    VaultPath,
+    VaultResolveResponse,
+    VaultSearchQuery,
+    VaultSearchResponse,
+    VaultSettingsResponse,
+    VaultSettingsSnapshotResponse,
+    VaultTrashPageResponse,
+    VaultTrashQuery,
+    VaultTreeQuery,
+    VaultUploadResponse,
+    VaultVersionDetailResponse,
+    VaultVersionPageQuery,
+    VaultVersionPageResponse,
+    VaultVersionResponse,
+    VaultVersionSelector,
+} from "./protocol/vaults.js";
 import type {
     CloudAccessTokenResponse,
     CloudAuthorizingResponse,
@@ -370,8 +403,10 @@ interface HttpRequest {
     binary?: { contentType: string; data: BinaryData | Blob };
     form?: FormData;
     accept?: string;
-    /** A `Range` header, for artifact files. */
+    /** A `Range` header, for artifact and vault files. */
     range?: string | undefined;
+    /** A `Content-Range` header, placing a vault upload chunk. */
+    contentRange?: string | undefined;
     ifMatch?: string | undefined;
     ifNoneMatch?: string | undefined;
     lastEventId?: string | undefined;
@@ -2506,6 +2541,405 @@ export class HappyAgentClient {
         });
     }
 
+    // Vaults
+
+    /** `GET /v0/surfaces/vault/:surfaceId/settings` — the retention policy, with an event cursor. */
+    async getVaultSettings(
+        surfaceId: SurfaceId,
+        options: RequestOptions = {},
+    ): Promise<VaultSettingsSnapshotResponse> {
+        return await this.#json({
+            method: "GET",
+            path: vaultPath(surfaceId, "settings"),
+            signal: options.signal,
+        });
+    }
+
+    /** Replaces the whole policy; no `If-Match`, the latest edit wins. Pruning waits for its pass. */
+    async updateVaultSettings(
+        surfaceId: SurfaceId,
+        request: UpdateVaultSettingsRequest,
+        options: RequestOptions = {},
+    ): Promise<VaultSettingsResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: vaultPath(surfaceId, "settings"),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** One page of a folder's live children, the root without `parentId`; folders come first. */
+    async listVaultEntries(
+        surfaceId: SurfaceId,
+        query: VaultEntryListQuery = {},
+        options: RequestOptions = {},
+    ): Promise<VaultEntryPageResponse> {
+        return await this.#json({
+            method: "GET",
+            path: vaultPath(surfaceId, "entries"),
+            query: { ...query },
+            signal: options.signal,
+        });
+    }
+
+    /** One entry with its path and ancestors; Trash items and what is inside them included. */
+    async getVaultEntry(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<VaultEntryLocationResponse> {
+        return await this.#json({
+            method: "GET",
+            path: vaultEntryPath(surfaceId, entryId),
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * A live path to its entry, case-insensitively. A path running on past an artifact answers
+     * with the artifact and the rest as `innerPath`.
+     */
+    async resolveVaultPath(
+        surfaceId: SurfaceId,
+        path: VaultPath,
+        options: RequestOptions = {},
+    ): Promise<VaultResolveResponse> {
+        return await this.#json({
+            method: "GET",
+            path: vaultPath(surfaceId, "resolve"),
+            query: { path },
+            signal: options.signal,
+        });
+    }
+
+    /** Every live entry in ID order; follow events from the first page's `cursor`. */
+    async listVaultTree(
+        surfaceId: SurfaceId,
+        query: VaultTreeQuery = {},
+        options: RequestOptions = {},
+    ): Promise<VaultEntryPageResponse> {
+        return await this.#json({
+            method: "GET",
+            path: vaultPath(surfaceId, "tree"),
+            query: { ...query },
+            signal: options.signal,
+        });
+    }
+
+    /** Name matches first, then content matches with a line and snippet. */
+    async searchVault(
+        surfaceId: SurfaceId,
+        query: VaultSearchQuery,
+        options: RequestOptions = {},
+    ): Promise<VaultSearchResponse> {
+        return await this.#json({
+            method: "GET",
+            path: vaultPath(surfaceId, "search"),
+            query: { ...query },
+            signal: options.signal,
+        });
+    }
+
+    /** Trash items, most recently deleted first, with where each one was. */
+    async listVaultTrash(
+        surfaceId: SurfaceId,
+        query: VaultTrashQuery = {},
+        options: RequestOptions = {},
+    ): Promise<VaultTrashPageResponse> {
+        return await this.#json({
+            method: "GET",
+            path: vaultPath(surfaceId, "trash"),
+            query: { ...query },
+            signal: options.signal,
+        });
+    }
+
+    /** A folder, or a file or artifact from an upload or a copy; a supplied ID is the retry key. */
+    async createVaultEntry(
+        surfaceId: SurfaceId,
+        request: CreateVaultEntryRequest,
+        options: RequestOptions = {},
+    ): Promise<VaultEntryResponse> {
+        return await this.#json({
+            method: "POST",
+            path: vaultPath(surfaceId, "entries"),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Renames or moves; a name taken in the destination answers `name_taken`. */
+    async updateVaultEntry(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        request: UpdateVaultEntryRequest,
+        options: VersionedRequestOptions,
+    ): Promise<VaultEntryResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: vaultEntryPath(surfaceId, entryId),
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Moves the entry, and everything inside a folder, to the Trash. */
+    async deleteVaultEntry(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        options: VersionedRequestOptions & VaultMutationRequest,
+    ): Promise<VaultEntryResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `${vaultEntryPath(surfaceId, entryId)}/delete`,
+            json: bodyOf(options),
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Restores a Trash item where it was, or into another live folder under another name. */
+    async restoreVaultEntry(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        request: RestoreVaultEntryRequest,
+        options: VersionedRequestOptions,
+    ): Promise<VaultEntryResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `${vaultEntryPath(surfaceId, entryId)}/restore`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Surviving versions, newest first, without artifact manifests. */
+    async listVaultVersions(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        query: VaultVersionPageQuery = {},
+        options: RequestOptions = {},
+    ): Promise<VaultVersionPageResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `${vaultEntryPath(surfaceId, entryId)}/versions`,
+            query: { ...query },
+            signal: options.signal,
+        });
+    }
+
+    /** One version; an artifact version carries its whole manifest. Pruned versions are `404`. */
+    async getVaultVersion(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        version: VaultVersionSelector,
+        options: RequestOptions = {},
+    ): Promise<VaultVersionDetailResponse> {
+        return await this.#json({
+            method: "GET",
+            path: vaultVersionPath(surfaceId, entryId, version),
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * New content from an upload or an earlier version; `version` is `null` when the content
+     * equalled the newest version.
+     */
+    async createVaultVersion(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        request: CreateVaultVersionRequest,
+        options: VersionedRequestOptions,
+    ): Promise<CreateVaultVersionResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `${vaultEntryPath(surfaceId, entryId)}/versions`,
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** Pinned versions are never pruned. Pinning changes neither the entry nor its `version`. */
+    async pinVaultVersion(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        version: number,
+        options: RequestOptions & VaultMutationRequest = {},
+    ): Promise<VaultVersionResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `${vaultVersionPath(surfaceId, entryId, version)}/pin`,
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
+    async unpinVaultVersion(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        version: number,
+        options: RequestOptions & VaultMutationRequest = {},
+    ): Promise<VaultVersionResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `${vaultVersionPath(surfaceId, entryId, version)}/unpin`,
+            json: bodyOf(options),
+            signal: options.signal,
+        });
+    }
+
+    /** The entry's append-only activity, newest first. */
+    async listVaultActivity(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        query: VaultVersionPageQuery = {},
+        options: RequestOptions = {},
+    ): Promise<VaultActivityPageResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `${vaultEntryPath(surfaceId, entryId)}/activity`,
+            query: { ...query },
+            signal: options.signal,
+        });
+    }
+
+    /** A file version's bytes, or one range of them; `null` when `ifNoneMatch` still matches. */
+    async getVaultFileContent(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        version: VaultVersionSelector,
+        options: VaultFileRequestOptions = {},
+    ): Promise<VaultFileContent | null> {
+        return await this.#fileContent(
+            `${vaultVersionPath(surfaceId, entryId, version)}/content`,
+            options,
+        );
+    }
+
+    /**
+     * The URL of a file version's bytes, for media elements and streamed downloads; `download`
+     * asks for `Content-Disposition: attachment`. The caller's transport adds the bearer token.
+     */
+    vaultFileContentUrl(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        version: VaultVersionSelector,
+        options: { readonly download?: boolean } = {},
+    ): string {
+        return endpointUrl(
+            this.#endpoint,
+            `${vaultVersionPath(surfaceId, entryId, version)}/content`,
+            { download: options.download === true ? true : undefined },
+        );
+    }
+
+    /** One file of an artifact version, by its exact manifest path. */
+    async getVaultArtifactFile(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        version: VaultVersionSelector,
+        path: ArtifactPath,
+        options: VaultFileRequestOptions = {},
+    ): Promise<VaultFileContent | null> {
+        return await this.#fileContent(
+            vaultArtifactFilePath(surfaceId, entryId, version, path),
+            options,
+        );
+    }
+
+    /**
+     * The URL of one artifact file. Every file of a version shares one prefix, so a page's
+     * relative references resolve; show a page through a numbered version.
+     */
+    vaultArtifactFileUrl(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        version: VaultVersionSelector,
+        path: ArtifactPath,
+    ): string {
+        return endpointUrl(
+            this.#endpoint,
+            vaultArtifactFilePath(surfaceId, entryId, version, path),
+        );
+    }
+
+    /** The URL of an artifact version as a streamed zip. */
+    vaultArtifactZipUrl(
+        surfaceId: SurfaceId,
+        entryId: Cuid2,
+        version: VaultVersionSelector,
+    ): string {
+        return endpointUrl(this.#endpoint, `${vaultVersionPath(surfaceId, entryId, version)}/zip`);
+    }
+
+    /** The URL of a live folder as a streamed zip, or of the whole vault without `entryId`. */
+    vaultFolderZipUrl(surfaceId: SurfaceId, entryId?: Cuid2): string {
+        return endpointUrl(
+            this.#endpoint,
+            entryId === undefined
+                ? vaultPath(surfaceId, "zip")
+                : `${vaultEntryPath(surfaceId, entryId)}/zip`,
+        );
+    }
+
+    /** `POST /v0/vault-uploads` — starts a resumable upload of `size` bytes, up to 64 GiB. */
+    async createVaultUpload(
+        request: CreateVaultUploadRequest,
+        options: RequestOptions = {},
+    ): Promise<VaultUploadResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/vault-uploads",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `PUT /v0/vault-uploads/:uploadId` — appends at most 256 MiB at `start`, which must equal the
+     * upload's `received`. Without `start` the bytes are the whole upload. A `conflict` error
+     * carries the current upload, so resume from its `received`.
+     */
+    async uploadVaultChunk(
+        uploadId: Cuid2,
+        chunk: VaultUploadChunk,
+        options: RequestOptions = {},
+    ): Promise<VaultUploadResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: vaultUploadPath(uploadId),
+            binary: { contentType: "application/octet-stream", data: chunk.data },
+            contentRange: chunk.start === undefined ? undefined : contentRangeHeader(chunk),
+            signal: options.signal,
+        });
+    }
+
+    /** Where an upload stands, to resume it. */
+    async getVaultUpload(
+        uploadId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<VaultUploadResponse> {
+        return await this.#json({
+            method: "GET",
+            path: vaultUploadPath(uploadId),
+            signal: options.signal,
+        });
+    }
+
+    /** Discards an unused upload and its bytes. */
+    async cancelVaultUpload(uploadId: Cuid2, options: RequestOptions = {}): Promise<void> {
+        await this.#send({
+            method: "DELETE",
+            path: vaultUploadPath(uploadId),
+            signal: options.signal,
+        });
+    }
+
     // Artifacts
 
     /**
@@ -2574,22 +3008,7 @@ export class HappyAgentClient {
         path: ArtifactPath,
         options: ArtifactFileRequestOptions = {},
     ): Promise<ArtifactFileContent | null> {
-        const response = await this.#send({
-            method: "GET",
-            path: artifactFilePath(artifactId, version, path),
-            accept: "*/*",
-            ifNoneMatch: options.ifNoneMatch,
-            range: options.range === undefined ? undefined : rangeHeader(options.range),
-            signal: options.signal,
-            allowNotModified: true,
-        });
-        if (response.status === 304) return null;
-        return {
-            contentRange: response.status === 206 ? response.headers.get("content-range") : null,
-            contentType: response.headers.get("content-type") ?? "application/octet-stream",
-            data: await response.arrayBuffer(),
-            etag: response.headers.get("etag"),
-        };
+        return await this.#fileContent(artifactFilePath(artifactId, version, path), options);
     }
 
     /**
@@ -3634,6 +4053,29 @@ export class HappyAgentClient {
         };
     }
 
+    /** Served file bytes, whole or one range; `null` when `If-None-Match` still matches. */
+    async #fileContent(
+        path: string,
+        options: ArtifactFileRequestOptions,
+    ): Promise<ArtifactFileContent | null> {
+        const response = await this.#send({
+            method: "GET",
+            path,
+            accept: "*/*",
+            ifNoneMatch: options.ifNoneMatch,
+            range: options.range === undefined ? undefined : rangeHeader(options.range),
+            signal: options.signal,
+            allowNotModified: true,
+        });
+        if (response.status === 304) return null;
+        return {
+            contentRange: response.status === 206 ? response.headers.get("content-range") : null,
+            contentType: response.headers.get("content-type") ?? "application/octet-stream",
+            data: await response.arrayBuffer(),
+            etag: response.headers.get("etag"),
+        };
+    }
+
     async #binary(request: HttpRequest): Promise<BinaryContent | null> {
         const response = await this.#send({
             ...request,
@@ -3663,6 +4105,7 @@ export class HappyAgentClient {
         if (request.ifNoneMatch !== undefined) headers["if-none-match"] = request.ifNoneMatch;
         if (request.lastEventId !== undefined) headers["last-event-id"] = request.lastEventId;
         if (request.range !== undefined) headers.range = request.range;
+        if (request.contentRange !== undefined) headers["content-range"] = request.contentRange;
 
         let body: BodyInit | null = null;
         if (request.binary !== undefined) {
@@ -3735,6 +4178,43 @@ function artifactFilePath(
 ): string {
     const encoded = path.split("/").map(encodeURIComponent).join("/");
     return `${artifactVersionPath(artifactId, version)}/files/${encoded}`;
+}
+
+function vaultPath(surfaceId: SurfaceId, rest: string): string {
+    return `v0/surfaces/vault/${encodeURIComponent(surfaceId)}/${rest}`;
+}
+
+function vaultEntryPath(surfaceId: SurfaceId, entryId: Cuid2): string {
+    return vaultPath(surfaceId, `entries/${encodeURIComponent(entryId)}`);
+}
+
+function vaultVersionPath(
+    surfaceId: SurfaceId,
+    entryId: Cuid2,
+    version: VaultVersionSelector,
+): string {
+    return `${vaultEntryPath(surfaceId, entryId)}/versions/${String(version)}`;
+}
+
+/** An artifact entry's file route, with each segment of its path percent-encoded. */
+function vaultArtifactFilePath(
+    surfaceId: SurfaceId,
+    entryId: Cuid2,
+    version: VaultVersionSelector,
+    path: ArtifactPath,
+): string {
+    const encoded = path.split("/").map(encodeURIComponent).join("/");
+    return `${vaultVersionPath(surfaceId, entryId, version)}/files/${encoded}`;
+}
+
+function vaultUploadPath(uploadId: Cuid2): string {
+    return `v0/vault-uploads/${encodeURIComponent(uploadId)}`;
+}
+
+/** The `Content-Range` of an upload chunk placed at `start` of an upload of `size` bytes. */
+function contentRangeHeader(chunk: VaultUploadChunk & { start: number }): string {
+    const end = chunk.start + chunk.data.byteLength - 1;
+    return `bytes ${String(chunk.start)}-${String(end)}/${String(chunk.size)}`;
 }
 
 function toolCallMediaPath(agentId: Cuid2, toolCallId: Cuid2, index: number): string {

@@ -11,6 +11,7 @@ import {
 } from "./common.js";
 import { userIdSchema } from "./userId.js";
 import { agentSchema } from "./agents.js";
+import { vaultRetentionSchema } from "./vaultRetention.js";
 
 /** Each list uses the daemon generator's exact 24-character CUID2 format. */
 export const surfaceIdSchema = Type.String({
@@ -178,6 +179,16 @@ export const createChatSurfaceRequestSchema = Type.Object(
     },
     { additionalProperties: false },
 );
+/** A shared file tree; `retention` defaults to `DEFAULT_VAULT_RETENTION`. */
+export const createVaultSurfaceRequestSchema = Type.Object(
+    {
+        ...surfaceCreationFields,
+        image: Type.Optional(surfaceImageInputSchema),
+        retention: Type.Optional(vaultRetentionSchema),
+        type: Type.Literal("vault"),
+    },
+    { additionalProperties: false },
+);
 export const createArtifactSurfaceRequestSchema = Type.Object(
     {
         ...surfaceCreationFields,
@@ -219,6 +230,7 @@ export const createSurfaceRequestSchema = Type.Union([
     createCalendarSurfaceRequestSchema,
     createSystemMonitorSurfaceRequestSchema,
     createChatSurfaceRequestSchema,
+    createVaultSurfaceRequestSchema,
     createArtifactSurfaceRequestSchema,
     createBotSurfaceRequestSchema,
     createTaskSurfaceRequestSchema,
@@ -339,11 +351,11 @@ export const todoResponseSchema = Type.Object({ todo: todoSchema });
 export type TodoResponse = Static<typeof todoResponseSchema>;
 
 /** Audit identity comes from trusted API or tool execution context, never the body. */
-const surfaceRevisionActorSchema = Type.Object({
+export const surfaceRevisionActorSchema = Type.Object({
     agentId: Nullable(cuid2Schema),
     userId: Nullable(userIdSchema),
 });
-const surfaceRevisionSourceSchema = Type.Union([Type.Literal("api"), Type.Literal("tool")]);
+export const surfaceRevisionSourceSchema = Type.Union([Type.Literal("api"), Type.Literal("tool")]);
 export const todoRevisionSchema = Type.Object({
     actor: surfaceRevisionActorSchema,
     source: surfaceRevisionSourceSchema,

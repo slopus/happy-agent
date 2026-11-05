@@ -75,6 +75,20 @@ export interface ArtifactFileContent extends BinaryContent {
     contentRange: string | null;
 }
 
+/** Options for reading a vault file or a file of a vault artifact. */
+export type VaultFileRequestOptions = ArtifactFileRequestOptions;
+
+/** A vault file's bytes, whole or one range of them. */
+export type VaultFileContent = ArtifactFileContent;
+
+/**
+ * Bytes for a vault upload. With `start` they are placed there, in an upload of `size` bytes;
+ * without it they are the whole upload.
+ */
+export type VaultUploadChunk =
+    | { data: BinaryData; start: number; size: number }
+    | { data: BinaryData; start?: undefined; size?: undefined };
+
 /** Options for reading one tool call's media item. */
 export interface ToolCallMediaRequestOptions extends ConditionalRequestOptions {
     /** Read only these bytes, as a video player does to seek. */

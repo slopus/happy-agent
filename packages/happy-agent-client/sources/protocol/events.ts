@@ -26,6 +26,7 @@ import {
     artifactDisplaySchema,
     artifactFileSchema,
     artifactLiveSchema,
+    artifactSha256Schema,
     artifactSchema,
     artifactSourceSchema,
     artifactTitleSchema,
@@ -73,6 +74,13 @@ import {
     type SurfaceDocumentLiveFrame,
 } from "./surfaces.js";
 import { Nullable } from "./common.js";
+import {
+    vaultArtifactSummarySchema,
+    vaultActorSchema,
+    vaultEntryNameSchema,
+    vaultEntrySchema,
+} from "./vaults.js";
+import { vaultRetentionSchema } from "./vaultRetention.js";
 import type { Terminal } from "./terminals.js";
 import { providerAccountUsageSnapshotSchema, type AgentContextUsage } from "./usage.js";
 import type { Workspace } from "./workspaces.js";
@@ -362,6 +370,64 @@ export const surfaceMessageUpdatedPayloadSchema = Type.Object({
     version: resourceVersionSchema,
 });
 export type SurfaceMessageUpdatedPayload = Static<typeof surfaceMessageUpdatedPayloadSchema>;
+
+/** A vault entry was created: a folder, or a file or artifact with its version 1. */
+export const vaultEntryCreatedPayloadSchema = Type.Object({
+    entry: vaultEntrySchema,
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type VaultEntryCreatedPayload = Static<typeof vaultEntryCreatedPayloadSchema>;
+
+/**
+ * Rename, move, new version, Trash, or restore; only the changed fields, always with `updatedAt`
+ * and `updatedBy`. Deleting or restoring a folder announces the folder alone.
+ */
+export const vaultEntryUpdatedPayloadSchema = Type.Object({
+    changes: Type.Object({
+        artifact: Type.Optional(Nullable(vaultArtifactSummarySchema)),
+        deletedAt: Type.Optional(Nullable(timestampSchema)),
+        latestVersion: Type.Optional(Type.Integer({ minimum: 1 })),
+        mediaType: Type.Optional(Nullable(Type.String({ minLength: 1 }))),
+        name: Type.Optional(vaultEntryNameSchema),
+        parentId: Type.Optional(Nullable(cuid2Schema)),
+        sha256: Type.Optional(Nullable(artifactSha256Schema)),
+        size: Type.Optional(Type.Integer({ minimum: 0 })),
+        updatedAt: timestampSchema,
+        updatedBy: vaultActorSchema,
+    }),
+    entryId: cuid2Schema,
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    surfaceId: surfaceIdSchema,
+    version: resourceVersionSchema,
+});
+export type VaultEntryUpdatedPayload = Static<typeof vaultEntryUpdatedPayloadSchema>;
+
+/** A Trash item was removed for good; drop it and every entry below it. */
+export const vaultEntryRemovedPayloadSchema = Type.Object({
+    entryId: cuid2Schema,
+    surfaceId: surfaceIdSchema,
+});
+export type VaultEntryRemovedPayload = Static<typeof vaultEntryRemovedPayloadSchema>;
+
+/** A version was pinned or unpinned; the entry and its `version` are unchanged. */
+export const vaultVersionUpdatedPayloadSchema = Type.Object({
+    entryId: cuid2Schema,
+    mutationId: Type.Optional(mutationIdSchema),
+    number: Type.Integer({ minimum: 1 }),
+    pinned: Type.Boolean(),
+    surfaceId: surfaceIdSchema,
+});
+export type VaultVersionUpdatedPayload = Static<typeof vaultVersionUpdatedPayloadSchema>;
+
+export const vaultSettingsUpdatedPayloadSchema = Type.Object({
+    changes: Type.Object({ retention: vaultRetentionSchema, updatedAt: timestampSchema }),
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    surfaceId: surfaceIdSchema,
+    version: resourceVersionSchema,
+});
+export type VaultSettingsUpdatedPayload = Static<typeof vaultSettingsUpdatedPayloadSchema>;
 
 /**
  * Emitted only by daemons without collaborative documents; current daemons deliver document
@@ -662,6 +728,11 @@ export type HappyAgentEvent =
     | EventEnvelope<"surface_message.created", SurfaceMessageCreatedPayload>
     | EventEnvelope<"surface_message.updated", SurfaceMessageUpdatedPayload>
     | EventEnvelope<"surface.document.updated", SurfaceDocumentUpdatedPayload>
+    | EventEnvelope<"vault.entry.created", VaultEntryCreatedPayload>
+    | EventEnvelope<"vault.entry.updated", VaultEntryUpdatedPayload>
+    | EventEnvelope<"vault.entry.removed", VaultEntryRemovedPayload>
+    | EventEnvelope<"vault.version.updated", VaultVersionUpdatedPayload>
+    | EventEnvelope<"vault.settings.updated", VaultSettingsUpdatedPayload>
     | EventEnvelope<"artifact.created", ArtifactCreatedPayload>
     | EventEnvelope<"artifact.updated", ArtifactUpdatedPayload>
     | EventEnvelope<"artifact.deleted", ArtifactDeletedPayload>
