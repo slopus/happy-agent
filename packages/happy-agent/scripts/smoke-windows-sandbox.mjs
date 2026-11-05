@@ -728,6 +728,8 @@ try {
                 });
                 assert.equal(git.status, 0, git.stderr);
             }
+            // Setup's sandboxed Git reads show the launch counter sees this daemon's commands.
+            const setupLaunches = watchSandboxLaunches();
             const project = await registerProject(daemon, workspace);
             assert.equal(
                 project.initialization.status,
@@ -744,6 +746,8 @@ try {
             );
             // Let initial indexing and Git setup finish before the baseline.
             await sleep(60_000);
+            setupLaunches.close();
+            report.sandboxLaunchesDuringSetup = setupLaunches.seen.size;
             launches = watchSandboxLaunches();
             samples.push(await sample(daemon.child.pid));
             const deadline = Date.now() + minutes * 60_000;
