@@ -266,7 +266,7 @@ describe("vault Surfaces through the real daemon", () => {
         const css = await client.getVaultArtifactFile(surfaceId, site.entry.id, 1, "style.css");
         expect(css).toMatchObject({ contentType: expect.stringContaining("text/css") });
         expect(utf8(css?.data)).toBe("h1 { color: teal; }");
-        const zip = await gym.http.get(
+        const zip = await gym.raw.get(
             `/v0/surfaces/vault/${surfaceId}/entries/${site.entry.id}/versions/1/zip`,
         );
         expect(zip.status).toBe(200);
