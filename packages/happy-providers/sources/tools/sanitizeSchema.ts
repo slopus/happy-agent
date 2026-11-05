@@ -145,6 +145,14 @@ function sanitizeNode(node: unknown): unknown {
 }
 
 /**
+ * Strips every `pattern` / `patternProperties` from a schema of any shape, such as a
+ * structured-output schema, without the object-root rules applied to tool parameters.
+ */
+export function toLlmSchema(schema: TSchema): unknown {
+    return sanitizeNode(JSON.parse(JSON.stringify(schema)));
+}
+
+/**
  * Prepares a tool's parameters schema for emission to a model provider.
  *
  * - If no schema is provided, returns a safe empty object schema.

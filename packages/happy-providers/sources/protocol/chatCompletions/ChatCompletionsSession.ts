@@ -36,6 +36,8 @@ export interface ChatCompletionsSessionOptions extends SessionOptions, Inference
     reasoningField?: "reasoning_content" | "reasoning" | null;
     /** How the vendor is named in errors people read. Bedrock when omitted. */
     vendor?: ChatCompletionsVendor;
+    /** Strips regex patterns from schemas; Bedrock rejects look-around for Kimi and GLM. */
+    stripSchemaPatterns?: boolean;
 }
 
 /** The vendor's short name for sentences and its full name for headline failures. */
@@ -102,6 +104,9 @@ export class ChatCompletionsSession extends BaseSession {
                     ? {}
                     : { reasoningField: this.options.reasoningField }),
                 vendor: this.vendor.name,
+                ...(this.options.stripSchemaPatterns === undefined
+                    ? {}
+                    : { stripSchemaPatterns: this.options.stripSchemaPatterns }),
             });
         } catch (error) {
             yield errorDone(error, 1, this.vendor);

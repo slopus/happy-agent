@@ -6,6 +6,7 @@ import type {
 import type { SessionTool } from "@/core/SessionTool.js";
 import type { SessionRunRequest } from "@/core/SessionRunRequest.js";
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
+import { toLlmParametersSchema, toLlmSchema } from "@/tools/sanitizeSchema.js";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
@@ -23,6 +24,8 @@ export function createChatCompletionsRequest(options: {
     /** Where assistant reasoning is replayed, or null to leave it off the wire. */
     reasoningField?: "reasoning_content" | "reasoning" | null;
     vendor?: string;
+    /** Strips regex patterns from tool and structured-output schemas the endpoint rejects. */
+    stripSchemaPatterns?: boolean;
 }): object {
     // Kimi and GLM replay reasoning_content on every assistant turn, even when it is empty.
     const reasoningField =
@@ -100,7 +103,12 @@ export function createChatCompletionsRequest(options: {
             function: {
                 name: toolName(tool),
                 ...(tool.description === undefined ? {} : { description: tool.description }),
-                parameters: tool.parameters ?? { type: "object", properties: {} },
+                parameters:
+                    tool.parameters === undefined
+                        ? { type: "object", properties: {} }
+                        : options.stripSchemaPatterns === true
+                          ? toLlmParametersSchema(tool.parameters)
+                          : tool.parameters,
             },
         };
     });
@@ -123,7 +131,10 @@ export function createChatCompletionsRequest(options: {
                       type: "json_schema",
                       json_schema: {
                           name: options.request.structuredOutput.name,
-                          schema: options.request.structuredOutput.schema,
+                          schema:
+                              options.stripSchemaPatterns === true
+                                  ? toLlmSchema(options.request.structuredOutput.schema)
+                                  : options.request.structuredOutput.schema,
                       },
                   },
               }),

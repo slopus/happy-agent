@@ -651,6 +651,50 @@ describe.each(providers)("$name on Bedrock Runtime", (vendor) => {
         }
     });
 
+    it("strips look-around patterns from tool and structured-output schemas", async () => {
+        const transport = mockTransport(() => answer('{"title":"Done"}'));
+        const title = Type.String({ pattern: "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$" });
+        const patterned: SessionTool = {
+            name: "write",
+            parameters: Type.Object({
+                path: Type.String({
+                    description: "Relative path",
+                    pattern: "^(?!/)(?!.*\\.\\.)[^\\u0000]+$",
+                }),
+                labels: Type.Record(Type.String({ pattern: "^(?!-)[a-z]+$" }), Type.String()),
+            }),
+        };
+        const session = await new vendor.Provider({
+            credential: await bearer(),
+            fetch: transport.fetch,
+        }).session("patterns", { instructions: "", tools: [patterned] });
+        try {
+            await collect(
+                session.run(testContext, {
+                    context,
+                    structuredOutput: { name: "title", schema: Type.Object({ title }) },
+                }),
+            );
+            const body = transport.requests[0]!.body;
+            expect(JSON.stringify(body.tools)).not.toMatch(/pattern|\(\?[=!<]/);
+            expect(JSON.stringify(body.response_format)).not.toMatch(/pattern|\(\?[=!<]/);
+            expect(body.tools[0].function.parameters.properties.path).toEqual({
+                type: "string",
+                description: "Relative path. Must not contain null bytes or line break characters.",
+            });
+            expect(body.response_format.json_schema.schema.properties.title).toEqual({
+                type: "string",
+                description: "Must satisfy the required format.",
+            });
+            expect(patterned.parameters).toHaveProperty(
+                "properties.path.pattern",
+                "^(?!/)(?!.*\\.\\.)[^\\u0000]+$",
+            );
+        } finally {
+            session.destroy();
+        }
+    });
+
     it("rejects ambiguous serialized tool names before transport", async () => {
         const transport = mockTransport(() => answer());
         const session = await new vendor.Provider({

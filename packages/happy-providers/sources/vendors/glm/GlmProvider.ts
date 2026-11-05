@@ -53,6 +53,7 @@ export class GlmProvider extends BaseProvider {
                 endpoint: this.options.endpoint ?? bedrockRuntimeOpenAIEndpoint(region),
                 userAgent: this.options.userAgent ?? "claude-code/2.1.207",
             }),
+            stripSchemaPatterns: true,
             resolveModel: (selected) => resolveGlmModel(selected, region),
             generation: (request) => {
                 const effort = request.effort ?? "max";
