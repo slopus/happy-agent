@@ -1181,10 +1181,21 @@ export class ArtifactsModule implements AgentModule {
                     (candidate) => candidate.path === file.path && candidate.sha256 === file.sha256,
                 ),
         );
-        const measured =
+        // The preview is the file's own, so it is taken from the file however the cover was
+        // measured: a cover measured before previews existed gains the one the file has now.
+        const checked =
             known === undefined
                 ? await measureArtifactCover(file, this.#config.artifactContentPath(file.sha256))
                 : { cover: { ...known.cover, mimeType: file.mimeType } };
+        const measured =
+            "cover" in checked
+                ? {
+                      cover: {
+                          ...withoutPreview(checked.cover),
+                          ...(file.preview === undefined ? {} : { preview: file.preview }),
+                      },
+                  }
+                : checked;
         if (choice.kind === "default") {
             return "cover" in measured
                 ? { cover: measured.cover, coverDefault: true }
@@ -1431,6 +1442,11 @@ type CoverChoice =
     | { readonly kind: "none" }
     | { readonly kind: "default" }
     | { readonly kind: "named"; readonly path: string; readonly carried: boolean };
+
+function withoutPreview(cover: ArtifactCover): ArtifactCover {
+    const { preview: _preview, ...rest } = cover;
+    return rest;
+}
 
 /** How a file of a version is measured, or undefined when the version does not show it. */
 function mediaKindOf(

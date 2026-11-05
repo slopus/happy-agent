@@ -92,6 +92,7 @@ describe("artifact covers and summaries", () => {
             height: 900,
             aspect: "wide",
             thumbhash: expect.any(String),
+            preview: { width: 640, height: 360 },
         };
         expect(artifact).toMatchObject({ cover, summary });
         expect(await w.artifacts.getVersion(w.ctx, artifact.id, 1)).toMatchObject({
@@ -115,6 +116,7 @@ describe("artifact covers and summaries", () => {
             height: 1200,
             aspect: "square",
             thumbhash: expect.any(String),
+            preview: { width: 640, height: 640 },
         });
 
         const cleared = await update(w, square, { cover: null, summary: null });
@@ -202,6 +204,7 @@ describe("artifact covers and summaries", () => {
             height: 900,
             aspect: "wide",
             thumbhash: expect.any(String),
+            preview: { width: 640, height: 360 },
         });
     });
 
@@ -261,6 +264,7 @@ describe("artifact covers and summaries", () => {
             height: 540,
             aspect: "wide",
             thumbhash: expect.any(String),
+            preview: { width: 640, height: 360 },
         });
         const looping = await update(w, moving, {
             files: [await placed(w, "cover.gif", gif)],
@@ -325,6 +329,7 @@ describe("artifact covers and summaries", () => {
             height: 900,
             aspect: "wide",
             thumbhash: expect.any(String),
+            preview: { width: 640, height: 360 },
         });
 
         // A new picture under another name takes the default along with it.

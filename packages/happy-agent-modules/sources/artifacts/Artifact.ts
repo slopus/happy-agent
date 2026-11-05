@@ -116,6 +116,8 @@ export const artifactCoverSchema = Type.Object(
         aspect: Type.Union([Type.Literal("wide"), Type.Literal("square")]),
         /** The first frame's ThumbHash in base64, `null` when it could not be decoded. */
         thumbhash: Type.Union([artifactThumbHashSchema, Type.Null()]),
+        /** The cover file's still preview, as its file object's `preview`. */
+        preview: artifactFileMediaSchema.properties.preview,
     },
     { additionalProperties: false },
 );

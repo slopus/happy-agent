@@ -405,6 +405,9 @@ function artifactCoverResource(cover: ArtifactCover | undefined): Record<string,
               height: cover.height,
               aspect: cover.aspect,
               thumbhash: cover.thumbhash,
+              ...(cover.preview === undefined
+                  ? {}
+                  : { preview: { width: cover.preview.width, height: cover.preview.height } }),
           };
 }
 

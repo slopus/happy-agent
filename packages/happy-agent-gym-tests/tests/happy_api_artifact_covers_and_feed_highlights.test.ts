@@ -82,6 +82,7 @@ describe("artifact covers and the Highlights filter over the API", () => {
             height: 900,
             aspect: "wide",
             thumbhash: expect.any(String),
+            preview: { width: 640, height: 360 },
         };
         expect(artifact).toMatchObject({ cover, summary });
         expect((await gym.client.getArtifactVersion(artifact.id, 1)).version).toMatchObject({
@@ -159,6 +160,7 @@ describe("artifact covers and the Highlights filter over the API", () => {
             height: 720,
             aspect: "square",
             thumbhash: expect.any(String),
+            preview: { width: 640, height: 640 },
         });
         const { artifact: banner } = await gym.client.createArtifact({
             type: "image",
@@ -191,6 +193,7 @@ describe("artifact covers and the Highlights filter over the API", () => {
                 height: 540,
                 aspect: "wide",
                 thumbhash: expect.any(String),
+                preview: { width: 640, height: 360 },
             });
         }
         expect(gym.errors).toEqual([]);

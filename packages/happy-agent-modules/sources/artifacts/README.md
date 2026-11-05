@@ -101,7 +101,8 @@ chat media items do: every picture of an `image` or `image_series` version and e
 cover get `width`, `height` (as shown), and a `thumbhash`; a `video` artifact's video gets
 `width`, `height`, `durationMs`, and a `thumbhash` of its first frame. Each of those pictures and
 each video's first frame, its poster, also get a still WebP `preview`, fitted within 640×640 and
-never enlarged, stored once per source digest at `artifacts/previews/<two hex>/<sha256>.webp`.
+never enlarged, stored once per source digest at `artifacts/previews/<two hex>/<sha256>.webp`. A
+cover repeats its file's preview as its own `preview`, so a list can load it from the cover alone.
 
 Measuring runs before the version's transaction, because a video's tools may take seconds, over
 the latest version's files and the placed uploads; the transaction then attaches what was measured
