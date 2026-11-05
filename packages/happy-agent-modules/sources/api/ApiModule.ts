@@ -102,6 +102,7 @@ import {
     renameBotRequestSchema,
     storyCreateRequestSchema,
     feedCursorSchema,
+    feedQuerySchema,
     feedReadAllRequestSchema,
     feedSeenRequestSchema,
     feedSubscriptionRequestSchema,
@@ -356,9 +357,11 @@ import {
 import { ApiArtifactData, ARTIFACT_DATA_ROUTE } from "./ApiArtifactData.js";
 import {
     ARTIFACT_FILE_ROUTE,
+    ARTIFACT_PREVIEW_ROUTE,
     artifactFileRequest,
     decodeArtifactFilePath,
     sendArtifactFile,
+    sendArtifactPreview,
 } from "./ApiArtifactFiles.js";
 import { contentDisposition, sendStoredFile } from "./sendStoredFile.js";
 import { writeZip, type ZipItem } from "../surfaces/vaults/zip/writeZip.js";
@@ -492,6 +495,8 @@ const ARTIFACT_UPDATED_FIELDS = [
     "size",
     "background",
     "display",
+    "cover",
+    "summary",
     "live",
     "updatedBy",
     "updatedSource",
@@ -7837,10 +7842,12 @@ export class ApiModule implements AgentModule {
                 if (before !== undefined && !Value.Check(feedCursorSchema, before))
                     throw invalidRequest("The feed cursor is invalid.");
                 const limit = feedLimit(url);
+                const subjects = feedSubjectTypes(url);
                 const cursor = this.#journal.cursor();
                 const page = await feed.list(ctx, {
                     ...(before === undefined ? {} : { before }),
                     ...(limit === undefined ? {} : { limit }),
+                    ...(subjects === undefined ? {} : { subjects }),
                 });
                 sendJson(response, 200, { ...page, cursor });
                 return true;
@@ -7858,7 +7865,7 @@ export class ApiModule implements AgentModule {
                 const body = await bodyAs(request, feedReadAllRequestSchema, "feed read marker");
                 const read = await this.#withMutationId(
                     body.mutationId,
-                    async () => await feed.markAllSeen(ctx, body.through),
+                    async () => await feed.markAllSeen(ctx, body.through, body.subjects),
                 );
                 sendJson(response, 200, read);
                 return true;
@@ -8158,6 +8165,8 @@ export class ApiModule implements AgentModule {
                             title: body.title,
                             files,
                             ...(body.background == null ? {} : { background: body.background }),
+                            ...(body.cover === undefined ? {} : { cover: body.cover }),
+                            ...(body.summary === undefined ? {} : { summary: body.summary }),
                             author: this.#artifactUser(ctx),
                             ...(source === undefined ? {} : { source }),
                         }),
@@ -8176,6 +8185,19 @@ export class ApiModule implements AgentModule {
                     target.path,
                 );
                 await sendArtifactFile(request, response, stored, target.selector === "latest");
+                return true;
+            }
+            if (ARTIFACT_PREVIEW_ROUTE.test(url.pathname)) {
+                if (request.method !== "GET") return false;
+                const target = artifactFileRequest(url.pathname, ARTIFACT_PREVIEW_ROUTE);
+                if (target === undefined) throw notFound("The artifact version has no such file.");
+                const stored = await artifacts.storedPreview(
+                    ctx,
+                    target.artifactId,
+                    target.selector,
+                    target.path,
+                );
+                await sendArtifactPreview(request, response, stored, target.selector === "latest");
                 return true;
             }
             const route =
@@ -8265,6 +8287,8 @@ export class ApiModule implements AgentModule {
                             ...(body.background === undefined
                                 ? {}
                                 : { background: body.background }),
+                            ...(body.cover === undefined ? {} : { cover: body.cover }),
+                            ...(body.summary === undefined ? {} : { summary: body.summary }),
                             ...(files === undefined ? {} : { files }),
                             ...(body.remove === undefined ? {} : { remove: body.remove }),
                             ...(body.replaceAll === undefined
@@ -10495,7 +10519,8 @@ export class ApiModule implements AgentModule {
                     : { providerRoutes: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#stories === undefined ? {} : { storyFeed: true }),
-                ...(this.#feed === undefined ? {} : { feed: true }),
+                ...(this.#feed === undefined ? {} : { feed: true, feedSubjectFilter: true }),
+                ...(this.#artifacts === undefined ? {} : { artifactCovers: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),
@@ -11114,6 +11139,23 @@ function feedLimit(url: URL): number | undefined {
     if (!/^[1-9][0-9]{0,2}$/.test(value) || Number(value) > 200)
         throw invalidRequest("The feed limit is invalid.");
     return Number(value);
+}
+
+/**
+ * The subject types a Feed page is filtered to, from a comma-separated `subjects`, or undefined
+ * when the page is not filtered. Empty names are skipped, so a list of none matches nothing.
+ */
+function feedSubjectTypes(url: URL): string[] | undefined {
+    const values = url.searchParams.getAll("subjects");
+    if (values.length === 0) return undefined;
+    const types = [
+        ...new Set(values.flatMap((value) => value.split(",")).filter((type) => type !== "")),
+    ];
+    if (!Value.Check(feedQuerySchema, { subjects: types }))
+        throw invalidRequest(
+            "The feed subjects filter is invalid: name at most 32 subject types of 1 to 64 characters each.",
+        );
+    return types;
 }
 
 function documentQuery<const Key extends "seq" | "afterSeq" | "limit" | "stateVector">(

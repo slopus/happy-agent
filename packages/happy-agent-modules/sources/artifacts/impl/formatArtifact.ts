@@ -1,6 +1,12 @@
 import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 
-import type { ArtifactAuthor, ArtifactFile, ArtifactRecord, ArtifactSource } from "../Artifact.js";
+import type {
+    ArtifactAuthor,
+    ArtifactCover,
+    ArtifactFile,
+    ArtifactRecord,
+    ArtifactSource,
+} from "../Artifact.js";
 import { ARTIFACT_TYPE_RULES, formatBytes } from "../ArtifactTypes.js";
 
 /** The ready-to-paste Markdown link to an artifact, or to one of its versions, labeled with `title`. */
@@ -21,7 +27,7 @@ export function formatArtifactLine(artifact: ArtifactRecord): string {
         ARTIFACT_TYPE_RULES[artifact.type].label,
         JSON.stringify(artifact.title),
         formatArtifactVersion(artifact),
-        `${formatFileCount(artifact.fileCount)} (${formatBytes(artifact.size)}) opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}`,
+        `${formatFileCount(artifact.fileCount)} (${formatBytes(artifact.size)}) opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${formatArtifactCover(artifact)}`,
         `${artifact.status === "deleted" ? "deleted" : "updated"} ${new Date(artifact.updatedAt).toISOString()} by ${formatArtifactAuthor(artifact.updatedBy)}`,
     ];
     if (artifact.source !== undefined)
@@ -41,6 +47,19 @@ export function formatArtifactVersion(artifact: ArtifactRecord): string {
 /** The background a model is told about, as a clause; nothing for a transparent slot. */
 export function formatArtifactBackground(background: string | undefined): string {
     return background === undefined ? "" : ` on a ${background} background`;
+}
+
+/** The cover and summary a model is told about, as clauses; nothing when there are none. */
+export function formatArtifactCover(item: {
+    readonly cover?: ArtifactCover | undefined;
+    readonly summary?: string | undefined;
+}): string {
+    const cover =
+        item.cover === undefined
+            ? ""
+            : `, with cover ${JSON.stringify(item.cover.path)} (${String(item.cover.width)}×${String(item.cover.height)})`;
+    const summary = item.summary === undefined ? "" : `, summary ${JSON.stringify(item.summary)}`;
+    return `${cover}${summary}`;
 }
 
 export function formatArtifactAuthor(author: ArtifactAuthor): string {

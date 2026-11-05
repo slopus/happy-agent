@@ -41,9 +41,11 @@ import {
     MAX_ARTIFACT_FILES,
     updateArtifactInputSchema,
     type ArtifactAuthor,
+    type ArtifactCover,
     type ArtifactCreation,
     type ArtifactFile,
     type ArtifactFileInput,
+    type ArtifactFileMedia,
     type ArtifactListQuery,
     type ArtifactPage,
     type ArtifactPlacement,
@@ -51,6 +53,7 @@ import {
     type ArtifactSource,
     type ArtifactSourceInput,
     type ArtifactStoredFile,
+    type ArtifactStoredPreview,
     type ArtifactType,
     type ArtifactUpload,
     type ArtifactVersion,
@@ -76,6 +79,7 @@ import {
     queryArtifact,
     queryArtifactContentInUse,
     queryArtifactFile,
+    queryArtifactMediaForContent,
     queryArtifactPage,
     queryArtifactUpload,
     queryArtifactVersion,
@@ -101,7 +105,14 @@ import {
     storeArtifactContent,
     type ArtifactContentSource,
 } from "./impl/artifactContentFiles.js";
-import { ARTIFACT_REFERENCE_INSTRUCTIONS } from "./tools/common.js";
+import { measureArtifactCover } from "./impl/measureArtifactCover.js";
+import {
+    ARTIFACT_PICTURE_FORMATS,
+    measureArtifactMedia,
+    type ArtifactMediaKind,
+} from "./impl/measureArtifactMedia.js";
+import { normalizeArtifactSummary } from "./impl/normalizeArtifactSummary.js";
+import { ARTIFACT_COVER_INSTRUCTIONS, ARTIFACT_REFERENCE_INSTRUCTIONS } from "./tools/common.js";
 import { connectArtifactNetwork, describeArtifactNetworkExposure } from "./impl/artifactNetwork.js";
 import {
     LIVE_ARTIFACT_FALLBACK,
@@ -209,7 +220,7 @@ export class ArtifactsModule implements AgentModule {
     }
 
     readonly #hooks: AgentModuleHooks = {
-        instructions: () => ARTIFACT_REFERENCE_INSTRUCTIONS,
+        instructions: () => `${ARTIFACT_REFERENCE_INSTRUCTIONS}\n\n${ARTIFACT_COVER_INSTRUCTIONS}`,
         tools: async (_ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => [
             createArtifactTool(this, this.#compute, scope.agent.id),
             writeArtifactFileTool(this, scope.agent.id),
@@ -363,6 +374,26 @@ export class ArtifactsModule implements AgentModule {
     }
 
     /**
+     * The still preview of one file of one version of an active artifact, matched by exact path
+     * like `storedFile`, and where its WebP bytes are on this machine. A file the version holds
+     * without a preview, or whose preview is no longer stored, has none.
+     */
+    async storedPreview(
+        ctx: Context,
+        artifactId: string,
+        selector: ArtifactVersionSelector,
+        path: string,
+    ): Promise<ArtifactStoredPreview> {
+        const stored = await this.storedFile(ctx, artifactId, selector, path);
+        const preview = stored.file.preview;
+        const contentPath = this.#config.artifactPreviewPath(stored.file.sha256);
+        if (preview === undefined || !(await artifactFileExists(contentPath))) {
+            throw new ArtifactNotFoundError(`The file at "${path}" has no preview.`);
+        }
+        return { file: stored.file, version: stored.version, preview, contentPath };
+    }
+
+    /**
      * At most `maxBytes` of one stored file, starting `offset` bytes in, and whether more of the
      * file follows.
      */
@@ -513,6 +544,15 @@ export class ArtifactsModule implements AgentModule {
                 "The artifact creation request is invalid. Check its title, type, and file paths.",
             );
         }
+        const media =
+            input.live === undefined
+                ? await this.#measureMedia(
+                      ctx,
+                      input.type,
+                      await this.#placedFiles(ctx, input.files),
+                      typeof input.cover === "string" ? input.cover : undefined,
+                  )
+                : new Map<string, ArtifactFileMedia>();
         return await ctx.inTx(async (txCtx) => {
             if (input.id !== undefined) {
                 const existing = await queryArtifact(txCtx, input.id);
@@ -520,7 +560,13 @@ export class ArtifactsModule implements AgentModule {
                     return { artifact: structuredClone(existing), created: false };
                 }
             }
-            const { files, entry } = await this.#placeFiles(txCtx, input.type, [], input.files);
+            const { files, entry } = await this.#placeFiles(
+                txCtx,
+                input.type,
+                [],
+                input.files,
+                media,
+            );
             if (input.live !== undefined) {
                 const fallback = LIVE_ARTIFACT_FALLBACK;
                 if (
@@ -536,6 +582,21 @@ export class ArtifactsModule implements AgentModule {
             }
             const background = input.background?.toLowerCase();
             const display = input.display;
+            const summary =
+                input.summary == null ? undefined : normalizeArtifactSummary(input.summary);
+            const cover = await this.#resolveCover(
+                input.type,
+                input.live !== undefined,
+                files,
+                input.cover === undefined
+                    ? coversByDefault(input.type)
+                        ? { kind: "default" }
+                        : { kind: "none" }
+                    : input.cover === null
+                      ? { kind: "none" }
+                      : { kind: "named", path: input.cover, carried: false },
+                [],
+            );
             const now = Date.now();
             const artifact: ArtifactRecord = {
                 id: input.id ?? createId(),
@@ -550,6 +611,8 @@ export class ArtifactsModule implements AgentModule {
                 size: totalSize(files),
                 ...(background === undefined ? {} : { background }),
                 ...(display === undefined ? {} : { display }),
+                ...(cover.cover === undefined ? {} : { cover: cover.cover }),
+                ...(summary === undefined ? {} : { summary }),
                 ...(input.live === undefined ? {} : { live: input.live }),
                 ...(input.source === undefined ? {} : { source: input.source }),
                 createdBy: input.author,
@@ -569,6 +632,8 @@ export class ArtifactsModule implements AgentModule {
                 files,
                 ...(background === undefined ? {} : { background }),
                 ...(display === undefined ? {} : { display }),
+                ...cover,
+                ...(summary === undefined ? {} : { summary }),
                 ...(input.live === undefined ? {} : { live: input.live }),
                 createdBy: input.author,
                 ...(input.source === undefined ? {} : { source: input.source }),
@@ -603,6 +668,8 @@ export class ArtifactsModule implements AgentModule {
             input.title === undefined &&
             input.background === undefined &&
             input.display === undefined &&
+            input.cover === undefined &&
+            input.summary === undefined &&
             input.files === undefined &&
             input.remove === undefined &&
             input.replaceAll === undefined &&
@@ -610,10 +677,11 @@ export class ArtifactsModule implements AgentModule {
             input.url === undefined
         ) {
             throw new ArtifactInputError(
-                "Change the title, the background, the display, the URL, or the files, or make a major version.",
+                "Change the title, the background, the display, the cover, the summary, the URL, or the files, or make a major version.",
             );
         }
         const url = input.url === undefined ? undefined : normalizeArtifactUrl(input.url);
+        const media = await this.#measureUpdateMedia(ctx, input);
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, input.artifactId);
             if (
@@ -650,7 +718,12 @@ export class ArtifactsModule implements AgentModule {
                 (input.title === undefined || input.title === current.title) &&
                 (input.background === undefined ||
                     (input.background?.toLowerCase() ?? undefined) === current.background) &&
-                (input.display === undefined || (input.display ?? undefined) === current.display)
+                (input.display === undefined || (input.display ?? undefined) === current.display) &&
+                (input.cover === undefined || input.cover === null) &&
+                (input.summary === undefined ||
+                    (input.summary === null
+                        ? undefined
+                        : normalizeArtifactSummary(input.summary)) === current.summary)
             ) {
                 return current;
             }
@@ -685,6 +758,7 @@ export class ArtifactsModule implements AgentModule {
                 current.type,
                 [...kept.values()],
                 input.files ?? [],
+                media,
             );
             const now = Math.max(Date.now(), current.updatedAt + 1);
             const title = input.title ?? current.title;
@@ -694,6 +768,27 @@ export class ArtifactsModule implements AgentModule {
                     : (input.background?.toLowerCase() ?? undefined);
             const display =
                 input.display === undefined ? current.display : (input.display ?? undefined);
+            const summary =
+                input.summary === undefined
+                    ? current.summary
+                    : input.summary === null
+                      ? undefined
+                      : normalizeArtifactSummary(input.summary);
+            const cover = await this.#resolveCover(
+                current.type,
+                current.live !== undefined,
+                files,
+                input.cover === null
+                    ? { kind: "none" }
+                    : input.cover !== undefined
+                      ? { kind: "named", path: input.cover, carried: false }
+                      : latest.coverDefault === true
+                        ? { kind: "default" }
+                        : latest.cover === undefined
+                          ? { kind: "none" }
+                          : { kind: "named", path: latest.cover.path, carried: true },
+                latest.cover === undefined ? [] : [{ cover: latest.cover, files: latest.files }],
+            );
             const live =
                 current.live === undefined
                     ? undefined
@@ -718,6 +813,10 @@ export class ArtifactsModule implements AgentModule {
             if (background !== undefined) next.background = background;
             delete next.display;
             if (display !== undefined) next.display = display;
+            delete next.cover;
+            if (cover.cover !== undefined) next.cover = cover.cover;
+            delete next.summary;
+            if (summary !== undefined) next.summary = summary;
             const version: ArtifactVersion = {
                 artifactId: current.id,
                 number: next.latestVersion,
@@ -728,6 +827,8 @@ export class ArtifactsModule implements AgentModule {
                 files,
                 ...(background === undefined ? {} : { background }),
                 ...(display === undefined ? {} : { display }),
+                ...cover,
+                ...(summary === undefined ? {} : { summary }),
                 ...(live === undefined ? {} : { live }),
                 createdBy: input.author,
                 ...(input.source === undefined ? {} : { source: input.source }),
@@ -1038,6 +1139,150 @@ export class ArtifactsModule implements AgentModule {
     }
 
     /**
+     * A new version's cover. A named cover must be one of the version's files and pass the cover
+     * rules, or the version is refused; a cover carried over from the latest version is checked
+     * again, since its file may have been replaced or removed. The type's default — an image's own
+     * file or a series' first one — is kept only when it passes, and otherwise leaves the version
+     * without a cover. A live artifact holds no files a cover could be.
+     */
+    async #resolveCover(
+        type: ArtifactType,
+        live: boolean,
+        files: readonly ArtifactFile[],
+        choice: CoverChoice,
+        previous: readonly {
+            readonly cover: ArtifactCover;
+            readonly files: readonly ArtifactFile[];
+        }[],
+    ): Promise<{ readonly cover?: ArtifactCover; readonly coverDefault?: true }> {
+        if (choice.kind === "none") return {};
+        if (live) {
+            if (choice.kind === "default") return {};
+            throw new ArtifactInputError(
+                "A live-URL artifact holds no files, so it cannot have a cover. Give it a summary instead, or publish the page's files as an html artifact with a cover.",
+            );
+        }
+        const path = choice.kind === "default" ? files[0]?.path : choice.path;
+        const file = files.find((candidate) => candidate.path === path);
+        if (file === undefined) {
+            if (choice.kind === "default") return { coverDefault: true };
+            throw new ArtifactInputError(
+                choice.carried
+                    ? `The cover ${JSON.stringify(path)} would no longer be in the artifact. Name another file as its cover, or remove the cover with cover: null.`
+                    : `The artifact has no file at ${JSON.stringify(path)} to use as its cover. Add the image to the files, then name its path.`,
+            );
+        }
+        // The same bytes at the same path measure the same, so an unchanged cover is not decoded
+        // again for every version.
+        const known = previous.find(
+            (entry) =>
+                entry.cover.path === file.path &&
+                entry.files.some(
+                    (candidate) => candidate.path === file.path && candidate.sha256 === file.sha256,
+                ),
+        );
+        const measured =
+            known === undefined
+                ? await measureArtifactCover(file, this.#config.artifactContentPath(file.sha256))
+                : { cover: { ...known.cover, mimeType: file.mimeType } };
+        if (choice.kind === "default") {
+            return "cover" in measured
+                ? { cover: measured.cover, coverDefault: true }
+                : { coverDefault: true };
+        }
+        if ("problem" in measured) {
+            throw new ArtifactInputError(`That cover cannot be used: ${measured.problem}`);
+        }
+        return { cover: measured.cover };
+    }
+
+    /**
+     * Measure, before an update's transaction, the files its version will show: the latest
+     * version's and the placed ones. What it reads here is only a guess at what the transaction
+     * will see, so a change that races it may leave a file unmeasured, never wrong.
+     */
+    async #measureUpdateMedia(
+        ctx: Context,
+        input: UpdateArtifactInput,
+    ): Promise<ReadonlyMap<string, ArtifactFileMedia>> {
+        const current = await queryArtifact(ctx, input.artifactId);
+        if (current === undefined || current.status === "deleted" || current.live !== undefined) {
+            return new Map();
+        }
+        const latest = await queryArtifactVersion(ctx, current.id, current.latestVersion);
+        const kept = input.replaceAll === true ? [] : (latest?.files ?? []);
+        const coverPath =
+            input.cover === null
+                ? undefined
+                : (input.cover ??
+                  (latest?.coverDefault === true ? undefined : latest?.cover?.path));
+        return await this.#measureMedia(
+            ctx,
+            current.type,
+            [...kept, ...(await this.#placedFiles(ctx, input.files ?? []))],
+            coverPath,
+        );
+    }
+
+    /** The files staged uploads would become at their paths, for the uploads still there. */
+    async #placedFiles(
+        ctx: Context,
+        placements: readonly ArtifactPlacement[],
+    ): Promise<ArtifactFile[]> {
+        const files: ArtifactFile[] = [];
+        for (const placement of placements) {
+            const staged = await this.uploadContent(ctx, placement.uploadId);
+            if (staged === undefined) continue;
+            files.push({
+                path: placement.path,
+                mimeType: artifactMimeTypeForPath(placement.path),
+                size: staged.upload.size,
+                sha256: staged.upload.sha256,
+            });
+        }
+        return files;
+    }
+
+    /**
+     * What a version shows of its pictures and video, measured once per digest and media type:
+     * every picture of an image or image series, the cover whatever the type, and a video
+     * artifact's video. A file a kept version already measured keeps what it has; one whose bytes
+     * an earlier version measured reuses that, as long as its preview is still stored. This runs
+     * before the version's transaction, because a video's tools may take seconds, and it never
+     * fails: whatever cannot be measured is left out.
+     */
+    async #measureMedia(
+        ctx: Context,
+        type: ArtifactType,
+        files: readonly ArtifactFile[],
+        coverPath: string | undefined,
+    ): Promise<Map<string, ArtifactFileMedia>> {
+        const media = new Map<string, ArtifactFileMedia>();
+        for (const file of files) {
+            const kind = mediaKindOf(type, file, coverPath);
+            const key = mediaKey(file);
+            if (kind === undefined || media.has(key) || hasMedia(file)) continue;
+            const previewPath = this.#config.artifactPreviewPath(file.sha256);
+            const known = await queryArtifactMediaForContent(ctx, file.sha256, file.mimeType);
+            if (
+                known !== undefined &&
+                (known.preview === undefined || (await artifactFileExists(previewPath)))
+            ) {
+                media.set(key, known);
+                continue;
+            }
+            const measured = await measureArtifactMedia(
+                file,
+                kind,
+                this.#config.artifactContentPath(file.sha256),
+                previewPath,
+            );
+            if (hasMedia(measured)) media.set(key, measured);
+        }
+        return media;
+    }
+
+    /**
      * A version's files: the kept ones with staged uploads placed over them, checked against the
      * type's rules, in path order. The uploads are used up in the caller's transaction, and only
      * once everything checks out. Every upload must exist, be received, be unexpired, and still
@@ -1048,6 +1293,7 @@ export class ArtifactsModule implements AgentModule {
         type: ArtifactType,
         kept: readonly ArtifactFile[],
         placements: readonly ArtifactPlacement[],
+        media: ReadonlyMap<string, ArtifactFileMedia>,
     ): Promise<{ readonly files: ArtifactFile[]; readonly entry: ArtifactFile }> {
         if (new Set(placements.map((placement) => placement.path)).size !== placements.length) {
             throw new ArtifactInputError("Each path can be written only once per version.");
@@ -1078,9 +1324,12 @@ export class ArtifactsModule implements AgentModule {
                 sha256: upload.sha256,
             });
         }
-        const files = [...byPath.values()].sort((left, right) =>
-            compareArtifactPaths(left.path, right.path),
-        );
+        const files = [...byPath.values()]
+            .map((file) => {
+                const measured = media.get(mediaKey(file));
+                return measured === undefined ? file : { ...file, ...measured };
+            })
+            .sort((left, right) => compareArtifactPaths(left.path, right.path));
         const entry = checkArtifactFiles(type, files, notUtf8);
         for (const placement of placements) {
             await deleteArtifactUpload(ctx, placement.uploadId);
@@ -1106,6 +1355,7 @@ export class ArtifactsModule implements AgentModule {
                 !(await queryArtifactContentInUse(txCtx, received.sha256, uploadId))
             ) {
                 await removeArtifactFile(this.#config.artifactContentPath(received.sha256));
+                await removeArtifactFile(this.#config.artifactPreviewPath(received.sha256));
             }
         });
     }
@@ -1174,6 +1424,43 @@ export class ArtifactsModule implements AgentModule {
         if (this.#agents === undefined) throw new Error("The artifacts module has not started.");
         return this.#agents;
     }
+}
+
+/** Which cover a new version asks for. */
+type CoverChoice =
+    | { readonly kind: "none" }
+    | { readonly kind: "default" }
+    | { readonly kind: "named"; readonly path: string; readonly carried: boolean };
+
+/** How a file of a version is measured, or undefined when the version does not show it. */
+function mediaKindOf(
+    type: ArtifactType,
+    file: ArtifactFile,
+    coverPath: string | undefined,
+): ArtifactMediaKind | undefined {
+    if (type === "video" && file.mimeType.startsWith("video/")) return "video";
+    if (ARTIFACT_PICTURE_FORMATS[file.mimeType] === undefined) return undefined;
+    return coversByDefault(type) || file.path === coverPath ? "image" : undefined;
+}
+
+/** Measurements belong to bytes read as one media type. */
+function mediaKey(file: Pick<ArtifactFile, "sha256" | "mimeType">): string {
+    return `${file.sha256} ${file.mimeType}`;
+}
+
+function hasMedia(media: ArtifactFileMedia): boolean {
+    return (
+        media.width !== undefined ||
+        media.height !== undefined ||
+        media.durationMs !== undefined ||
+        media.thumbhash !== undefined ||
+        media.preview !== undefined
+    );
+}
+
+/** Whether a type's cover is its own picture unless someone names another or clears it. */
+function coversByDefault(type: ArtifactType): boolean {
+    return type === "image" || type === "image_series";
 }
 
 /** The durable removal of one upload, cancelled when the upload is used. */

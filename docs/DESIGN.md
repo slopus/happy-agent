@@ -334,6 +334,29 @@ What the page must do:
 `recipe/artifact-apps.md` has a whole game, with a pause menu that quits
 through `happyApp.close()`.
 
+### 1.9 Artifact covers
+
+The Feed shows an artifact with a cover as a post: its title, its summary, and
+the cover full width beneath. The summary is a short plain-text post, like a
+tweet: what this is and the key takeaway, in a few sentences. Line breaks are
+fine; Markdown is not. The cover is a picture the artifact
+draws itself; clients put nothing on top of it. Give one to any report,
+analysis, or result people would want to see in the Feed.
+
+- **Shape.** Either 16:9, drawn at 1600×900, or square, drawn at 1200×1200.
+  Other shapes are refused.
+- **Format.** WebP, still or animated. PNG and JPEG work too. Convert a GIF to
+  animated WebP before publishing:
+  `ffmpeg -i in.gif -c:v libwebp -loop 0 -q:v 75 cover.webp` (or `gif2webp`).
+  SVG is refused: render a chart or diagram first, with a headless browser
+  screenshot, `rsvg-convert`, matplotlib, or whatever the machine has.
+- **Content.** One idea: the headline, the key number, or the main chart. It is
+  read at feed size, about 400 px wide on a phone, so use few words, large
+  type (a headline of at least 64 px at 1600×900), and thick chart lines.
+- **Look.** Flat, in plain colours that read on light and dark around it, with
+  generous margins. No cards, tinted boxes, or coloured stripes (§16), and no
+  rounded corners or frame: the client rounds the image itself.
+
 ---
 
 ## 2. Surfaces, dimensions, and gutters

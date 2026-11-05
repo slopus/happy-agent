@@ -6,6 +6,7 @@ import { Value } from "@sinclair/typebox/value";
 
 import type {
     ArtifactAuthor,
+    ArtifactCover,
     ArtifactFile,
     ArtifactRecord,
     ArtifactSource,
@@ -344,6 +345,8 @@ export function artifactResource(artifact: ArtifactRecord): Record<string, unkno
         size: artifact.size,
         background: artifact.background ?? null,
         display: artifact.display ?? null,
+        cover: artifactCoverResource(artifact.cover),
+        summary: artifact.summary ?? null,
         live: artifact.live ?? null,
         source: artifactSourceResource(artifact.source),
         createdBy: artifactAuthorResource(artifact.createdBy),
@@ -371,6 +374,8 @@ export function artifactVersionResource(version: ArtifactVersion): Record<string
         files: version.files.map(artifactFileResource),
         background: version.background ?? null,
         display: version.display ?? null,
+        cover: artifactCoverResource(version.cover),
+        summary: version.summary ?? null,
         live: version.live ?? null,
         createdBy: artifactAuthorResource(version.createdBy),
         source: artifactSourceResource(version.source),
@@ -389,8 +394,35 @@ export function artifactUploadResource(upload: ArtifactUpload): Record<string, u
     };
 }
 
+/** A cover the file route serves, with the pixel size the daemon decoded; `null` for none. */
+function artifactCoverResource(cover: ArtifactCover | undefined): Record<string, unknown> | null {
+    return cover === undefined
+        ? null
+        : {
+              path: cover.path,
+              mimeType: cover.mimeType,
+              width: cover.width,
+              height: cover.height,
+              aspect: cover.aspect,
+              thumbhash: cover.thumbhash,
+          };
+}
+
+/** A file, with whatever the daemon measured of it; a measurement it lacks is left out. */
 function artifactFileResource(file: ArtifactFile): Record<string, unknown> {
-    return { path: file.path, mimeType: file.mimeType, size: file.size, sha256: file.sha256 };
+    return {
+        path: file.path,
+        mimeType: file.mimeType,
+        size: file.size,
+        sha256: file.sha256,
+        ...(file.width === undefined ? {} : { width: file.width }),
+        ...(file.height === undefined ? {} : { height: file.height }),
+        ...(file.durationMs === undefined ? {} : { durationMs: file.durationMs }),
+        ...(file.thumbhash === undefined ? {} : { thumbhash: file.thumbhash }),
+        ...(file.preview === undefined
+            ? {}
+            : { preview: { width: file.preview.width, height: file.preview.height } }),
+    };
 }
 
 /** Every kind but `agent` names its conversation as `agentId`, `null` when a person acted. */

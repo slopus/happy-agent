@@ -947,6 +947,74 @@ describe("the artifact tools", () => {
         expect((await w.artifacts.list(w.ctx)).artifacts).toEqual([]);
     });
 
+    it("tells every agent that a good artifact has a 16:9 cover", async () => {
+        const w = await world("artifact-tools-cover-guidance");
+        const instructions = await w.instructions(AGENT);
+        expect(instructions).toContain(
+            "A good artifact has a cover: a WebP, still or animated, either 16:9 (1600×900) or square (1200×1200)",
+        );
+        const create = await w.tool(AGENT, "create_artifact");
+        const update = await w.tool(AGENT, "update_artifact");
+        for (const tool of [create, update]) {
+            expect(tool.description).toContain("A good artifact has a cover and a summary");
+            expect(JSON.stringify(tool.parameters)).toContain(
+                "either 16:9 (1600×900) or square (1200×1200)",
+            );
+        }
+    });
+
+    it("publishes a cover and summary with the artifact, and changes them later", async () => {
+        const w = await world("artifact-tools-cover");
+        w.machine.writeBuffer(
+            "/workspace/out/cover.png",
+            await sharp({
+                create: { width: 1600, height: 900, channels: 3, background: "#1d4ed8" },
+            })
+                .png()
+                .toBuffer(),
+        );
+        const tool = await w.tool(AGENT, "create_artifact");
+        const result = await call(w.ctx, tool, {
+            type: "markdown",
+            title: "Q3 revenue",
+            content: "# Q3\n",
+            files: [{ fromPath: "out/cover.png" }],
+            cover: "cover.png",
+            summary: "Revenue up 18% QoQ.",
+        });
+        expect(result).toMatchObject({
+            cover: {
+                path: "cover.png",
+                mimeType: "image/png",
+                width: 1600,
+                height: 900,
+                aspect: "wide",
+                thumbhash: expect.any(String),
+            },
+            summary: "Revenue up 18% QoQ.",
+        });
+        expect(textOf(tool, result)).toContain('with cover "cover.png" (1600×900)');
+        expect(textOf(tool, result)).not.toContain("It has no cover");
+        const artifactId = (result as ArtifactRecord).id;
+
+        const update = await w.tool(AGENT, "update_artifact");
+        await expect(
+            call(w.ctx, update, { artifactId, remove: ["cover.png"] }, { id: "drop" }),
+        ).rejects.toThrow(/cover: null/);
+        const cleared = await call(
+            w.ctx,
+            update,
+            { artifactId, remove: ["cover.png"], cover: null, summary: null },
+            { id: "clear" },
+        );
+        expect(cleared).toMatchObject({ latestVersion: 2 });
+        expect((cleared as ArtifactRecord).cover).toBeUndefined();
+        expect((cleared as ArtifactRecord).summary).toBeUndefined();
+
+        const plain = await call(w.ctx, tool, { type: "markdown", title: "Scratch" });
+        expect(textOf(tool, plain)).toContain("It has no cover");
+    });
+
     it("publishes an image copied in from the agent's machine", async () => {
         const w = await world("artifact-tools-image");
         const chart = await png();

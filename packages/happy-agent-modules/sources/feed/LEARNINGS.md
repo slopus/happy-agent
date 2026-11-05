@@ -46,3 +46,11 @@ lock, so a pending fan-out cannot race a reader's seeding.
 
 Fan-out, enrollment, and the task and agent read routes emit Feed events outside the request's
 mutation scope. Only `POST /v0/feed/seen`, read-all, and subscribing echo a `mutationId`.
+
+## Highlights filter in the daemon, not only in clients
+
+Steve asked for a Highlights view of artifacts and tasks. Filtering pages on the client leaves
+gaps and needs extra pages to fill a screen, so `GET /v0/feed` takes `subjects` and pages inside
+the filtered list, with `filteredUnread` beside the reader's whole `unread`, and read-all takes the
+same list so "Mark all read" in Highlights closes only what it shows. Live events stay unfiltered;
+clients drop what their view leaves out.

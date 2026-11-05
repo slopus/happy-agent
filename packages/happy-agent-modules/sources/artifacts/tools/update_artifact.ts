@@ -17,6 +17,7 @@ import {
 } from "../impl/artifactWriteAccess.js";
 import {
     formatArtifactBackground,
+    formatArtifactCover,
     formatArtifactLink,
     formatArtifactVersion,
 } from "../impl/formatArtifact.js";
@@ -28,12 +29,15 @@ import {
     stageArtifactSources,
 } from "../impl/stageArtifactSources.js";
 import {
+    ARTIFACT_COVER_GUIDANCE,
     ARTIFACT_PRESENTED_NOTICE,
     ARTIFACT_TOOL_CAPABILITY,
     artifactToolBackgroundChangeSchema,
+    artifactToolCoverChangeSchema,
     artifactToolDisplayChangeSchema,
     artifactToolResultSchema,
     artifactToolSourcesSchema,
+    artifactToolSummaryChangeSchema,
     presentedArtifact,
 } from "./common.js";
 
@@ -51,6 +55,8 @@ const updateArtifactToolInputSchema = Type.Object(
         ),
         background: Type.Optional(artifactToolBackgroundChangeSchema),
         display: Type.Optional(artifactToolDisplayChangeSchema),
+        cover: Type.Optional(artifactToolCoverChangeSchema),
+        summary: Type.Optional(artifactToolSummaryChangeSchema),
         files: Type.Optional(artifactToolSourcesSchema),
         remove: Type.Optional(
             Type.Array(artifactPathSchema, {
@@ -92,13 +98,17 @@ export function updateArtifactTool(
             "artifact display",
             "live url",
             "artifact background",
+            "artifact cover",
+            "feed image",
+            "artifact summary",
             "major version",
             "add image to artifact",
             "remove artifact file",
         ],
         description: [
-            "Change an artifact in one new version that keeps every earlier one, recorded as made by you, where you are working. title renames it, background changes the colour behind it, which almost every artifact leaves unset, and display changes how the chat first shows it.",
+            "Change an artifact in one new version that keeps every earlier one, recorded as made by you, where you are working. title renames it, background changes the colour behind it, which almost every artifact leaves unset, display changes how the chat first shows it, and cover and summary change how it appears in the Feed.",
             'files copies files from your machine in, adding each path or replacing the file there — for example { "fromPath": "out/chart.png", "path": "images/chart.png" } to place an image you generated, or the files of an app you built and tried with the shell. A copy keeps its own name unless you give it a path. remove takes paths out. Write and edit text files with write_artifact_file and edit_artifact_file instead.',
+            `${ARTIFACT_COVER_GUIDANCE} To add or replace one, copy the image in and name it in the same call: files: [{ "fromPath": "out/cover.webp", "path": "cover.webp" }], cover: "cover.webp". A later version keeps the cover and summary until a change names new ones or removes them with null; removing or replacing the cover's file without naming another cover fails.`,
             "Every change makes a minor version, such as 1.3 after 1.2. When the artifact reaches a meaningful milestone, mark it with major, exactly one more than the latest major version: 2 makes this version 2.0, alone or together with the other changes. A major version needs at least one change since the last one.",
             "For a live-URL artifact, url replaces its address while keeping the network captured at creation. Every update is reviewed in Auto. Do not supply files or remove: the fallback entry is generated, not editable. File artifacts and live artifacts cannot be converted into one another.",
         ].join("\n\n"),
@@ -179,6 +189,8 @@ export function updateArtifactTool(
                 ...(input.url === undefined ? {} : { url: input.url }),
                 ...(input.background === undefined ? {} : { background: input.background }),
                 ...(input.display === undefined ? {} : { display: input.display }),
+                ...(input.cover === undefined ? {} : { cover: input.cover }),
+                ...(input.summary === undefined ? {} : { summary: input.summary }),
                 ...(files === undefined ? {} : { files }),
                 ...(input.remove === undefined ? {} : { remove: input.remove }),
                 ...(input.major === undefined ? {} : { major: input.major }),
@@ -191,7 +203,7 @@ export function updateArtifactTool(
             {
                 type: "text",
                 text: [
-                    `Artifact ${artifact.id} is now at ${formatArtifactVersion(artifact)}: ${JSON.stringify(artifact.title)}, ${String(artifact.fileCount)} ${artifact.fileCount === 1 ? "file" : "files"}, opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${artifact.display === undefined ? "" : `, shown ${artifact.display}`}.`,
+                    `Artifact ${artifact.id} is now at ${formatArtifactVersion(artifact)}: ${JSON.stringify(artifact.title)}, ${String(artifact.fileCount)} ${artifact.fileCount === 1 ? "file" : "files"}, opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${artifact.display === undefined ? "" : `, shown ${artifact.display}`}${formatArtifactCover(artifact)}.`,
                     ARTIFACT_PRESENTED_NOTICE,
                     ...(artifact.live === undefined
                         ? []

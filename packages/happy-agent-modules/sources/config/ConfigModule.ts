@@ -2069,6 +2069,17 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
+     * The still WebP preview of one stored artifact file, named by the SHA-256 of the source
+     * file's bytes, so every version and artifact holding those bytes shares it.
+     */
+    artifactPreviewPath(sha256: string): string {
+        if (!/^[0-9a-f]{64}$/.test(sha256)) {
+            throw new Error("The artifact content digest cannot name a preview.");
+        }
+        return join(this.artifactsHome, "previews", sha256.slice(0, 2), `${sha256}.webp`);
+    }
+
+    /**
      * One snapshot of media shown in a chat, named by the SHA-256 of its bytes and never
      * rewritten, in the private root beside the database rather than in history.
      */

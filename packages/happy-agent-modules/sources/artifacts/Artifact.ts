@@ -58,18 +58,83 @@ export const artifactDisplaySchema = Type.Union([
     Type.Literal("inline_expanded"),
     Type.Literal("side"),
 ]);
+/**
+ * A summary as stored: post-like plain text a client shows under the title, like a tweet or a
+ * short post. Trimmed, with `\n` line breaks and no other control characters, and at most 5,000
+ * characters, which `normalizeArtifactSummary` counts as code points; this bound is in UTF-16
+ * units.
+ */
+export const artifactSummarySchema = Type.String({
+    minLength: 1,
+    maxLength: 10_000,
+    pattern: "^(?!\\s)(?![\\s\\S]*\\s$)[^\\x00-\\x09\\x0b-\\x1f\\x7f-\\x9f\\u2028\\u2029]+$",
+});
+/**
+ * A summary as someone writes it, before CRLF line ends are made `\n` and it is trimmed and
+ * checked.
+ */
+export const artifactSummaryInputSchema = Type.String({ minLength: 1, maxLength: 20_000 });
+/** A ThumbHash placeholder in standard base64. */
+export const artifactThumbHashSchema = Type.String({ minLength: 1, maxLength: 128 });
+/**
+ * What the daemon measured of a picture or video file when a version placed it. Every field is
+ * optional: one it could not measure is absent.
+ */
+export const artifactFileMediaSchema = Type.Object(
+    {
+        /** The pixel size as displayed, after EXIF orientation or a video's rotation. */
+        width: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+        height: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+        /** A video's length in whole milliseconds. */
+        durationMs: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+        /** The first frame's ThumbHash. */
+        thumbhash: Type.Optional(artifactThumbHashSchema),
+        /** The size of the still WebP preview stored under the file's digest. */
+        preview: Type.Optional(
+            Type.Object(
+                {
+                    width: Type.Integer({ minimum: 1, maximum: 640 }),
+                    height: Type.Integer({ minimum: 1, maximum: 640 }),
+                },
+                { additionalProperties: false },
+            ),
+        ),
+    },
+    { additionalProperties: false },
+);
+/**
+ * The image a feed shows for a version: one of its files, with the pixel size the daemon decoded
+ * from it.
+ */
+export const artifactCoverSchema = Type.Object(
+    {
+        path: artifactPathSchema,
+        mimeType: artifactMimeTypeSchema,
+        width: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+        height: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+        /** The standard shape the size matches: `"wide"` (16:9) or `"square"` (1:1). */
+        aspect: Type.Union([Type.Literal("wide"), Type.Literal("square")]),
+        /** The first frame's ThumbHash in base64, `null` when it could not be decoded. */
+        thumbhash: Type.Union([artifactThumbHashSchema, Type.Null()]),
+    },
+    { additionalProperties: false },
+);
 /** A background as someone names it: the same colours, in either case. */
 export const artifactBackgroundInputSchema = Type.String({
     pattern: "^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
 });
 
-/** One file of one version, stored once by the digest of its bytes. */
+/**
+ * One file of one version, stored once by the digest of its bytes, with what the daemon measured
+ * of it when it is a picture or video the version shows.
+ */
 export const artifactFileSchema = Type.Object(
     {
         path: artifactPathSchema,
         mimeType: artifactMimeTypeSchema,
         size: artifactCounterSchema,
         sha256: artifactSha256Schema,
+        ...artifactFileMediaSchema.properties,
     },
     { additionalProperties: false },
 );
@@ -171,6 +236,10 @@ export const artifactRecordSchema = Type.Object(
         background: Type.Optional(artifactBackgroundSchema),
         /** The latest version's display preference; absent leaves it to the client. */
         display: Type.Optional(artifactDisplaySchema),
+        /** The latest version's cover; absent when it has none. */
+        cover: Type.Optional(artifactCoverSchema),
+        /** The latest version's summary; absent when it has none. */
+        summary: Type.Optional(artifactSummarySchema),
         live: Type.Optional(artifactLiveSchema),
         source: Type.Optional(artifactSourceSchema),
         createdBy: artifactAuthorSchema,
@@ -207,6 +276,16 @@ export const artifactVersionSchema = Type.Object(
         background: Type.Optional(artifactBackgroundSchema),
         /** How this version's author wants it shown; absent leaves it to the client. */
         display: Type.Optional(artifactDisplaySchema),
+        /** The image a feed shows for this version; absent when it has none. */
+        cover: Type.Optional(artifactCoverSchema),
+        /**
+         * Whether the cover is the type's default, an image's own file or a series' first one,
+         * rather than one somebody named. A default follows the files into the next version and
+         * may be absent when that file cannot be a cover.
+         */
+        coverDefault: Type.Optional(Type.Literal(true)),
+        /** Post-like text a client shows under the title; absent when it has none. */
+        summary: Type.Optional(artifactSummarySchema),
         live: Type.Optional(artifactLiveSchema),
         createdBy: artifactAuthorSchema,
         source: Type.Optional(artifactSourceSchema),
@@ -259,6 +338,13 @@ export const createArtifactInputSchema = Type.Object(
         background: Type.Optional(artifactBackgroundInputSchema),
         /** The first version's display preference; absent leaves it to the client. */
         display: Type.Optional(artifactDisplaySchema),
+        /**
+         * The path of the first version's cover, `null` for none, and absent for the type's
+         * default: an image's own file or a series' first one, and none for other types.
+         */
+        cover: Type.Optional(Type.Union([artifactPathSchema, Type.Null()])),
+        /** The first version's summary; absent or `null` for none. */
+        summary: Type.Optional(Type.Union([artifactSummaryInputSchema, Type.Null()])),
         live: Type.Optional(artifactLiveSchema),
         author: artifactAuthorSchema,
         source: Type.Optional(artifactSourceSchema),
@@ -286,6 +372,10 @@ export const updateArtifactInputSchema = Type.Object(
         background: Type.Optional(Type.Union([artifactBackgroundInputSchema, Type.Null()])),
         /** A preference sets the new version's display, `null` clears it, and absent keeps it. */
         display: Type.Optional(Type.Union([artifactDisplaySchema, Type.Null()])),
+        /** A path sets the new version's cover, `null` clears it, and absent keeps it. */
+        cover: Type.Optional(Type.Union([artifactPathSchema, Type.Null()])),
+        /** Text sets the new version's summary, `null` clears it, and absent keeps it. */
+        summary: Type.Optional(Type.Union([artifactSummaryInputSchema, Type.Null()])),
         /**
          * Make the new version this major one, `major.0`. It must be one more than the latest
          * major, and the latest version must be a minor one.
@@ -343,7 +433,9 @@ export const artifactVersionQuerySchema = Type.Object(
 export type ArtifactType = Static<typeof artifactTypeSchema>;
 export type ArtifactStatus = Static<typeof artifactStatusSchema>;
 export type ArtifactDisplay = Static<typeof artifactDisplaySchema>;
+export type ArtifactCover = Static<typeof artifactCoverSchema>;
 export type ArtifactFile = Static<typeof artifactFileSchema>;
+export type ArtifactFileMedia = Static<typeof artifactFileMediaSchema>;
 export type ArtifactSource = Static<typeof artifactSourceSchema>;
 export type ArtifactSourceInput = Static<typeof artifactSourceInputSchema>;
 export type ArtifactAuthor = Static<typeof artifactAuthorSchema>;
@@ -384,6 +476,16 @@ export interface ArtifactStoredFile {
     /** The version the file was read from, `latest` resolved. */
     readonly version: number;
     /** Where the bytes are on the daemon's machine. */
+    readonly contentPath: string;
+}
+
+/** One stored file's still preview, and where its WebP bytes are on this machine. */
+export interface ArtifactStoredPreview {
+    readonly file: ArtifactFile;
+    /** The version the file was read from, `latest` resolved. */
+    readonly version: number;
+    readonly preview: NonNullable<ArtifactFile["preview"]>;
+    /** Where the preview's bytes are on the daemon's machine. */
     readonly contentPath: string;
 }
 

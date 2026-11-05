@@ -5,6 +5,7 @@ import {
     artifactDisplaySchema,
     artifactPathSchema,
     artifactRecordSchema,
+    artifactSummaryInputSchema,
     artifactTitleSchema,
     artifactTypeSchema,
     MAX_ARTIFACT_FILES,
@@ -21,6 +22,51 @@ export const ARTIFACT_TOOL_CAPABILITY =
  */
 export const ARTIFACT_REFERENCE_INSTRUCTIONS =
     "When you mention an artifact in a reply, link it as [its title](happy://artifacts/<artifactId>); add ?version=N to point at one version. The artifact tools give you the exact link. People see the artifact's current title as the link text, so do not repeat the title beside the link. A link inside code stays literal.";
+
+/**
+ * What makes a good artifact in the Feed, as every agent's instructions say it: the artifact tools
+ * are deferred, so an agent may plan an artifact before it has read their descriptions.
+ */
+export const ARTIFACT_COVER_INSTRUCTIONS =
+    "A good artifact has a cover: a WebP, still or animated, either 16:9 (1600×900) or square (1200×1200), showing its headline, key number, or main chart, readable at feed size; the Feed shows it full width. Give one, with a summary, a short post saying what it is and the key takeaway, to any report, analysis, or result people would want to see in the Feed: render it first with what you have, such as a headless browser screenshot, rsvg-convert, or matplotlib, then name that file as cover in create_artifact or update_artifact. Scratch and utility artifacts may go without.";
+
+/** How every writing tool describes `cover`. */
+const ARTIFACT_COVER_DESCRIPTION =
+    "The path of the artifact's cover image among its files, such as \"cover.webp\": a WebP, still or animated, showing the headline, key number, or main chart, readable at feed size. A cover is either 16:9 (1600×900) or square (1200×1200); other shapes are refused. PNG and JPEG work too; convert a GIF to animated WebP first, and SVG is refused. An image artifact's cover is its own picture and an image series' its first, unless you name another or pass null.";
+
+/** How every writing tool describes `summary`. */
+const ARTIFACT_SUMMARY_DESCRIPTION =
+    "A short post shown under the title, like a tweet: what this is and the key takeaway, in a few sentences of plain text. Line breaks are fine; no Markdown. At most 5,000 characters.";
+
+/** A new artifact's cover, or `null` for none. */
+export const artifactToolCoverSchema = Type.Union(
+    [Type.String({ ...artifactPathSchema }), Type.Null()],
+    { description: ARTIFACT_COVER_DESCRIPTION },
+);
+
+/** A new version's cover, or `null` to remove it. */
+export const artifactToolCoverChangeSchema = Type.Union(
+    [Type.String({ ...artifactPathSchema }), Type.Null()],
+    {
+        description: `${ARTIFACT_COVER_DESCRIPTION} null removes it; leaving it out keeps it, and its file must then stay in the artifact.`,
+    },
+);
+
+/** A new artifact's summary. */
+export const artifactToolSummarySchema = Type.String({
+    ...artifactSummaryInputSchema,
+    description: ARTIFACT_SUMMARY_DESCRIPTION,
+});
+
+/** A new version's summary, or `null` to remove it. */
+export const artifactToolSummaryChangeSchema = Type.Union(
+    [Type.String({ ...artifactSummaryInputSchema }), Type.Null()],
+    { description: `${ARTIFACT_SUMMARY_DESCRIPTION} null removes it; leaving it out keeps it.` },
+);
+
+/** How the writing tools explain covers. */
+export const ARTIFACT_COVER_GUIDANCE =
+    "A good artifact has a cover and a summary. The summary is a short post under the title: what this is and the key takeaway, in a few sentences of plain text, line breaks fine, no Markdown. The cover is a WebP, either 16:9 (1600×900) or square (1200×1200), showing the headline, key number, or main chart, readable at feed size; the Feed shows it full width and draws nothing over it. Add one to any report, analysis, or result people would want to see in the Feed; scratch and utility artifacts may go without. For a chart or diagram, render it first with what you have, such as a headless browser screenshot, rsvg-convert, or matplotlib, and save it as WebP. A short looping animated WebP is fine; keep it small, and convert a GIF to one first: ffmpeg -i in.gif -c:v libwebp -loop 0 -q:v 75 cover.webp. PNG and JPEG are accepted; GIF is accepted but discouraged; SVG is refused.";
 
 /** How every writing tool describes `background`, which almost every artifact leaves out. */
 const ARTIFACT_BACKGROUND_DESCRIPTION =

@@ -286,19 +286,37 @@ export class FeedModule implements AgentModule {
         return () => this.#listeners.delete(listener);
     }
 
-    /** The caller's entries, newest cursor first, with their open count. */
+    /**
+     * The caller's entries, newest cursor first, with their open count. Given `subjects`, only
+     * entries about those subject types are listed, and `filteredUnread` counts their open ones;
+     * an unknown type matches nothing.
+     */
     async list(
         ctx: Context,
-        query: { readonly before?: string; readonly limit?: number },
-    ): Promise<{ items: FeedItem[]; unread: number; hasMore: boolean }> {
+        query: {
+            readonly before?: string;
+            readonly limit?: number;
+            readonly subjects?: readonly string[];
+        },
+    ): Promise<{ items: FeedItem[]; unread: number; filteredUnread?: number; hasMore: boolean }> {
         const reader = await this.#reader(ctx);
-        if (reader === undefined) return { items: [], unread: 0, hasMore: false };
+        const filtered = query.subjects === undefined ? {} : { filteredUnread: 0 };
+        if (reader === undefined) return { items: [], unread: 0, ...filtered, hasMore: false };
         const limit = query.limit ?? 50;
         return await ctx.inTx(async (tx) => {
-            const records = await queryFeedItems(tx, reader, query.before, limit + 1);
+            const records = await queryFeedItems(
+                tx,
+                reader,
+                query.before,
+                limit + 1,
+                query.subjects,
+            );
             return {
                 items: records.slice(0, limit).map(servedFeedItem),
                 unread: await queryFeedUnread(tx, reader),
+                ...(query.subjects === undefined
+                    ? {}
+                    : { filteredUnread: await queryFeedUnread(tx, reader, query.subjects) }),
                 hasMore: records.length > limit,
             };
         });
@@ -333,12 +351,19 @@ export class FeedModule implements AgentModule {
         });
     }
 
-    /** Close every open entry of the caller not newer than `through`. */
-    async markAllSeen(ctx: Context, through?: string): Promise<{ unread: number }> {
+    /**
+     * Close every open entry of the caller not newer than `through`, about only the subject types
+     * in `subjects` when it is given. The count returned is every type's.
+     */
+    async markAllSeen(
+        ctx: Context,
+        through?: string,
+        subjects?: readonly string[],
+    ): Promise<{ unread: number }> {
         const reader = await this.#reader(ctx);
         if (reader === undefined) return { unread: 0 };
         return await ctx.inTx(async (tx) => {
-            const open = await queryOpenFeedItems(tx, reader, through);
+            const open = await queryOpenFeedItems(tx, reader, through, subjects);
             return { unread: (await this.#close(tx, reader, open, false)).unread };
         });
     }
