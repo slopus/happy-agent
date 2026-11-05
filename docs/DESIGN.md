@@ -276,7 +276,11 @@ In app mode the host also defines `window.happyApp.close()`, which closes the
 page exactly as the host's own controls do: it dismisses it on iOS and
 Android, and on Happy Desktop leaves full screen, or goes back from the viewer
 when not full screen. A page that has its own exit, such as Quit in a pause
-menu, calls it; it works whatever `happy-app-close` says.
+menu, calls it; it works whatever `happy-app-close` says. The host may define
+`window.happyApp` only once the document is committed, after a script in
+`<head>` has already run, so look it up when the person acts, as in
+`onclick = () => window.happyApp?.close()`. Never keep it in a variable at
+load or check for it in a `<head>` script.
 
 `none` hides the "×", and is discouraged. Use it only when the page draws its
 own clearly visible exit that calls `happyApp.close()`; moving the button to

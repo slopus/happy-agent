@@ -100,7 +100,8 @@ with Happy Agent too:
   to another corner the game does not use (`top-start`, `top-end`, `bottom-start`, `bottom-end`).
   The root's `data-happy-app-close` names the corner and `--happy-app-close-x`, `-y`, `-width`, and
   `-height` give its exact box. An exit the page draws, such as Quit in a pause menu, calls
-  `window.happyApp.close()`. `none` hides the "×" and is discouraged: use it only with an exit of
+  `window.happyApp.close()`, looked up when the person acts, since the host may define it after
+  `<head>` scripts run, and never kept from page load. `none` hides the "×" and is discouraged: use it only with an exit of
   your own that is always clearly visible. A document or dashboard meant to be read is not an app; use `happy-page-width: full` for it. `../DESIGN.md` §1.8 has the details, and
   [An app-mode game](#an-app-mode-game) below is a skeleton.
 - `/api/v1/components.js`, last. It defines five elements that read what they show from the page.
@@ -465,7 +466,8 @@ as a high score.
             }
             document.getElementById("pause").onclick = () => setPaused(true);
             document.getElementById("resume").onclick = () => setPaused(false);
-            // The host defines happyApp only in app mode, so check before calling it.
+            // The host defines happyApp only in app mode, and possibly after this script runs,
+            // so look it up on each click instead of keeping it from page load.
             document.getElementById("quit").onclick = () => window.happyApp?.close();
 
             function resize() {
