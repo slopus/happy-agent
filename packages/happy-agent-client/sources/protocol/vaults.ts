@@ -1,5 +1,5 @@
 /**
- * Vault Surfaces: a shared tree of folders and files, plain or static-site artifacts, whose files
+ * Vault Surfaces: a shared tree of folders and files, plain or artifacts (vault apps), whose files
  * have numbered versions kept under the vault's retention policy, a Trash, an activity log, and search. Bytes
  * arrive as resumable uploads and are stored once per SHA-256.
  */
@@ -54,7 +54,7 @@ export function isVaultArtifactName(name: string): boolean {
     return name.toLowerCase().endsWith(VAULT_ARTIFACT_SUFFIX);
 }
 
-/** An artifact's site: `html` when `index.html` sits at its root, otherwise `markdown`. */
+/** A vault app's kind: `html` when `index.html` sits at its root, otherwise `markdown`. */
 export const vaultArtifactTypeSchema = Type.Union([Type.Literal("html"), Type.Literal("markdown")]);
 export type VaultArtifactType = Static<typeof vaultArtifactTypeSchema>;
 
@@ -72,7 +72,7 @@ export const vaultArtifactContentsSchema = Type.Object({
 });
 export type VaultArtifactContents = Static<typeof vaultArtifactContentsSchema>;
 
-/** Where a `.artifact` file keeps its manifest: at the zip's root, beside the site's files. */
+/** Where a `.artifact` file keeps its manifest: at the zip's root, beside the app's files. */
 export const VAULT_ARTIFACT_MANIFEST_PATH = "artifact.json";
 
 /**
@@ -532,13 +532,28 @@ export const vaultMutationRequestSchema = Type.Object(
 );
 export type VaultMutationRequest = Static<typeof vaultMutationRequestSchema>;
 
+/**
+ * Makes a version request safe to repeat: one per attempt, sent again unchanged when a response is
+ * lost. A repeat on the same file answers with the first request's outcome and makes nothing new.
+ */
+export const vaultOperationIdSchema = Type.String({ minLength: 1, maxLength: 128 });
+export type VaultOperationId = Static<typeof vaultOperationIdSchema>;
+
 /** New content from an upload (a `.artifact` file for an artifact) or an earlier version. */
 export const createVaultVersionRequestSchema = Type.Union([
-    Type.Object({ mutationId: Type.Optional(mutationIdSchema), uploadId: cuid2Schema }, strict),
+    Type.Object(
+        {
+            mutationId: Type.Optional(mutationIdSchema),
+            operationId: Type.Optional(vaultOperationIdSchema),
+            uploadId: cuid2Schema,
+        },
+        strict,
+    ),
     Type.Object(
         {
             fromVersion: Type.Integer({ minimum: 1 }),
             mutationId: Type.Optional(mutationIdSchema),
+            operationId: Type.Optional(vaultOperationIdSchema),
         },
         strict,
     ),

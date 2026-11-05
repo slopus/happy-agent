@@ -2834,7 +2834,8 @@ export class HappyAgentClient {
 
     /**
      * New content from an upload or an earlier version; `version` is `null` when the content
-     * equalled the newest version.
+     * equalled the newest version. Repeating a request's `operationId` on the same file answers
+     * with what the first request did instead of making another version.
      */
     async createVaultVersion(
         surfaceId: SurfaceId,

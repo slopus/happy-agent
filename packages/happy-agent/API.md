@@ -10900,6 +10900,16 @@ Changing:
   `mutationId`. It returns `201 { "file": {...}, "version": {...} }`, records `version_created`,
   and emits `vault.file.updated`. Content identical to the newest version returns
   `200 { "file": {...}, "version": null }`, changes nothing, and still uses up the upload.
+- Optional `operationId` on either body, a client-chosen string of 1–128 characters, makes the
+  request safe to repeat: a client sends one `operationId` per attempt and repeats it unchanged when
+  a response is lost. The daemon remembers, for as long as the file exists, whether each
+  `operationId` used on the file made a version and which. Repeating one already used on that file
+  makes nothing new: it skips the `If-Match` check, ignores the rest of the body, uses up no
+  upload, and emits no event. It answers with the original status, `201` or `200`, and
+  `{ "file": {...}, "version": {...} }`, where `file` is the file as it is now and `version` is the
+  version the first request made, with its current `pinned`, or `null` when that request made none
+  or the version has since been pruned. An `operationId` belongs to one file; the same value sent
+  for another file is a new request.
 - `POST /files/:fileId/versions/:number/pin` and `/unpin` accept `{}` or
   `{ "mutationId": "..." }` and return `200 { "version": {...} }`. A change records `pinned` or
   `unpinned` and emits `vault.version.updated`; it does not change the file or its `version`.
@@ -11047,8 +11057,9 @@ at a protected path, refused in Read only. No vault write needs or grants Full a
 
 Every writing tool is durable and keyed by its call ID: a call repeated after a restart finds the
 folders, files, and versions it made and returns its result without making another one or another
-event. Every result names the paths it changed and the version numbers it made. Reading and
-writing never join anyone to the Surface.
+event. A tool that makes a version uses its call ID as the version's `operationId`. Every result
+names the paths it changed and the version numbers it made. Reading and writing never join anyone
+to the Surface.
 
 Active admin bots additionally receive `create_vault_surface`, accepting `name`, required explicit
 `creatorUserId`, optional absolute `imagePath`, and optional `retention`. Its authority,

@@ -423,6 +423,30 @@ describe("vault Surface protocol", () => {
             Value.Check(createVaultVersionRequestSchema, { uploadId: "u", fromVersion: 2 }),
         ).toBe(false);
         expect(Value.Check(createVaultVersionRequestSchema, {})).toBe(false);
+        expect(
+            Value.Check(createVaultVersionRequestSchema, {
+                uploadId: "u",
+                operationId: "attempt-1",
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(createVaultVersionRequestSchema, {
+                fromVersion: 2,
+                operationId: "x".repeat(128),
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(createVaultVersionRequestSchema, { uploadId: "u", operationId: "" }),
+        ).toBe(false);
+        expect(
+            Value.Check(createVaultVersionRequestSchema, {
+                uploadId: "u",
+                operationId: "x".repeat(129),
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(createVaultVersionRequestSchema, { uploadId: "u", operationId: 7 }),
+        ).toBe(false);
     });
 
     it("models resumable uploads", () => {

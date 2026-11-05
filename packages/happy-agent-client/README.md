@@ -62,14 +62,15 @@ not one past the newest held, read forward with `afterSeq`.
 Vault Surfaces are shared trees of folders and files, served at `/v0/surfaces/vault/:surfaceId`
 when health reports `capabilities.vaults`. Folders and files are separate resources told apart by
 `kind`: `createVaultFolder()` makes an empty folder, and a file is a plain file or an artifact, a
-small web site whose name ends in `.artifact` (`isVaultArtifactName()`). `listVaultItems()` pages
+vault app (a small web app) whose name ends in `.artifact` (`isVaultArtifactName()`). `listVaultItems()` pages
 one folder, folders first; `listVaultTree()` pages every live item for a client that keeps the
 whole tree, and `resolveVaultPath()` and `searchVault()` find items by path, name, or text. Bytes
 arrive as resumable uploads: `createVaultUpload({ size })`, then `uploadVaultChunk()` from the
 upload's `received` until it is complete; a `conflict` error carries the current upload to resume
 from. Place an upload with `createVaultFile()` or `createVaultVersion()`; an artifact's upload is a
-`.artifact` file, a zip with `artifact.json` (`vaultArtifactManifestSchema`) beside the site's
-files. Renames, moves, Trash, restore, and new versions take `ifMatch`; a name used in the
+`.artifact` file, a zip with `artifact.json` (`vaultArtifactManifestSchema`) beside the app's
+files. Give `createVaultVersion()` an `operationId` and reuse it when retrying, so a retry
+answers with the version the first attempt made instead of making another. Renames, moves, Trash, restore, and new versions take `ifMatch`; a name used in the
 destination folder is refused with `name_taken`. Versions are pruned by the vault's retention
 policy (`getVaultSettings()`, `updateVaultSettings()`), except pinned ones, so a version that
 answers `404` was pruned. Show bytes through `vaultFileContentUrl()` and artifact pages through
