@@ -861,8 +861,9 @@ export class CodexSession extends BaseSession {
                 if (
                     this.transport === "auto" &&
                     !useSse &&
-                    reportedAttempt < this.inferenceMaxRetries &&
-                    (isRetryableCodexStreamError(error) || isCodexWebSocketUnavailableError(error))
+                    (isCodexWebSocketUnavailableError(error) ||
+                        (reportedAttempt < this.inferenceMaxRetries &&
+                            isRetryableCodexStreamError(error)))
                 ) {
                     this.forceSse = true;
                     useSse = true;
