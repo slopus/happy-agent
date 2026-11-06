@@ -1,0 +1,46 @@
+{
+  "capabilities": [
+    "List, create, and message persistent bots."
+  ],
+  "defer": true,
+  "description": "Send a message to a bot by its ID. Find IDs with list_bots.\n\nThe message joins the bot's one continuous conversation: an idle bot starts working on it immediately, and a busy bot picks it up when its current work ends. Delivery returns right away; the bot's answer arrives as a message when it has one, so carry on with other work in the meantime.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "botId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "explanation": {
+        "description": "2–8 words saying what this message says, shown to the user; refer to agents by their ID. Example: \"Why the CSV tests fail\" or \"Asking for the deploy logs\".",
+        "maxLength": 120,
+        "minLength": 1,
+        "pattern": "^[^\\u0000\\r\\n]+$",
+        "type": "string"
+      },
+      "text": {
+        "maxLength": 100000,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "botId",
+      "explanation",
+      "text"
+    ],
+    "type": "object"
+  },
+  "name": "send_bot_message",
+  "returnType": {
+    "type": "void"
+  },
+  "searchKeywords": [
+    "message bot",
+    "talk to assistant",
+    "bot conversation"
+  ]
+}

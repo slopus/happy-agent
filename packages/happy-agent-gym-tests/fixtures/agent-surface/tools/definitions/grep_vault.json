@@ -1,0 +1,84 @@
+{
+  "capabilities": [
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
+  ],
+  "defer": true,
+  "description": "Searches the text of vault files, and of text files inside artifacts, for a JavaScript regular expression.\nUsage:\n- path limits the search to one folder; glob limits it to matching file paths relative to that folder, such as \"**/*.md\".\n- output_mode is \"files_with_matches\" (the default) for the matching paths, \"content\" for matching lines with their numbers, or \"count\" for the number of matching lines per file. head_limit caps the lines returned (default 100).\n- Only the newest version of files that are UTF-8 text of at most 1 MiB is searched; the result says how many other files were skipped.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "case_insensitive": {
+        "type": "boolean"
+      },
+      "glob": {
+        "maxLength": 1024,
+        "minLength": 1,
+        "type": "string"
+      },
+      "head_limit": {
+        "maximum": 10000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "output_mode": {
+        "anyOf": [
+          {
+            "const": "files_with_matches",
+            "type": "string"
+          },
+          {
+            "const": "content",
+            "type": "string"
+          },
+          {
+            "const": "count",
+            "type": "string"
+          }
+        ]
+      },
+      "path": {
+        "description": "The folder to search below; defaults to the root",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "pattern": {
+        "maxLength": 1024,
+        "minLength": 1,
+        "type": "string"
+      },
+      "surfaceId": {
+        "description": "The vault Surface's ID, from list_surfaces",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "pattern"
+    ],
+    "type": "object"
+  },
+  "name": "grep_vault",
+  "reloadable": true,
+  "returnType": {
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "search vault contents",
+    "grep vault",
+    "find text in vault"
+  ]
+}

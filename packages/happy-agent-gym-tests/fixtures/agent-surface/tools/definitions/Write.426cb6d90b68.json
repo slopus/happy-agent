@@ -1,0 +1,187 @@
+{
+  "autoPermissionInstructions": "For Write, request reviewed Full access for this file change with dangerouslyDisableSandbox: true. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate.",
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Writes a file to the local filesystem.\n\nUsage:\n- This tool will overwrite the existing file if there is one at the provided path.\n- Prefer the Edit tool for modifying existing files -- it only sends the diff. Only use this tool to create new files or for complete rewrites.\n- NEVER create documentation files (*.md) or README files unless explicitly requested by the User.\n- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "content": {
+        "description": "The content to write to the file",
+        "type": "string"
+      },
+      "dangerouslyDisableSandbox": {
+        "description": "Request reviewed Full access for this write in Auto mode. Protected and outside-workspace paths are also reviewed automatically when omitted.",
+        "type": "boolean"
+      },
+      "file_path": {
+        "description": "The absolute path to the file to write (must be absolute, not relative)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "file_path",
+      "content"
+    ],
+    "type": "object"
+  },
+  "name": "Write",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "characters": {
+        "type": "integer"
+      },
+      "created": {
+        "type": "boolean"
+      },
+      "path": {
+        "type": "string"
+      },
+      "presentation": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "added": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "deleted": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "hunks": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "lines": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "context",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "add",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "delete",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "text": {
+                              "maxLength": 4000,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "text"
+                          ],
+                          "type": "object"
+                        },
+                        "maxItems": 500,
+                        "type": "array"
+                      },
+                      "newStart": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "oldStart": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "oldStart",
+                      "newStart",
+                      "lines"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 500,
+                  "type": "array"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "const": "add",
+                      "type": "string"
+                    },
+                    {
+                      "const": "delete",
+                      "type": "string"
+                    },
+                    {
+                      "const": "update",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "language": {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "omittedLines": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "path": {
+                  "maxLength": 4000,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "kind",
+                "added",
+                "deleted",
+                "hunks"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "omittedFiles": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "const": "file_diff",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "files"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "path",
+      "created",
+      "characters",
+      "presentation"
+    ],
+    "type": "object"
+  }
+}

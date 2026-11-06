@@ -1,0 +1,80 @@
+{
+  "autoPermissionInstructions": "sandbox_permissions: require_escalated requests reviewed Full access for one call. Outside-workspace, symlink-escaping, and protected write paths are also reviewed automatically. Read only and Workspace write never elevate.",
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Find files by glob pattern, newest modified first. A bare pattern like *.ts searches at any depth. Supports *, **, ?, and brace alternatives. path is the search directory, default working directory. Results are files only; .git directories and symbolic links are skipped. This bounded filesystem scan includes ignored files and does not implement ripgrep ignore rules. head_limit defaults to 100; 0 removes the page-count limit within the 10000-file retention bound. offset skips matched paths. Output is bounded to 60000 characters; follow next_offset when more collected matches remain. Scan limits may leave uncollected files; narrow the search when the scan is incomplete.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "head_limit": {
+        "maximum": 10000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "justification": {
+        "description": "Concise reason why this call needs Full access.",
+        "type": "string"
+      },
+      "offset": {
+        "maximum": 10000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "path": {
+        "type": "string"
+      },
+      "pattern": {
+        "type": "string"
+      },
+      "sandbox_permissions": {
+        "anyOf": [
+          {
+            "const": "use_default",
+            "type": "string"
+          },
+          {
+            "const": "require_escalated",
+            "type": "string"
+          }
+        ],
+        "description": "Request reviewed Full access for this exact call when the workspace sandbox blocks necessary work. Defaults to use_default."
+      }
+    },
+    "required": [
+      "pattern"
+    ],
+    "type": "object"
+  },
+  "name": "Glob",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "files": {
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 10000,
+        "type": "array"
+      },
+      "next_offset": {
+        "type": "integer"
+      },
+      "text": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "text",
+      "truncated",
+      "files"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "capabilities": [
+    "Create, message, and coordinate coding subagents.",
+    "Message agents by Agent ID across workspaces."
+  ],
+  "defer": true,
+  "description": "Send a message to any existing agent by its Agent ID, including an agent in another workspace. Agent IDs are unguessable and must be shared with you.\n\nMessages are one-way and steer the recipient's active turn in either direction. This returns as soon as the message is delivered, and there is nothing to wait on.\n\nTo switch a collaborator or subtask you created directly to another model, add model and effort, plus harness, provider, or serviceTier when needed; they take the same choices as create_agent, listed by agent_options, and harness and provider default to yours when they serve the model. The recipient changes model when it reads this message, after its current step if it is working. A model that cannot read its earlier conversation starts fresh with a handoff notice. Keep an agent on one model unless its model is failing or wrong for the work. Any other recipient is refused.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "effort": {
+        "anyOf": [
+          {
+            "const": "off",
+            "type": "string"
+          },
+          {
+            "const": "minimal",
+            "type": "string"
+          },
+          {
+            "const": "low",
+            "type": "string"
+          },
+          {
+            "const": "medium",
+            "type": "string"
+          },
+          {
+            "const": "high",
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "type": "string"
+          },
+          {
+            "const": "max",
+            "type": "string"
+          }
+        ]
+      },
+      "explanation": {
+        "description": "2–8 words saying what this message says, shown to the user; refer to agents by their ID. Example: \"Why the CSV tests fail\" or \"Asking for the deploy logs\".",
+        "maxLength": 120,
+        "minLength": 1,
+        "pattern": "^[^\\u0000\\r\\n]+$",
+        "type": "string"
+      },
+      "harness": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "model": {
+        "description": "Switch an agent you created directly to this model with the message. Requires effort. Omit to leave its model alone.",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "provider": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "serviceTier": {
+        "const": "priority",
+        "type": "string"
+      },
+      "text": {
+        "maxLength": 50000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "toAgentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "toAgentId",
+      "explanation",
+      "text"
+    ],
+    "type": "object"
+  },
+  "name": "send_agent_message",
+  "returnType": {
+    "type": "void"
+  },
+  "searchKeywords": [
+    "message subagent",
+    "reply to parent agent",
+    "steer collaborator",
+    "switch subagent model",
+    "message agent by id",
+    "cross workspace agent"
+  ],
+  "transactional": true
+}

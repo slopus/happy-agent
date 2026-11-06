@@ -1,0 +1,204 @@
+{
+  "autoPermissionInstructions": "sandbox_permissions: require_escalated requests reviewed Full access for one call. Outside-workspace, symlink-escaping, and protected write paths are also reviewed automatically. Read only and Workspace write never elevate.",
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Replace exact text in an existing UTF-8 file. Copy text from Read without line-number prefixes. old_string must appear once unless replace_all is true. For pure CRLF files, use the LF view from Read; Edit preserves CRLF. For other carriage returns, include actual carriage returns where Read shows \\r. Remembered files changed on disk are refused until Read refreshes them. Existing and resulting files are limited to 8 MiB, with at most 10000 occurrences per edit.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "justification": {
+        "description": "Concise reason why this call needs Full access.",
+        "type": "string"
+      },
+      "new_string": {
+        "maxLength": 8388608,
+        "type": "string"
+      },
+      "old_string": {
+        "maxLength": 8388608,
+        "minLength": 1,
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "replace_all": {
+        "type": "boolean"
+      },
+      "sandbox_permissions": {
+        "anyOf": [
+          {
+            "const": "use_default",
+            "type": "string"
+          },
+          {
+            "const": "require_escalated",
+            "type": "string"
+          }
+        ],
+        "description": "Request reviewed Full access for this exact call when the workspace sandbox blocks necessary work. Defaults to use_default."
+      }
+    },
+    "required": [
+      "path",
+      "old_string",
+      "new_string"
+    ],
+    "type": "object"
+  },
+  "name": "Edit",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "presentation": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "added": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "deleted": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "hunks": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "lines": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "context",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "add",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "delete",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "text": {
+                              "maxLength": 4000,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "text"
+                          ],
+                          "type": "object"
+                        },
+                        "maxItems": 500,
+                        "type": "array"
+                      },
+                      "newStart": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "oldStart": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "oldStart",
+                      "newStart",
+                      "lines"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 500,
+                  "type": "array"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "const": "add",
+                      "type": "string"
+                    },
+                    {
+                      "const": "delete",
+                      "type": "string"
+                    },
+                    {
+                      "const": "update",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "language": {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "omittedLines": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "path": {
+                  "maxLength": 4000,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "kind",
+                "added",
+                "deleted",
+                "hunks"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "omittedFiles": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "const": "file_diff",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "files"
+        ],
+        "type": "object"
+      },
+      "replacements": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "path",
+      "replacements",
+      "presentation"
+    ],
+    "type": "object"
+  }
+}

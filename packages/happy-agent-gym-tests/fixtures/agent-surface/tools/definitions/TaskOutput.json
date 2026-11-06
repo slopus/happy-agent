@@ -1,0 +1,69 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Read the current status and new output of a shell task started by Bash. Always non-blocking. Completion is reported automatically; use this for a progress check you will act on. Only output since the previous read is returned, bounded to 60000 characters. This tool manages shell tasks only; no full-log output_path is provided.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "task_id": {
+        "description": "The background shell task ID to inspect.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ],
+    "type": "object"
+  },
+  "name": "TaskOutput",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "exit_code": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "output": {
+        "type": "string"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "running",
+            "type": "string"
+          },
+          {
+            "const": "completed",
+            "type": "string"
+          },
+          {
+            "const": "killed",
+            "type": "string"
+          }
+        ]
+      },
+      "task_id": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "task_id",
+      "status",
+      "output",
+      "truncated"
+    ],
+    "type": "object"
+  }
+}

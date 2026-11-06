@@ -1,0 +1,134 @@
+{
+  "capabilities": [
+    "Discover and use configured MCP servers, resources, prompts, and tools."
+  ],
+  "defer": true,
+  "description": "List configured MCP servers and their current connection status. Results are bounded and cursor-paged.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "maxLength": 32,
+        "minLength": 1,
+        "type": "string"
+      },
+      "limit": {
+        "maximum": 100,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "name": "list_mcp_servers",
+  "reloadable": true,
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "nextCursor": {
+        "maxLength": 32,
+        "minLength": 1,
+        "type": "string"
+      },
+      "servers": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "disabledTools": {
+              "items": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "enabledTools": {
+              "items": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "errorMessage": {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            "fingerprint": {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "promptSupport": {
+              "type": "boolean"
+            },
+            "resourceSupport": {
+              "type": "boolean"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "blocked",
+                  "type": "string"
+                },
+                {
+                  "const": "connected",
+                  "type": "string"
+                },
+                {
+                  "const": "connecting",
+                  "type": "string"
+                },
+                {
+                  "const": "disabled",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                },
+                {
+                  "const": "needs_auth",
+                  "type": "string"
+                }
+              ]
+            },
+            "toolCount": {
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "status",
+            "toolCount"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100,
+        "type": "array"
+      }
+    },
+    "required": [
+      "servers"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "list MCP servers",
+    "connected external servers",
+    "MCP configuration"
+  ]
+}

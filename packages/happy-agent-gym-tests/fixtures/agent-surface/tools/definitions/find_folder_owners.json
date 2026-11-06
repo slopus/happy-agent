@@ -1,0 +1,335 @@
+{
+  "capabilities": [
+    "Find, inspect, and clean up stale bots, tasks, subtasks, projects, workspaces, and folders on this installation."
+  ],
+  "defer": true,
+  "description": "Find what owns or works in a folder: the bots, tasks, subtasks, projects, and workspaces whose folder it is, holds it, or lies inside it, and every agent working there, hidden subagents included, each with whether it is running, idle, or archived. Use it to tell whether a folder is still in use before removing anything. Only active admin bots may use it.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "folder": {
+        "description": "An absolute folder path.",
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^/",
+        "type": "string"
+      }
+    },
+    "required": [
+      "folder"
+    ],
+    "type": "object"
+  },
+  "name": "find_folder_owners",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agents": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "agent": {
+              "additionalProperties": false,
+              "properties": {
+                "agentId": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "createdAt": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "folder": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "lastActivityAt": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "state": {
+                  "anyOf": [
+                    {
+                      "const": "running",
+                      "type": "string"
+                    },
+                    {
+                      "const": "idle",
+                      "type": "string"
+                    },
+                    {
+                      "const": "archived",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "agentId",
+                "state",
+                "createdAt",
+                "lastActivityAt"
+              ],
+              "type": "object"
+            },
+            "relation": {
+              "anyOf": [
+                {
+                  "const": "same",
+                  "type": "string"
+                },
+                {
+                  "const": "contains",
+                  "type": "string"
+                },
+                {
+                  "const": "inside",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "agent",
+            "relation"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "at": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "folder": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "items": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "item": {
+              "additionalProperties": false,
+              "properties": {
+                "agentId": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "agents": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "branch": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "createdAt": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "folder": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "const": "bot",
+                      "type": "string"
+                    },
+                    {
+                      "const": "task",
+                      "type": "string"
+                    },
+                    {
+                      "const": "subtask",
+                      "type": "string"
+                    },
+                    {
+                      "const": "project",
+                      "type": "string"
+                    },
+                    {
+                      "const": "workspace",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "lastActivityAt": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "ownerUserId": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "parent": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "const": "bot",
+                          "type": "string"
+                        },
+                        {
+                          "const": "task",
+                          "type": "string"
+                        },
+                        {
+                          "const": "subtask",
+                          "type": "string"
+                        },
+                        {
+                          "const": "project",
+                          "type": "string"
+                        },
+                        {
+                          "const": "workspace",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "running": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "active",
+                      "type": "string"
+                    },
+                    {
+                      "const": "archived",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "subtasks": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "active": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "total": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "active"
+                  ],
+                  "type": "object"
+                },
+                "workspaces": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "active": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "total": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "active"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "kind",
+                "id",
+                "name",
+                "status",
+                "createdAt",
+                "lastActivityAt",
+                "running",
+                "agents"
+              ],
+              "type": "object"
+            },
+            "relation": {
+              "anyOf": [
+                {
+                  "const": "same",
+                  "type": "string"
+                },
+                {
+                  "const": "contains",
+                  "type": "string"
+                },
+                {
+                  "const": "inside",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "item",
+            "relation"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "folder",
+      "items",
+      "agents",
+      "at"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "folder owner",
+    "which task uses folder",
+    "who uses this folder",
+    "session folder"
+  ]
+}

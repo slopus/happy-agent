@@ -1,0 +1,477 @@
+{
+  "capabilities": [
+    "Run, inspect, pause, resume, and cancel multi-agent workflows."
+  ],
+  "defer": true,
+  "description": "Continue a paused workflow from its last checkpoint. Every agent that already answered is reused rather than paid for again. A workflow that is already running is left alone.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "maxLength": 96,
+        "minLength": 1,
+        "pattern": "^[^\\u0000\\r\\n]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "type": "object"
+  },
+  "name": "resume_workflow",
+  "returnType": {
+    "anyOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "agentCount": {
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "agentId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "createdAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "logs": {
+            "items": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "logsTruncated": {
+            "type": "boolean"
+          },
+          "phase": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "startedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "const": "running",
+            "type": "string"
+          },
+          "updatedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "workflow": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agentId",
+          "workflow",
+          "description",
+          "agentCount",
+          "logs",
+          "logsTruncated",
+          "createdAt",
+          "updatedAt",
+          "startedAt",
+          "status"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "agentCount": {
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "agentId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "createdAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "logs": {
+            "items": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "logsTruncated": {
+            "type": "boolean"
+          },
+          "pausedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "phase": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "startedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "const": "paused",
+            "type": "string"
+          },
+          "updatedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "workflow": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agentId",
+          "workflow",
+          "description",
+          "agentCount",
+          "logs",
+          "logsTruncated",
+          "createdAt",
+          "updatedAt",
+          "startedAt",
+          "status",
+          "pausedAt"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "agentCount": {
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "agentId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "createdAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "finishedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "logs": {
+            "items": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "logsTruncated": {
+            "type": "boolean"
+          },
+          "output": {
+            "maxLength": 20000,
+            "type": "string"
+          },
+          "phase": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "startedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "const": "completed",
+            "type": "string"
+          },
+          "updatedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "workflow": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agentId",
+          "workflow",
+          "description",
+          "agentCount",
+          "logs",
+          "logsTruncated",
+          "createdAt",
+          "updatedAt",
+          "startedAt",
+          "status",
+          "finishedAt",
+          "output"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "agentCount": {
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "agentId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "createdAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "error": {
+            "maxLength": 4000,
+            "type": "string"
+          },
+          "finishedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "logs": {
+            "items": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "logsTruncated": {
+            "type": "boolean"
+          },
+          "phase": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "startedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "const": "failed",
+            "type": "string"
+          },
+          "updatedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "workflow": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agentId",
+          "workflow",
+          "description",
+          "agentCount",
+          "logs",
+          "logsTruncated",
+          "createdAt",
+          "updatedAt",
+          "startedAt",
+          "status",
+          "finishedAt",
+          "error"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "agentCount": {
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "agentId": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "createdAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": {
+            "maxLength": 1000,
+            "type": "string"
+          },
+          "finishedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "logs": {
+            "items": {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "logsTruncated": {
+            "type": "boolean"
+          },
+          "phase": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          },
+          "startedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "const": "cancelled",
+            "type": "string"
+          },
+          "updatedAt": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "workflow": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^[^\\u0000\\r\\n]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "agentId",
+          "workflow",
+          "description",
+          "agentCount",
+          "logs",
+          "logsTruncated",
+          "createdAt",
+          "updatedAt",
+          "startedAt",
+          "status",
+          "finishedAt"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "searchKeywords": [
+    "continue workflow",
+    "resume paused orchestration",
+    "reuse agent calls"
+  ]
+}

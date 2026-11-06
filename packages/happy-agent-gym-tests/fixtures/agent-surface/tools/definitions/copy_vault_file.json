@@ -1,0 +1,109 @@
+{
+  "capabilities": [
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
+  ],
+  "defer": true,
+  "description": "Copies a vault file or artifact, any size, to toPath as a new file whose history starts at version 1 with the copied version's content; no bytes are uploaded or rewritten. toSurfaceId copies into another vault (default this one); version copies an earlier version (default the newest). An artifact's copy keeps a name ending in \".artifact\", and a plain file's copy may not take one. Folders and files inside an artifact cannot be copied. Missing folders above toPath are created, and nothing may be at toPath.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "The file or artifact to copy",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "surfaceId": {
+        "description": "The vault Surface's ID, from list_surfaces",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      },
+      "toPath": {
+        "description": "The copy's path, including its name",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "toSurfaceId": {
+        "description": "The vault to copy into; defaults to surfaceId",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      },
+      "version": {
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "path",
+      "toPath"
+    ],
+    "type": "object"
+  },
+  "name": "copy_vault_file",
+  "returnType": {
+    "properties": {
+      "created": {
+        "type": "boolean"
+      },
+      "fileId": {
+        "type": "string"
+      },
+      "folders": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "kind": {
+        "anyOf": [
+          {
+            "const": "file",
+            "type": "string"
+          },
+          {
+            "const": "artifact",
+            "type": "string"
+          }
+        ]
+      },
+      "path": {
+        "type": "string"
+      },
+      "version": {
+        "anyOf": [
+          {
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "path",
+      "fileId",
+      "kind",
+      "version",
+      "created",
+      "folders"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "copy vault file",
+    "duplicate vault file",
+    "copy between vaults",
+    "copy vault artifact"
+  ]
+}

@@ -1,0 +1,533 @@
+{
+  "capabilities": [
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
+  ],
+  "defer": true,
+  "description": "Renames or moves a vault file or artifact from path to toPath. The folder above toPath must already exist, and nothing may be at toPath; the move never replaces anything. An artifact's name keeps ending in \".artifact\", and a plain file's may not. Moving keeps the file's versions and history. Move folders with move_vault_folder.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "The file to move",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "surfaceId": {
+        "description": "The vault Surface's ID, from list_surfaces",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      },
+      "toPath": {
+        "description": "Its new path, including its name",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "path",
+      "toPath"
+    ],
+    "type": "object"
+  },
+  "name": "move_vault_file",
+  "returnType": {
+    "properties": {
+      "item": {
+        "anyOf": [
+          {
+            "properties": {
+              "createdAt": {
+                "type": "integer"
+              },
+              "createdBy": {
+                "properties": {
+                  "agentId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "userId": {
+                    "anyOf": [
+                      {
+                        "maxLength": 32,
+                        "minLength": 2,
+                        "pattern": "^[a-z][a-z0-9]*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "agentId",
+                  "userId"
+                ],
+                "type": "object"
+              },
+              "deletedAt": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "folder",
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 255,
+                "minLength": 1,
+                "pattern": "^(?!\\.\\.?$)[^/\\\\\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "surfaceId": {
+                "maxLength": 24,
+                "minLength": 24,
+                "pattern": "^[a-z][a-z0-9]{23}$",
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "integer"
+              },
+              "updatedBy": {
+                "properties": {
+                  "agentId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "userId": {
+                    "anyOf": [
+                      {
+                        "maxLength": 32,
+                        "minLength": 2,
+                        "pattern": "^[a-z][a-z0-9]*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "agentId",
+                  "userId"
+                ],
+                "type": "object"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "createdAt",
+              "createdBy",
+              "deletedAt",
+              "id",
+              "name",
+              "parentId",
+              "surfaceId",
+              "updatedAt",
+              "updatedBy",
+              "version",
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifact": {
+                "type": "null"
+              },
+              "createdAt": {
+                "type": "integer"
+              },
+              "createdBy": {
+                "properties": {
+                  "agentId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "userId": {
+                    "anyOf": [
+                      {
+                        "maxLength": 32,
+                        "minLength": 2,
+                        "pattern": "^[a-z][a-z0-9]*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "agentId",
+                  "userId"
+                ],
+                "type": "object"
+              },
+              "deletedAt": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "file",
+                "type": "string"
+              },
+              "latestVersion": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "mediaType": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 255,
+                "minLength": 1,
+                "pattern": "^(?!\\.\\.?$)[^/\\\\\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sha256": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "size": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "surfaceId": {
+                "maxLength": 24,
+                "minLength": 24,
+                "pattern": "^[a-z][a-z0-9]{23}$",
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "integer"
+              },
+              "updatedBy": {
+                "properties": {
+                  "agentId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "userId": {
+                    "anyOf": [
+                      {
+                        "maxLength": 32,
+                        "minLength": 2,
+                        "pattern": "^[a-z][a-z0-9]*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "agentId",
+                  "userId"
+                ],
+                "type": "object"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "createdAt",
+              "createdBy",
+              "deletedAt",
+              "id",
+              "name",
+              "parentId",
+              "surfaceId",
+              "updatedAt",
+              "updatedBy",
+              "version",
+              "artifact",
+              "kind",
+              "latestVersion",
+              "mediaType",
+              "sha256",
+              "size"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifact": {
+                "properties": {
+                  "entry": {
+                    "anyOf": [
+                      {
+                        "const": "index.html",
+                        "type": "string"
+                      },
+                      {
+                        "const": "index.md",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "fileCount": {
+                    "maximum": 256,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "type": {
+                    "anyOf": [
+                      {
+                        "const": "html",
+                        "type": "string"
+                      },
+                      {
+                        "const": "markdown",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "entry",
+                  "fileCount",
+                  "type"
+                ],
+                "type": "object"
+              },
+              "createdAt": {
+                "type": "integer"
+              },
+              "createdBy": {
+                "properties": {
+                  "agentId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "userId": {
+                    "anyOf": [
+                      {
+                        "maxLength": 32,
+                        "minLength": 2,
+                        "pattern": "^[a-z][a-z0-9]*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "agentId",
+                  "userId"
+                ],
+                "type": "object"
+              },
+              "deletedAt": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "artifact",
+                "type": "string"
+              },
+              "latestVersion": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "mediaType": {
+                "type": "null"
+              },
+              "name": {
+                "maxLength": 255,
+                "minLength": 1,
+                "pattern": "^(?!\\.\\.?$)[^/\\\\\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              },
+              "parentId": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sha256": {
+                "type": "null"
+              },
+              "size": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "surfaceId": {
+                "maxLength": 24,
+                "minLength": 24,
+                "pattern": "^[a-z][a-z0-9]{23}$",
+                "type": "string"
+              },
+              "updatedAt": {
+                "type": "integer"
+              },
+              "updatedBy": {
+                "properties": {
+                  "agentId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "userId": {
+                    "anyOf": [
+                      {
+                        "maxLength": 32,
+                        "minLength": 2,
+                        "pattern": "^[a-z][a-z0-9]*$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "agentId",
+                  "userId"
+                ],
+                "type": "object"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "createdAt",
+              "createdBy",
+              "deletedAt",
+              "id",
+              "name",
+              "parentId",
+              "surfaceId",
+              "updatedAt",
+              "updatedBy",
+              "version",
+              "artifact",
+              "kind",
+              "latestVersion",
+              "mediaType",
+              "sha256",
+              "size"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "item",
+      "path"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "move vault file",
+    "rename vault file"
+  ]
+}

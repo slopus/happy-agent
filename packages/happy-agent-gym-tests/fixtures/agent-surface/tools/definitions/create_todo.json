@@ -1,0 +1,265 @@
+{
+  "capabilities": [
+    "Add a todo to a shared Surface."
+  ],
+  "defer": true,
+  "description": "Add a plain-text todo at the top of one shared Surface. For a section heading, start the text with exact '# ' (hash and space); it remains an ordinary ordered todo without a checkbox. Explicitly supply authorUserId as a local Happy user ID, or null for no attribution; only null is allowed in standalone mode. The author is immutable and separate from the revision's audit actor. This never creates a chat or joins anyone to the Surface.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "authorUserId": {
+        "anyOf": [
+          {
+            "maxLength": 32,
+            "minLength": 2,
+            "pattern": "^[a-z][a-z0-9]*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "surfaceId": {
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      },
+      "text": {
+        "maxLength": 10000,
+        "minLength": 1,
+        "pattern": "^(?=[\\s\\S]*\\S)[^\\x00-\\x08\\x0b-\\x1f\\x7f]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "text",
+      "authorUserId"
+    ],
+    "type": "object"
+  },
+  "name": "create_todo",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "anyOf": [
+      {
+        "properties": {
+          "authorUserId": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 2,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completedAt": {
+            "type": "null"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "deletedAt": {
+            "type": "null"
+          },
+          "id": {
+            "type": "string"
+          },
+          "orderKey": {
+            "pattern": "^[0-9]*[1-9]$",
+            "type": "string"
+          },
+          "status": {
+            "const": "active",
+            "type": "string"
+          },
+          "surfaceId": {
+            "maxLength": 24,
+            "minLength": 24,
+            "pattern": "^[a-z][a-z0-9]{23}$",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "pattern": "^(?=[\\s\\S]*\\S)[^\\x00-\\x08\\x0b-\\x1f\\x7f]+$",
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "createdAt",
+          "id",
+          "surfaceId",
+          "text",
+          "updatedAt",
+          "version",
+          "completedAt",
+          "deletedAt",
+          "orderKey",
+          "status"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "authorUserId": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 2,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completedAt": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "deletedAt": {
+            "type": "null"
+          },
+          "id": {
+            "type": "string"
+          },
+          "orderKey": {
+            "type": "null"
+          },
+          "status": {
+            "const": "completed",
+            "type": "string"
+          },
+          "surfaceId": {
+            "maxLength": 24,
+            "minLength": 24,
+            "pattern": "^[a-z][a-z0-9]{23}$",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "pattern": "^(?=[\\s\\S]*\\S)[^\\x00-\\x08\\x0b-\\x1f\\x7f]+$",
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "createdAt",
+          "id",
+          "surfaceId",
+          "text",
+          "updatedAt",
+          "version",
+          "completedAt",
+          "deletedAt",
+          "orderKey",
+          "status"
+        ],
+        "type": "object"
+      },
+      {
+        "properties": {
+          "authorUserId": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 2,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "deletedAt": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "orderKey": {
+            "type": "null"
+          },
+          "status": {
+            "const": "deleted",
+            "type": "string"
+          },
+          "surfaceId": {
+            "maxLength": 24,
+            "minLength": 24,
+            "pattern": "^[a-z][a-z0-9]{23}$",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "pattern": "^(?=[\\s\\S]*\\S)[^\\x00-\\x08\\x0b-\\x1f\\x7f]+$",
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "createdAt",
+          "id",
+          "surfaceId",
+          "text",
+          "updatedAt",
+          "version",
+          "completedAt",
+          "deletedAt",
+          "orderKey",
+          "status"
+        ],
+        "type": "object"
+      }
+    ]
+  },
+  "searchKeywords": [
+    "create todo",
+    "add checklist item",
+    "new reminder"
+  ],
+  "transactional": true
+}

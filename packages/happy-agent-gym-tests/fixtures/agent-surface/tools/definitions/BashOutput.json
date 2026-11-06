@@ -1,0 +1,105 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Read output from a background shell command.\n\nOnly what the command has produced since your last read comes back; you already have everything before that. Set block to false to look without waiting.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "bash_id": {
+        "description": "The background shell identifier.",
+        "type": "string"
+      },
+      "block": {
+        "default": true,
+        "description": "Whether to wait for the command to finish.",
+        "type": "boolean"
+      },
+      "timeout": {
+        "description": "Maximum wait in milliseconds. Defaults to 30000.",
+        "maximum": 600000,
+        "minimum": 0,
+        "type": "number"
+      }
+    },
+    "required": [
+      "bash_id"
+    ],
+    "type": "object"
+  },
+  "name": "BashOutput",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "bash_id": {
+        "type": "string"
+      },
+      "command": {
+        "type": "string"
+      },
+      "exitCode": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "output": {
+        "type": "string"
+      },
+      "restarting": {
+        "const": true,
+        "type": "boolean"
+      },
+      "retrieval_status": {
+        "anyOf": [
+          {
+            "const": "not_ready",
+            "type": "string"
+          },
+          {
+            "const": "success",
+            "type": "string"
+          },
+          {
+            "const": "timeout",
+            "type": "string"
+          }
+        ]
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "completed",
+            "type": "string"
+          },
+          {
+            "const": "killed",
+            "type": "string"
+          },
+          {
+            "const": "running",
+            "type": "string"
+          }
+        ]
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "bash_id",
+      "command",
+      "status",
+      "output",
+      "truncated",
+      "retrieval_status"
+    ],
+    "type": "object"
+  }
+}

@@ -1,0 +1,320 @@
+{
+  "capabilities": [
+    "Create, inspect, rename, and archive Git workspaces and branches."
+  ],
+  "defer": true,
+  "description": "Create one persistent child workspace directly beneath the workspace you are currently working in. Give it a short title written the way a person would write it, such as \"Retry policy rewrite\": Happy Agent resolves the parent and builds the Git branch and folder from that title, so write a title rather than a slug or a path. You may supply baseRef to branch from a specific ref; otherwise the child inherits its parent workspace's branch. The workspace comes back while checkout and setup may still be running, and its parentId identifies its exact place in the workspace tree.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "baseRef": {
+        "maxLength": 1024,
+        "minLength": 1,
+        "pattern": "^(?!@$)(?!/)(?!\\.)(?![\\s\\S]*//)(?![\\s\\S]*\\.\\.)(?![\\s\\S]*@\\{)(?![\\s\\S]*\\.lock(?:/|$))(?![\\s\\S]*/\\.)(?![\\s\\S]*\\./)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+(?<![./])$",
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 500,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "name": "create_child_workspace",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "archivedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "baseCommit": {
+        "maxLength": 64,
+        "minLength": 4,
+        "pattern": "^[0-9a-fA-F]+$",
+        "type": "string"
+      },
+      "baseRef": {
+        "maxLength": 1024,
+        "minLength": 1,
+        "pattern": "^(?!@$)(?!/)(?!\\.)(?![\\s\\S]*//)(?![\\s\\S]*\\.\\.)(?![\\s\\S]*@\\{)(?![\\s\\S]*\\.lock(?:/|$))(?![\\s\\S]*/\\.)(?![\\s\\S]*\\./)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+(?<![./])$",
+        "type": "string"
+      },
+      "branch": {
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^(?!@$)(?!/)(?!\\.)(?![\\s\\S]*//)(?![\\s\\S]*\\.\\.)(?![\\s\\S]*@\\{)(?![\\s\\S]*\\.lock(?:/|$))(?![\\s\\S]*/\\.)(?![\\s\\S]*\\./)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+(?<![./])$",
+        "type": "string"
+      },
+      "createdAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "creatorSessionId": {
+        "maxLength": 96,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0020\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "dockerImage": {
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^\\S+$",
+        "type": "string"
+      },
+      "gitAhead": {
+        "maximum": 1000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "gitBehind": {
+        "maximum": 1000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "gitCommonDir": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^(?![\\s\\S]*[\\u0000-\\u001F\\u007F])(?![\\s\\S]*[/\\\\]\\.{1,2}(?:[/\\\\]|$))(?:/(?:[^/]+/)*[^/]+|[A-Za-z]:\\\\(?:[^\\\\/]+\\\\)*[^\\\\/]+)$",
+        "type": "string"
+      },
+      "gitDetached": {
+        "type": "boolean"
+      },
+      "gitHead": {
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^(?!@$)(?!/)(?!\\.)(?![\\s\\S]*//)(?![\\s\\S]*\\.\\.)(?![\\s\\S]*@\\{)(?![\\s\\S]*\\.lock(?:/|$))(?![\\s\\S]*/\\.)(?![\\s\\S]*\\./)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+(?<![./])$",
+        "type": "string"
+      },
+      "gitUpstream": {
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^(?!@$)(?!/)(?!\\.)(?![\\s\\S]*//)(?![\\s\\S]*\\.\\.)(?![\\s\\S]*@\\{)(?![\\s\\S]*\\.lock(?:/|$))(?![\\s\\S]*/\\.)(?![\\s\\S]*\\./)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+(?<![./])$",
+        "type": "string"
+      },
+      "id": {
+        "maxLength": 96,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0020\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "initializationAttempt": {
+        "maximum": 1000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "initializationError": {
+        "maxLength": 500,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "kind": {
+        "anyOf": [
+          {
+            "const": "git_worktree",
+            "type": "string"
+          },
+          {
+            "const": "directory",
+            "type": "string"
+          }
+        ]
+      },
+      "name": {
+        "maxLength": 500,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "nameConfigured": {
+        "type": "boolean"
+      },
+      "orderKey": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[0-9]+$",
+        "type": "string"
+      },
+      "parentId": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0020\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "path": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^(?![\\s\\S]*[\\u0000-\\u001F\\u007F])(?![\\s\\S]*[/\\\\]\\.{1,2}(?:[/\\\\]|$))(?:/(?:[^/]+/)*[^/]+|[A-Za-z]:\\\\(?:[^\\\\/]+\\\\)*[^\\\\/]+)$",
+        "type": "string"
+      },
+      "presence": {
+        "anyOf": [
+          {
+            "const": "present",
+            "type": "string"
+          },
+          {
+            "const": "missing",
+            "type": "string"
+          }
+        ]
+      },
+      "projectRef": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0020\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "runnerId": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "serviceCleanup": {
+        "anyOf": [
+          {
+            "properties": {
+              "error": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "message"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "phase": {
+                "anyOf": [
+                  {
+                    "const": "stopping_services",
+                    "type": "string"
+                  },
+                  {
+                    "const": "removing_files",
+                    "type": "string"
+                  },
+                  {
+                    "const": "blocked",
+                    "type": "string"
+                  }
+                ]
+              },
+              "serviceIds": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              }
+            },
+            "required": [
+              "phase",
+              "serviceIds",
+              "error"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "initializing",
+            "type": "string"
+          },
+          {
+            "const": "ready",
+            "type": "string"
+          },
+          {
+            "const": "failed",
+            "type": "string"
+          },
+          {
+            "const": "archiving",
+            "type": "string"
+          },
+          {
+            "const": "archived",
+            "type": "string"
+          }
+        ]
+      },
+      "storageKey": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+        "type": "string"
+      },
+      "subtaskAgentId": {
+        "maxLength": 96,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0020\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "updatedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "version": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "id",
+      "projectRef",
+      "parentId",
+      "name",
+      "nameConfigured",
+      "branch",
+      "storageKey",
+      "kind",
+      "path",
+      "presence",
+      "status",
+      "orderKey",
+      "version",
+      "gitAhead",
+      "gitBehind",
+      "gitDetached",
+      "initializationAttempt",
+      "createdAt",
+      "updatedAt"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "child workspace",
+    "nested worktree",
+    "branch from current workspace"
+  ],
+  "transactional": true
+}

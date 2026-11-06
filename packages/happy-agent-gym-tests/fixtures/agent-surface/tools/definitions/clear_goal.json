@@ -1,0 +1,31 @@
+{
+  "capabilities": [
+    "Create, inspect, update, and clear persistent long-running goals."
+  ],
+  "defer": true,
+  "description": "Clear the persistent goal when the user explicitly abandons it. Use update_goal with blocked when work cannot continue but the objective should remain recorded.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "clear_goal",
+  "returnType": {
+    "properties": {
+      "cleared": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "cleared"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "abandon goal",
+    "clear persistent objective",
+    "remove goal"
+  ],
+  "transactional": true
+}

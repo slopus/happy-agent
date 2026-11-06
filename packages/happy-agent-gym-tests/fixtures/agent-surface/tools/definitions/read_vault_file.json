@@ -1,0 +1,118 @@
+{
+  "capabilities": [
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
+  ],
+  "defer": true,
+  "description": "Reads a vault file by its path, or a file inside an artifact, such as \"/Apps/launch.artifact/index.html\" where launch.artifact is a vault app. Text comes back as numbered lines: a line number, then a tab, then the line, numbered from 1, up to 2000 lines from offset. Raster images are shown to you; other binary files are described without their bytes. version reads an earlier version of the file, or of the artifact holding it; list them with list_vault_versions.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "description": "The number of lines to read. Only provide if the file is too large to read at once.",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "offset": {
+        "description": "The line number to start reading from. Only provide if the file is too large to read at once",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "path": {
+        "description": "The file's path, such as \"/Reports/summary.md\"",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "surfaceId": {
+        "description": "The vault Surface's ID, from list_surfaces",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      },
+      "version": {
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "read_vault_file",
+  "reloadable": true,
+  "returnType": {
+    "properties": {
+      "image": {
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "mimeType"
+        ],
+        "type": "object"
+      },
+      "mediaType": {
+        "type": "string"
+      },
+      "nextOffset": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "note": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "returnedLines": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "size": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "startLine": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "text": {
+        "type": "string"
+      },
+      "totalLines": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "version": {
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "path",
+      "version",
+      "mediaType",
+      "size"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "read vault file",
+    "open vault document",
+    "vault image",
+    "vault version"
+  ]
+}

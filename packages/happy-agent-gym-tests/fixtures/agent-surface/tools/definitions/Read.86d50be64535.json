@@ -1,0 +1,85 @@
+{
+  "autoPermissionInstructions": "sandbox_permissions: require_escalated requests reviewed Full access for one call. Outside-workspace, symlink-escaping, and protected write paths are also reviewed automatically. Read only and Workspace write never elevate.",
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Read a UTF-8 text file, with line numbers. Relative paths resolve against the working directory. Directories and binary files return errors. Source files are limited to 8 MiB. line_offset is 1-based; negative values begin at the last N lines, paging forward. n_lines selects the number of lines. max_chars defaults to 100000, with an effective range of 1024 to 500000 characters including status. Long lines may be fragmented: copy the Next Read arguments to resume without gaps. column_offset is a zero-based character offset in the first displayed line; it is only supported for forward reads. Pure CRLF files display LF; Edit preserves their CRLF endings. Other carriage returns display as \\r; use actual carriage returns in Edit arguments. For images, use ReadMediaFile. Session attachment URLs and UTF-16 decoding are not supported.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "column_offset": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "justification": {
+        "description": "Concise reason why this call needs Full access.",
+        "type": "string"
+      },
+      "line_offset": {
+        "anyOf": [
+          {
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "maximum": -1,
+            "type": "integer"
+          }
+        ]
+      },
+      "max_chars": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "n_lines": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "path": {
+        "type": "string"
+      },
+      "sandbox_permissions": {
+        "anyOf": [
+          {
+            "const": "use_default",
+            "type": "string"
+          },
+          {
+            "const": "require_escalated",
+            "type": "string"
+          }
+        ],
+        "description": "Request reviewed Full access for this exact call when the workspace sandbox blocks necessary work. Defaults to use_default."
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "Read",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "text": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path",
+      "text",
+      "truncated"
+    ],
+    "type": "object"
+  },
+  "transactional": true
+}

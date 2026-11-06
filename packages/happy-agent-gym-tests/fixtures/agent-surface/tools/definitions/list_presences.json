@@ -1,0 +1,106 @@
+{
+  "capabilities": [
+    "Read and update the user's presence and availability."
+  ],
+  "defer": true,
+  "description": "List the configured presence states and their waiting guidance.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "list_presences",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "presences": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "answerWaitMs": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "maximum": 8640000000000000,
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              ]
+            },
+            "emoji": {
+              "maxLength": 32,
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "prompt": {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "const": "online",
+                      "type": "string"
+                    },
+                    {
+                      "const": "away",
+                      "type": "string"
+                    },
+                    {
+                      "const": "offline",
+                      "type": "string"
+                    },
+                    {
+                      "const": "dnd",
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "const": "custom",
+                  "type": "string"
+                }
+              ]
+            },
+            "title": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "status",
+            "title",
+            "emoji",
+            "prompt",
+            "answerWaitMs"
+          ],
+          "type": "object"
+        },
+        "maxItems": 256,
+        "type": "array"
+      }
+    },
+    "required": [
+      "presences"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "presence states",
+    "availability options",
+    "do not disturb status"
+  ]
+}

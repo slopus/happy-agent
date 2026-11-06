@@ -1,0 +1,81 @@
+{
+  "capabilities": [
+    "Create, inspect, update, and clear persistent long-running goals."
+  ],
+  "defer": true,
+  "description": "Get the persistent goal for this agent, including its objective and status.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "get_goal",
+  "reloadable": true,
+  "returnType": {
+    "properties": {
+      "goal": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "createdAt": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "objective": {
+                "maxLength": 20000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "active",
+                    "type": "string"
+                  },
+                  {
+                    "const": "paused",
+                    "type": "string"
+                  },
+                  {
+                    "const": "blocked",
+                    "type": "string"
+                  },
+                  {
+                    "const": "complete",
+                    "type": "string"
+                  }
+                ]
+              },
+              "updatedAt": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "createdAt",
+              "objective",
+              "status",
+              "updatedAt"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "goal"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "inspect current goal",
+    "goal status",
+    "read objective"
+  ],
+  "transactional": true
+}

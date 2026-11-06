@@ -1,0 +1,32 @@
+{
+  "capabilities": [
+    "Create, message, and coordinate coding subagents."
+  ],
+  "defer": true,
+  "description": "Immediately abort a collaborator's current turn and every running descendant. Nothing waits for them to settle, and the agents remain available for follow-up work later.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "targetAgentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "targetAgentId"
+    ],
+    "type": "object"
+  },
+  "name": "interrupt_agent",
+  "returnType": {
+    "type": "void"
+  },
+  "searchKeywords": [
+    "stop subagent",
+    "abort collaborator",
+    "cancel agent work"
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "capabilities": [
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
+  ],
+  "defer": true,
+  "description": "Lists a vault file's or artifact's kept versions, newest first, with who made each, its size, whether it is pinned, and which version it restored, followed by recent activity such as moves and renames. Read an old version with read_vault_file and version; restore one with write_vault_file and fromVersion.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "maximum": 50,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "pageCursor": {
+        "type": "string"
+      },
+      "path": {
+        "description": "The file or artifact",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "surfaceId": {
+        "description": "The vault Surface's ID, from list_surfaces",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "list_vault_versions",
+  "reloadable": true,
+  "returnType": {
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "vault file history",
+    "vault versions",
+    "who changed vault file"
+  ]
+}

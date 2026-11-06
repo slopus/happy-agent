@@ -1,0 +1,128 @@
+{
+  "capabilities": [
+    "Search the web and fetch individual web pages."
+  ],
+  "defer": true,
+  "description": "This is the preferred web search for this agent because Claude is its current provider. Omit provider_id to use the current Claude account. Use it for recent facts and documentation, and cite returned sources.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "allowed_domains": {
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "blocked_domains": {
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "provider_id": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "query": {
+        "maxLength": 20000,
+        "minLength": 2,
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "type": "object"
+  },
+  "name": "claude_web_search",
+  "reloadable": true,
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "answer": {
+        "maxLength": 100000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "durationMs": {
+        "minimum": 0,
+        "type": "number"
+      },
+      "provider": {
+        "anyOf": [
+          {
+            "const": "bedrock",
+            "type": "string"
+          },
+          {
+            "const": "claude",
+            "type": "string"
+          },
+          {
+            "const": "codex",
+            "type": "string"
+          },
+          {
+            "const": "gemini",
+            "type": "string"
+          },
+          {
+            "const": "grok",
+            "type": "string"
+          },
+          {
+            "const": "grok-x",
+            "type": "string"
+          }
+        ]
+      },
+      "query": {
+        "maxLength": 20000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "sources": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "url": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "url"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100,
+        "type": "array"
+      }
+    },
+    "required": [
+      "provider",
+      "query",
+      "answer",
+      "sources",
+      "durationMs"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "Claude web search",
+    "internet current information",
+    "Anthropic search"
+  ]
+}

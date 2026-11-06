@@ -1,0 +1,91 @@
+{
+  "capabilities": [
+    "Discover and read installed agent skills."
+  ],
+  "defer": true,
+  "description": "Search the complete available skill catalog by name or task keywords, or list it in pages. The system prompt contains only a shortlist. Exact name matches rank first; follow nextCursor for more results.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "maxLength": 10,
+        "minLength": 1,
+        "pattern": "^[0-9]+$",
+        "type": "string"
+      },
+      "limit": {
+        "maximum": 256,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "query": {
+        "maxLength": 128,
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "name": "list_skills",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "nextCursor": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "skills": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            },
+            "disableModelInvocation": {
+              "const": true,
+              "type": "boolean"
+            },
+            "location": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+              "type": "string"
+            },
+            "source": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[^\\u0000\\r\\n]+$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "description",
+            "location",
+            "name",
+            "source"
+          ],
+          "type": "object"
+        },
+        "maxItems": 256,
+        "type": "array"
+      }
+    },
+    "required": [
+      "skills"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "available skills",
+    "specialized workflows",
+    "skill catalog"
+  ]
+}

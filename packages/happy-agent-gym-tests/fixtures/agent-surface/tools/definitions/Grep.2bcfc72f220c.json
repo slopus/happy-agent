@@ -1,0 +1,123 @@
+{
+  "autoPermissionInstructions": "sandbox_permissions: require_escalated requests reviewed Full access for one call. Outside-workspace, symlink-escaping, and protected write paths are also reviewed automatically. Read only and Workspace write never elevate.",
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Search text file contents with JavaScript regular expressions in a bounded filesystem scan. Use Read for a known file's contents. path selects a file or directory. glob matches relative paths under the search root; bare patterns match at any depth. Supports a bounded subset of .gitignore rules; include_ignored, .ignore, and .rgignore are unavailable. output_mode defaults to files_with_matches; content shows lines, count_matches shows path:count entries. -C overrides -A and -B. head_limit defaults to 250; 0 removes the entry limit within a 10000-entry cap. offset is capped at 100000. Matching lines are capped at 400 characters, output at 40000 characters, and source files at 1 million bytes. Scan and regex work limits may leave incomplete results, reported as truncated. This tool does not use ripgrep.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "-A": {
+        "maximum": 10000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "-B": {
+        "maximum": 10000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "-C": {
+        "maximum": 10000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "-i": {
+        "type": "boolean"
+      },
+      "-n": {
+        "type": "boolean"
+      },
+      "glob": {
+        "type": "string"
+      },
+      "head_limit": {
+        "maximum": 10000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "justification": {
+        "description": "Concise reason why this call needs Full access.",
+        "type": "string"
+      },
+      "multiline": {
+        "type": "boolean"
+      },
+      "offset": {
+        "maximum": 100000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "output_mode": {
+        "anyOf": [
+          {
+            "const": "content",
+            "type": "string"
+          },
+          {
+            "const": "files_with_matches",
+            "type": "string"
+          },
+          {
+            "const": "count_matches",
+            "type": "string"
+          }
+        ]
+      },
+      "path": {
+        "type": "string"
+      },
+      "pattern": {
+        "type": "string"
+      },
+      "sandbox_permissions": {
+        "anyOf": [
+          {
+            "const": "use_default",
+            "type": "string"
+          },
+          {
+            "const": "require_escalated",
+            "type": "string"
+          }
+        ],
+        "description": "Request reviewed Full access for this exact call when the workspace sandbox blocks necessary work. Defaults to use_default."
+      },
+      "type": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "pattern"
+    ],
+    "type": "object"
+  },
+  "name": "Grep",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "match_count": {
+        "type": "integer"
+      },
+      "matched_files": {
+        "type": "integer"
+      },
+      "text": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "text",
+      "truncated",
+      "match_count",
+      "matched_files"
+    ],
+    "type": "object"
+  }
+}

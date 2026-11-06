@@ -1,0 +1,81 @@
+{
+  "autoPermissionInstructions": "For run_terminal_command, request full-access execution with sandbox_permissions: \"require_escalated\" and say in the description why the sandbox has to be left. Keep sandbox_permissions at \"use_default\" or omit it to stay sandboxed. Put only the attached secret IDs this exact command needs in secrets. Secret provisioning is reviewed separately and does not change the sandbox; secrets and escalation may be used independently or together.",
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Run a bash command in the current working directory and return its output.\n\nUsage notes:\n- You can specify an optional timeout in milliseconds, up to 300000. If not specified, foreground commands wait 120000ms. The timeout is how long you wait, not how long the command may live: a command still running when the wait ends keeps running and comes back with a task_id.\n- Use background for long-running commands such as development servers and long builds. It waits about 3 seconds to see that the command did not fall over; do not add '&' to the command.\n- Read a background command with get_command_or_subagent_output, type into it with send_command_input, and stop it with kill_command_or_subagent.\n- Environment variables and shell functions do not carry over between commands.\n- Use secrets to select only the attached secret bundles this command needs as environment variables. Selection is reviewed separately and stays sandboxed unless sandbox_permissions also requests escalation.\n- Output may be truncated before it is returned.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "background": {
+        "description": "Set true for a long-running command. Returns a task_id while the command continues in the background. Defaults to false.",
+        "type": "boolean"
+      },
+      "command": {
+        "description": "The bash command to run.",
+        "type": "string"
+      },
+      "description": {
+        "description": "One sentence explaining why this command needs to run and how it contributes to the goal.",
+        "type": "string"
+      },
+      "sandbox_permissions": {
+        "anyOf": [
+          {
+            "const": "use_default",
+            "type": "string"
+          },
+          {
+            "const": "require_escalated",
+            "type": "string"
+          }
+        ],
+        "description": "Request reviewed execution outside the workspace sandbox in Auto mode. Defaults to use_default."
+      },
+      "secrets": {
+        "description": "IDs of attached secret bundles to expose to this command as environment variables. Choose only what this command needs; use an empty array for none.",
+        "items": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "type": "string"
+        },
+        "maxItems": 256,
+        "type": "array",
+        "uniqueItems": true
+      },
+      "timeout": {
+        "description": "Optional timeout in milliseconds (max 300000). Defaults to 120000. A timeout of 0 means the default.",
+        "maximum": 300000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "tty": {
+        "description": "Run the command under a terminal, for programs that behave differently without one. Defaults to false.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "command",
+      "description"
+    ],
+    "type": "object"
+  },
+  "name": "run_terminal_command",
+  "returnType": {
+    "properties": {
+      "task_id": {
+        "type": "string"
+      },
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "type": "object"
+  }
+}

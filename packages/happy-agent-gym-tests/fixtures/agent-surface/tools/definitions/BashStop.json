@@ -1,0 +1,43 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Stop a background shell command, along with everything it started.\n\nThe command is asked to stop first and forced a moment later. Stopping one that had already ended is not an error; you are simply told it had ended.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "bash_id": {
+        "description": "The background shell identifier.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "bash_id"
+    ],
+    "type": "object"
+  },
+  "name": "BashStop",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "bash_id": {
+        "type": "string"
+      },
+      "command": {
+        "type": "string"
+      },
+      "stopped": {
+        "description": "False when the command had already ended by itself.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "bash_id",
+      "command",
+      "stopped"
+    ],
+    "type": "object"
+  }
+}

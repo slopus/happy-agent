@@ -1,0 +1,211 @@
+{
+  "capabilities": [
+    "Read and change this installation's voice settings."
+  ],
+  "defer": true,
+  "description": "Change this Happy Agent installation's voice settings for calls that start afterwards. `controller` may set `providerId` (a configured account or account pool), `modelId` (a model that account offers), `effort` (one that model accepts), and `fastMode`; `systemPrompt` replaces the voice model's prompt. Omitted properties are unchanged. `null` removes the runtime override and falls back to the machine-file value or built-in default. A prompt identical to the built-in prompt also removes the runtime override. Only active admin bots may use it.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "controller": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fastMode": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "modelId": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "providerId": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "systemPrompt": {
+        "anyOf": [
+          {
+            "maxLength": 32768,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "name": "set_voice_settings",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "properties": {
+      "controller": {
+        "properties": {
+          "effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fastMode": {
+            "type": "boolean"
+          },
+          "modelId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "providerId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "providerId",
+          "modelId",
+          "effort",
+          "fastMode"
+        ],
+        "type": "object"
+      },
+      "defaultSystemPrompt": {
+        "type": "string"
+      },
+      "effectiveController": {
+        "properties": {
+          "effort": {
+            "type": "string"
+          },
+          "modelId": {
+            "type": "string"
+          },
+          "notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "providerId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "serviceTier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "providerId",
+          "modelId",
+          "effort",
+          "serviceTier",
+          "notice"
+        ],
+        "type": "object"
+      },
+      "effectiveSystemPrompt": {
+        "type": "string"
+      },
+      "systemPromptOverride": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "controller",
+      "effectiveController",
+      "defaultSystemPrompt",
+      "systemPromptOverride",
+      "effectiveSystemPrompt"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "voice",
+    "voice controller",
+    "voice model",
+    "voice prompt",
+    "fast mode"
+  ]
+}

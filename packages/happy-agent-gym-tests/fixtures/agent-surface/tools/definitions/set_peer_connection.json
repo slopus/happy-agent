@@ -1,0 +1,112 @@
+{
+  "capabilities": [
+    "Connect a known remote installation for bidirectional agent messaging."
+  ],
+  "defer": true,
+  "description": "Register or replace a known peer with shared 43-character base64url token. On the initiating node use role=connect and its peer's ws:// or wss:// origin. On the listener use role=accept with only the token; no reverse URL is needed. One persistent session supports messages in both directions. Pair tokens must match and be unique per peer; never repeat tokens in output. Durably admits settings; poll debug_peer_connections. Only active admin bots may use this tool.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "connection": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "const": true,
+                "type": "boolean"
+              },
+              "role": {
+                "const": "connect",
+                "type": "string"
+              },
+              "token": {
+                "pattern": "^[A-Za-z0-9_-]{43}$",
+                "type": "string"
+              },
+              "url": {
+                "maxLength": 2048,
+                "minLength": 6,
+                "pattern": "^wss?://",
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "url",
+              "token"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "const": true,
+                "type": "boolean"
+              },
+              "role": {
+                "const": "accept",
+                "type": "string"
+              },
+              "token": {
+                "pattern": "^[A-Za-z0-9_-]{43}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "token"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "const": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "enabled"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "node_id": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "node_id",
+      "connection"
+    ],
+    "type": "object"
+  },
+  "name": "set_peer_connection",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "accepted": {
+        "const": true,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "accepted"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "add peer",
+    "connect remote installation",
+    "pair nodes",
+    "shared peer token"
+  ],
+  "transactional": true
+}

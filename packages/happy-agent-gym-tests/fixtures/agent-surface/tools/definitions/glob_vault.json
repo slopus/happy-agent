@@ -1,0 +1,55 @@
+{
+  "capabilities": [
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
+  ],
+  "defer": true,
+  "description": "Finds vault folders and files whose paths match a glob, relative to path (default \"/\"): * and ? within one name, ** across folders, [abc] for one of several characters, and {a,b} for alternatives, such as \"**/*.pdf\". Matching ignores case. Returns at most 200 paths, most recently changed first, folders ending in /. Files inside artifacts are not matched; list an artifact with list_vault.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "The folder to search below; defaults to the root",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "pattern": {
+        "maxLength": 1024,
+        "minLength": 1,
+        "type": "string"
+      },
+      "surfaceId": {
+        "description": "The vault Surface's ID, from list_surfaces",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "pattern"
+    ],
+    "type": "object"
+  },
+  "name": "glob_vault",
+  "reloadable": true,
+  "returnType": {
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "find vault files",
+    "vault glob",
+    "vault file pattern"
+  ]
+}

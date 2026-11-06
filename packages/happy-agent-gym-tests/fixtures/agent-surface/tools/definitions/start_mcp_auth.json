@@ -1,0 +1,77 @@
+{
+  "autoPermissionInstructions": "This starts an OAuth login with the MCP server's authorization server and saves the login for every agent using that server's catalog.",
+  "capabilities": [
+    "Configure Happy Agent MCP servers and reload them without restarting the daemon."
+  ],
+  "defer": true,
+  "description": "Logs in to an HTTP MCP server that needs a login (list_mcp_servers shows it as needs_auth). Call it when the person asks you to log in to that server. The person gets a sign-in link in a question only they can answer; after signing in, they paste back the address their browser opened. The login is saved for everyone using the same catalog: the user-wide MCP servers, or this folder's mcp.toml. The server then reconnects. The result is only the outcome. For a stdio server, it explains how to log in outside Happy instead.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "server": {
+        "description": "The name of the MCP server to log in to, as list_mcp_servers shows it.",
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "server"
+    ],
+    "type": "object"
+  },
+  "name": "start_mcp_auth",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "message": {
+        "maxLength": 2000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "server": {
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "logged_in",
+            "type": "string"
+          },
+          {
+            "const": "saved",
+            "type": "string"
+          },
+          {
+            "const": "not_needed",
+            "type": "string"
+          },
+          {
+            "const": "cancelled",
+            "type": "string"
+          },
+          {
+            "const": "failed",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "required": [
+      "server",
+      "status",
+      "message"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "log in to MCP server",
+    "sign in to MCP server",
+    "MCP OAuth",
+    "needs_auth"
+  ]
+}

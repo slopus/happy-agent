@@ -1,0 +1,132 @@
+{
+  "capabilities": [
+    "Read a shared document Surface as Markdown, now or at an earlier version."
+  ],
+  "defer": true,
+  "description": "Read a document Surface as Markdown with the seq it was read at, or as of an optional earlier seq. People may be editing it at the same time. Keep the seq: update_document needs the seq your edit is based on. The result says when the document holds content Markdown cannot show, such as comments or colors. When admins marked it as one of the installation's important documents, the result includes promptDocument with their description.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "seq": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "surfaceId": {
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId"
+    ],
+    "type": "object"
+  },
+  "name": "read_document",
+  "returnType": {
+    "properties": {
+      "document": {
+        "properties": {
+          "authorUserId": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 2,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "lastEditorUserId": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 2,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seq": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "surfaceId": {
+            "maxLength": 24,
+            "minLength": 24,
+            "pattern": "^[a-z][a-z0-9]{23}$",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 262144,
+            "pattern": "^[^\\u0000]*$",
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorUserId",
+          "createdAt",
+          "lastEditorUserId",
+          "seq",
+          "surfaceId",
+          "text",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object"
+      },
+      "omitted": {
+        "type": "string"
+      },
+      "promptDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "document"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "read document",
+    "surface markdown",
+    "previous document text"
+  ]
+}

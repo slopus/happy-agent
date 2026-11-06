@@ -1,0 +1,11 @@
+[
+  {
+    "content": [
+      {
+        "text": "The first user message:\nStart a collaborator.",
+        "type": "text"
+      }
+    ],
+    "role": "user"
+  }
+]

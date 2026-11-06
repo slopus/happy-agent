@@ -1,0 +1,256 @@
+{
+  "capabilities": [
+    "Read the errors, warnings, and sync problems HTML artifact apps reported while people used them."
+  ],
+  "defer": true,
+  "description": "Read the debug log of an HTML artifact app, newest first: what its pages reported while people used them. A page that loads /api/v1/client.js reports uncaught errors, unhandled promise rejections, console.error and console.warn, the SDK's own sync trouble (reconnects, conflicts, rejected writes, resets, going unavailable), and whatever the page passes to happy.debug.log.\n\nEach entry shows its level, source, message, data, who was using the page, when it arrived, and the artifact's newest version then. Filter by level, user, and time; 50 entries per page by default. The log keeps the newest 1000 entries of the last 7 days. Use it after someone reports a problem with an app, or after publishing a new version, to see what broke.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "artifactId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "level": {
+        "anyOf": [
+          {
+            "const": "error",
+            "type": "string"
+          },
+          {
+            "const": "warn",
+            "type": "string"
+          },
+          {
+            "const": "info",
+            "type": "string"
+          }
+        ],
+        "description": "The least severe level shown: \"error\" shows errors only, \"warn\" warnings and errors, \"info\" everything (default)"
+      },
+      "limit": {
+        "description": "Entries per page, default 50",
+        "maximum": 200,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "pageCursor": {
+        "description": "The nextPageCursor of the previous page, for older entries",
+        "pattern": "^[1-9][0-9]{0,15}$",
+        "type": "string"
+      },
+      "since": {
+        "description": "Only entries received at or after this time, ISO 8601",
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "until": {
+        "description": "Only entries received at or before this time, ISO 8601",
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "userId": {
+        "description": "Only entries this user's pages reported",
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "artifactId"
+    ],
+    "type": "object"
+  },
+  "name": "read_artifact_logs",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "artifactId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "entries": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "clientAt": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "data": {},
+            "id": {
+              "type": "string"
+            },
+            "level": {
+              "anyOf": [
+                {
+                  "const": "error",
+                  "type": "string"
+                },
+                {
+                  "const": "warn",
+                  "type": "string"
+                },
+                {
+                  "const": "info",
+                  "type": "string"
+                }
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "const": "uncaught",
+                  "type": "string"
+                },
+                {
+                  "const": "rejection",
+                  "type": "string"
+                },
+                {
+                  "const": "console",
+                  "type": "string"
+                },
+                {
+                  "const": "sync",
+                  "type": "string"
+                },
+                {
+                  "const": "app",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "userId": {
+              "maxLength": 32,
+              "minLength": 2,
+              "pattern": "^[a-z][a-z0-9]*$",
+              "type": "string"
+            },
+            "version": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "at",
+            "clientAt",
+            "level",
+            "source",
+            "message",
+            "data",
+            "userId",
+            "version",
+            "url"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "nextPageCursor": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "users": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "const": "user",
+                  "type": "string"
+                },
+                {
+                  "const": "agent",
+                  "type": "string"
+                }
+              ]
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "artifactId",
+      "entries",
+      "nextPageCursor",
+      "users"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "artifact logs",
+    "artifact errors",
+    "debug artifact app",
+    "console errors",
+    "html app crash"
+  ]
+}

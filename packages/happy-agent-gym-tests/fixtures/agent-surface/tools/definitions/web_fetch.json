@@ -1,0 +1,66 @@
+{
+  "capabilities": [
+    "Search the web and fetch individual web pages."
+  ],
+  "defer": true,
+  "description": "Fetch one web page and read it as bounded text. HTML comes back as markdown.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "maxCharacters": {
+        "maximum": 100000,
+        "minimum": 1000,
+        "type": "integer"
+      },
+      "url": {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "url"
+    ],
+    "type": "object"
+  },
+  "name": "web_fetch",
+  "reloadable": true,
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "content": {
+        "maxLength": 100000,
+        "type": "string"
+      },
+      "contentType": {
+        "maxLength": 256,
+        "type": "string"
+      },
+      "title": {
+        "maxLength": 2000,
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "url": {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "url",
+      "content",
+      "truncated"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "fetch URL",
+    "read web page",
+    "download page text"
+  ]
+}

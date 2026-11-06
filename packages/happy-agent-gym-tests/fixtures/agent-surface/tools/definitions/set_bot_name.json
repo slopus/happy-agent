@@ -1,0 +1,191 @@
+{
+  "capabilities": [
+    "Rename bots; admin bots can rename any bot."
+  ],
+  "defer": true,
+  "description": "Change a bot's display name, which is also the title of its conversation. Omit botId, or pass your own bot ID, to rename yourself. Only active admin bots may supply another bot's ID, including an archived bot's; find IDs with list_bots. The username and folder never change. A renamed bot is no longer named automatically from its first message.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "botId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "name": "set_bot_name",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "archivedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "avatar": {
+        "properties": {
+          "kind": {
+            "const": "image",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "const": "user",
+                "type": "string"
+              },
+              {
+                "const": "generated",
+                "type": "string"
+              }
+            ]
+          },
+          "thumbhash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "source",
+          "thumbhash"
+        ],
+        "type": "object"
+      },
+      "createdAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "id": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "isAdmin": {
+        "type": "boolean"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "nameConfigured": {
+        "type": "boolean"
+      },
+      "orderKey": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[0-9]+$",
+        "type": "string"
+      },
+      "path": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "runnerId": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "shortName": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "active",
+            "type": "string"
+          },
+          {
+            "const": "archived",
+            "type": "string"
+          }
+        ]
+      },
+      "systemKey": {
+        "const": "chief_of_staff",
+        "type": "string"
+      },
+      "updatedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "username": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "version": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "workspaceId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "workspaceUpdatedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "workspaceVersion": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "id",
+      "isAdmin",
+      "name",
+      "nameConfigured",
+      "username",
+      "workspaceId",
+      "workspaceVersion",
+      "workspaceUpdatedAt",
+      "agentId",
+      "path",
+      "status",
+      "orderKey",
+      "version",
+      "createdAt",
+      "updatedAt"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "rename bot",
+    "bot name",
+    "change my name",
+    "admin bot rename"
+  ]
+}

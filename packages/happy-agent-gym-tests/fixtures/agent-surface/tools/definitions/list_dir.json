@@ -1,0 +1,49 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Lists files and directories in a given path. The target_directory parameter can be relative to the workspace root or absolute.\n\nOther details:\n- The result does not display dot-files and dot-directories.\n- A directory's own name ends in a slash, so you can tell at a glance what you can descend into.\n- Large directories are truncated; use list_dir on a narrower path or grep to explore further.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "target_directory": {
+        "description": "Path to the directory to list, relative to the workspace root or absolute.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "target_directory"
+    ],
+    "type": "object"
+  },
+  "name": "list_dir",
+  "reloadable": true,
+  "returnType": {
+    "properties": {
+      "entries": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "path": {
+        "type": "string"
+      },
+      "total_entries": {
+        "type": "integer"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path",
+      "entries",
+      "total_entries",
+      "truncated"
+    ],
+    "type": "object"
+  }
+}

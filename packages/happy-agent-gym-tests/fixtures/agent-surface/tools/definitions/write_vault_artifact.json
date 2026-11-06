@@ -1,0 +1,119 @@
+{
+  "capabilities": [
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
+  ],
+  "defer": true,
+  "description": "Creates an artifact, a vault app: a small web app kept as one vault file and served from its bundle, at path, which must end in \".artifact\", or makes the next version of the artifact there whose files are exactly those given. Pass files, a list of {\"path\", \"content\"} UTF-8 text files, or fromPath, a folder, a .zip, or a .artifact file on your machine. The bundle needs \"index.html\" (an HTML app) or \"index.md\" (a Markdown document) at its root; up to 256 files and 256 MiB, every file at least one byte. \"artifact.json\" at the root is the manifest of a .artifact file: it is refused in files, and read as the manifest from a folder or zip. Missing folders above path are created.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "files": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ],
+          "type": "object"
+        },
+        "maxItems": 256,
+        "minItems": 1,
+        "type": "array"
+      },
+      "fromPath": {
+        "description": "A folder, a .zip, or a .artifact file on your machine",
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "path": {
+        "description": "The artifact's path, such as \"/Apps/launch.artifact\"",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "surfaceId": {
+        "description": "The vault Surface's ID, from list_surfaces",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "write_vault_artifact",
+  "returnType": {
+    "properties": {
+      "created": {
+        "type": "boolean"
+      },
+      "fileId": {
+        "type": "string"
+      },
+      "folders": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "kind": {
+        "anyOf": [
+          {
+            "const": "file",
+            "type": "string"
+          },
+          {
+            "const": "artifact",
+            "type": "string"
+          }
+        ]
+      },
+      "path": {
+        "type": "string"
+      },
+      "version": {
+        "anyOf": [
+          {
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "path",
+      "fileId",
+      "kind",
+      "version",
+      "created",
+      "folders"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "vault artifact",
+    "vault app",
+    "publish html to vault",
+    "zip app to vault"
+  ]
+}

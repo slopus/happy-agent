@@ -1,0 +1,56 @@
+{
+  "capabilities": [
+    "Check whether a configured peer messaging connection is ready."
+  ],
+  "defer": true,
+  "description": "Ping a known peer over its existing authenticated WebSocket session. Both connector and listener use that same connection; this never opens a reverse connection. Returns bounded credential-free readiness diagnostics. Only active admin bots may use this tool.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "node_id": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "node_id"
+    ],
+    "type": "object"
+  },
+  "name": "check_peer_connection",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "authenticated": {
+        "type": "boolean"
+      },
+      "error": {
+        "type": "string"
+      },
+      "nodeId": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "reachable": {
+        "type": "boolean"
+      },
+      "ready": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "nodeId",
+      "reachable",
+      "authenticated",
+      "ready"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "ping peer",
+    "peer health",
+    "check remote node connection"
+  ]
+}

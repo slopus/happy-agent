@@ -1,0 +1,324 @@
+{
+  "capabilities": [
+    "Read and update the user's presence and availability."
+  ],
+  "defer": true,
+  "description": "Set the user's presence only when the user explicitly asked you to change it. You may set an absolute expiry with until and choose a fallbackPresenceId. Never infer consent from conversation context.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "input": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "fallbackPresenceId": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "message": {
+                "maxLength": 240,
+                "minLength": 1,
+                "type": "string"
+              },
+              "presenceId": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "until": {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "presenceId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "fallbackPresenceId": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "message": {
+                "maxLength": 240,
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "const": "online",
+                    "type": "string"
+                  },
+                  {
+                    "const": "away",
+                    "type": "string"
+                  },
+                  {
+                    "const": "offline",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dnd",
+                    "type": "string"
+                  }
+                ]
+              },
+              "until": {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "fallbackPresenceId": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "message": {
+                "maxLength": 240,
+                "minLength": 1,
+                "type": "string"
+              },
+              "presenceId": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "const": "custom",
+                "type": "string"
+              },
+              "until": {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "status",
+              "presenceId"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "required": [
+      "input"
+    ],
+    "type": "object"
+  },
+  "name": "set_presence",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "presence": {
+        "additionalProperties": false,
+        "properties": {
+          "answerWaitMs": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "integer"
+              }
+            ]
+          },
+          "changesAt": {
+            "maximum": 8640000000000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "effectiveFrom": {
+            "maximum": 8640000000000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "emoji": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expiresAt": {
+            "maximum": 8640000000000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fallback": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "message": {
+                    "maxLength": 240,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "presenceId": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "presenceId"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "message": {
+                    "maxLength": 240,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "const": "online",
+                        "type": "string"
+                      },
+                      {
+                        "const": "away",
+                        "type": "string"
+                      },
+                      {
+                        "const": "offline",
+                        "type": "string"
+                      },
+                      {
+                        "const": "dnd",
+                        "type": "string"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "message": {
+                    "maxLength": 240,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "presenceId": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "custom",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "status",
+                  "presenceId"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "fallbackPresenceId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 240,
+            "minLength": 1,
+            "type": "string"
+          },
+          "presenceId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "prompt": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "const": "online",
+                    "type": "string"
+                  },
+                  {
+                    "const": "away",
+                    "type": "string"
+                  },
+                  {
+                    "const": "offline",
+                    "type": "string"
+                  },
+                  {
+                    "const": "dnd",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "const": "custom",
+                "type": "string"
+              }
+            ]
+          },
+          "title": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "presenceId",
+          "status",
+          "title",
+          "emoji",
+          "prompt",
+          "answerWaitMs"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "presence"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "change presence",
+    "set away",
+    "set do not disturb",
+    "availability expiry"
+  ],
+  "transactional": true
+}

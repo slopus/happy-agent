@@ -1,0 +1,82 @@
+{
+  "capabilities": [
+    "Create, inspect, update, and clear persistent long-running goals."
+  ],
+  "defer": true,
+  "description": "Create a persistent goal only when the user explicitly asks for long-running goal execution.\nDo not infer a goal from an ordinary task. A new goal cannot replace an unfinished goal.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "objective": {
+        "maxLength": 20000,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "objective"
+    ],
+    "type": "object"
+  },
+  "name": "create_goal",
+  "returnType": {
+    "properties": {
+      "goal": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "objective": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "active",
+                "type": "string"
+              },
+              {
+                "const": "paused",
+                "type": "string"
+              },
+              {
+                "const": "blocked",
+                "type": "string"
+              },
+              {
+                "const": "complete",
+                "type": "string"
+              }
+            ]
+          },
+          "updatedAt": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "createdAt",
+          "objective",
+          "status",
+          "updatedAt"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "goal"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "start persistent goal",
+    "long-running objective",
+    "continue autonomously"
+  ],
+  "transactional": true
+}

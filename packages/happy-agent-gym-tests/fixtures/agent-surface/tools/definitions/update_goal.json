@@ -1,0 +1,90 @@
+{
+  "capabilities": [
+    "Create, inspect, update, and clear persistent long-running goals."
+  ],
+  "defer": true,
+  "description": "Mark the persistent goal complete or blocked.\nUse complete only when the full objective is achieved and verified with no required work remaining.\nUse blocked only when meaningful progress cannot continue without user input or an external state change.\nPausing, resuming, and clearing a goal are controlled by the user.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "status": {
+        "anyOf": [
+          {
+            "const": "complete",
+            "type": "string"
+          },
+          {
+            "const": "blocked",
+            "type": "string"
+          }
+        ],
+        "description": "The terminal status for the current goal."
+      }
+    },
+    "required": [
+      "status"
+    ],
+    "type": "object"
+  },
+  "name": "update_goal",
+  "returnType": {
+    "properties": {
+      "goal": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "objective": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "active",
+                "type": "string"
+              },
+              {
+                "const": "paused",
+                "type": "string"
+              },
+              {
+                "const": "blocked",
+                "type": "string"
+              },
+              {
+                "const": "complete",
+                "type": "string"
+              }
+            ]
+          },
+          "updatedAt": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "createdAt",
+          "objective",
+          "status",
+          "updatedAt"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "goal"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "complete persistent goal",
+    "block goal",
+    "finish objective"
+  ],
+  "transactional": true
+}

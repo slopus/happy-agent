@@ -1,0 +1,81 @@
+{
+  "capabilities": [
+    "List, add, and remove this installation's extra skill folders."
+  ],
+  "defer": true,
+  "description": "Stop scanning a skill folder, given as an absolute path, that was added to this Happy Agent installation. The folder and its files are left untouched. Folders listed in the user's happy.toml cannot be removed with this tool. The change is saved in runtime.toml and applies from each agent's next turn. Only active admin bots may use it.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "The absolute path of a folder whose subdirectories each contain a SKILL.md.",
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^/[^\\u0000\\r\\n]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "remove_skill_folder",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "changed": {
+        "type": "boolean"
+      },
+      "folders": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "const": "user",
+                  "type": "string"
+                },
+                {
+                  "const": "runtime",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "path",
+            "source"
+          ],
+          "type": "object"
+        },
+        "maxItems": 512,
+        "type": "array"
+      },
+      "path": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "changed",
+      "folders"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "remove skill folder",
+    "skill directory",
+    "uninstall skills"
+  ]
+}

@@ -1,0 +1,153 @@
+{
+  "capabilities": [
+    "Create, list, message, and archive persistent tasks with their own folders."
+  ],
+  "defer": true,
+  "description": "Archive a task you created. Stops its current work and running descendants, ends its background processes, and archives its conversation. Its folder stays on disk and its history stays readable. Repeating archival is harmless.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "taskId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "taskId"
+    ],
+    "type": "object"
+  },
+  "name": "archive_task",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "archivedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "createdAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "creatorAgentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "folderName": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "id": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "nameConfigured": {
+        "type": "boolean"
+      },
+      "ownerUserId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "path": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "runnerId": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "shortName": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "active",
+            "type": "string"
+          },
+          {
+            "const": "archived",
+            "type": "string"
+          }
+        ]
+      },
+      "updatedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "version": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "workspaceId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "workspaceUpdatedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "workspaceVersion": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "id",
+      "name",
+      "nameConfigured",
+      "folderName",
+      "workspaceId",
+      "workspaceVersion",
+      "workspaceUpdatedAt",
+      "agentId",
+      "path",
+      "status",
+      "version",
+      "createdAt",
+      "updatedAt"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "archive task",
+    "finish task",
+    "close task"
+  ],
+  "transactional": true
+}

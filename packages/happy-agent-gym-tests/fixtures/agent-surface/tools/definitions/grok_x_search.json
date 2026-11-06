@@ -1,0 +1,118 @@
+{
+  "capabilities": [
+    "Search the web and fetch individual web pages."
+  ],
+  "defer": true,
+  "description": "Search posts and discussion on X through Grok for reactions, opinion, and breaking conversation.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "latest": {
+        "type": "boolean"
+      },
+      "provider_id": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "query": {
+        "maxLength": 20000,
+        "minLength": 2,
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "type": "object"
+  },
+  "name": "grok_x_search",
+  "reloadable": true,
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "answer": {
+        "maxLength": 100000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "durationMs": {
+        "minimum": 0,
+        "type": "number"
+      },
+      "provider": {
+        "anyOf": [
+          {
+            "const": "bedrock",
+            "type": "string"
+          },
+          {
+            "const": "claude",
+            "type": "string"
+          },
+          {
+            "const": "codex",
+            "type": "string"
+          },
+          {
+            "const": "gemini",
+            "type": "string"
+          },
+          {
+            "const": "grok",
+            "type": "string"
+          },
+          {
+            "const": "grok-x",
+            "type": "string"
+          }
+        ]
+      },
+      "query": {
+        "maxLength": 20000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "sources": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "url": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "url"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100,
+        "type": "array"
+      }
+    },
+    "required": [
+      "provider",
+      "query",
+      "answer",
+      "sources",
+      "durationMs"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "search X posts",
+    "Twitter discussion",
+    "social reaction",
+    "breaking conversation"
+  ]
+}

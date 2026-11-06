@@ -1,0 +1,86 @@
+{
+  "capabilities": [
+    "List and manage Happy teams."
+  ],
+  "defer": true,
+  "description": "Invite one email address to a Happy team (WorkOS organization) as a member. Use list_happy_teams to find the team ID. Only an active admin bot may call this tool, and the connected WorkOS user must administer that organization. WorkOS uses its configured invitation email delivery; email delivery must be enabled there. Returns a sensitive acceptance link to share only with the intended recipient. Do not automatically retry an uncertain result: the invitation may already have been sent. WorkOS may allow another address on the same corporate domain to accept; do not promise exact-email binding. No administrator role or delivery override is supported.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "email": {
+        "maxLength": 512,
+        "minLength": 3,
+        "type": "string"
+      },
+      "team_id": {
+        "pattern": "^org_[a-zA-Z0-9]{1,508}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "email",
+      "team_id"
+    ],
+    "type": "object"
+  },
+  "name": "invite_happy_team_member",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "acceptanceLink": {
+        "maxLength": 4096,
+        "pattern": "^https://[^\\s/@?#\\\\]+(?:[/?#][^\\s\\\\]*)?$",
+        "type": "string"
+      },
+      "acceptedAt": {
+        "type": "null"
+      },
+      "createdAt": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "email": {
+        "maxLength": 254,
+        "minLength": 3,
+        "pattern": "^(?=[^@]{1,64}@)(?!\\.)(?![^@]*\\.\\.)(?![^@]*\\.@)[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
+        "type": "string"
+      },
+      "expiresAt": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "id": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
+      "revokedAt": {
+        "type": "null"
+      },
+      "status": {
+        "const": "pending",
+        "type": "string"
+      }
+    },
+    "required": [
+      "acceptedAt",
+      "acceptanceLink",
+      "createdAt",
+      "email",
+      "expiresAt",
+      "id",
+      "revokedAt",
+      "status"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "invite people",
+    "email invitation",
+    "WorkOS organization member"
+  ]
+}

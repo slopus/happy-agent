@@ -1,0 +1,339 @@
+{
+  "capabilities": [
+    "Create projects from local folders and import Git or GitHub repositories."
+  ],
+  "defer": true,
+  "description": "Create a Happy project from an existing local folder, whether or not it uses Git. Supply its absolute path. For a brand-new project, first create the folder with the shell under the user's permission policy, then register it here. Existing projects are reused; archived projects are restored. Setup runs in the background: use list_projects to check readiness before starting work. Use clone_project to import a remote repository.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^(?![\\s\\S]*[\\u0000-\\u001F\\u007F])(?![\\s\\S]*[/\\\\]\\.{1,2}(?:[/\\\\]|$))(?:/(?:[^/]+/)*[^/]+|[A-Za-z]:[/\\\\](?:[^/\\\\]+[/\\\\])*[^/\\\\]+)$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "create_project",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "archivedAt": {
+        "maximum": 7258118400000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "avatar": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "image",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "const": "user",
+                "type": "string"
+              },
+              {
+                "const": "generated",
+                "type": "string"
+              }
+            ]
+          },
+          "thumbhash": {
+            "maxLength": 128,
+            "minLength": 4,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "source",
+          "thumbhash"
+        ],
+        "type": "object"
+      },
+      "createdAt": {
+        "maximum": 7258118400000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "defaultBranch": {
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^(?!@$)(?!/)(?!\\.)(?![\\s\\S]*//)(?![\\s\\S]*\\.\\.)(?![\\s\\S]*@\\{)(?![\\s\\S]*\\.lock(?:/|$))(?![\\s\\S]*/\\.)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+(?<![./])$",
+        "type": "string"
+      },
+      "description": {
+        "maxLength": 2000,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "gitAhead": {
+        "maximum": 1000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "gitBehind": {
+        "maximum": 1000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "gitBranch": {
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^(?!@$)(?!/)(?!\\.)(?![\\s\\S]*//)(?![\\s\\S]*\\.\\.)(?![\\s\\S]*@\\{)(?![\\s\\S]*\\.lock(?:/|$))(?![\\s\\S]*/\\.)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+(?<![./])$",
+        "type": "string"
+      },
+      "gitDetached": {
+        "type": "boolean"
+      },
+      "gitHead": {
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^(?!@$)(?!/)(?!\\.)(?![\\s\\S]*//)(?![\\s\\S]*\\.\\.)(?![\\s\\S]*@\\{)(?![\\s\\S]*\\.lock(?:/|$))(?![\\s\\S]*/\\.)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+(?<![./])$",
+        "type": "string"
+      },
+      "gitUpstream": {
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^(?!@$)(?!/)(?!\\.)(?![\\s\\S]*//)(?![\\s\\S]*\\.\\.)(?![\\s\\S]*@\\{)(?![\\s\\S]*\\.lock(?:/|$))(?![\\s\\S]*/\\.)[^\\u0000-\\u0020\\u007F~^:?*\\[\\\\]+(?<![./])$",
+        "type": "string"
+      },
+      "id": {
+        "maxLength": 96,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0020\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "initializationAttempt": {
+        "maximum": 1000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "initializationError": {
+        "maxLength": 500,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "initializationStatus": {
+        "anyOf": [
+          {
+            "const": "initializing",
+            "type": "string"
+          },
+          {
+            "const": "ready",
+            "type": "string"
+          },
+          {
+            "const": "failed",
+            "type": "string"
+          }
+        ]
+      },
+      "kind": {
+        "anyOf": [
+          {
+            "const": "home",
+            "type": "string"
+          },
+          {
+            "const": "regular",
+            "type": "string"
+          }
+        ]
+      },
+      "name": {
+        "maxLength": 500,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$",
+        "type": "string"
+      },
+      "nameSource": {
+        "anyOf": [
+          {
+            "const": "folder",
+            "type": "string"
+          },
+          {
+            "const": "user",
+            "type": "string"
+          },
+          {
+            "const": "remote",
+            "type": "string"
+          }
+        ]
+      },
+      "orderKey": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[0-9]+$",
+        "type": "string"
+      },
+      "presence": {
+        "anyOf": [
+          {
+            "const": "present",
+            "type": "string"
+          },
+          {
+            "const": "missing",
+            "type": "string"
+          }
+        ]
+      },
+      "remoteSource": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "github",
+                "type": "string"
+              },
+              "repository": {
+                "maxLength": 201,
+                "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,99})/[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "repository"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "git",
+                "type": "string"
+              },
+              "url": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "pattern": "^https://(?![^/?#]*@)[^\\u0000-\\u0020\\u007F/?#:@]+(?::[0-9]+)?(?:[/?#][^\\u0000-\\u0020\\u007F]*)?$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "url"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "repositoryRef": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^(?![\\s\\S]*[\\u0000-\\u001F\\u007F])(?![\\s\\S]*[/\\\\]\\.{1,2}(?:[/\\\\]|$))(?:/(?:[^/]+/)*[^/]+|[A-Za-z]:[/\\\\](?:[^/\\\\]+[/\\\\])*[^/\\\\]+)$",
+        "type": "string"
+      },
+      "runnerId": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "active",
+            "type": "string"
+          },
+          {
+            "const": "archived",
+            "type": "string"
+          }
+        ]
+      },
+      "storageKey": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        "type": "string"
+      },
+      "updatedAt": {
+        "maximum": 7258118400000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "version": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "workspaceSetupCommands": {
+        "items": {
+          "maxLength": 4096,
+          "pattern": "^[^\\u0000]*$",
+          "type": "string"
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "worktreeSupport": {
+        "anyOf": [
+          {
+            "const": "supported",
+            "type": "string"
+          },
+          {
+            "const": "unsupported",
+            "type": "string"
+          },
+          {
+            "const": "unknown",
+            "type": "string"
+          }
+        ]
+      },
+      "worktreeUnsupportedReason": {
+        "maxLength": 500,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F-\\u009F]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "repositoryRef",
+      "kind",
+      "storageKey",
+      "name",
+      "nameSource",
+      "status",
+      "presence",
+      "initializationStatus",
+      "initializationAttempt",
+      "worktreeSupport",
+      "gitAhead",
+      "gitBehind",
+      "gitDetached",
+      "orderKey",
+      "version",
+      "createdAt",
+      "updatedAt"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "new project",
+    "register project",
+    "import local repository",
+    "add folder"
+  ]
+}

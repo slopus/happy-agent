@@ -1,0 +1,54 @@
+{
+  "description": "Search the deferred Happy Agent tool catalog with BM25 and make the best matching tools callable. Use this when the capability summary says an appropriate tool exists but its definition is not currently loaded.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "description": "Maximum number of matching tools to return. Defaults to 8.",
+        "minimum": 1,
+        "type": "integer"
+      },
+      "query": {
+        "description": "Search terms describing the tool or capability needed next.",
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "type": "object"
+  },
+  "name": "tool_search",
+  "persistInHistory": false,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "server": {
+    "description": "Search the deferred Happy Agent tool catalog with BM25 and make the best matching tools callable. Use this when the capability summary says an appropriate tool exists but its definition is not currently loaded.",
+    "execution": "client",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "description": "Maximum number of matching tools to return. Defaults to 8.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "query": {
+          "description": "Search terms describing the tool or capability needed next.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "type": "tool_search"
+  },
+  "visibleToUser": false
+}

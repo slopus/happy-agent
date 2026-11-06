@@ -1,0 +1,110 @@
+{
+  "capabilities": [
+    "Create, message, and coordinate coding subagents."
+  ],
+  "defer": true,
+  "description": "Create a hidden collaborator for internal work, such as research. Bots, tasks, and subtasks use create_subtask only for substantial, distinct workstreams (e.g. changes across projects) or explicit subtask requests, within eligibility and depth limits. Handle small steps inline. Usually create second-level subtasks only on explicit user request.\n\nThe collaborator works on its own. This call returns as soon as the task is delivered, and anything the collaborator has to say arrives later as a message — nothing here waits for it.\nOne root agent tree may contain at most 5 ordinary collaborators. Reuse one with send_agent_message after reaching the limit, or archive one that can no longer work (for example, its provider fails) with archive_agent to free its place. The maximum depth is 3 agents including the root. Subtasks belong to the tree but count toward neither limit; collaborators they create do count.\nChoose an exact model and effort; harness and provider default to yours when they serve the model. Switch them later only when needed, with model fields on send_agent_message.\nThe collaborator runs in your current permission mode. Set read_only to run it in Read only. Set full_mode to run it in Full access, which is allowed only while you are in Full access yourself.\n\nModels you can start agents on (* = default effort):\nanthropic/opus-5-5 (Opus 5.5) on happy via claude, bedrock: medium*\nanthropic/opus-5 (Opus 5) on happy via claude: medium*\nanthropic/sonnet-5-5 (Sonnet 5.5) on happy via claude: medium*\nanthropic/sonnet-5 (Sonnet 5) on happy via claude: medium*\nanthropic/fable-5-1 (Fable 5.1) on happy via claude: medium*\nanthropic/fable-5 (Fable 5) on happy via claude: medium*\nanthropic/opus-4-8 (Opus 4.8) on happy via claude: medium*\nanthropic/future-model (Future Claude) on happy via claude: medium*\nopenai/gpt-6.1-sol (GPT-6.1 Sol) on happy via codex: medium*\nopenai/gpt-6.1-terra (GPT-6.1 Terra) on happy via codex: medium*\nopenai/future-model (Future GPT) on happy via codex: medium*\nxai/grok-4.5 (Grok 4.5) on happy via grok: medium*\nzai/glm-5.3 (GLM 5.3) on happy via compatible: medium*\nmoonshotai/kimi-k3 (Kimi K3) on happy via gym: medium*\ngym/model (Gym model) on happy via gym: medium*\n\nCall agent_options for the current list.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "effort": {
+        "anyOf": [
+          {
+            "const": "off",
+            "type": "string"
+          },
+          {
+            "const": "minimal",
+            "type": "string"
+          },
+          {
+            "const": "low",
+            "type": "string"
+          },
+          {
+            "const": "medium",
+            "type": "string"
+          },
+          {
+            "const": "high",
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "type": "string"
+          },
+          {
+            "const": "max",
+            "type": "string"
+          }
+        ]
+      },
+      "full_mode": {
+        "description": "Run the new agent in Full access. Allowed only while you are in Full access yourself.",
+        "type": "boolean"
+      },
+      "harness": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "model": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "provider": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "read_only": {
+        "description": "Run the new agent in Read only. Omit both read_only and full_mode to use your own current permission mode.",
+        "type": "boolean"
+      },
+      "serviceTier": {
+        "const": "priority",
+        "type": "string"
+      },
+      "text": {
+        "maxLength": 50000,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "model",
+      "effort",
+      "text"
+    ],
+    "type": "object"
+  },
+  "name": "create_agent",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agentId"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "spawn subagent",
+    "delegate work",
+    "parallel collaborator"
+  ]
+}

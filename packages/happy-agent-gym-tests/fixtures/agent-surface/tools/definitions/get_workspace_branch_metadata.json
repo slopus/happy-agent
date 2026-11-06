@@ -1,0 +1,109 @@
+{
+  "capabilities": [
+    "Create, inspect, rename, and archive Git workspaces and branches."
+  ],
+  "defer": true,
+  "description": "Read the current branch metadata reported by the host for one workspace. Follow the returned cursor to read complete branch, head, upstream, and ahead/behind values. Git, worktrees, and paths remain outside the module.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "limit": {
+        "maximum": 1024,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "workspaceId": {
+        "maxLength": 96,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0020\\u007F-\\u009F]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workspaceId"
+    ],
+    "type": "object"
+  },
+  "name": "get_workspace_branch_metadata",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "ahead": {
+        "maximum": 1000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "behind": {
+        "maximum": 1000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "branch": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
+      "cursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "detached": {
+        "type": "boolean"
+      },
+      "detail": {
+        "maxLength": 1024,
+        "type": "string"
+      },
+      "head": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
+      "nextCursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "total": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "upstream": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
+      "workspaceId": {
+        "maxLength": 96,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0020\\u007F-\\u009F]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workspaceId",
+      "ahead",
+      "behind",
+      "detached",
+      "detail",
+      "cursor",
+      "total"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "Git branch metadata",
+    "ahead behind",
+    "workspace HEAD",
+    "upstream branch"
+  ]
+}

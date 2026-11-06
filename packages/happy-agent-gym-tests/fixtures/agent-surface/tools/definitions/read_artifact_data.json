@@ -1,0 +1,195 @@
+{
+  "capabilities": [
+    "Read and change the live data that HTML artifact apps share between their viewers."
+  ],
+  "defer": true,
+  "description": "Read the live data of an HTML artifact app: the key-value store its pages share through /api/v1/client.js, shared by every version of the artifact and everyone who opens it. Use it to see what people entered, such as poll votes, to-dos, or scores.\n\nName one key to read it alone, with up to 64 KiB of its value, or list keys in key order, all or under a prefix, 100 at a time by default. Each entry shows its JSON value, its version, and who wrote it and when. Change data with write_artifact_data.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "artifactId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "key": {
+        "description": "Read this one key",
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+        "type": "string"
+      },
+      "limit": {
+        "description": "Keys per page, default 100",
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "pageCursor": {
+        "description": "The nextPageCursor of the previous page",
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+        "type": "string"
+      },
+      "prefix": {
+        "description": "List only keys that start with this, such as \"todos/\"",
+        "maxLength": 512,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "artifactId"
+    ],
+    "type": "object"
+  },
+  "name": "read_artifact_data",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "artifactId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "authors": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "const": "user",
+                  "type": "string"
+                },
+                {
+                  "const": "agent",
+                  "type": "string"
+                }
+              ]
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "cursor": {
+        "anyOf": [
+          {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "entries": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "deleted": {
+              "type": "boolean"
+            },
+            "key": {
+              "maxLength": 512,
+              "minLength": 1,
+              "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+              "type": "string"
+            },
+            "updatedAt": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "updatedBy": {
+              "maxLength": 32,
+              "minLength": 2,
+              "pattern": "^[a-z][a-z0-9]*$",
+              "type": "string"
+            },
+            "value": {},
+            "version": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "writeId": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_.:-]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "key",
+            "value",
+            "deleted",
+            "version",
+            "updatedBy",
+            "updatedAt",
+            "writeId"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "key": {
+        "type": "string"
+      },
+      "nextPageCursor": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "artifactId",
+      "entries",
+      "nextPageCursor",
+      "cursor",
+      "authors"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "artifact data",
+    "artifact app data",
+    "poll results",
+    "read artifact store",
+    "html app state"
+  ]
+}

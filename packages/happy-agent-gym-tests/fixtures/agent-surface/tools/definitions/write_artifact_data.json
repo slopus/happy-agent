@@ -1,0 +1,109 @@
+{
+  "capabilities": [
+    "Read and change the live data that HTML artifact apps share between their viewers."
+  ],
+  "defer": true,
+  "description": "Set or delete one key in the live data of an HTML artifact app: the key-value store its pages share through /api/v1/client.js. Every open copy of the page sees the change at once, and the write is recorded as made by you.\n\nPass value as JSON text to set the key, or delete: true to delete it. Follow the keys and value shapes the page's own script uses, such as one key per item under a prefix (\"todos/<id>\"); read its index.html with read_artifact_file when unsure. Pass ifVersion, from read_artifact_data, so you never overwrite a change you did not see, or ifAbsent: true to only create. Values hold at most 256 KiB of JSON.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "artifactId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "delete": {
+        "description": "true deletes the key instead of setting it",
+        "type": "boolean"
+      },
+      "ifAbsent": {
+        "description": "true writes only while the key holds no value",
+        "type": "boolean"
+      },
+      "ifVersion": {
+        "description": "Write only while the key is still at this version, as read_artifact_data showed it",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "key": {
+        "description": "The key, such as \"todos/7\"",
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+        "type": "string"
+      },
+      "value": {
+        "description": "The new value as JSON text, such as {\"title\":\"Milk\",\"done\":false}, \"text\", 3, or null",
+        "maxLength": 1048576,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "artifactId",
+      "key"
+    ],
+    "type": "object"
+  },
+  "name": "write_artifact_data",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "deleted": {
+        "type": "boolean"
+      },
+      "key": {
+        "maxLength": 512,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+        "type": "string"
+      },
+      "updatedAt": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "updatedBy": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "value": {},
+      "version": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "writeId": {
+        "anyOf": [
+          {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "key",
+      "value",
+      "deleted",
+      "version",
+      "updatedBy",
+      "updatedAt",
+      "writeId"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "artifact data",
+    "write artifact store",
+    "seed artifact app",
+    "update artifact app data"
+  ]
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "author": {
+      "description": "Agent {{mainAgentId}}",
+      "id": "{{mainAgentId}}"
+    },
+    "content": [
+      {
+        "text": "Message from agent {{mainAgentId}}:\n\nCollaborator hello.",
+        "type": "text"
+      }
+    ],
+    "role": "agent"
+  }
+]

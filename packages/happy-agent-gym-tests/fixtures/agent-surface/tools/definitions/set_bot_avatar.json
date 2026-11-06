@@ -1,0 +1,38 @@
+{
+  "capabilities": [
+    "Choose bot avatar pictures; admin bots can update any bot."
+  ],
+  "defer": true,
+  "description": "Set a bot's avatar from an image file in your own folder. Omit botId, or pass your own bot ID, to set your own picture. Only active admin bots may supply another bot's ID, including an archived bot's; find IDs and missing avatars with list_bots. Give the path to a PNG, JPEG, or WebP image, up to 8 MiB; write or generate the image first, then point this tool at it. The picture is resized to a square-fitting WebP.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "botId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "path": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "set_bot_avatar",
+  "returnType": {
+    "type": "void"
+  },
+  "searchKeywords": [
+    "bot avatar",
+    "profile picture",
+    "set my picture",
+    "admin bot avatar"
+  ]
+}

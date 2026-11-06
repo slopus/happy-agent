@@ -1,0 +1,56 @@
+{
+  "capabilities": [
+    "Discover and read installed agent skills."
+  ],
+  "defer": true,
+  "description": "Read the complete instructions for one available skill.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name"
+    ],
+    "type": "object"
+  },
+  "name": "read_skill",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "content": {
+        "maxLength": 262144,
+        "minLength": 1,
+        "type": "string"
+      },
+      "location": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "content",
+      "location",
+      "name"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "read skill instructions",
+    "SKILL.md",
+    "specialized guidance"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "capabilities": [
+    "Create, message, and coordinate coding subagents."
+  ],
+  "defer": true,
+  "description": "Archive a collaborator you created, for example one that failed because its model or provider no longer works. To retry its work on a working model, switch it with model fields on send_agent_message, or archive it and create a new collaborator. Stops its current work and running descendants, but marks only that collaborator archived. It no longer counts toward the collaborator limit and can no longer receive messages. Conversation history remains, and repeating archival is harmless. Use archive_subtask for subtasks.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "targetAgentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "targetAgentId"
+    ],
+    "type": "object"
+  },
+  "name": "archive_agent",
+  "returnType": {
+    "type": "void"
+  },
+  "searchKeywords": [
+    "archive subagent",
+    "remove collaborator",
+    "free collaborator slot"
+  ],
+  "transactional": true
+}

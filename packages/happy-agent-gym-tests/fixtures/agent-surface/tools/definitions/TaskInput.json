@@ -1,0 +1,77 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Happy extension: send characters to a running shell task and collect new output. End a line with a newline; use \\u0003 for Ctrl-C. timeout is a wait in milliseconds, default 250, maximum 30000. Input is reviewed and stays inside the process's existing boundary, including its selected secret environment.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "input": {
+        "type": "string"
+      },
+      "task_id": {
+        "type": "string"
+      },
+      "timeout": {
+        "maximum": 30000,
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "task_id",
+      "input"
+    ],
+    "type": "object"
+  },
+  "name": "TaskInput",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "exit_code": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "output": {
+        "type": "string"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "running",
+            "type": "string"
+          },
+          {
+            "const": "completed",
+            "type": "string"
+          },
+          {
+            "const": "killed",
+            "type": "string"
+          }
+        ]
+      },
+      "task_id": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "task_id",
+      "status",
+      "output",
+      "truncated"
+    ],
+    "type": "object"
+  }
+}

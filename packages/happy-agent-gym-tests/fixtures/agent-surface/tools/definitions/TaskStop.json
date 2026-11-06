@@ -1,0 +1,38 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Stop a background shell task and its process tree. Shutdown is requested first, then forced after the normal grace period. Use only when the task must be cancelled. A task that already ended returns stopped: false. This manages shell tasks only.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "task_id": {
+        "description": "The background shell task ID to stop.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ],
+    "type": "object"
+  },
+  "name": "TaskStop",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "stopped": {
+        "type": "boolean"
+      },
+      "task_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id",
+      "stopped"
+    ],
+    "type": "object"
+  }
+}

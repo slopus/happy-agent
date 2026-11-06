@@ -1,0 +1,37 @@
+{
+  "capabilities": [
+    "Create, message, and coordinate coding subagents."
+  ],
+  "defer": true,
+  "description": "The current models you can start agents and subtasks on, by harness and provider. usage: true adds the quota each account reports.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "usage": {
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  },
+  "name": "agent_options",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "list models",
+    "subagent models",
+    "harnesses",
+    "providers",
+    "quota"
+  ]
+}

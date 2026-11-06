@@ -1,0 +1,625 @@
+{
+  "capabilities": [
+    "Read live host CPU, GPU, memory, disk, and process usage."
+  ],
+  "defer": true,
+  "description": "Read the machine running this daemon through one System Monitor Surface. Includes CPU, GPU, memory, mounted disks, disk activity, recent history, and top processes by CPU and resident memory. Several System Monitors show the same host. Unavailable measurements are null. Process names exclude command-line arguments and environments. Reading never changes membership.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "surfaceId": {
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId"
+    ],
+    "type": "object"
+  },
+  "name": "read_system_monitor",
+  "returnType": {
+    "properties": {
+      "cpu": {
+        "properties": {
+          "loadAverage": {
+            "anyOf": [
+              {
+                "additionalItems": false,
+                "items": [
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "minimum": 0,
+                    "type": "number"
+                  }
+                ],
+                "maxItems": 3,
+                "minItems": 3,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "logicalCores": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "perCoreUsagePercent": {
+            "anyOf": [
+              {
+                "items": {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "speedMhz": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "temperatureCelsius": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usagePercent": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "model",
+          "logicalCores",
+          "usagePercent",
+          "perCoreUsagePercent",
+          "loadAverage",
+          "speedMhz",
+          "temperatureCelsius"
+        ],
+        "type": "object"
+      },
+      "diskIo": {
+        "anyOf": [
+          {
+            "properties": {
+              "readBytesPerSecond": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "writeBytesPerSecond": {
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "readBytesPerSecond",
+              "writeBytesPerSecond"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "disks": {
+        "items": {
+          "properties": {
+            "availableBytes": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "device": {
+              "type": "string"
+            },
+            "fileSystem": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "mountPoint": {
+              "type": "string"
+            },
+            "totalBytes": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "usedBytes": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "mountPoint",
+            "device",
+            "fileSystem",
+            "totalBytes",
+            "usedBytes",
+            "availableBytes"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "gpus": {
+        "items": {
+          "properties": {
+            "memoryTotalBytes": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "memoryUsedBytes": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "powerWatts": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "temperatureCelsius": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "usagePercent": {
+              "anyOf": [
+                {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "vendor": {
+              "anyOf": [
+                {
+                  "const": "nvidia",
+                  "type": "string"
+                },
+                {
+                  "const": "amd",
+                  "type": "string"
+                },
+                {
+                  "const": "apple",
+                  "type": "string"
+                },
+                {
+                  "const": "intel",
+                  "type": "string"
+                },
+                {
+                  "const": "other",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "name",
+            "vendor",
+            "usagePercent",
+            "memoryTotalBytes",
+            "memoryUsedBytes",
+            "temperatureCelsius",
+            "powerWatts"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "history": {
+        "items": {
+          "properties": {
+            "cpuPercent": {
+              "anyOf": [
+                {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "diskReadBytesPerSecond": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "diskWriteBytesPerSecond": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "gpuPercent": {
+              "anyOf": [
+                {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "memoryUsedBytes": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "sampledAt": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "sampledAt",
+            "cpuPercent",
+            "memoryUsedBytes",
+            "gpuPercent",
+            "diskReadBytesPerSecond",
+            "diskWriteBytesPerSecond"
+          ],
+          "type": "object"
+        },
+        "maxItems": 300,
+        "type": "array"
+      },
+      "host": {
+        "properties": {
+          "arch": {
+            "type": "string"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "osName": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "uptimeSeconds": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "hostname",
+          "platform",
+          "arch",
+          "osName",
+          "uptimeSeconds"
+        ],
+        "type": "object"
+      },
+      "intervalMs": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "memory": {
+        "properties": {
+          "availableBytes": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "cachedBytes": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "swapTotalBytes": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "swapUsedBytes": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totalBytes": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "usedBytes": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "totalBytes",
+          "usedBytes",
+          "availableBytes",
+          "cachedBytes",
+          "swapTotalBytes",
+          "swapUsedBytes"
+        ],
+        "type": "object"
+      },
+      "processes": {
+        "anyOf": [
+          {
+            "properties": {
+              "items": {
+                "items": {
+                  "properties": {
+                    "cpuPercent": {
+                      "anyOf": [
+                        {
+                          "maximum": 100,
+                          "minimum": 0,
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "memoryBytes": {
+                      "minimum": 0,
+                      "type": "number"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "parentPid": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pid": {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "startedAt": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "state": {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "const": "running",
+                              "type": "string"
+                            },
+                            {
+                              "const": "sleeping",
+                              "type": "string"
+                            },
+                            {
+                              "const": "stopped",
+                              "type": "string"
+                            },
+                            {
+                              "const": "zombie",
+                              "type": "string"
+                            },
+                            {
+                              "const": "idle",
+                              "type": "string"
+                            },
+                            {
+                              "const": "other",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "threads": {
+                      "anyOf": [
+                        {
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "user": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "pid",
+                    "parentPid",
+                    "name",
+                    "user",
+                    "state",
+                    "cpuPercent",
+                    "memoryBytes",
+                    "threads",
+                    "startedAt"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              "threads": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "total": {
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "threads",
+              "items"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "sampledAt": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "sampledAt",
+      "intervalMs",
+      "host",
+      "cpu",
+      "memory",
+      "gpus",
+      "disks",
+      "diskIo",
+      "processes",
+      "history"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "system monitor",
+    "cpu gpu memory disk usage",
+    "running processes",
+    "task manager"
+  ]
+}

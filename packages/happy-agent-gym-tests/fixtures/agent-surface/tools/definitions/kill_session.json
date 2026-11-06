@@ -1,0 +1,42 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Stops a running shell session and everything it started. The session is asked to stop first and forced a couple of seconds later. Stopping a session that has already ended is not an error; you are simply told it had ended.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "session_id": {
+        "description": "Identifier of the shell session to stop.",
+        "type": "number"
+      }
+    },
+    "required": [
+      "session_id"
+    ],
+    "type": "object"
+  },
+  "name": "kill_session",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "command": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "session_id": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "command",
+      "message",
+      "session_id"
+    ],
+    "type": "object"
+  }
+}

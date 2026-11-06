@@ -1,0 +1,59 @@
+{
+  "capabilities": [
+    "Configure and inspect remote Happy Agent connections."
+  ],
+  "defer": true,
+  "description": "Check a configured remote Happy Agent's authenticated health endpoint through Tailcat. Reports reachability, authentication, readiness, and protocol version without exposing credentials. Bounded to 30 seconds. Team checks use the connected Cloud user's organization-scoped token. Available only to active admin bots.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "type": "object"
+  },
+  "name": "check_remote_connection_health",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "authenticated": {
+        "type": "boolean"
+      },
+      "connectionId": {
+        "type": "string"
+      },
+      "error": {
+        "type": "string"
+      },
+      "protocol": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "reachable": {
+        "type": "boolean"
+      },
+      "ready": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "connectionId",
+      "reachable",
+      "authenticated",
+      "ready"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "remote endpoint health",
+    "check connection",
+    "Tailcat readiness authentication"
+  ]
+}

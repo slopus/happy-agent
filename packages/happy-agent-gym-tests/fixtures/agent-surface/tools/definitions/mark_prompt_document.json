@@ -1,0 +1,137 @@
+{
+  "capabilities": [
+    "List, mark, and unmark this installation's important documents."
+  ],
+  "defer": true,
+  "description": "Mark a document Surface as important for every agent on this Happy Agent installation. Every agent's instructions then list it with its name, link, and your description, and tell agents to read it with read_document before acting on work it covers. Write the description like a skill's: what the document covers and when an agent should read it. name is optional and replaces the Surface's own name in that list; leave it out to follow the Surface. Marking a document again replaces its description and name but keeps its place, which is ordered by when it was first marked. At most 32 documents can be marked. The change applies from each agent's next turn. Only active admin bots may use it.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "description": {
+        "maxLength": 1024,
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "surfaceId": {
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "description"
+    ],
+    "type": "object"
+  },
+  "name": "mark_prompt_document",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "changed": {
+        "type": "boolean"
+      },
+      "documents": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            "displayName": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "link": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "markedAt": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "markedByAgentId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readable": {
+              "type": "boolean"
+            },
+            "surfaceId": {
+              "maxLength": 24,
+              "minLength": 24,
+              "pattern": "^[a-z][a-z0-9]{23}$",
+              "type": "string"
+            },
+            "updatedAt": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "surfaceId",
+            "name",
+            "description",
+            "markedAt",
+            "markedByAgentId",
+            "updatedAt",
+            "displayName",
+            "link",
+            "readable"
+          ],
+          "type": "object"
+        },
+        "maxItems": 32,
+        "type": "array"
+      },
+      "surfaceId": {
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "changed",
+      "documents"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "mark important document",
+    "add document to system prompt",
+    "prompt documents",
+    "standing guidance"
+  ],
+  "transactional": true
+}

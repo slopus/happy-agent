@@ -1,0 +1,55 @@
+{
+  "capabilities": [
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
+  ],
+  "defer": true,
+  "description": "Lists a vault folder like ls: its live folders, first and ending in /, then its files with their kinds, sizes, newest version numbers, and change times. depth (1–10, default 1) also lists what is inside the folders below. An artifact is a vault app, a small web app kept as one file whose name ends in \".artifact\"; listing one lists the files of its newest version. At most 1,000 lines. Paths start with / at the vault's root and match names case-insensitively.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "depth": {
+        "maximum": 10,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "path": {
+        "description": "The folder to list, such as \"/Reports\". Defaults to \"/\".",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "surfaceId": {
+        "description": "The vault Surface's ID, from list_surfaces",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId"
+    ],
+    "type": "object"
+  },
+  "name": "list_vault",
+  "reloadable": true,
+  "returnType": {
+    "properties": {
+      "text": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "text"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "list vault",
+    "vault folder",
+    "browse vault",
+    "vault ls"
+  ]
+}

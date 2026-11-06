@@ -1,0 +1,38 @@
+{
+  "capabilities": [
+    "Choose a configured project's avatar picture."
+  ],
+  "defer": true,
+  "description": "Set a project's avatar from an image file in that project's folder. Give the project ID from list_projects and the path to a PNG, JPEG, or WebP image, up to 8 MiB; write or generate the image first, then point this tool at it. The picture is resized to a square-fitting WebP and shown wherever the project appears.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "projectId": {
+        "maxLength": 96,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u0020\\u007F-\\u009F]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "projectId"
+    ],
+    "type": "object"
+  },
+  "name": "set_project_avatar",
+  "returnType": {
+    "type": "void"
+  },
+  "searchKeywords": [
+    "project avatar",
+    "project picture",
+    "repository image"
+  ]
+}

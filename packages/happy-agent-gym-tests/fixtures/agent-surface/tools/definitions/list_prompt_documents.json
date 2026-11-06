@@ -1,0 +1,102 @@
+{
+  "capabilities": [
+    "List, mark, and unmark this installation's important documents."
+  ],
+  "defer": true,
+  "description": "List the document Surfaces marked as important for every agent on this Happy Agent installation, in the order agents see them, with each description, name, and when it was marked. Includes marked Surfaces that can no longer be read, which agents do not see. Only active admin bots may use it.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "list_prompt_documents",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "documents": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            "displayName": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "link": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "markedAt": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "markedByAgentId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "readable": {
+              "type": "boolean"
+            },
+            "surfaceId": {
+              "maxLength": 24,
+              "minLength": 24,
+              "pattern": "^[a-z][a-z0-9]{23}$",
+              "type": "string"
+            },
+            "updatedAt": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "surfaceId",
+            "name",
+            "description",
+            "markedAt",
+            "markedByAgentId",
+            "updatedAt",
+            "displayName",
+            "link",
+            "readable"
+          ],
+          "type": "object"
+        },
+        "maxItems": 32,
+        "type": "array"
+      }
+    },
+    "required": [
+      "documents"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "important documents",
+    "prompt documents",
+    "system prompt documents",
+    "standing guidance"
+  ]
+}

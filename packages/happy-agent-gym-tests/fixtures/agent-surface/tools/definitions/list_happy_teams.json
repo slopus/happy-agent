@@ -1,0 +1,87 @@
+{
+  "capabilities": [
+    "List and manage Happy teams."
+  ],
+  "defer": true,
+  "description": "List a 10-item page of Happy teams the connected Happy Cloud user belongs to, including each WorkOS organization ID and its configured Happy Agent server endpoint. Follow next_offset until it is null to read every team.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "offset": {
+        "maximum": 10000,
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "name": "list_happy_teams",
+  "reloadable": true,
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "next_offset": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "maximum": 10000,
+            "minimum": 0,
+            "type": "integer"
+          }
+        ]
+      },
+      "teams": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "maxLength": 600,
+                  "minLength": 1,
+                  "pattern": "^(?:http|https|tailcat|ws|wss)://[\\x20-\\x7e]+$",
+                  "type": "string"
+                }
+              ]
+            },
+            "id": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "endpoint",
+            "id",
+            "name"
+          ],
+          "type": "object"
+        },
+        "maxItems": 10,
+        "type": "array"
+      }
+    },
+    "required": [
+      "next_offset",
+      "teams"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "Happy Cloud organizations",
+    "team list",
+    "WorkOS organizations"
+  ]
+}

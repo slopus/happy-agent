@@ -1,0 +1,323 @@
+{
+  "autoPermissionInstructions": "This updates the user-wide Happy MCP configuration, or with scope \"folder\" this folder's mcp.toml, and reconnects external servers.",
+  "capabilities": [
+    "Configure Happy Agent MCP servers and reload them without restarting the daemon."
+  ],
+  "defer": true,
+  "description": "Adds, replaces, or removes one server in {{happyPublicHome}}/config/mcp.toml, or with scope \"folder\" in mcp.toml at the root of this session's folder, then reloads the live MCP connections. Existing unrelated servers are preserved. A user-wide server wins over a folder server of the same name.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "action": {
+        "anyOf": [
+          {
+            "const": "set",
+            "type": "string"
+          },
+          {
+            "const": "remove",
+            "type": "string"
+          }
+        ]
+      },
+      "name": {
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      },
+      "scope": {
+        "anyOf": [
+          {
+            "const": "user",
+            "type": "string"
+          },
+          {
+            "const": "folder",
+            "type": "string"
+          }
+        ],
+        "description": "Where the server is configured. \"user\" (the default) writes {{happyPublicHome}}/config/mcp.toml, which every session uses. \"folder\" writes mcp.toml at the root of this session's folder (its project workspace, bot folder, or task folder), which only the agents working in that folder use."
+      },
+      "server": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "args": {
+                "items": {
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              "command": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "cwd": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              "disabledTools": {
+                "items": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "enabledTools": {
+                "items": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "env": {
+                "maxProperties": 2048,
+                "patternProperties": {
+                  "^(.*)$": {
+                    "maxLength": 16384,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "startupTimeoutMs": {
+                "maximum": 600000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "toolTimeoutMs": {
+                "maximum": 600000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "transport": {
+                "const": "stdio",
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "transport"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bearerTokenEnvVar": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "disabledTools": {
+                "items": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "enabledTools": {
+                "items": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "headers": {
+                "maxProperties": 2048,
+                "patternProperties": {
+                  "^(.*)$": {
+                    "maxLength": 16384,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "oauthClientIdEnvVar": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "oauthClientSecretEnvVar": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "oauthScopes": {
+                "items": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              "startupTimeoutMs": {
+                "maximum": 600000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "toolTimeoutMs": {
+                "maximum": 600000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "transport": {
+                "const": "http",
+                "type": "string"
+              },
+              "url": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "transport",
+              "url"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "required": [
+      "action",
+      "name"
+    ],
+    "type": "object"
+  },
+  "name": "configure_mcp_server",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "nextCursor": {
+        "maxLength": 32,
+        "minLength": 1,
+        "type": "string"
+      },
+      "servers": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "disabledTools": {
+              "items": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "enabledTools": {
+              "items": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "errorMessage": {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            "fingerprint": {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "promptSupport": {
+              "type": "boolean"
+            },
+            "resourceSupport": {
+              "type": "boolean"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "blocked",
+                  "type": "string"
+                },
+                {
+                  "const": "connected",
+                  "type": "string"
+                },
+                {
+                  "const": "connecting",
+                  "type": "string"
+                },
+                {
+                  "const": "disabled",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                },
+                {
+                  "const": "needs_auth",
+                  "type": "string"
+                }
+              ]
+            },
+            "toolCount": {
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "status",
+            "toolCount"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100,
+        "type": "array"
+      }
+    },
+    "required": [
+      "servers"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "add MCP server",
+    "edit mcp.toml",
+    "remove MCP server"
+  ]
+}

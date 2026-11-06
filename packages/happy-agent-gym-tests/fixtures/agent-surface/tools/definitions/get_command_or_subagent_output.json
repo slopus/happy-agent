@@ -1,0 +1,84 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Get output and status for one or more background commands.\n\nUsage notes:\n- Pass task_ids with the task IDs run_terminal_command handed back; for a single command use a one-element array.\n- Only output produced since your last read comes back, so nothing you were told before is repeated.\n- Omit timeout_ms or pass 0 for an immediate snapshot; a positive value waits up to that many milliseconds in total for the commands to end.\n- A command that has ended keeps answering this for a while, so its last output is never lost.\n- This machine runs commands, so a subagent's task ID is not something it can report on.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "task_ids": {
+        "description": "Task IDs to query. For one command, pass a one-element array. At most 20 IDs.",
+        "items": {
+          "type": "string"
+        },
+        "maxItems": 20,
+        "minItems": 1,
+        "type": "array"
+      },
+      "timeout_ms": {
+        "description": "Maximum wait in milliseconds. A positive value waits; omit or pass 0 to poll.",
+        "maximum": 600000,
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "task_ids"
+    ],
+    "type": "object"
+  },
+  "name": "get_command_or_subagent_output",
+  "returnType": {
+    "properties": {
+      "results": {
+        "items": {
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "exit_code": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "output": {
+              "type": "string"
+            },
+            "restarting": {
+              "const": true,
+              "type": "boolean"
+            },
+            "status": {
+              "type": "string"
+            },
+            "task_id": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "task_id",
+            "status",
+            "output",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "results"
+    ],
+    "type": "object"
+  }
+}

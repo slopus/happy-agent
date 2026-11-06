@@ -1,0 +1,98 @@
+{
+  "capabilities": [
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
+  ],
+  "defer": true,
+  "description": "Writes a whole text file in a vault, creating it and any missing folders above it, or making the next version of the file already there. Every earlier version is kept.\nUsage:\n- Pass exactly one of content, the file's whole UTF-8 text, and fromVersion, which restores an earlier version of the file or artifact at path as its newest version.\n- A path that runs into an artifact, such as \"/Apps/launch.artifact/style.css\", adds or replaces that file in the artifact's next version. Make a new artifact with write_vault_artifact.\n- Prefer edit_vault_file to change part of an existing file. Copy binary files in with import_vault_file. Make an empty folder with create_vault_folder.\n- Writing content identical to the newest version makes no version.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "content": {
+        "description": "The whole text of the file",
+        "type": "string"
+      },
+      "fromVersion": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "path": {
+        "description": "Where the file is, such as \"/Notes/plan.md\"",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "surfaceId": {
+        "description": "The vault Surface's ID, from list_surfaces",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "write_vault_file",
+  "returnType": {
+    "properties": {
+      "created": {
+        "type": "boolean"
+      },
+      "fileId": {
+        "type": "string"
+      },
+      "folders": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "kind": {
+        "anyOf": [
+          {
+            "const": "file",
+            "type": "string"
+          },
+          {
+            "const": "artifact",
+            "type": "string"
+          }
+        ]
+      },
+      "path": {
+        "type": "string"
+      },
+      "version": {
+        "anyOf": [
+          {
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "path",
+      "fileId",
+      "kind",
+      "version",
+      "created",
+      "folders"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "write vault file",
+    "save to vault",
+    "restore vault version",
+    "create vault file"
+  ]
+}

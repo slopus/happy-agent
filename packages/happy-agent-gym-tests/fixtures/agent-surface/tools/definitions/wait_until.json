@@ -1,0 +1,111 @@
+{
+  "capabilities": [
+    "Wait and schedule durable messages for future delivery."
+  ],
+  "defer": true,
+  "description": "Pause until a date at most 24 hours away. Write it as ISO 8601, RFC 2822, or a Unix timestamp in seconds or milliseconds; a date already past returns at once. The wait survives a restart, and any new message in this chat ends it early.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "at": {
+        "anyOf": [
+          {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "maximum": 8640000000000000,
+            "minimum": -8640000000000000,
+            "type": "number"
+          }
+        ]
+      }
+    },
+    "required": [
+      "at"
+    ],
+    "type": "object"
+  },
+  "name": "wait_until",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "dueAt": {
+        "maximum": 8640000000000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "elapsedMs": {
+        "maximum": 8640000000000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "endedAt": {
+        "maximum": 8640000000000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "kind": {
+        "anyOf": [
+          {
+            "const": "wait",
+            "type": "string"
+          },
+          {
+            "const": "wait_until",
+            "type": "string"
+          }
+        ]
+      },
+      "outcome": {
+        "anyOf": [
+          {
+            "const": "elapsed",
+            "type": "string"
+          },
+          {
+            "const": "interrupted",
+            "type": "string"
+          }
+        ]
+      },
+      "startedAt": {
+        "maximum": 8640000000000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "waitId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "waitId",
+      "agentId",
+      "outcome",
+      "kind",
+      "dueAt",
+      "startedAt",
+      "endedAt",
+      "elapsedMs"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "pause until date",
+    "wait until timestamp",
+    "future time"
+  ],
+  "steerable": true
+}

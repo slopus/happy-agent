@@ -1,0 +1,92 @@
+{
+  "capabilities": [
+    "Inspect agent token and timing usage."
+  ],
+  "defer": true,
+  "description": "Report exact lifetime token usage for this agent and every recursively linked descendant, including hidden and delegated agents. Access requires host authorization; completed agents remain in the bounded snapshot.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "get_agent_tree_usage",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "sessions": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "agentId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "parentAgentId": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "path": {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^[^\\u0000\\r\\n]+$",
+              "type": "string"
+            },
+            "relation": {
+              "anyOf": [
+                {
+                  "const": "root",
+                  "type": "string"
+                },
+                {
+                  "const": "subagent",
+                  "type": "string"
+                },
+                {
+                  "const": "delegated",
+                  "type": "string"
+                }
+              ]
+            },
+            "title": {
+              "maxLength": 512,
+              "type": "string"
+            },
+            "totalTokens": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "agentId",
+            "path",
+            "relation",
+            "totalTokens"
+          ],
+          "type": "object"
+        },
+        "maxItems": 1000,
+        "type": "array"
+      },
+      "totalTokens": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "sessions",
+      "totalTokens"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "agent tree tokens",
+    "subagent usage",
+    "lifetime token total"
+  ]
+}

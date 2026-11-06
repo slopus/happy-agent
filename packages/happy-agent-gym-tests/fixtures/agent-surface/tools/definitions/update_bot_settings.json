@@ -1,0 +1,340 @@
+{
+  "autoPermissionInstructions": "Changing a bot's settings changes what that bot and every agent working under it can reach. A change that widens secrets, reach, compute isolation, or Stories is reviewed; one that only narrows is not.",
+  "capabilities": [
+    "Read and change what each bot and the agents under it may reach."
+  ],
+  "defer": true,
+  "description": "Change one bot's settings. They govern the bot's agent and every agent working under it: its subtasks, their collaborators, its exported-bot conversations, and tasks it creates. Only active admin bots may use it.\nPass previous exactly as get_bot_settings returned it, then only the fields to change:\n- allowedSecretIds: null lets them use any secret attached to the bot or where it works; an array of secret IDs is the complete set they may list, attach, update, and select for commands, and [] allows none. With an array they cannot create secrets.\n- crossWorkspace: false keeps them to the bot's own agents, with no projects, workspaces, tasks, other bots, or agents outside the bot; true leaves reach to this installation's setting.\n- stories: true gives this bot's own agent story tools and shows its stories to non-guest members with personal stories on; false turns them off (the default).\n- compute: {\"type\":\"host\"} runs them on the machine holding the bot's folder; {\"type\":\"docker\",\"image\":\"...\"} runs their files and commands in a container of that image with only their own folder mounted, where commands cannot select secrets. A compute change reaches new agents at once and running agents after Happy Agent restarts.\nA change that only narrows is applied directly; one that widens access is reviewed first.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "allowedSecretIds": {
+        "anyOf": [
+          {
+            "items": {
+              "maxLength": 32,
+              "minLength": 2,
+              "pattern": "^[a-z][a-z0-9_-]*$",
+              "type": "string"
+            },
+            "maxItems": 256,
+            "type": "array",
+            "uniqueItems": true
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "botId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "compute": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "host",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "image": {
+                "maxLength": 512,
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u0020\\u007f]+$",
+                "type": "string"
+              },
+              "type": {
+                "const": "docker",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "image"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "crossWorkspace": {
+        "type": "boolean"
+      },
+      "previous": {
+        "additionalProperties": false,
+        "properties": {
+          "allowedSecretIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 32,
+                  "minLength": 2,
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "compute": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "host",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "image": {
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u0020\\u007f]+$",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "docker",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "image"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "crossWorkspace": {
+            "type": "boolean"
+          },
+          "stories": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allowedSecretIds",
+          "crossWorkspace",
+          "compute"
+        ],
+        "type": "object"
+      },
+      "stories": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "botId",
+      "previous"
+    ],
+    "type": "object"
+  },
+  "name": "update_bot_settings",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "botId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "changed": {
+        "type": "boolean"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "previous": {
+        "additionalProperties": false,
+        "properties": {
+          "allowedSecretIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 32,
+                  "minLength": 2,
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "compute": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "host",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "image": {
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u0020\\u007f]+$",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "docker",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "image"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "crossWorkspace": {
+            "type": "boolean"
+          },
+          "stories": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allowedSecretIds",
+          "crossWorkspace",
+          "compute"
+        ],
+        "type": "object"
+      },
+      "settings": {
+        "additionalProperties": false,
+        "properties": {
+          "allowedSecretIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 32,
+                  "minLength": 2,
+                  "pattern": "^[a-z][a-z0-9_-]*$",
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "compute": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "host",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "image": {
+                    "maxLength": 512,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u0020\\u007f]+$",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "docker",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "image"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "crossWorkspace": {
+            "type": "boolean"
+          },
+          "stories": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "allowedSecretIds",
+          "crossWorkspace",
+          "compute"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "botId",
+      "name",
+      "previous",
+      "settings",
+      "changed"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "bot settings",
+    "restrict bot",
+    "lock down bot",
+    "bot docker",
+    "bot secrets"
+  ],
+  "transactional": true
+}

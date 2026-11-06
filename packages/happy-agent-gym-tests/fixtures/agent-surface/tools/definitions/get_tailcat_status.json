@@ -1,0 +1,73 @@
+{
+  "capabilities": [
+    "Enable, disable, and inspect Tailcat internet exposure."
+  ],
+  "defer": true,
+  "description": "Read whether Tailcat internet exposure is enabled and open. When open, the result includes the stable Tailcat connection address.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "get_tailcat_status",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "address": {
+        "maxLength": 8192,
+        "minLength": 3,
+        "pattern": "^tc[A-Za-z0-9_-]+$",
+        "type": "string"
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "error": {
+        "maxLength": 8192,
+        "minLength": 1,
+        "type": "string"
+      },
+      "port": {
+        "maximum": 65535,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "state": {
+        "anyOf": [
+          {
+            "const": "disabled",
+            "type": "string"
+          },
+          {
+            "const": "starting",
+            "type": "string"
+          },
+          {
+            "const": "open",
+            "type": "string"
+          },
+          {
+            "const": "stopping",
+            "type": "string"
+          },
+          {
+            "const": "failed",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "required": [
+      "enabled",
+      "state"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "Tailcat address",
+    "internet tunnel status",
+    "public team server"
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "capabilities": [
+    "Wait and schedule durable messages for future delivery."
+  ],
+  "defer": true,
+  "description": "Pause for up to 24 hours. Give the duration in seconds, minutes, hours, or days, as fields or as text such as '90 seconds' or '1h 30m'. The wait survives a restart, and any new message in this chat ends it early; the result says how much time actually passed.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "duration": {
+        "anyOf": [
+          {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "days": {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "number"
+              },
+              "hours": {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "number"
+              },
+              "minutes": {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "number"
+              },
+              "seconds": {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "required": [
+      "duration"
+    ],
+    "type": "object"
+  },
+  "name": "wait",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "dueAt": {
+        "maximum": 8640000000000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "elapsedMs": {
+        "maximum": 8640000000000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "endedAt": {
+        "maximum": 8640000000000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "kind": {
+        "anyOf": [
+          {
+            "const": "wait",
+            "type": "string"
+          },
+          {
+            "const": "wait_until",
+            "type": "string"
+          }
+        ]
+      },
+      "outcome": {
+        "anyOf": [
+          {
+            "const": "elapsed",
+            "type": "string"
+          },
+          {
+            "const": "interrupted",
+            "type": "string"
+          }
+        ]
+      },
+      "startedAt": {
+        "maximum": 8640000000000000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "waitId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "waitId",
+      "agentId",
+      "outcome",
+      "kind",
+      "dueAt",
+      "startedAt",
+      "endedAt",
+      "elapsedMs"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "pause duration",
+    "timer",
+    "wait for time"
+  ],
+  "steerable": true
+}

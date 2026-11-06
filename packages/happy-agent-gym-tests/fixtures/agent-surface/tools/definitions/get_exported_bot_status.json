@@ -1,0 +1,274 @@
+{
+  "capabilities": [
+    "Export bots to Telegram or other chat services and choose who may talk to them."
+  ],
+  "defer": true,
+  "description": "Read how bots are exported to chat services such as Telegram: whether each export is connected and as which account, who is allowed, each guest's conversation subtask, who is waiting to be let in, and who was recently turned away or ignored. Approve or deny someone waiting with approve_exported_bot_user or deny_exported_bot_user once the user decides. What people outside the allowlist wrote is never shown, and neither are credentials. botId limits the answer to one bot's exports; without it, every export is listed.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "botId": {
+        "description": "The ID of the Happy bot that is exported, from list_bots.",
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "name": "get_exported_bot_status",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "botId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "exportedBots": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "accessRequests": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "name": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "userId": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                    "type": "string"
+                  },
+                  "username": {
+                    "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f@]{1,64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "userId",
+                  "name",
+                  "at"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "allowedUsers": {
+              "items": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                "type": "string"
+              },
+              "maxItems": 256,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "bot": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]{0,63}$",
+              "type": "string"
+            },
+            "botId": {
+              "maxLength": 32,
+              "minLength": 2,
+              "pattern": "^[a-z][a-z0-9]*$",
+              "type": "string"
+            },
+            "conversations": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "agentId": {
+                    "maxLength": 32,
+                    "minLength": 2,
+                    "pattern": "^[a-z][a-z0-9]*$",
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "userId": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "userId",
+                  "agentId",
+                  "name"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "deniedUsers": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "name": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "userId": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                    "type": "string"
+                  },
+                  "username": {
+                    "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f@]{1,64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "userId",
+                  "name",
+                  "at"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "error": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "ignoredSenders": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "userId": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                    "type": "string"
+                  },
+                  "username": {
+                    "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f@]{1,64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "userId",
+                  "at"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "pattern": "^[a-z][a-z0-9_]{0,31}$",
+              "type": "string"
+            },
+            "link": {
+              "maxLength": 256,
+              "type": "string"
+            },
+            "service": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "serviceUsername": {
+              "pattern": "^[^\\s\\u0000-\\u001f\\u007f-\\u009f@]{1,64}$",
+              "type": "string"
+            },
+            "state": {
+              "anyOf": [
+                {
+                  "const": "disabled",
+                  "type": "string"
+                },
+                {
+                  "const": "waiting_for_bot",
+                  "type": "string"
+                },
+                {
+                  "const": "connecting",
+                  "type": "string"
+                },
+                {
+                  "const": "waiting_for_bridge",
+                  "type": "string"
+                },
+                {
+                  "const": "connected",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                }
+              ]
+            },
+            "unknownSenders": {
+              "anyOf": [
+                {
+                  "const": "ask",
+                  "type": "string"
+                },
+                {
+                  "const": "ignore",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "service",
+            "botId",
+            "state",
+            "allowedUsers",
+            "unknownSenders",
+            "ignoredSenders",
+            "accessRequests",
+            "deniedUsers",
+            "conversations"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "exportedBots"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "exported bot status",
+    "Telegram bot status",
+    "exported bot allowlist",
+    "Telegram user ID",
+    "bridge status"
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "capabilities": [
+    "Export bots to Telegram or other chat services and choose who may talk to them."
+  ],
+  "defer": true,
+  "description": "Stop exporting a bot to a chat service immediately and delete the export's stored credentials. kind is how the bot is exported, \"telegram\" or \"bridge\"; botId is the exported bot. Existing conversation subtasks and guests stay in Happy. A bridge token stops working and the bridge's unsent replies are discarded. To pause instead, use set_telegram_exported_bot or set_bridge_exported_bot with enabled false.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "botId": {
+        "description": "The ID of the Happy bot that is exported, from list_bots.",
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "kind": {
+        "description": "The kind of export to remove, \"telegram\" or \"bridge\"",
+        "maxLength": 32,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind",
+      "botId"
+    ],
+    "type": "object"
+  },
+  "name": "remove_exported_bot",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "botId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "kind": {
+        "pattern": "^[a-z][a-z0-9_]{0,31}$",
+        "type": "string"
+      },
+      "removed": {
+        "type": "boolean"
+      },
+      "service": {
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "botId",
+      "kind",
+      "removed"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "stop exporting bot",
+    "disconnect Telegram bot",
+    "remove bridge export"
+  ]
+}

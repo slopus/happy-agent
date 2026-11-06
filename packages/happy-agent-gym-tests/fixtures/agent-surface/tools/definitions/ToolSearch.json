@@ -1,0 +1,13 @@
+{
+  "name": "ToolSearch",
+  "persistInHistory": false,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "server": {
+    "type": "ToolSearch"
+  },
+  "visibleToUser": false
+}

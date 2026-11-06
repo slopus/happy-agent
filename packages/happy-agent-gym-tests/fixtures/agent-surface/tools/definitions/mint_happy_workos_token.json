@@ -1,0 +1,58 @@
+{
+  "capabilities": [
+    "List and manage Happy teams."
+  ],
+  "defer": true,
+  "description": "Mint a WorkOS bearer token for direct requests to a Happy Agent team node. Only an active admin bot may call this tool. Requires team_id (the WorkOS organization ID). The token acts as the connected Happy Cloud user in that organization, not as a separate bot identity, and expires within five minutes. WorkOS must have Access token duration set to five minutes or less; longer-lived tokens are withheld. Use Authorization: Bearer <access_token> only with the intended trusted node. This is a sensitive credential: do not echo it to the user, write it to files, or send it to unrelated endpoints. No refresh token is returned. Token expiry prevents new authenticated requests; it does not undo work already started.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "team_id": {
+        "maxLength": 160,
+        "minLength": 5,
+        "pattern": "^org_[A-Za-z0-9]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "team_id"
+    ],
+    "type": "object"
+  },
+  "name": "mint_happy_workos_token",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "access_token": {
+        "maxLength": 32768,
+        "minLength": 1,
+        "type": "string"
+      },
+      "expires_at": {
+        "description": "Actual token expiry as Unix milliseconds.",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "team_id": {
+        "maxLength": 160,
+        "minLength": 5,
+        "pattern": "^org_[A-Za-z0-9]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "access_token",
+      "expires_at",
+      "team_id"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "WorkOS authentication",
+    "short-lived token",
+    "connect to team node",
+    "bearer token"
+  ]
+}

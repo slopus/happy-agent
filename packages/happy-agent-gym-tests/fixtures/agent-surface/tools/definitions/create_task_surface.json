@@ -1,0 +1,373 @@
+{
+  "capabilities": [
+    "Create a Surface that points at an existing task as an admin bot."
+  ],
+  "defer": true,
+  "description": "Admin bots only: create a Surface pointing at one existing, active task so people can keep it in their sidebar. Opening it shows that task's existing conversation; it never joins anyone to the task or changes who may archive it. The name is the Surface's permanent label, shown when the target is unavailable; while available, people see the target's live name. A missing, deleted, or archived target is rejected as not found. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. A named creator joins at the end of their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum) for the Surface's own picture.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "creatorUserId": {
+        "anyOf": [
+          {
+            "maxLength": 32,
+            "minLength": 2,
+            "pattern": "^[a-z][a-z0-9]*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "imagePath": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)[^\\u0000]*$",
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "taskId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "creatorUserId",
+      "taskId"
+    ],
+    "type": "object"
+  },
+  "name": "create_task_surface",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "properties": {
+      "chatAgentId": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "creatorUserId": {
+        "anyOf": [
+          {
+            "maxLength": 32,
+            "minLength": 2,
+            "pattern": "^[a-z][a-z0-9]*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "id": {
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      },
+      "image": {
+        "anyOf": [
+          {
+            "properties": {
+              "thumbhash": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "thumbhash"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "members": {
+        "items": {
+          "properties": {
+            "joinedAt": {
+              "type": "integer"
+            },
+            "orderKey": {
+              "pattern": "^[0-9]*[1-9]$",
+              "type": "string"
+            },
+            "userId": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "minLength": 2,
+                  "pattern": "^[a-z][a-z0-9]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "joinedAt",
+            "orderKey",
+            "userId"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "promptDocument": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "description"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "target": {
+        "anyOf": [
+          {
+            "properties": {
+              "artifactId": {
+                "type": "string"
+              },
+              "botId": {
+                "not": {}
+              },
+              "hasImage": {
+                "type": "boolean"
+              },
+              "name": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              },
+              "state": {
+                "const": "available",
+                "type": "string"
+              },
+              "taskId": {
+                "not": {}
+              },
+              "type": {
+                "const": "artifact",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "name",
+              "hasImage",
+              "version",
+              "type",
+              "artifactId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifactId": {
+                "not": {}
+              },
+              "botId": {
+                "type": "string"
+              },
+              "hasImage": {
+                "type": "boolean"
+              },
+              "name": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              },
+              "state": {
+                "const": "available",
+                "type": "string"
+              },
+              "taskId": {
+                "not": {}
+              },
+              "type": {
+                "const": "bot",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "name",
+              "hasImage",
+              "version",
+              "type",
+              "botId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifactId": {
+                "not": {}
+              },
+              "botId": {
+                "not": {}
+              },
+              "hasImage": {
+                "const": false,
+                "type": "boolean"
+              },
+              "name": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              },
+              "state": {
+                "const": "available",
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "task",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "name",
+              "hasImage",
+              "version",
+              "type",
+              "taskId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifactId": {
+                "not": {}
+              },
+              "botId": {
+                "not": {}
+              },
+              "hasImage": {
+                "not": {}
+              },
+              "name": {
+                "not": {}
+              },
+              "state": {
+                "const": "unavailable",
+                "type": "string"
+              },
+              "taskId": {
+                "not": {}
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "const": "artifact",
+                    "type": "string"
+                  },
+                  {
+                    "const": "bot",
+                    "type": "string"
+                  },
+                  {
+                    "const": "task",
+                    "type": "string"
+                  }
+                ]
+              },
+              "version": {
+                "not": {}
+              }
+            },
+            "required": [
+              "type",
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "type": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "updatedAt": {
+        "type": "integer"
+      },
+      "version": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "image",
+      "type",
+      "members",
+      "name",
+      "updatedAt",
+      "version"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "task surface",
+    "pin task to sidebar",
+    "task reference"
+  ]
+}

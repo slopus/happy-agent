@@ -1,0 +1,151 @@
+{
+  "capabilities": [
+    "Run, inspect, pause, resume, and cancel multi-agent workflows."
+  ],
+  "defer": true,
+  "description": "Read a workflow's progress notes, a page at a time. Ask from=end for the latest notes, and follow the cursor a page reports to read further back.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "input": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "cursor": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "from": {
+                "const": "start",
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 96,
+                "minLength": 1,
+                "pattern": "^[^\\u0000\\r\\n]+$",
+                "type": "string"
+              },
+              "limit": {
+                "maximum": 500,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "const": "end",
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 96,
+                "minLength": 1,
+                "pattern": "^[^\\u0000\\r\\n]+$",
+                "type": "string"
+              },
+              "limit": {
+                "maximum": 500,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "from"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "required": [
+      "input"
+    ],
+    "type": "object"
+  },
+  "name": "workflow_logs",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^[^\\u0000\\r\\n]+$",
+        "type": "string"
+      },
+      "cursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "id": {
+        "maxLength": 96,
+        "minLength": 1,
+        "pattern": "^[^\\u0000\\r\\n]+$",
+        "type": "string"
+      },
+      "lines": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "position": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "text": {
+              "maxLength": 4000,
+              "type": "string"
+            }
+          },
+          "required": [
+            "position",
+            "text"
+          ],
+          "type": "object"
+        },
+        "maxItems": 500,
+        "type": "array"
+      },
+      "nextCursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "previousCursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "totalLines": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "agentId",
+      "id",
+      "cursor",
+      "lines",
+      "totalLines"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "workflow progress notes",
+    "orchestration logs",
+    "agent pipeline output"
+  ],
+  "transactional": true
+}

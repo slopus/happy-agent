@@ -76,245 +76,257 @@ interface Capture {
     readonly request: GymInferenceRequest;
 }
 
-it("exports the prompts and tools every agent kind receives", async () => {
-    const scripted = new Map<string, GymTurn>();
-    const gym = await createAgentGym({
-        timeoutMs: 30_000,
-        providerIds: Object.keys(PROVIDER_TYPES),
-        providerTypes: PROVIDER_TYPES,
-        models: MAIN.map(([, entry]) => entry),
-        files: {
-            "AGENTS.md": "{{projectAgentsMd}}\n",
-            "AGENTS_SECURITY.md": "{{projectSecurityMd}}\n",
-            ".agents/skills/example/SKILL.md":
-                "---\nname: example\ndescription: '{{skillDescription}}'\n---\n\n{{skillBody}}\n",
-        },
-        inference: (request) => {
-            const last = request.messages.at(-1);
-            const text =
-                last?.role === "user"
-                    ? last.content
-                          .map((block) => (block.type === "text" ? block.text : ""))
-                          .join("")
-                    : "";
-            const turn = scripted.get(text.trim());
-            if (turn !== undefined) {
-                scripted.delete(text.trim());
-                return turn;
-            }
-            if (request.sessionId.startsWith("naming:"))
-                return { content: [{ type: "text", text: "<title>Surface export</title>" }] };
-            return { content: [{ type: "text", text: "Done." }] };
-        },
-    });
-    try {
-        await writeFile(join(gym.publicHomePath, "config", "AGENTS.md"), "{{globalAgentsMd}}\n");
-        await writeFile(
-            join(gym.publicHomePath, "config", "SECURITY.md"),
-            "{{globalSecurityMd}}\n",
-        );
-        await writeFile(join(gym.publicHomePath, "AGENTS_SECURITY.md"), "{{homeSecurityMd}}\n");
-        const captures: Capture[] = [];
-        const firstRequest = (sessionId: string) =>
-            gym.waitUntil(
-                async () =>
-                    gym.inference.requests.find((request) => request.sessionId === sessionId),
-                `the first request of ${sessionId}`,
+// The fixtures describe a Linux host; other platforms are told about their own sandbox and paths.
+it.runIf(process.platform === "linux")(
+    "exports the prompts and tools every agent kind receives",
+    async () => {
+        const scripted = new Map<string, GymTurn>();
+        const gym = await createAgentGym({
+            timeoutMs: 30_000,
+            providerIds: Object.keys(PROVIDER_TYPES),
+            providerTypes: PROVIDER_TYPES,
+            models: MAIN.map(([, entry]) => entry),
+            files: {
+                "AGENTS.md": "{{projectAgentsMd}}\n",
+                "AGENTS_SECURITY.md": "{{projectSecurityMd}}\n",
+                ".agents/skills/example/SKILL.md":
+                    "---\nname: example\ndescription: '{{skillDescription}}'\n---\n\n{{skillBody}}\n",
+            },
+            inference: (request) => {
+                const last = request.messages.at(-1);
+                const text =
+                    last?.role === "user"
+                        ? last.content
+                              .map((block) => (block.type === "text" ? block.text : ""))
+                              .join("")
+                        : "";
+                const turn = scripted.get(text.trim());
+                if (turn !== undefined) {
+                    scripted.delete(text.trim());
+                    return turn;
+                }
+                if (request.sessionId.startsWith("naming:"))
+                    return { content: [{ type: "text", text: "<title>Surface export</title>" }] };
+                return { content: [{ type: "text", text: "Done." }] };
+            },
+        });
+        try {
+            await writeFile(
+                join(gym.publicHomePath, "config", "AGENTS.md"),
+                "{{globalAgentsMd}}\n",
             );
+            await writeFile(
+                join(gym.publicHomePath, "config", "SECURITY.md"),
+                "{{globalSecurityMd}}\n",
+            );
+            await writeFile(join(gym.publicHomePath, "AGENTS_SECURITY.md"), "{{homeSecurityMd}}\n");
+            const captures: Capture[] = [];
+            const firstRequest = (sessionId: string) =>
+                gym.waitUntil(
+                    async () =>
+                        gym.inference.requests.find((request) => request.sessionId === sessionId),
+                    `the first request of ${sessionId}`,
+                );
 
-        for (const [label, entry] of MAIN) {
-            const agent = await gym.createSession({ title: label });
-            await gym.send("Hello.", {
-                sessionId: agent.id,
-                providerId: entry.providerId,
-                modelId: entry.id,
+            for (const [label, entry] of MAIN) {
+                const agent = await gym.createSession({ title: label });
+                await gym.send("Hello.", {
+                    sessionId: agent.id,
+                    providerId: entry.providerId,
+                    modelId: entry.id,
+                    permissionMode: "auto",
+                });
+                captures.push({
+                    context: `main.${label}`,
+                    builtBy: "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
+                    request: await firstRequest(agent.id),
+                });
+            }
+
+            for (const mode of PERMISSION_MODES) {
+                const agent = await gym.createSession({ title: mode });
+                await gym.send("Hello.", { sessionId: agent.id, permissionMode: mode });
+                captures.push({
+                    context: `permission.${mode}`,
+                    builtBy: "permissions/PermissionsModule.ts:PermissionsModule",
+                    request: await firstRequest(agent.id),
+                });
+            }
+
+            const chief = (await gym.client.listBots()).bots.find((bot) => bot.isAdmin)!;
+            await gym.send("Hello.", { sessionId: chief.agent.id, permissionMode: "auto" });
+            captures.push({
+                context: "chief_of_staff",
+                builtBy:
+                    "bots/impl/formatChiefOfStaffInstructions.ts:formatChiefOfStaffInstructions",
+                request: await firstRequest(chief.agent.id),
+            });
+
+            const bot = (await gym.client.createBot({ name: "Research Bot" })).bot;
+            await gym.send("Hello.", { sessionId: bot.agent.id, permissionMode: "auto" });
+            captures.push({
+                context: "bot",
+                builtBy: "bots/BotsModule.ts:BotsModule",
+                request: await firstRequest(bot.agent.id),
+            });
+
+            const { task } = await gym.client.createTask({ name: "Quarterly review" });
+            await gym.send("Hello.", { sessionId: task.agent.id, permissionMode: "auto" });
+            captures.push({
+                context: "task",
+                builtBy: "tasks/TasksModule.ts:TasksModule",
+                request: await firstRequest(task.agent.id),
+            });
+
+            const selection = gym.selection;
+            scripted.set("Start a subtask.", {
+                content: [
+                    {
+                        type: "tool_call",
+                        name: "create_subtask",
+                        callId: "surface_subtask",
+                        arguments: {
+                            title: "Subtask",
+                            text: "Subtask hello.",
+                            model: selection.modelId,
+                            provider: selection.providerId,
+                            effort: "medium",
+                        },
+                    },
+                ],
+            });
+            await gym.send("Start a subtask.", {
+                sessionId: task.agent.id,
                 permissionMode: "auto",
             });
             captures.push({
-                context: `main.${label}`,
-                builtBy: "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
-                request: await firstRequest(agent.id),
+                context: "subtask",
+                builtBy: "subtasks/SubtasksModule.ts:SubtasksModule",
+                request: await firstRequestWithText(gym, "Subtask hello."),
             });
-        }
 
-        for (const mode of PERMISSION_MODES) {
-            const agent = await gym.createSession({ title: mode });
-            await gym.send("Hello.", { sessionId: agent.id, permissionMode: mode });
+            scripted.set("Start a collaborator.", {
+                content: [
+                    {
+                        type: "tool_call",
+                        name: "create_agent",
+                        callId: "surface_collaborator",
+                        arguments: {
+                            title: "Collaborator",
+                            text: "Collaborator hello.",
+                            model: selection.modelId,
+                            provider: selection.providerId,
+                            effort: "medium",
+                        },
+                    },
+                ],
+            });
+            await gym.send("Start a collaborator.", { permissionMode: "auto" });
             captures.push({
-                context: `permission.${mode}`,
-                builtBy: "permissions/PermissionsModule.ts:PermissionsModule",
-                request: await firstRequest(agent.id),
+                context: "collaborator",
+                builtBy: "collaboration/CollaborationModule.ts:CollaborationModule",
+                request: await firstRequestWithText(gym, "Collaborator hello."),
             });
-        }
 
-        const chief = (await gym.client.listBots()).bots.find((bot) => bot.isAdmin)!;
-        await gym.send("Hello.", { sessionId: chief.agent.id, permissionMode: "auto" });
-        captures.push({
-            context: "chief_of_staff",
-            builtBy: "bots/impl/formatChiefOfStaffInstructions.ts:formatChiefOfStaffInstructions",
-            request: await firstRequest(chief.agent.id),
-        });
-
-        const bot = (await gym.client.createBot({ name: "Research Bot" })).bot;
-        await gym.send("Hello.", { sessionId: bot.agent.id, permissionMode: "auto" });
-        captures.push({
-            context: "bot",
-            builtBy: "bots/BotsModule.ts:BotsModule",
-            request: await firstRequest(bot.agent.id),
-        });
-
-        const { task } = await gym.client.createTask({ name: "Quarterly review" });
-        await gym.send("Hello.", { sessionId: task.agent.id, permissionMode: "auto" });
-        captures.push({
-            context: "task",
-            builtBy: "tasks/TasksModule.ts:TasksModule",
-            request: await firstRequest(task.agent.id),
-        });
-
-        const selection = gym.selection;
-        scripted.set("Start a subtask.", {
-            content: [
-                {
-                    type: "tool_call",
-                    name: "create_subtask",
-                    callId: "surface_subtask",
-                    arguments: {
-                        title: "Subtask",
-                        text: "Subtask hello.",
-                        model: selection.modelId,
-                        provider: selection.providerId,
-                        effort: "medium",
+            scripted.set("Run outside the sandbox.", {
+                content: [
+                    {
+                        type: "tool_call",
+                        name: "Bash",
+                        callId: "surface_review",
+                        arguments: {
+                            command: "ls /",
+                            description: "List the root folder",
+                            dangerouslyDisableSandbox: true,
+                        },
                     },
-                },
-            ],
-        });
-        await gym.send("Start a subtask.", { sessionId: task.agent.id, permissionMode: "auto" });
-        captures.push({
-            context: "subtask",
-            builtBy: "subtasks/SubtasksModule.ts:SubtasksModule",
-            request: await firstRequestWithText(gym, "Subtask hello."),
-        });
+                ],
+            });
+            const before = gym.inference.requests.length;
+            await gym.send("Run outside the sandbox.", { permissionMode: "auto" });
+            const sessions = new Set(captures.map((capture) => capture.request.sessionId));
+            const reviews = gym.inference.requests
+                .slice(before)
+                .filter(
+                    (request) =>
+                        !sessions.has(request.sessionId) &&
+                        request.sessionId !== gym.defaultSessionId &&
+                        !request.sessionId.startsWith("naming:"),
+                );
+            expect(reviews).toHaveLength(1);
+            captures.push({
+                context: "auto_review",
+                builtBy: "auto/prompts/guardian-policy-template.md",
+                request: reviews[0]!,
+            });
 
-        scripted.set("Start a collaborator.", {
-            content: [
-                {
-                    type: "tool_call",
-                    name: "create_agent",
-                    callId: "surface_collaborator",
-                    arguments: {
-                        title: "Collaborator",
-                        text: "Collaborator hello.",
-                        model: selection.modelId,
-                        provider: selection.providerId,
-                        effort: "medium",
-                    },
-                },
-            ],
-        });
-        await gym.send("Start a collaborator.", { permissionMode: "auto" });
-        captures.push({
-            context: "collaborator",
-            builtBy: "collaboration/CollaborationModule.ts:CollaborationModule",
-            request: await firstRequestWithText(gym, "Collaborator hello."),
-        });
-
-        scripted.set("Run outside the sandbox.", {
-            content: [
-                {
-                    type: "tool_call",
-                    name: "Bash",
-                    callId: "surface_review",
-                    arguments: {
-                        command: "ls /",
-                        description: "List the root folder",
-                        dangerouslyDisableSandbox: true,
-                    },
-                },
-            ],
-        });
-        const before = gym.inference.requests.length;
-        await gym.send("Run outside the sandbox.", { permissionMode: "auto" });
-        const sessions = new Set(captures.map((capture) => capture.request.sessionId));
-        const reviews = gym.inference.requests
-            .slice(before)
-            .filter(
-                (request) =>
-                    !sessions.has(request.sessionId) &&
-                    request.sessionId !== gym.defaultSessionId &&
-                    !request.sessionId.startsWith("naming:"),
+            const naming = gym.inference.requests.find((request) =>
+                request.sessionId.startsWith("naming:"),
             );
-        expect(reviews).toHaveLength(1);
-        captures.push({
-            context: "auto_review",
-            builtBy: "auto/prompts/guardian-policy-template.md",
-            request: reviews[0]!,
-        });
+            expect(naming).toBeDefined();
+            captures.push({
+                context: "naming",
+                builtBy: "titles/impl/runNamingInference.ts:runNamingInference",
+                request: naming!,
+            });
 
-        const naming = gym.inference.requests.find((request) =>
-            request.sessionId.startsWith("naming:"),
-        );
-        expect(naming).toBeDefined();
-        captures.push({
-            context: "naming",
-            builtBy: "titles/impl/runNamingInference.ts:runNamingInference",
-            request: naming!,
-        });
+            await gym.compact();
+            const compaction = await gym.waitUntil(
+                async () => gym.inference.compactions[0],
+                "the compaction request",
+            );
 
-        await gym.compact();
-        const compaction = await gym.waitUntil(
-            async () => gym.inference.compactions[0],
-            "the compaction request",
-        );
-
-        const ids: Record<string, string> = {
-            [gym.defaultSessionId]: "mainAgentId",
-            [chief.agent.id]: "chiefOfStaffAgentId",
-            [chief.id]: "chiefOfStaffBotId",
-            [bot.agent.id]: "botAgentId",
-            [bot.id]: "botId",
-            [task.agent.id]: "taskAgentId",
-            [task.id]: "taskId",
-        };
-        for (const capture of captures)
-            ids[capture.request.sessionId] ??= `${capture.context.replace(/\W/g, "_")}_agentId`;
-        for (const workspace of [chief.workspaceId, bot.workspaceId, task.agent.workspaceId])
-            ids[workspace] ??= `workspaceId`;
-        const paths: [string, string][] = [
-            [gym.workspacePath, "workspacePath"],
-            [gym.happyHome, "happyHome"],
-            [gym.publicHomePath, "happyPublicHome"],
-            [join(gym.workspacePath, ".."), "installationRoot"],
-        ];
-        const surface = exportSurface(captures, compaction, ids, paths);
-        const health = await gym.client.getHealth();
-        const manifest = {
-            contexts: captures.map((capture) => capture.context),
-            generatedBy: SCRIPT,
-            happyAgentCommit: UPDATE ? headCommit() : "",
-            protocol: health.version.protocol,
-        };
-        if (UPDATE) {
-            await rm(FIXTURES, { recursive: true, force: true });
-            for (const [path, content] of surface) {
-                await mkdir(join(FIXTURES, path, ".."), { recursive: true });
-                await writeFile(join(FIXTURES, path), content);
+            const ids: Record<string, string> = {
+                [gym.defaultSessionId]: "mainAgentId",
+                [chief.agent.id]: "chiefOfStaffAgentId",
+                [chief.id]: "chiefOfStaffBotId",
+                [bot.agent.id]: "botAgentId",
+                [bot.id]: "botId",
+                [task.agent.id]: "taskAgentId",
+                [task.id]: "taskId",
+            };
+            for (const capture of captures)
+                ids[capture.request.sessionId] ??= `${capture.context.replace(/\W/g, "_")}_agentId`;
+            for (const workspace of [chief.workspaceId, bot.workspaceId, task.agent.workspaceId])
+                ids[workspace] ??= `workspaceId`;
+            const paths: [string, string][] = [
+                [gym.workspacePath, "workspacePath"],
+                [gym.happyHome, "happyHome"],
+                [gym.publicHomePath, "happyPublicHome"],
+                [join(gym.workspacePath, ".."), "installationRoot"],
+            ];
+            const surface = exportSurface(captures, compaction, ids, paths);
+            const health = await gym.client.getHealth();
+            const manifest = {
+                contexts: captures.map((capture) => capture.context),
+                generatedBy: SCRIPT,
+                happyAgentCommit: UPDATE ? headCommit() : "",
+                protocol: health.version.protocol,
+            };
+            if (UPDATE) {
+                await rm(FIXTURES, { recursive: true, force: true });
+                for (const [path, content] of surface) {
+                    await mkdir(join(FIXTURES, path, ".."), { recursive: true });
+                    await writeFile(join(FIXTURES, path), content);
+                }
+                await writeFile(join(FIXTURES, "manifest.json"), stableJson(manifest));
             }
-            await writeFile(join(FIXTURES, "manifest.json"), stableJson(manifest));
+            const written = await readTree(FIXTURES);
+            const committed = JSON.parse(written.get("manifest.json") ?? "{}") as typeof manifest;
+            written.delete("manifest.json");
+            expect({ ...committed, happyAgentCommit: "" }).toEqual({
+                ...manifest,
+                happyAgentCommit: "",
+            });
+            expect(committed.happyAgentCommit).toMatch(/^[0-9a-f]{40}$/);
+            expect([...written.keys()].sort()).toEqual([...surface.keys()].sort());
+            for (const [path, content] of surface) expect(written.get(path), path).toBe(content);
+        } finally {
+            await gym.dispose();
         }
-        const written = await readTree(FIXTURES);
-        const committed = JSON.parse(written.get("manifest.json") ?? "{}") as typeof manifest;
-        written.delete("manifest.json");
-        expect({ ...committed, happyAgentCommit: "" }).toEqual({
-            ...manifest,
-            happyAgentCommit: "",
-        });
-        expect(committed.happyAgentCommit).toMatch(/^[0-9a-f]{40}$/);
-        expect([...written.keys()].sort()).toEqual([...surface.keys()].sort());
-        for (const [path, content] of surface) expect(written.get(path), path).toBe(content);
-    } finally {
-        await gym.dispose();
-    }
-}, 300_000);
+    },
+    300_000,
+);
 
 async function firstRequestWithText(gym: AgentGym, text: string): Promise<GymInferenceRequest> {
     return await gym.waitUntil(

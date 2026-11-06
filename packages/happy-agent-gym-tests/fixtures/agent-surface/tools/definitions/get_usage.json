@@ -1,0 +1,288 @@
+{
+  "capabilities": [
+    "Inspect agent token and timing usage."
+  ],
+  "defer": true,
+  "description": "Read this agent's bounded token and timing usage. Set aggregate=true to group the totals, and follow a returned cursor to continue.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "aggregate": {
+        "type": "boolean"
+      },
+      "cursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "maxGroups": {
+        "maximum": 500,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "name": "get_usage",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "currentContext": {
+        "additionalProperties": false,
+        "properties": {
+          "approximate": {
+            "type": "boolean"
+          },
+          "contextTokens": {
+            "maximum": 1000000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "effort": {
+            "anyOf": [
+              {
+                "const": "off",
+                "type": "string"
+              },
+              {
+                "const": "minimal",
+                "type": "string"
+              },
+              {
+                "const": "low",
+                "type": "string"
+              },
+              {
+                "const": "medium",
+                "type": "string"
+              },
+              {
+                "const": "high",
+                "type": "string"
+              },
+              {
+                "const": "xhigh",
+                "type": "string"
+              },
+              {
+                "const": "max",
+                "type": "string"
+              }
+            ]
+          },
+          "model": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "tier": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "approximate",
+          "contextTokens",
+          "provider"
+        ],
+        "type": "object"
+      },
+      "cursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "groups": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "effort": {
+              "anyOf": [
+                {
+                  "const": "off",
+                  "type": "string"
+                },
+                {
+                  "const": "minimal",
+                  "type": "string"
+                },
+                {
+                  "const": "low",
+                  "type": "string"
+                },
+                {
+                  "const": "medium",
+                  "type": "string"
+                },
+                {
+                  "const": "high",
+                  "type": "string"
+                },
+                {
+                  "const": "xhigh",
+                  "type": "string"
+                },
+                {
+                  "const": "max",
+                  "type": "string"
+                }
+              ]
+            },
+            "inferenceCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "inferenceDurationMs": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "inputTokens": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "model": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "outputTokens": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "provider": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "tier": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "totalDurationMs": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "totalTokens": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "turnCount": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "turnDurationMs": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "provider",
+            "inferenceCount",
+            "turnCount",
+            "inputTokens",
+            "outputTokens",
+            "totalTokens",
+            "inferenceDurationMs",
+            "turnDurationMs",
+            "totalDurationMs"
+          ],
+          "type": "object"
+        },
+        "maxItems": 500,
+        "type": "array"
+      },
+      "inferenceCount": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "inferenceDurationMs": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "inputTokens": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "nextCursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "outputTokens": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "totalDurationMs": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "totalGroups": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "totalTokens": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "turnCount": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "turnDurationMs": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "cursor",
+      "totalGroups",
+      "inferenceCount",
+      "turnCount",
+      "inputTokens",
+      "outputTokens",
+      "totalTokens",
+      "inferenceDurationMs",
+      "turnDurationMs",
+      "totalDurationMs",
+      "groups"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "token usage",
+    "timing",
+    "model consumption",
+    "usage breakdown"
+  ]
+}

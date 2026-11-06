@@ -1,0 +1,146 @@
+{
+  "capabilities": [
+    "List a shared document's permanent changes and who made them."
+  ],
+  "defer": true,
+  "description": "List a document Surface's permanent changes, oldest first: each seq with who made it, when, and whether a person, an agent, or the one-time conversion of an older document. Returns up to 20 entries, default 10; continue with nextAfterSeq. Read any version's Markdown with read_document and its seq.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "afterSeq": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "limit": {
+        "maximum": 20,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "surfaceId": {
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId"
+    ],
+    "type": "object"
+  },
+  "name": "list_document_versions",
+  "returnType": {
+    "properties": {
+      "nextAfterSeq": {
+        "anyOf": [
+          {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "updates": {
+        "items": {
+          "properties": {
+            "actor": {
+              "properties": {
+                "agentId": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "userId": {
+                  "anyOf": [
+                    {
+                      "maxLength": 32,
+                      "minLength": 2,
+                      "pattern": "^[a-z][a-z0-9]*$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "agentId",
+                "userId"
+              ],
+              "type": "object"
+            },
+            "createdAt": {
+              "type": "integer"
+            },
+            "mutationId": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "seq": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "size": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "const": "api",
+                  "type": "string"
+                },
+                {
+                  "const": "tool",
+                  "type": "string"
+                },
+                {
+                  "const": "conversion",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "actor",
+            "createdAt",
+            "mutationId",
+            "seq",
+            "size",
+            "source"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "nextAfterSeq",
+      "updates"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "document history",
+    "document versions",
+    "markdown revision authors"
+  ]
+}

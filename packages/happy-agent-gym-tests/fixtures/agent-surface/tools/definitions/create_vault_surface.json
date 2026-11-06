@@ -1,0 +1,444 @@
+{
+  "capabilities": [
+    "Create a named shared vault Surface for files as an admin bot."
+  ],
+  "defer": true,
+  "description": "Admin bots only: create a named vault Surface, a shared tree of folders, files, and small web sites that keeps earlier versions of every file. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The immutable creator joins their sidebar; null joins nobody in team mode and the local person in standalone mode. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum) and a retention policy; without one the vault keeps every version for a day, one a day until 30 days, one a week after that, and holds deleted entries in its Trash for 30 days.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "creatorUserId": {
+        "anyOf": [
+          {
+            "maxLength": 32,
+            "minLength": 2,
+            "pattern": "^[a-z][a-z0-9]*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "imagePath": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)[^\\u0000]*$",
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "retention": {
+        "additionalProperties": false,
+        "properties": {
+          "keepAllDays": {
+            "maximum": 36500,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxAgeDays": {
+            "anyOf": [
+              {
+                "maximum": 36500,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxVersions": {
+            "anyOf": [
+              {
+                "maximum": 10000,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "thinning": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "afterDays": {
+                  "maximum": 36500,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "everyDays": {
+                  "maximum": 3650,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "afterDays",
+                "everyDays"
+              ],
+              "type": "object"
+            },
+            "maxItems": 8,
+            "type": "array"
+          },
+          "trashDays": {
+            "anyOf": [
+              {
+                "maximum": 3650,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "keepAllDays",
+          "maxAgeDays",
+          "maxVersions",
+          "thinning",
+          "trashDays"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "name",
+      "creatorUserId"
+    ],
+    "type": "object"
+  },
+  "name": "create_vault_surface",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "properties": {
+      "chatAgentId": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "creatorUserId": {
+        "anyOf": [
+          {
+            "maxLength": 32,
+            "minLength": 2,
+            "pattern": "^[a-z][a-z0-9]*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "id": {
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      },
+      "image": {
+        "anyOf": [
+          {
+            "properties": {
+              "thumbhash": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "thumbhash"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "members": {
+        "items": {
+          "properties": {
+            "joinedAt": {
+              "type": "integer"
+            },
+            "orderKey": {
+              "pattern": "^[0-9]*[1-9]$",
+              "type": "string"
+            },
+            "userId": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "minLength": 2,
+                  "pattern": "^[a-z][a-z0-9]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "joinedAt",
+            "orderKey",
+            "userId"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "promptDocument": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "name": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "description"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "target": {
+        "anyOf": [
+          {
+            "properties": {
+              "artifactId": {
+                "type": "string"
+              },
+              "botId": {
+                "not": {}
+              },
+              "hasImage": {
+                "type": "boolean"
+              },
+              "name": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              },
+              "state": {
+                "const": "available",
+                "type": "string"
+              },
+              "taskId": {
+                "not": {}
+              },
+              "type": {
+                "const": "artifact",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "name",
+              "hasImage",
+              "version",
+              "type",
+              "artifactId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifactId": {
+                "not": {}
+              },
+              "botId": {
+                "type": "string"
+              },
+              "hasImage": {
+                "type": "boolean"
+              },
+              "name": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              },
+              "state": {
+                "const": "available",
+                "type": "string"
+              },
+              "taskId": {
+                "not": {}
+              },
+              "type": {
+                "const": "bot",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "name",
+              "hasImage",
+              "version",
+              "type",
+              "botId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifactId": {
+                "not": {}
+              },
+              "botId": {
+                "not": {}
+              },
+              "hasImage": {
+                "const": false,
+                "type": "boolean"
+              },
+              "name": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+                "type": "string"
+              },
+              "state": {
+                "const": "available",
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              },
+              "type": {
+                "const": "task",
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "name",
+              "hasImage",
+              "version",
+              "type",
+              "taskId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "artifactId": {
+                "not": {}
+              },
+              "botId": {
+                "not": {}
+              },
+              "hasImage": {
+                "not": {}
+              },
+              "name": {
+                "not": {}
+              },
+              "state": {
+                "const": "unavailable",
+                "type": "string"
+              },
+              "taskId": {
+                "not": {}
+              },
+              "type": {
+                "anyOf": [
+                  {
+                    "const": "artifact",
+                    "type": "string"
+                  },
+                  {
+                    "const": "bot",
+                    "type": "string"
+                  },
+                  {
+                    "const": "task",
+                    "type": "string"
+                  }
+                ]
+              },
+              "version": {
+                "not": {}
+              }
+            },
+            "required": [
+              "type",
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "type": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "updatedAt": {
+        "type": "integer"
+      },
+      "version": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "image",
+      "type",
+      "members",
+      "name",
+      "updatedAt",
+      "version"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "create vault surface",
+    "new shared file vault",
+    "vault retention"
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "capabilities": [
+    "List and manage Happy teams."
+  ],
+  "defer": true,
+  "description": "Update one Happy team. For now, endpoint is the only mutable field and must be an absolute HTTP, HTTPS, Tailcat, WS, or WSS Happy Agent server endpoint. Happy Cloud permits the write only when the connected WorkOS user is an active administrator of that organization. Human-owned root agents and admin bots may call this tool; non-admin bots are refused.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "endpoint": {
+        "maxLength": 2048,
+        "minLength": 1,
+        "pattern": "^[\\x20-\\x7e]+$",
+        "type": "string"
+      },
+      "team_id": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "endpoint",
+      "team_id"
+    ],
+    "type": "object"
+  },
+  "name": "update_happy_team",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "endpoint": {
+        "maxLength": 600,
+        "minLength": 1,
+        "pattern": "^(?:http|https|tailcat|ws|wss)://[\\x20-\\x7e]+$",
+        "type": "string"
+      },
+      "team_id": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "endpoint",
+      "team_id"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "change team",
+    "team server URL",
+    "organization endpoint"
+  ]
+}

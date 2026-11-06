@@ -1,0 +1,127 @@
+{
+  "capabilities": [
+    "Configure Happy Agent MCP servers and reload them without restarting the daemon."
+  ],
+  "defer": true,
+  "description": "Reconciles the mcp.toml at the root of this session's folder (its project workspace, bot folder, or task folder) with the live shared MCP connections. Set global to true to reconcile {{happyPublicHome}}/config/mcp.toml instead. Unchanged connections keep running.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "global": {
+        "description": "Reload the user-wide {{happyPublicHome}}/config/mcp.toml catalog instead of this folder's mcp.toml.",
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  },
+  "name": "reload_mcp_servers",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "nextCursor": {
+        "maxLength": 32,
+        "minLength": 1,
+        "type": "string"
+      },
+      "servers": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "disabledTools": {
+              "items": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "enabledTools": {
+              "items": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 100,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "errorMessage": {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            "fingerprint": {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "promptSupport": {
+              "type": "boolean"
+            },
+            "resourceSupport": {
+              "type": "boolean"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "blocked",
+                  "type": "string"
+                },
+                {
+                  "const": "connected",
+                  "type": "string"
+                },
+                {
+                  "const": "connecting",
+                  "type": "string"
+                },
+                {
+                  "const": "disabled",
+                  "type": "string"
+                },
+                {
+                  "const": "failed",
+                  "type": "string"
+                },
+                {
+                  "const": "needs_auth",
+                  "type": "string"
+                }
+              ]
+            },
+            "toolCount": {
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "status",
+            "toolCount"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100,
+        "type": "array"
+      }
+    },
+    "required": [
+      "servers"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "reload MCP",
+    "reconnect MCP",
+    "refresh mcp.toml"
+  ]
+}

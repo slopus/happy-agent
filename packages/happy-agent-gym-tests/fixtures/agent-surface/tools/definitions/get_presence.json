@@ -1,0 +1,215 @@
+{
+  "capabilities": [
+    "Read and update the user's presence and availability."
+  ],
+  "defer": true,
+  "description": "Read the user's current presence status and optional status message.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "get_presence",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "presence": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "answerWaitMs": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "maximum": 8640000000000000,
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                ]
+              },
+              "changesAt": {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "effectiveFrom": {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "emoji": {
+                "maxLength": 32,
+                "minLength": 1,
+                "type": "string"
+              },
+              "expiresAt": {
+                "maximum": 8640000000000000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "fallback": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "message": {
+                        "maxLength": 240,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "presenceId": {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "presenceId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "message": {
+                        "maxLength": 240,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "const": "online",
+                            "type": "string"
+                          },
+                          {
+                            "const": "away",
+                            "type": "string"
+                          },
+                          {
+                            "const": "offline",
+                            "type": "string"
+                          },
+                          {
+                            "const": "dnd",
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "status"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "message": {
+                        "maxLength": 240,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "presenceId": {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "custom",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "presenceId"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "fallbackPresenceId": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "message": {
+                "maxLength": 240,
+                "minLength": 1,
+                "type": "string"
+              },
+              "presenceId": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "prompt": {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "const": "online",
+                        "type": "string"
+                      },
+                      {
+                        "const": "away",
+                        "type": "string"
+                      },
+                      {
+                        "const": "offline",
+                        "type": "string"
+                      },
+                      {
+                        "const": "dnd",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  {
+                    "const": "custom",
+                    "type": "string"
+                  }
+                ]
+              },
+              "title": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "presenceId",
+              "status",
+              "title",
+              "emoji",
+              "prompt",
+              "answerWaitMs"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "presence"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "current presence",
+    "availability status",
+    "online away offline"
+  ]
+}

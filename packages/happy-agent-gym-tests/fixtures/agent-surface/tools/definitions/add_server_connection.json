@@ -1,0 +1,162 @@
+{
+  "autoPermissionInstructions": "Contacts the address the person gave to check it is a Happy server, and writes private machine configuration. It stores no credential.",
+  "capabilities": [
+    "Configure and inspect remote Happy Agent connections."
+  ],
+  "defer": true,
+  "description": "Add a team Happy server by its HTTPS address, for example when the person asks to connect to their organization's server. Checks that the address is a Happy server offering single sign-on, then adds it to the connection roster. Holds no credential: each person's app signs in to the server itself. Agents cannot use it through this daemon. Remove it with remove_remote_connection. Personal Happy Agent only. Only active admin bots may use this tool.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "name": {
+        "description": "A display name; defaults to the address's host.",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "url": {
+        "description": "The server's https:// address, as the person gave it.",
+        "maxLength": 2048,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "url"
+    ],
+    "type": "object"
+  },
+  "name": "add_server_connection",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "properties": {
+      "connections": {
+        "items": {
+          "anyOf": [
+            {
+              "properties": {
+                "authentication": {
+                  "const": "bearer",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "instanceId": {
+                  "pattern": "^[a-z][a-z0-9]{23}$",
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "orderKey": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "orderKey",
+                "authentication"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "authentication": {
+                  "const": "workos",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "instanceId": {
+                  "pattern": "^[a-z][a-z0-9]{23}$",
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "orderKey": {
+                  "type": "string"
+                },
+                "organizationId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "orderKey",
+                "authentication",
+                "organizationId"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "authentication": {
+                  "const": "oauth",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "instanceId": {
+                  "pattern": "^[a-z][a-z0-9]{23}$",
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "orderKey": {
+                  "type": "string"
+                },
+                "url": {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "orderKey",
+                "authentication",
+                "url"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "version": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "connections"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "add team server",
+    "server URL",
+    "SSO server",
+    "connect to a team"
+  ]
+}

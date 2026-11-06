@@ -1,0 +1,305 @@
+{
+  "capabilities": [
+    "Find, inspect, and clean up stale bots, tasks, subtasks, projects, workspaces, and folders on this installation."
+  ],
+  "defer": true,
+  "description": "Permanently delete one bot, task, subtask, project, or workspace, active or archived, with everything preview_delete listed for it: agents and their whole conversations, catalog rows, folders, and worktree branches. Pass the confirmation code from preview_delete; if anything changed since, the call is refused and you must preview again. Running work is stopped at once and the removal finishes in the background. This cannot be undone. Only active admin bots may use it, and never on themselves or anything they run inside.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "confirmation": {
+        "description": "The confirmation code preview_delete returned for this exact deletion.",
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      },
+      "id": {
+        "description": "The bot, task, project, or workspace ID; a subtask's is its agent ID.",
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      },
+      "kind": {
+        "anyOf": [
+          {
+            "const": "bot",
+            "type": "string"
+          },
+          {
+            "const": "task",
+            "type": "string"
+          },
+          {
+            "const": "subtask",
+            "type": "string"
+          },
+          {
+            "const": "project",
+            "type": "string"
+          },
+          {
+            "const": "workspace",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "required": [
+      "kind",
+      "id",
+      "confirmation"
+    ],
+    "type": "object"
+  },
+  "name": "delete_permanently",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agents": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "agentId": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "createdAt": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "folder": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "lastActivityAt": {
+              "maximum": 9007199254740991,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "state": {
+              "anyOf": [
+                {
+                  "const": "running",
+                  "type": "string"
+                },
+                {
+                  "const": "idle",
+                  "type": "string"
+                },
+                {
+                  "const": "archived",
+                  "type": "string"
+                }
+              ]
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "agentId",
+            "state",
+            "createdAt",
+            "lastActivityAt"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "at": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "branches": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "branch": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "repository": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "repository",
+            "branch"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "confirmation": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "folders": {
+        "items": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "items": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "folder": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "const": "bot",
+                  "type": "string"
+                },
+                {
+                  "const": "task",
+                  "type": "string"
+                },
+                {
+                  "const": "subtask",
+                  "type": "string"
+                },
+                {
+                  "const": "project",
+                  "type": "string"
+                },
+                {
+                  "const": "workspace",
+                  "type": "string"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "running": {
+              "type": "boolean"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "active",
+                  "type": "string"
+                },
+                {
+                  "const": "archived",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "id",
+            "name",
+            "status",
+            "running"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "keptFolders": {
+        "items": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "target": {
+        "additionalProperties": false,
+        "properties": {
+          "folder": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "const": "bot",
+                "type": "string"
+              },
+              {
+                "const": "task",
+                "type": "string"
+              },
+              {
+                "const": "subtask",
+                "type": "string"
+              },
+              {
+                "const": "project",
+                "type": "string"
+              },
+              {
+                "const": "workspace",
+                "type": "string"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "active",
+                "type": "string"
+              },
+              {
+                "const": "archived",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "name",
+          "status",
+          "running"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "target",
+      "items",
+      "agents",
+      "folders",
+      "branches",
+      "keptFolders",
+      "confirmation",
+      "at"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "delete permanently",
+    "purge",
+    "hard delete",
+    "remove forever"
+  ],
+  "transactional": true
+}

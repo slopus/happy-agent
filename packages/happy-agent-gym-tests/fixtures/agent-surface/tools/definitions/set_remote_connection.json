@@ -1,0 +1,274 @@
+{
+  "autoPermissionInstructions": "Registers remote API authority for this installation's authenticated clients and writes private machine configuration. Credentials must not be repeated in output.",
+  "capabilities": [
+    "Configure and inspect remote Happy Agent connections."
+  ],
+  "defer": true,
+  "description": "Register or replace a remote Happy Agent after deploying it. Supply its case-sensitive Tailcat address and API port, plus its fixed standalone bearer token or WorkOS organization ID. This enables authenticated clients of this installation to access the remote's entire API. A server connection by URL is added with add_server_connection instead; this tool can only rename one, never change its address or reuse its ID, even after removal. Saves machine runtime configuration; never deploys or deletes a remote. Only active admin bots may use this tool.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "connection": {
+        "anyOf": [
+          {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "address": {
+                    "maxLength": 8192,
+                    "minLength": 3,
+                    "pattern": "^tc[A-Za-z0-9_-]+$",
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string"
+                  },
+                  "port": {
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "token": {
+                    "pattern": "^[A-Za-z0-9_-]{43}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "address",
+                  "token"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "address": {
+                    "maxLength": 8192,
+                    "minLength": 3,
+                    "pattern": "^tc[A-Za-z0-9_-]+$",
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string"
+                  },
+                  "port": {
+                    "maximum": 65535,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "workos_organization_id": {
+                    "maxLength": 160,
+                    "pattern": "^org_[A-Za-z0-9]+$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "address",
+                  "workos_organization_id"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "enabled": {
+                    "const": true,
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f]+$",
+                    "type": "string"
+                  },
+                  "url": {
+                    "maxLength": 2048,
+                    "minLength": 1,
+                    "pattern": "^https?://",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "url"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "const": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "enabled"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "id": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "connection"
+    ],
+    "type": "object"
+  },
+  "name": "set_remote_connection",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "properties": {
+      "connections": {
+        "items": {
+          "anyOf": [
+            {
+              "properties": {
+                "authentication": {
+                  "const": "bearer",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "instanceId": {
+                  "pattern": "^[a-z][a-z0-9]{23}$",
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "orderKey": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "orderKey",
+                "authentication"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "authentication": {
+                  "const": "workos",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "instanceId": {
+                  "pattern": "^[a-z][a-z0-9]{23}$",
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "orderKey": {
+                  "type": "string"
+                },
+                "organizationId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "orderKey",
+                "authentication",
+                "organizationId"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "authentication": {
+                  "const": "oauth",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "instanceId": {
+                  "pattern": "^[a-z][a-z0-9]{23}$",
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "orderKey": {
+                  "type": "string"
+                },
+                "url": {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "orderKey",
+                "authentication",
+                "url"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "version": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "connections"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "add remote agent",
+    "configure connection",
+    "Tailcat bearer WorkOS"
+  ]
+}

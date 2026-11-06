@@ -1,0 +1,64 @@
+{
+  "capabilities": [
+    "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
+  ],
+  "defer": true,
+  "description": "Creates an empty folder in a vault at path, with any missing folders above it, like mkdir -p. A folder already at path is reported and left as it is. Folders stay until they are deleted, even when empty.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "The folder's path, such as \"/Reports/Q3\"",
+        "maxLength": 16384,
+        "minLength": 2,
+        "pattern": "^/",
+        "type": "string"
+      },
+      "surfaceId": {
+        "description": "The vault Surface's ID, from list_surfaces",
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "create_vault_folder",
+  "returnType": {
+    "properties": {
+      "created": {
+        "type": "boolean"
+      },
+      "folderId": {
+        "type": "string"
+      },
+      "folders": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "path": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "path",
+      "folderId",
+      "created",
+      "folders"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "create vault folder",
+    "new vault folder",
+    "vault mkdir"
+  ]
+}

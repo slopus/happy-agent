@@ -1,0 +1,75 @@
+{
+  "capabilities": [
+    "Set this Happy Agent installation's display name and avatar."
+  ],
+  "defer": true,
+  "description": "Set the Happy Agent daemon's avatar from an absolute local PNG, JPEG, or WebP path, up to 8 MiB and 40 million pixels. Pass null to remove it. Only active admin bots may use it. The daemon stores its own image and computes the ThumbHash.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "anyOf": [
+          {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)[^\\u0000]*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "type": "object"
+  },
+  "name": "set_node_avatar",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "properties": {
+      "avatar": {
+        "anyOf": [
+          {
+            "properties": {
+              "thumbhash": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "thumbhash"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "name": {
+        "maxLength": 128,
+        "minLength": 1,
+        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "name",
+      "avatar"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "node",
+    "daemon",
+    "installation",
+    "avatar",
+    "image",
+    "photo",
+    "icon"
+  ]
+}

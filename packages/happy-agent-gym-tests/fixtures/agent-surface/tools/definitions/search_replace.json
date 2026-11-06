@@ -1,0 +1,205 @@
+{
+  "autoPermissionInstructions": "For search_replace, request reviewed Full access for this file change with sandbox_permissions: \"require_escalated\" and explain why in description. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate.",
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Replace an exact string in a file.\n\n- read_file prefixes each line with \"LINE_NUMBER→\". That prefix is not part of the file: match only what comes after the →, with its exact indentation.\n- old_string must match exactly one place in the file. If it appears more than once, add surrounding lines to make it unique, or set replace_all to change every occurrence.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "description": {
+        "description": "Concise user-facing reason why sandbox escalation is needed. Use only with require_escalated.",
+        "type": "string"
+      },
+      "file_path": {
+        "description": "The path to the file to modify. You can use a relative path in the workspace or an absolute path.",
+        "type": "string"
+      },
+      "new_string": {
+        "description": "The text to replace it with. It must differ from old_string.",
+        "type": "string"
+      },
+      "old_string": {
+        "description": "The text to replace.",
+        "type": "string"
+      },
+      "replace_all": {
+        "description": "Replace all occurrences of old_string. Defaults to false.",
+        "type": "boolean"
+      },
+      "sandbox_permissions": {
+        "anyOf": [
+          {
+            "const": "use_default",
+            "type": "string"
+          },
+          {
+            "const": "require_escalated",
+            "type": "string"
+          }
+        ],
+        "description": "Request reviewed Full access for this edit in Auto mode. Protected and outside-workspace paths are also reviewed automatically when omitted."
+      }
+    },
+    "required": [
+      "file_path",
+      "old_string",
+      "new_string"
+    ],
+    "type": "object"
+  },
+  "name": "search_replace",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "presentation": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "added": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "deleted": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "hunks": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "lines": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "context",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "add",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "delete",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "text": {
+                              "maxLength": 4000,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "text"
+                          ],
+                          "type": "object"
+                        },
+                        "maxItems": 500,
+                        "type": "array"
+                      },
+                      "newStart": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "oldStart": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "oldStart",
+                      "newStart",
+                      "lines"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 500,
+                  "type": "array"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "const": "add",
+                      "type": "string"
+                    },
+                    {
+                      "const": "delete",
+                      "type": "string"
+                    },
+                    {
+                      "const": "update",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "language": {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "omittedLines": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "path": {
+                  "maxLength": 4000,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "kind",
+                "added",
+                "deleted",
+                "hunks"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "omittedFiles": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "const": "file_diff",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "files"
+        ],
+        "type": "object"
+      },
+      "replacements": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "path",
+      "replacements",
+      "presentation"
+    ],
+    "type": "object"
+  }
+}

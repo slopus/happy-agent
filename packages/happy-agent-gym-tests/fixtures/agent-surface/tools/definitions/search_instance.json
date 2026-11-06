@@ -1,0 +1,370 @@
+{
+  "capabilities": [
+    "Find, inspect, and clean up stale bots, tasks, subtasks, projects, workspaces, and folders on this installation."
+  ],
+  "defer": true,
+  "description": "Search this installation's bots, tasks, subtasks, projects, and workspaces, archived ones included. Only active admin bots may use it.\nEach row shows its ID, name, status, creation time, last activity, owner, child counts, agents, folder, and branch. Last activity rolls up everything under the row: a bot or task includes its subtasks and their subagents at any depth, a workspace its agents and child workspaces, and a project every workspace and agent in it. A row with a run open is running now.\nWith query, rows are ranked by BM25 relevance; without it, every row matches and the most recently active come first. sort \"recent\" or \"stale\" orders by last activity, newest or oldest first. activeSince and inactiveSince filter by last activity; createdAfter and createdBefore by creation.\nPages hold 20 rows unless limit says otherwise; continue with nextCursor.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "activeSince": {
+        "description": "Only rows active at or after this ISO 8601 date or time, such as 2026-10-01.",
+        "maxLength": 64,
+        "minLength": 4,
+        "type": "string"
+      },
+      "createdAfter": {
+        "description": "Only rows created at or after this ISO 8601 time.",
+        "maxLength": 64,
+        "minLength": 4,
+        "type": "string"
+      },
+      "createdBefore": {
+        "description": "Only rows created before this ISO 8601 time.",
+        "maxLength": 64,
+        "minLength": 4,
+        "type": "string"
+      },
+      "cursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "inactiveSince": {
+        "description": "Only rows with no activity at or after this ISO 8601 date or time: stale since then.",
+        "maxLength": 64,
+        "minLength": 4,
+        "type": "string"
+      },
+      "kinds": {
+        "description": "Only these kinds. Omit for all five.",
+        "items": {
+          "anyOf": [
+            {
+              "const": "bot",
+              "type": "string"
+            },
+            {
+              "const": "task",
+              "type": "string"
+            },
+            {
+              "const": "subtask",
+              "type": "string"
+            },
+            {
+              "const": "project",
+              "type": "string"
+            },
+            {
+              "const": "workspace",
+              "type": "string"
+            }
+          ]
+        },
+        "maxItems": 5,
+        "minItems": 1,
+        "type": "array",
+        "uniqueItems": true
+      },
+      "limit": {
+        "maximum": 50,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "ownerUserId": {
+        "description": "Only tasks owned by this team user, and the subtasks under them.",
+        "maxLength": 96,
+        "minLength": 1,
+        "type": "string"
+      },
+      "query": {
+        "description": "Words to rank by with BM25 over names, usernames, folder paths, branches, and the project, bot, or task a row belongs to. Omit to list every row by activity.",
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "sort": {
+        "anyOf": [
+          {
+            "const": "relevance",
+            "type": "string"
+          },
+          {
+            "const": "recent",
+            "type": "string"
+          },
+          {
+            "const": "stale",
+            "type": "string"
+          }
+        ]
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "active",
+            "type": "string"
+          },
+          {
+            "const": "archived",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "name": "search_instance",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "at": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "cursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "nextCursor": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "results": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "item": {
+              "additionalProperties": false,
+              "properties": {
+                "agentId": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "agents": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "branch": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "createdAt": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "folder": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "const": "bot",
+                      "type": "string"
+                    },
+                    {
+                      "const": "task",
+                      "type": "string"
+                    },
+                    {
+                      "const": "subtask",
+                      "type": "string"
+                    },
+                    {
+                      "const": "project",
+                      "type": "string"
+                    },
+                    {
+                      "const": "workspace",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "lastActivityAt": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "ownerUserId": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "parent": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "anyOf": [
+                        {
+                          "const": "bot",
+                          "type": "string"
+                        },
+                        {
+                          "const": "task",
+                          "type": "string"
+                        },
+                        {
+                          "const": "subtask",
+                          "type": "string"
+                        },
+                        {
+                          "const": "project",
+                          "type": "string"
+                        },
+                        {
+                          "const": "workspace",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "name"
+                  ],
+                  "type": "object"
+                },
+                "running": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "const": "active",
+                      "type": "string"
+                    },
+                    {
+                      "const": "archived",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "subtasks": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "active": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "total": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "active"
+                  ],
+                  "type": "object"
+                },
+                "workspaces": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "active": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "total": {
+                      "maximum": 9007199254740991,
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "total",
+                    "active"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "kind",
+                "id",
+                "name",
+                "status",
+                "createdAt",
+                "lastActivityAt",
+                "running",
+                "agents"
+              ],
+              "type": "object"
+            },
+            "score": {
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "item"
+          ],
+          "type": "object"
+        },
+        "maxItems": 50,
+        "type": "array"
+      },
+      "sort": {
+        "anyOf": [
+          {
+            "const": "relevance",
+            "type": "string"
+          },
+          {
+            "const": "recent",
+            "type": "string"
+          },
+          {
+            "const": "stale",
+            "type": "string"
+          }
+        ]
+      },
+      "total": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "results",
+      "sort",
+      "total",
+      "cursor",
+      "at"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "cleanup",
+    "stale tasks",
+    "inactive bots",
+    "recent activity",
+    "find workspace",
+    "search instance"
+  ]
+}

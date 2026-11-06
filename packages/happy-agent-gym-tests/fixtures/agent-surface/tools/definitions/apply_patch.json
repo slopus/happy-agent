@@ -1,0 +1,231 @@
+{
+  "autoPermissionInstructions": "For apply_patch, request reviewed Full access for this patch with sandbox_permissions: \"require_escalated\" and a concise justification. Protected and outside-workspace paths are also reviewed automatically without the flag. Approval elevates only this call; Read only and Workspace write never elevate.",
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Use the `apply_patch` tool to edit files. Put the patch text in the `patch` field as an ordinary JSON string.\n\nA patch is a sequence of file sections between a `*** Begin Patch` line and an `*** End Patch` line:\n\n*** Begin Patch\n*** Add File: path/to/new.ts\n+the whole content of the new file\n+one \"+\" per line\n*** Update File: path/to/existing.ts\n@@ the line the change sits under\n a line that stays, written with a leading space\n-a line that goes\n+the line that replaces it\n*** Delete File: path/to/old.ts\n*** End Patch\n\nPut `*** Move to: new/path.ts` directly after `*** Update File:` to rename the file as well, and `*** End of File` after a hunk that must match the very end of the file. Quote the lines you are changing: a hunk whose context does not match the file is refused, and nothing is written unless the whole patch applies.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "justification": {
+        "description": "Concise user-facing reason why sandbox escalation is needed. Use only with require_escalated.",
+        "type": "string"
+      },
+      "patch": {
+        "description": "Patch content using the *** Begin Patch/*** End Patch format.",
+        "type": "string"
+      },
+      "sandbox_permissions": {
+        "anyOf": [
+          {
+            "const": "use_default",
+            "type": "string"
+          },
+          {
+            "const": "require_escalated",
+            "type": "string"
+          }
+        ],
+        "description": "Request reviewed Full access for this patch in Auto mode. Protected and outside-workspace paths are also reviewed automatically when omitted."
+      },
+      "workdir": {
+        "description": "Working directory for relative paths.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "patch"
+    ],
+    "type": "object"
+  },
+  "name": "apply_patch",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "changes": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "anyOf": [
+                {
+                  "const": "add",
+                  "type": "string"
+                },
+                {
+                  "const": "delete",
+                  "type": "string"
+                },
+                {
+                  "const": "move",
+                  "type": "string"
+                },
+                {
+                  "const": "update",
+                  "type": "string"
+                }
+              ]
+            },
+            "moved_to": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "presentation": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "added": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "deleted": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "hunks": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "lines": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "anyOf": [
+                                {
+                                  "const": "context",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "add",
+                                  "type": "string"
+                                },
+                                {
+                                  "const": "delete",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "text": {
+                              "maxLength": 4000,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "text"
+                          ],
+                          "type": "object"
+                        },
+                        "maxItems": 500,
+                        "type": "array"
+                      },
+                      "newStart": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "oldStart": {
+                        "maximum": 9007199254740991,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "oldStart",
+                      "newStart",
+                      "lines"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 500,
+                  "type": "array"
+                },
+                "kind": {
+                  "anyOf": [
+                    {
+                      "const": "add",
+                      "type": "string"
+                    },
+                    {
+                      "const": "delete",
+                      "type": "string"
+                    },
+                    {
+                      "const": "update",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "language": {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                "omittedLines": {
+                  "maximum": 9007199254740991,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "path": {
+                  "maxLength": 4000,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "kind",
+                "added",
+                "deleted",
+                "hunks"
+              ],
+              "type": "object"
+            },
+            "maxItems": 20,
+            "type": "array"
+          },
+          "omittedFiles": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "const": "file_diff",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "files"
+        ],
+        "type": "object"
+      },
+      "summary": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "changes",
+      "summary",
+      "presentation"
+    ],
+    "type": "object"
+  }
+}

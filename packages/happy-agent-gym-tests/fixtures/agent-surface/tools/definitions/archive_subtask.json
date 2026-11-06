@@ -1,0 +1,45 @@
+{
+  "capabilities": [
+    "Archive a direct subtask together with its own workspace, preserving conversation history."
+  ],
+  "defer": true,
+  "description": "Archive one of your direct subtasks. Only its coordinating bot, task, or subtask may do this. Stops the target's current work and running descendants, but marks only the target archived. A workspace-bound subtask's workspace is archived with it; a shared-filesystem subtask leaves the shared folder untouched. Conversation history remains, but archival is final: nobody can restore the subtask. Repeating archival is harmless.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agentId"
+    ],
+    "type": "object"
+  },
+  "name": "archive_subtask",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "agentId"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "archive subtask",
+    "finish subtask",
+    "stop subtask"
+  ],
+  "transactional": true
+}

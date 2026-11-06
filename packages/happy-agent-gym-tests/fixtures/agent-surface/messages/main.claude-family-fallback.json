@@ -1,0 +1,11 @@
+[
+  {
+    "content": [
+      {
+        "text": "Hello.",
+        "type": "text"
+      }
+    ],
+    "role": "user"
+  }
+]

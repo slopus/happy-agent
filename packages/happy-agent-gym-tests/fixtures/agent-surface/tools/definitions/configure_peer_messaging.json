@@ -1,0 +1,60 @@
+{
+  "capabilities": [
+    "Configure this installation's peer messaging listener and identity."
+  ],
+  "defer": true,
+  "description": "Enable or disable peer messaging. Set listen=true only on the reachable node that accepts incoming WebSocket sessions; listen defaults false so a desktop can connect outward without binding a port. Supply a stable node_id. Listener default host is 127.0.0.1 and port is 24780. Durably admits settings; poll debug_peer_connections to confirm application. Only active admin bots may configure it. Configure the other installation through independently authorized administration access.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "host": {
+        "maxLength": 253,
+        "minLength": 1,
+        "pattern": "^[A-Za-z0-9.:%_-]+$",
+        "type": "string"
+      },
+      "listen": {
+        "type": "boolean"
+      },
+      "node_id": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "port": {
+        "maximum": 65535,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "enabled"
+    ],
+    "type": "object"
+  },
+  "name": "configure_peer_messaging",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "accepted": {
+        "const": true,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "accepted"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "configure peer messaging",
+    "peer listener",
+    "node identity",
+    "WebSocket server"
+  ],
+  "transactional": true
+}

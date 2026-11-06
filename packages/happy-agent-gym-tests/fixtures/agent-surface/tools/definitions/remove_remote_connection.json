@@ -1,0 +1,152 @@
+{
+  "capabilities": [
+    "Configure and inspect remote Happy Agent connections."
+  ],
+  "defer": true,
+  "description": "Remove a remote Happy Agent from the local connection roster and close its active proxy requests. Does not delete the remote or its data. Only active admin bots may use this tool.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "id"
+    ],
+    "type": "object"
+  },
+  "name": "remove_remote_connection",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "properties": {
+      "connections": {
+        "items": {
+          "anyOf": [
+            {
+              "properties": {
+                "authentication": {
+                  "const": "bearer",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "instanceId": {
+                  "pattern": "^[a-z][a-z0-9]{23}$",
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "orderKey": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "orderKey",
+                "authentication"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "authentication": {
+                  "const": "workos",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "instanceId": {
+                  "pattern": "^[a-z][a-z0-9]{23}$",
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "orderKey": {
+                  "type": "string"
+                },
+                "organizationId": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "orderKey",
+                "authentication",
+                "organizationId"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "authentication": {
+                  "const": "oauth",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+                  "type": "string"
+                },
+                "instanceId": {
+                  "pattern": "^[a-z][a-z0-9]{23}$",
+                  "type": "string"
+                },
+                "name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "orderKey": {
+                  "type": "string"
+                },
+                "url": {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "orderKey",
+                "authentication",
+                "url"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "maxItems": 100,
+        "type": "array"
+      },
+      "version": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "connections"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "remove remote agent",
+    "disconnect endpoint",
+    "remote roster"
+  ]
+}

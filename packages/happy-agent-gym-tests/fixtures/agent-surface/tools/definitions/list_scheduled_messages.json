@@ -1,0 +1,169 @@
+{
+  "capabilities": [
+    "Wait and schedule durable messages for future delivery."
+  ],
+  "defer": true,
+  "description": "List the messages you have scheduled, soonest first, one bounded page at a time. Every ID shown is complete and can be cancelled.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
+      "limit": {
+        "maximum": 100,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "pending",
+            "type": "string"
+          },
+          {
+            "const": "delivered",
+            "type": "string"
+          },
+          {
+            "const": "undelivered",
+            "type": "string"
+          },
+          {
+            "const": "cancelled",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "type": "object"
+  },
+  "name": "list_scheduled_messages",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "limit": {
+        "maximum": 100,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "nextCursor": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
+      "previousCursor": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
+      "schedules": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "createdAt": {
+              "maximum": 8640000000000000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "deliveredAt": {
+              "maximum": 8640000000000000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "dueAt": {
+              "maximum": 8640000000000000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "failure": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "id": {
+              "maxLength": 32,
+              "minLength": 2,
+              "pattern": "^[a-z][a-z0-9]*$",
+              "type": "string"
+            },
+            "message": {
+              "maxLength": 50000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "mutationId": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "senderAgentId": {
+              "maxLength": 32,
+              "minLength": 2,
+              "pattern": "^[a-z][a-z0-9]*$",
+              "type": "string"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "const": "pending",
+                  "type": "string"
+                },
+                {
+                  "const": "delivered",
+                  "type": "string"
+                },
+                {
+                  "const": "undelivered",
+                  "type": "string"
+                },
+                {
+                  "const": "cancelled",
+                  "type": "string"
+                }
+              ]
+            },
+            "targetAgentId": {
+              "maxLength": 32,
+              "minLength": 2,
+              "pattern": "^[a-z][a-z0-9]*$",
+              "type": "string"
+            },
+            "updatedAt": {
+              "maximum": 8640000000000000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "senderAgentId",
+            "targetAgentId",
+            "message",
+            "dueAt",
+            "status",
+            "createdAt",
+            "updatedAt"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100,
+        "type": "array"
+      }
+    },
+    "required": [
+      "schedules",
+      "limit"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "pending reminders",
+    "future messages",
+    "scheduled delivery list"
+  ]
+}

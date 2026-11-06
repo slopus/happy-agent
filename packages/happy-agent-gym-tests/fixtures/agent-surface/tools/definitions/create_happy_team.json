@@ -1,0 +1,71 @@
+{
+  "capabilities": [
+    "List and manage Happy teams."
+  ],
+  "defer": true,
+  "description": "Create one Happy team as a WorkOS organization and publish its absolute HTTP, HTTPS, Tailcat, WS, or WSS Happy Agent server endpoint. The endpoint is required. The connected Happy Cloud user becomes its administrator. Human-owned root agents and admin bots may create teams; non-admin bots are refused.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "endpoint": {
+        "maxLength": 2048,
+        "minLength": 1,
+        "pattern": "^[\\x20-\\x7e]+$",
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 255,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "endpoint",
+      "name"
+    ],
+    "type": "object"
+  },
+  "name": "create_happy_team",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "endpoint": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "maxLength": 600,
+            "minLength": 1,
+            "pattern": "^(?:http|https|tailcat|ws|wss)://[\\x20-\\x7e]+$",
+            "type": "string"
+          }
+        ]
+      },
+      "id": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "endpoint",
+      "id",
+      "name"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "new team",
+    "create organization",
+    "Happy Cloud team"
+  ]
+}

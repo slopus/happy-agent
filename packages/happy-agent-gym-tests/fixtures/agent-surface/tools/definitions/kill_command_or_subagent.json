@@ -1,0 +1,57 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Terminate a running background command by task ID.\n\nUsage notes:\n- The command is asked to stop first and forced a moment later, along with everything it started.\n- Stopping a command that had already ended is not an error; you are simply told it had ended.\n- This machine runs commands, so a subagent's task ID is not something it can stop.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "task_id": {
+        "description": "The task ID to terminate.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ],
+    "type": "object"
+  },
+  "name": "kill_command_or_subagent",
+  "returnType": {
+    "properties": {
+      "command": {
+        "type": "string"
+      },
+      "message": {
+        "type": "string"
+      },
+      "outcome": {
+        "anyOf": [
+          {
+            "const": "stopped",
+            "type": "string"
+          },
+          {
+            "const": "already_ended",
+            "type": "string"
+          },
+          {
+            "const": "not_found",
+            "type": "string"
+          }
+        ]
+      },
+      "task_id": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id",
+      "outcome",
+      "message"
+    ],
+    "type": "object"
+  }
+}

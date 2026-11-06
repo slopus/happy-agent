@@ -1,0 +1,66 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Writes to an existing shell session and returns recent output. Use it for REPLs started by exec_command; end each cell with a newline. Leave chars empty to poll a session without typing anything into it.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "chars": {
+        "description": "Bytes to write to stdin. Defaults to empty, which polls without writing.",
+        "type": "string"
+      },
+      "max_output_tokens": {
+        "description": "Output token budget. Defaults to 10000 tokens; larger requests may be capped by policy.",
+        "type": "number"
+      },
+      "session_id": {
+        "description": "Identifier of the running shell session.",
+        "type": "number"
+      },
+      "yield_time_ms": {
+        "description": "Wait before yielding output. Non-empty writes default to 250 ms and cap at 30000 ms; empty polls default to 5000 ms and cap at 300000 ms.",
+        "type": "number"
+      }
+    },
+    "required": [
+      "session_id"
+    ],
+    "type": "object"
+  },
+  "name": "write_stdin",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "command": {
+        "type": "string"
+      },
+      "exit_code": {
+        "type": "integer"
+      },
+      "original_token_count": {
+        "type": "integer"
+      },
+      "output": {
+        "type": "string"
+      },
+      "restarting": {
+        "const": true,
+        "type": "boolean"
+      },
+      "session_id": {
+        "type": "integer"
+      },
+      "wall_time_seconds": {
+        "type": "number"
+      }
+    },
+    "required": [
+      "output",
+      "wall_time_seconds"
+    ],
+    "type": "object"
+  }
+}

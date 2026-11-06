@@ -1,0 +1,87 @@
+{
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Search file contents with regular expressions (ripgrep).\n\n- Use full regular-expression syntax and pass the pattern without surrounding quotes.\n- Respects .gitignore.\n- Only filter by type or glob when you are sure of the file type.\n- Output is ripgrep-style and large results are capped.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "-A": {
+        "description": "Number of lines to show after each match.",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "-B": {
+        "description": "Number of lines to show before each match.",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "-C": {
+        "description": "Number of lines to show before and after each match.",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "-i": {
+        "description": "Case-insensitive search. Defaults to false.",
+        "type": "boolean"
+      },
+      "glob": {
+        "description": "Glob pattern used to filter files, such as '*.ts'.",
+        "type": "string"
+      },
+      "head_limit": {
+        "description": "Limit output to the first N lines. Defaults to 200.",
+        "maximum": 10000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "multiline": {
+        "description": "Enable multiline mode, where patterns can span lines. Defaults to false.",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "File or directory to search. Defaults to the workspace path.",
+        "type": "string"
+      },
+      "pattern": {
+        "description": "The regular expression pattern to search for in file contents.",
+        "type": "string"
+      },
+      "type": {
+        "description": "File type to search, such as js, py, rust, or go.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "pattern"
+    ],
+    "type": "object"
+  },
+  "name": "grep",
+  "reloadable": true,
+  "returnType": {
+    "properties": {
+      "match_count": {
+        "type": "integer"
+      },
+      "matched_files": {
+        "type": "integer"
+      },
+      "text": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "text",
+      "matched_files",
+      "match_count",
+      "truncated"
+    ],
+    "type": "object"
+  }
+}

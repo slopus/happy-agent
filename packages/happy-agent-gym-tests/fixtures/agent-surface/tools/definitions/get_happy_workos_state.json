@@ -1,0 +1,44 @@
+{
+  "capabilities": [
+    "List and manage Happy teams."
+  ],
+  "defer": true,
+  "description": "Return the WorkOS user ID and client ID of the connected Happy Cloud setup. Copy these exact values into feature.team.owner_workos_user_id and feature.team.workos_client_id when deploying a Happy Agent team server. This tool is available only to an active admin bot.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "get_happy_workos_state",
+  "reloadable": true,
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "workos_client_id": {
+        "maxLength": 160,
+        "minLength": 9,
+        "pattern": "^client_[A-Za-z0-9]+$",
+        "type": "string"
+      },
+      "workos_user_id": {
+        "maxLength": 160,
+        "minLength": 7,
+        "pattern": "^user_[A-Za-z0-9]+$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "workos_client_id",
+      "workos_user_id"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "WorkOS user ID",
+    "WorkOS client ID",
+    "team configuration",
+    "Happy Cloud identity"
+  ]
+}

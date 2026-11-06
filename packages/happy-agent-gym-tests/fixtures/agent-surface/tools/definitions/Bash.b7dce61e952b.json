@@ -1,0 +1,109 @@
+{
+  "autoPermissionInstructions": "Commands stay sandboxed by default. sandbox_permissions: require_escalated requests review and temporary Full access for one command. Secret selection is reviewed separately and stays sandboxed. Read only and Workspace write never elevate.",
+  "capabilities": [
+    "Read and modify files, run shell commands, inspect images, and manage background processes."
+  ],
+  "defer": false,
+  "description": "Execute a command in the environment's shell. Each call starts in the primary working directory; cwd selects another directory for this call. Prefer Read, Write, Edit, Glob, and Grep for file work. timeout is the foreground wait in seconds, default 60, maximum 300. A command that outlives the wait keeps running in the background and returns a task_id. run_in_background starts it in the background immediately, watching about three seconds for startup. Read new output with TaskOutput, send characters with TaskInput, and stop the process tree with TaskStop. Completion notifications arrive automatically. secrets selects attached secret bundles for this command; selection is reviewed independently of sandbox escalation.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "command": {
+        "description": "The command to execute.",
+        "minLength": 1,
+        "type": "string"
+      },
+      "cwd": {
+        "description": "Working directory for this command; defaults to the primary working directory.",
+        "type": "string"
+      },
+      "description": {
+        "description": "Short description of the command's purpose.",
+        "type": "string"
+      },
+      "justification": {
+        "description": "Concise reason why this call needs Full access.",
+        "type": "string"
+      },
+      "run_in_background": {
+        "description": "Start as a background shell task, with a brief startup wait.",
+        "type": "boolean"
+      },
+      "sandbox_permissions": {
+        "anyOf": [
+          {
+            "const": "use_default",
+            "type": "string"
+          },
+          {
+            "const": "require_escalated",
+            "type": "string"
+          }
+        ],
+        "description": "Request reviewed Full access for this exact call when the workspace sandbox blocks necessary work. Defaults to use_default."
+      },
+      "secrets": {
+        "description": "Attached secret bundle IDs needed by this exact command. Omit or pass an empty array for none.",
+        "items": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "type": "string"
+        },
+        "maxItems": 256,
+        "type": "array",
+        "uniqueItems": true
+      },
+      "timeout": {
+        "default": 60,
+        "description": "Foreground wait in seconds. A command that outlives this wait keeps running in the background.",
+        "maximum": 300,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "tty": {
+        "description": "Happy extension: run under a terminal for interactive programs. Defaults to false.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "command"
+    ],
+    "type": "object"
+  },
+  "name": "Bash",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "exit_code": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "stderr": {
+        "type": "string"
+      },
+      "stdout": {
+        "type": "string"
+      },
+      "task_id": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "stdout",
+      "stderr",
+      "truncated"
+    ],
+    "type": "object"
+  }
+}

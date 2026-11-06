@@ -1,0 +1,61 @@
+{
+  "capabilities": [
+    "List, add, and remove this installation's extra skill folders."
+  ],
+  "defer": true,
+  "description": "List the extra folders this Happy Agent installation scans for skills, beside ~/.agents/skills and each project's .agents/skills. Only active admin bots may use it.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "list_skill_folders",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "folders": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "const": "user",
+                  "type": "string"
+                },
+                {
+                  "const": "runtime",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "path",
+            "source"
+          ],
+          "type": "object"
+        },
+        "maxItems": 512,
+        "type": "array"
+      }
+    },
+    "required": [
+      "folders"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "skill folders",
+    "skill directories",
+    "skills path",
+    "list skills roots"
+  ]
+}

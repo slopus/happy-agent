@@ -1,0 +1,179 @@
+{
+  "capabilities": [
+    "Inspect local peer configuration, session status, and diagnostics."
+  ],
+  "defer": true,
+  "description": "Inspect local peer listener state, configured peer endpoints, and last health or send diagnostics. Does not contact peers or return tokens or message content. Only active admin bots may use this tool.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "debug_peer_connections",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "host": {
+        "type": "string"
+      },
+      "listenEnabled": {
+        "type": "boolean"
+      },
+      "listenerError": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "listening": {
+        "type": "boolean"
+      },
+      "nodeId": {
+        "anyOf": [
+          {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "peers": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "connected": {
+              "type": "boolean"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lastCheckedAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lastOperation": {
+              "anyOf": [
+                {
+                  "const": "health",
+                  "type": "string"
+                },
+                {
+                  "const": "send",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "lastSuccess": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "nodeId": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "const": "connect",
+                  "type": "string"
+                },
+                {
+                  "const": "accept",
+                  "type": "string"
+                }
+              ]
+            },
+            "sessionId": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "minLength": 2,
+                  "pattern": "^[a-z][a-z0-9]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "nodeId",
+            "role",
+            "url",
+            "connected",
+            "sessionId",
+            "lastOperation",
+            "lastSuccess",
+            "lastCheckedAt",
+            "error"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      },
+      "port": {
+        "type": "integer"
+      }
+    },
+    "required": [
+      "enabled",
+      "nodeId",
+      "listening",
+      "listenEnabled",
+      "host",
+      "port",
+      "listenerError",
+      "peers"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "debug peers",
+    "peer connection status",
+    "peer diagnostics",
+    "listener status"
+  ]
+}

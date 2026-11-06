@@ -1,0 +1,146 @@
+{
+  "capabilities": [
+    "Edit a shared document's Markdown alongside the people editing it, keeping permanent history."
+  ],
+  "defer": true,
+  "description": "Edit a document Surface by giving its entire new Markdown and the seq of the version you read. Happy compares your Markdown with that version block by block and applies only what you changed, so edits people made since then are kept. Unchanged Markdown changes nothing. Empty text clears the content; history keeps every version. To restore an earlier version, read it with read_document and write its text with the latest seq. Use seq 0 only for a document you read as empty.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "seq": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "surfaceId": {
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      },
+      "text": {
+        "maxLength": 262144,
+        "pattern": "^[^\\u0000]*$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "seq",
+      "text"
+    ],
+    "type": "object"
+  },
+  "name": "update_document",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "properties": {
+      "changed": {
+        "type": "boolean"
+      },
+      "document": {
+        "properties": {
+          "authorUserId": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 2,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "lastEditorUserId": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "minLength": 2,
+                "pattern": "^[a-z][a-z0-9]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seq": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "surfaceId": {
+            "maxLength": 24,
+            "minLength": 24,
+            "pattern": "^[a-z][a-z0-9]{23}$",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 262144,
+            "pattern": "^[^\\u0000]*$",
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorUserId",
+          "createdAt",
+          "lastEditorUserId",
+          "seq",
+          "surfaceId",
+          "text",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object"
+      },
+      "omitted": {
+        "type": "string"
+      },
+      "promptDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "type": "object"
+      }
+    },
+    "required": [
+      "document",
+      "changed"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "update document",
+    "edit markdown",
+    "clear shared document",
+    "restore document revision"
+  ],
+  "transactional": true
+}

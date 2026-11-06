@@ -1,0 +1,42 @@
+{
+  "capabilities": [
+    "Disable a configured peer and revoke its messaging authority."
+  ],
+  "defer": true,
+  "description": "Durably admit disabling a peer in this installation's generated runtime settings, revoking its inbound messaging token and outbound route. Inspect debug_peer_connections to confirm application. Does not alter the remote installation. Only active admin bots may use this tool.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "node_id": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "node_id"
+    ],
+    "type": "object"
+  },
+  "name": "remove_peer_connection",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "accepted": {
+        "const": true,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "accepted"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "remove peer",
+    "disconnect node",
+    "revoke peer token"
+  ],
+  "transactional": true
+}

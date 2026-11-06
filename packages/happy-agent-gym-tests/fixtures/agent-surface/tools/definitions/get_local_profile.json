@@ -1,0 +1,56 @@
+{
+  "capabilities": [
+    "Read the local profile for remote deployment."
+  ],
+  "defer": true,
+  "description": "Read this standalone installation's current profile name and email. Copy these values into the remote machine's [profile] table in happy.toml before startup to avoid manual profile creation. Returns null for missing fields; never invent missing values. Only an active admin bot running as a root agent may use this tool. No API request or credentials are involved.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "get_local_profile",
+  "reloadable": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "email": {
+        "anyOf": [
+          {
+            "maxLength": 254,
+            "minLength": 3,
+            "pattern": "^[^\\s@<>]+@[^\\s@<>]+\\.[^\\s@<>]+$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "name": {
+        "anyOf": [
+          {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200b\\u200e\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u206f]+$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "name",
+      "email"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "local name and email",
+    "profile bootstrap",
+    "remote onboarding"
+  ]
+}
