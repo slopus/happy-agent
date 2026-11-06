@@ -3,7 +3,8 @@
     "ignorePatterns": [
         "packages/rig-codemode-codex/native/**",
         "packages/happy-agent-modules/sources/artifactData/impl/artifactDiagramsScript.ts",
-        "skills/**"
+        "skills/**",
+        "packages/happy-agent-gym-tests/fixtures/**"
     ],
     "tabWidth": 4,
     "useTabs": false

@@ -7,7 +7,8 @@
         "test:gym": "pnpm dlx bun@1.4.4 runGym.ts",
         "test:gym:node": "pnpm dlx bun@1.4.4 runGym.ts --lane=node",
         "test:gym:api": "pnpm dlx bun@1.4.4 scripts/runHappyApiSuite.ts",
-        "vitest:bun": "pnpm dlx bun@1.4.4 --bun node_modules/vitest/vitest.mjs"
+        "vitest:bun": "pnpm dlx bun@1.4.4 --bun node_modules/vitest/vitest.mjs",
+        "export:agent-surface": "HAPPY_AGENT_SURFACE_UPDATE=1 pnpm vitest:bun run tests/agent_surface_fixtures_match_what_models_receive.test.ts"
     },
     "devDependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",
