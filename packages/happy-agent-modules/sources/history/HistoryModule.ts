@@ -160,10 +160,13 @@ import {
 import {
     eraseHistoryWords,
     historyWordRole,
+    historyWordText,
     indexHistoryWordBlocks,
     indexHistoryWords,
     migrateHistoryBlockWords,
+    migrateHistoryMessageWords,
     migrateHistoryWords,
+    WHOLE_MESSAGE,
     queryHistoryRowsForWords,
     queryHistoryWordBackfill,
     queryHistoryWords,
@@ -449,6 +452,7 @@ export class HistoryModule implements AgentModule {
         ],
         ["005-history-words", migrateHistoryWords],
         ["006-history-block-words", migrateHistoryBlockWords],
+        ["007-history-message-words", migrateHistoryMessageWords],
     ];
 
     /**
@@ -1558,7 +1562,8 @@ export class HistoryModule implements AgentModule {
                 ...updated,
                 blocks: [...pending, block],
             });
-            // Search finds every text block of an answer, so the blocks it gains are indexed.
+            // Search finds every text block of an answer being written, so the blocks it gains
+            // are indexed on their own until the answer is finished and indexed whole.
             await indexHistoryWordBlocks(ctx, scope.agent.id, updated, existing.blocks.length);
             if (pending.length > 0) {
                 await scope.runKV.delete(ctx, PENDING_BLOCKS_KEY);
@@ -1568,6 +1573,8 @@ export class HistoryModule implements AgentModule {
         if (existing.blocks.length > 1 && existing.blocks.at(-1)?.type !== "tool_result") {
             this.#scheduleAppendNotification(ctx, scope.agent.id, [existing]);
         }
+        // The full message is finished: the answer goes on in its continuation.
+        await indexHistoryWords(ctx, scope.agent.id, existing);
         const continuationId = createRecordId();
         await scope.runKV.write(ctx, PENDING_INFERENCE_ID_KEY, continuationId);
         await this.#append(ctx, scope.agent.id, {
@@ -1638,6 +1645,7 @@ export class HistoryModule implements AgentModule {
             const finalInferenceId = await scope.runKV.read(ctx, PENDING_INFERENCE_ID_KEY);
             if (Value.Check(historyRecordIdSchema, finalInferenceId)) {
                 const existing = await this.message(ctx, scope.agent.id, finalInferenceId);
+                if (existing !== undefined) await indexHistoryWords(ctx, scope.agent.id, existing);
                 if (
                     existing !== undefined &&
                     existing.blocks.length > 1 &&
@@ -1709,6 +1717,8 @@ export class HistoryModule implements AgentModule {
                 targetId === inference.inferenceId && blocks.length === 0
                     ? existingInitial
                     : await this.message(ctx, scope.agent.id, targetId);
+            // The answer is finished, so its words are indexed whole, across its blocks.
+            if (finalized !== undefined) await indexHistoryWords(ctx, scope.agent.id, finalized);
             if (
                 finalized !== undefined &&
                 finalized.blocks.length > 1 &&
@@ -2436,7 +2446,12 @@ export class HistoryModule implements AgentModule {
                 const role = message === undefined ? null : historyWordRole(message);
                 if (message === undefined || role === null) continue;
                 const block = message.blocks[found.block];
-                const text = block?.type === "text" ? block.text : "";
+                const text =
+                    found.block === WHOLE_MESSAGE
+                        ? historyWordText(message)
+                        : block?.type === "text"
+                          ? block.text
+                          : "";
                 hits.push({
                     type: "message",
                     key: `message:${message.recordId}`,

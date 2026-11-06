@@ -117,6 +117,20 @@ describe("search through the real daemon", () => {
                 },
             ],
         );
+        // A finished answer matches all of a query's words, even when they sit in different blocks.
+        await vi.waitFor(
+            async () => {
+                expect(
+                    (await client.search({ q: "rocket countdown", types: ["message"] })).results,
+                ).toMatchObject([
+                    {
+                        key: messages.find((result) => result.role === "agent")?.key,
+                        snippet: "The rocket is fueled.",
+                    },
+                ]);
+            },
+            { timeout: 10_000 },
+        );
         expect(new Set(keys(everything).filter((key) => !key.startsWith("message:")))).toEqual(
             new Set([
                 `vault_folder:${plans.id}`,

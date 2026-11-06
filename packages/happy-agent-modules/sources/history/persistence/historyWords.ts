@@ -11,15 +11,20 @@ import type { HistoryMessage } from "../HistoryMessage.js";
 
 /**
  * The word index search reads over conversation messages: what people and agents wrote, never
- * reasoning, tool calls, tool output, or system and service notices. Every text block of a
- * searchable message gets an integer row in `history_word_rows`, under which a contentless FTS5
- * table indexes its words, folded for case and diacritics and never stemmed. An answer grows block
- * by block, and indexing only the blocks it gains keeps that linear in its size. The text itself
- * stays in the history row. Every function joins the caller's transaction through `ctx.db`.
+ * reasoning, tool calls, tool output, or system and service notices. A searchable message gets an
+ * integer row in `history_word_rows` holding all of its text, `block` = {@link WHOLE_MESSAGE},
+ * under which a contentless FTS5 table indexes its words, folded for case and diacritics and never
+ * stemmed, so a query matches words anywhere in it. While an answer is still being written, each
+ * text block it gains gets a row of its own instead, which keeps writing it linear in its size;
+ * when it is finished, one whole-message row replaces them. The text itself stays in the history
+ * row. Every function joins the caller's transaction through `ctx.db`.
  */
 const ROWS = sql.raw("happy_agent_module_history_word_rows");
 const WORDS = sql.raw("happy_agent_module_history_words");
 const BACKFILL = sql.raw("happy_agent_module_history_word_backfill");
+
+/** The `block` of the row holding a whole message's text. */
+export const WHOLE_MESSAGE = -1;
 
 const rows = <Row>(ctx: Context, query: SQL) => agentDatabaseRows<Row>(ctx.db, query);
 const run = (ctx: Context, query: SQL) => agentDatabaseRun(ctx.db, query);
@@ -67,6 +72,22 @@ export async function migrateHistoryBlockWords(
     );
 }
 
+/**
+ * Index finished messages as one row each, so a query's words may sit in different blocks. The
+ * per-block rows written so far are dropped and the backfill indexes every message again.
+ */
+export async function migrateHistoryMessageWords(
+    _ctx: Context,
+    database: AgentDatabaseFacade<AgentDatabase>,
+): Promise<void> {
+    const change = (query: SQL) => agentDatabaseRun(database, query);
+    await change(sql`DELETE FROM ${WORDS}`);
+    await change(sql`DELETE FROM ${ROWS}`);
+    await change(
+        sql`INSERT OR REPLACE INTO ${BACKFILL} (id, after, until) SELECT 1, 0, coalesce(max(rowid), 0) FROM happy_agent_module_history`,
+    );
+}
+
 /** Who wrote a message, as search reports it, or null when search leaves it out. */
 export function historyWordRole(message: HistoryMessage): "user" | "agent" | null {
     if (message.hideFromUser === true) return null;
@@ -75,7 +96,17 @@ export function historyWordRole(message: HistoryMessage): "user" | "agent" | nul
     return null;
 }
 
-/** Index a message's words in place of what was indexed before. */
+/** The words search finds a whole message by: its text blocks, one to a line. */
+export function historyWordText(message: HistoryMessage): string {
+    return message.blocks
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n");
+}
+
+/**
+ * Index a finished message's words as one row, in place of what was indexed before, whether a
+ * whole-message row or the block rows of an answer being written.
+ */
 export async function indexHistoryWords(
     ctx: Context,
     agentId: string,
@@ -89,10 +120,14 @@ export async function indexHistoryWords(
         ctx,
         sql`DELETE FROM ${ROWS} WHERE agent_id = ${agentId} AND record_id = ${message.recordId}`,
     );
-    await indexHistoryWordBlocks(ctx, agentId, message, 0);
+    if (historyWordRole(message) === null) return;
+    await insertWords(ctx, agentId, message.recordId, WHOLE_MESSAGE, historyWordText(message));
 }
 
-/** Index the words of a message's text blocks from `from` on, which it has just gained. */
+/**
+ * Index the words of the text blocks an answer still being written has gained, from `from` on,
+ * each under its own row until {@link indexHistoryWords} indexes the finished message.
+ */
 export async function indexHistoryWordBlocks(
     ctx: Context,
     agentId: string,
@@ -102,15 +137,26 @@ export async function indexHistoryWordBlocks(
     if (historyWordRole(message) === null) return;
     for (let block = from; block < message.blocks.length; block += 1) {
         const found = message.blocks[block]!;
-        if (found.type !== "text" || found.text.trim().length === 0) continue;
-        const [row] = await rows<{ id: number }>(
-            ctx,
-            sql`INSERT INTO ${ROWS} (agent_id, record_id, block) VALUES (${agentId}, ${message.recordId}, ${block}) ON CONFLICT (agent_id, record_id, block) DO UPDATE SET block = excluded.block RETURNING id`,
-        );
-        const id = Number(row!.id);
-        await run(ctx, sql`DELETE FROM ${WORDS} WHERE rowid = ${id}`);
-        await run(ctx, sql`INSERT INTO ${WORDS} (rowid, text) VALUES (${id}, ${found.text})`);
+        if (found.type === "text")
+            await insertWords(ctx, agentId, message.recordId, block, found.text);
     }
+}
+
+async function insertWords(
+    ctx: Context,
+    agentId: string,
+    recordId: string,
+    block: number,
+    text: string,
+): Promise<void> {
+    if (text.trim().length === 0) return;
+    const [row] = await rows<{ id: number }>(
+        ctx,
+        sql`INSERT INTO ${ROWS} (agent_id, record_id, block) VALUES (${agentId}, ${recordId}, ${block}) ON CONFLICT (agent_id, record_id, block) DO UPDATE SET block = excluded.block RETURNING id`,
+    );
+    const id = Number(row!.id);
+    await run(ctx, sql`DELETE FROM ${WORDS} WHERE rowid = ${id}`);
+    await run(ctx, sql`INSERT INTO ${WORDS} (rowid, text) VALUES (${id}, ${text})`);
 }
 
 /** Forget every message of an agent erased for good. */
@@ -123,8 +169,8 @@ export async function eraseHistoryWords(ctx: Context, agentId: string): Promise<
 }
 
 /**
- * Messages with a text block holding every query word, best BM25 first, each once under its best
- * block, from at most `limit` matching blocks.
+ * Messages holding every query word, in the whole message or, for an answer still being written,
+ * in one of its blocks, best BM25 first, each once under its best row, from at most `limit` rows.
  */
 export async function queryHistoryWords(
     ctx: Context,
