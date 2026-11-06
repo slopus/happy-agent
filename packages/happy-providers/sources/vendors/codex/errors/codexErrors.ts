@@ -338,6 +338,14 @@ function hasUnauthorized(error: unknown, seen: Set<object>): boolean {
     return "cause" in error && hasUnauthorized(error.cause, seen);
 }
 
+/**
+ * OpenAI answers a WebSocket handshake with 426 to mean "use HTTP". Native Codex switches to HTTP
+ * at once and for the rest of the session, without retrying and without reporting an error.
+ */
+export function isCodexWebSocketUpgradeRequiredError(error: unknown): boolean {
+    return readDetails(error, new Set()).statuses.includes(426);
+}
+
 export function isCodexWebSocketUnavailableError(error: unknown): boolean {
     const details = readDetails(error, new Set());
     if (details.statuses.some((status) => status === 404 || status === 405 || status === 426))

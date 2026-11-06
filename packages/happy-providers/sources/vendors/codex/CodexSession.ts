@@ -58,6 +58,7 @@ import { isCodexPreviousResponseNotFoundError } from "@/vendors/codex/errors/cod
 import { readCodexMissingToolOutputCallId } from "@/vendors/codex/errors/codexErrors.js";
 import { isCodexUnauthorizedError } from "@/vendors/codex/errors/codexErrors.js";
 import { isCodexWebSocketUnavailableError } from "@/vendors/codex/errors/codexErrors.js";
+import { isCodexWebSocketUpgradeRequiredError } from "@/vendors/codex/errors/codexErrors.js";
 import { isRetryableCodexStreamError } from "@/vendors/codex/errors/codexErrors.js";
 import { recoverCodexUnauthorizedCredential } from "@/vendors/codex/impl/recoverCodexUnauthorizedCredential.js";
 import { resolveCodexReasoningEffort } from "@/vendors/codex/impl/resolveCodexReasoningEffort.js";
@@ -352,6 +353,15 @@ export class CodexSession extends BaseSession {
                         this.replaceCredential(recovered);
                         continue;
                     }
+                }
+                if (
+                    this.transport === "auto" &&
+                    !useSse &&
+                    isCodexWebSocketUpgradeRequiredError(error)
+                ) {
+                    this.forceSse = true;
+                    useSse = true;
+                    continue;
                 }
                 if (
                     !useSse &&
@@ -798,6 +808,19 @@ export class CodexSession extends BaseSession {
                         this.replaceCredential(recovered);
                         continue;
                     }
+                }
+                if (
+                    this.transport === "auto" &&
+                    !useSse &&
+                    isCodexWebSocketUpgradeRequiredError(error)
+                ) {
+                    // The handshake was refused before any request reached the model, so this is
+                    // a transport choice rather than a retry: it neither spends the retry budget
+                    // nor reports one.
+                    this.forceSse = true;
+                    useSse = true;
+                    transportRetries = 0;
+                    continue;
                 }
                 const missingToolOutputCallId = readCodexMissingToolOutputCallId(error);
                 if (

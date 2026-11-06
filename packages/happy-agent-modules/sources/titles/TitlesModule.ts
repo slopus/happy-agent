@@ -204,11 +204,13 @@ export class TitlesModule implements AgentModule<AnyAgentTool> {
                 sessionNamed: typeof config.metadata?.title === "string",
                 ...(workspace === undefined ? {} : { workspace }),
             });
-            if (this.#closed || names.title === undefined) return;
+            // A model that failed or answered nothing usable must not leave the chat untitled.
+            const title = names.title ?? this.fallbackName(message);
+            if (this.#closed || title === undefined) return;
             const latest = await agents.config(ctx, agentId);
             if (latest === undefined || typeof latest.metadata?.title === "string") return;
-            await agents.updateMetadata(ctx, agentId, { title: names.title });
-            await this.#recordGeneratedTitle(ctx, agentId, names.title);
+            await agents.updateMetadata(ctx, agentId, { title });
+            await this.#recordGeneratedTitle(ctx, agentId, title);
         } catch (error) {
             ctx.log.debug(
                 "Naming an agent from its first user message did not happen.",
