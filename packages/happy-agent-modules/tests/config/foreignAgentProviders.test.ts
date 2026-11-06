@@ -144,6 +144,60 @@ describe("harnesses", () => {
         expect(foreignAgentStart(route("codex_cli", "codex")).env).toEqual({});
     });
 
+    it("runs Claude Code from a Claude account's executable unless the harness names one", async () => {
+        const accounts = [
+            "[providers.claude]",
+            "enabled = true",
+            'executable = "/opt/claude/bin/claude"',
+            "[providers.claude_alex_acme]",
+            'type = "claude"',
+            'oauth_token = "token-for-test"',
+            "enabled = true",
+            "[harnesses.claude_code]",
+        ];
+        const start = async (lines: readonly string[], provider: string) => {
+            const config = await testConfigRootedAt(await root(), lines.join("\n"));
+            const route = foreignAgentRoutes(config.configuration).find(
+                (r) => r.harnessId === "claude_code" && r.providerId === provider,
+            )!;
+            return foreignAgentStart(route);
+        };
+        expect((await start(accounts, "claude")).command).toBe("/opt/claude/bin/claude");
+        expect((await start(accounts, "claude_alex_acme")).command).toBeUndefined();
+        expect(
+            (await start([...accounts, 'command = "/opt/pinned/claude"'], "claude")).command,
+        ).toBe("/opt/pinned/claude");
+    });
+
+    it("starts Claude Code with its telemetry only when the harness opts in", async () => {
+        const start = async (lines: readonly string[]) => {
+            const config = await testConfigRootedAt(
+                await root(),
+                ["[providers.claude]", "enabled = true", "[harnesses.claude_code]", ...lines].join(
+                    "\n",
+                ),
+            );
+            const route = foreignAgentRoutes(config.configuration).find(
+                (r) => r.harnessId === "claude_code" && r.providerId === "claude",
+            )!;
+            return foreignAgentStart(route);
+        };
+        expect((await start([])).telemetry).toBeUndefined();
+        expect((await start(["telemetry = false"])).telemetry).toBeUndefined();
+        expect((await start(["telemetry = true"])).telemetry).toBe(true);
+        await expect(
+            testConfigRootedAt(
+                await root(),
+                [
+                    "[providers.codex]",
+                    "enabled = true",
+                    "[harnesses.codex_cli]",
+                    "telemetry = true",
+                ].join("\n"),
+            ),
+        ).rejects.toThrow(/telemetry/);
+    });
+
     it("offers agents with their own login as accounts named after their harness", async () => {
         const config = await testConfigRootedAt(
             await root(),
