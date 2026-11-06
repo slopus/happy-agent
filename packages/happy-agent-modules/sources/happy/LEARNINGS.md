@@ -43,6 +43,51 @@ failure notice under the same identity. The full content remains in local Histor
 events keep syncing. An optional relay projection must not permanently stall a session behind
 one message it cannot carry.
 
+## Phone attachments reach the agent as paths
+
+Every picture a person attached on the phone used to be decoded into an inline image block, so
+each one cost context on every later turn whether or not it mattered, and any other file was
+dropped without a word. The user decided the agent should choose whether to look. An attachment
+is now written into the agent's own folder at `.happy-uploads/<message>/<n>-<name>`, the place
+the phones' direct chats already use, and the agent reads a note after the person's words naming
+each file by absolute path. The note's wording is shared verbatim with Happy CLI
+(`formatAttachmentNote`) so every route reads the same and clients can recognize it; change it
+only together with the CLI and the phones.
+
+- The folder is the one phone file reads already resolve from catalog ownership, and the write
+  goes through `ProjectFilesModule`, so a runner folder gets the file on the runner and the path
+  is that machine's (`absolutePath`). Never derive the path from the agent's working directory or
+  write with this machine's filesystem.
+- Absolute paths, not `./` relative ones: Claude's `Read` requires an absolute `file_path`, and
+  a session may run in a subfolder of its root.
+- A picture keeps a name ending in its type's extension, because the file tools decide whether
+  something is an image by extension.
+- Fallback is decided by whether the file could be saved where the agent works, not by asking
+  which tools a model has: a session with no folder or a failed write gets the picture inline.
+  Classifying models by tool capability is what master plan 16 rules out.
+
+## Saved attachments expire after 30 days and stay out of Git
+
+`.happy-uploads` had no retention, so it grew without bound in every agent folder, and Git showed
+it as untracked in every repository. The user decided attachments expire after 30 days, as Happy
+CLI's do. The installation-level `HappyModule` sweeps once at start and hourly, in every folder the
+files module serves, and removes message folders nothing was written to for 30 days.
+
+- Age is the newest modification time of the message folder and its files. Compute exposes no
+  access time, and access times are unreliable anyway, so reading an attachment does not extend
+  it; a message folder is written once, so its age is the message's.
+- The sweep belongs to `HappyModule`, not to each `HappyConnection`: personal team connections
+  share folders, and one sweep per installation must also cover what the phones' direct chats
+  wrote through the file API with no relay involved.
+- Removal goes through `ProjectFilesModule.removeOlderThan`, so a runner folder is swept on the
+  runner with the same containment rules; never walk folders with this machine's filesystem.
+- The Git noise is solved by an ignore file inside the uploads folder (`*`), not by editing the
+  project's `.gitignore` or writing `.git/info/exclude`. The folder is ours; `.git` is a protected
+  control path, worktrees share one `info/exclude` through the common directory, and a runner
+  folder would need Git run there. The ignore file works in every repository, worktree, nested
+  folder, and runner through the same file write. It is written only where an uploads folder
+  exists, and an existing one is left alone.
+
 ## Happy links become plain text on the phone
 
 Agents mention artifacts, conversations, workspaces, projects, Surfaces, and people with Happy
@@ -138,6 +183,19 @@ layout is left out, as the mapper already leaves out empty text.
       loop it. Legacy accounts encrypt with the account secret and are exempt from the key checks.
     - A session being archived, such as a reaped subtask, is only deleted and forgotten.
       Publishing a replacement just to archive it would put a new session on the phone.
+
+## The computer is named after the node
+
+Machine metadata used to say `<hostname> — Happy Agent`, so the name a person gave the
+installation, which the direct-connection QR code already carries, never reached the relay. The
+contract agreed with the phone apps is `displayName = "<node name> — Happy Agent"`, with `host`
+still the hostname; the hostname stands in only when the node name cannot be read. The machine
+client reads the name from `NodeModule` at every registration and republishes on its
+`onUpdated`, without registering again.
+
+A name given on the phone is still never overwritten. Any published name ending in
+` — Happy Agent` is treated as Happy Agent's own and follows the node; any other is kept. Without
+that rule the old hostname name, already stored on every relay, would have stuck forever.
 
 ## Missing relay sessions
 

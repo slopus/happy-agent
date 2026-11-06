@@ -62,3 +62,22 @@ The module used to start its own listener and reconcile in `afterStart`. With th
 listener, the exposure can only open once the daemon has bound it, so `attachTransport` triggers
 the first reconciliation and a pairing started earlier fails with "not ready yet" instead of
 showing a code nothing can answer.
+
+## A phone removes itself
+
+Every route under `/v0/mobile-connector` refused device tokens, so Disconnect on the phone could
+only forget its own credentials. The desktop kept the device, and pairing again added a second
+row for the same phone. `DELETE /v0/mobile-connector/device` is now the one connector route a
+device token reaches, and it removes only the phone that asks. It is idempotent: a retry after
+success meets an unknown token and gets `401`, which the phone also treats as removed. The asking
+connection is detached from the revocation so it receives its `200` before closing, and the
+socket lingers as after a pairing so the last phone's answer is not cut off.
+
+Replacing the previous device during the handshake was considered and declined. The daemon keeps
+only the token's SHA-256, so the phone could prove the old token only by sending it whole, which
+would let a one-time QR credential delete devices. A phone that still has its old token removes
+it with this route after pairing; one that lost it has nothing to prove ownership with.
+
+Upgrades and `CONNECT` on the Tailcat socket used to skip the device denylist, so a phone's
+upgrade to a management path got `404` instead of the specified `403`. Both the Node and the Bun
+native admission now apply it, as the public listener already did.

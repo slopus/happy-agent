@@ -45,6 +45,7 @@ import {
     type WorkspaceAgentPlacement,
     type WorkspaceEvent,
 } from "../workspaces/index.js";
+import type { NodeModule } from "../node/index.js";
 import type { RunnersModule } from "../runners/index.js";
 import type { SurfacesModule } from "../surfaces/index.js";
 import { TasksModule, type TaskRecord } from "../tasks/index.js";
@@ -82,8 +83,12 @@ import { HappyMachineClient, type HappyMachineConnectionEvent } from "./HappyMac
 import { HappyPairing, HappyPairingError } from "./HappyPairing.js";
 import { HappyProjectClient } from "./HappyProjectClient.js";
 import type { HappySessionTransport } from "./HappySessionSockets.js";
+import { formatHappyAttachmentNote } from "./formatHappyAttachmentNote.js";
+import { happyUploadPath } from "./happyUploadPath.js";
+import { ignoreHappyUploads } from "./ignoreHappyUploads.js";
 import {
     HappyMessageRefused,
+    type HappyInboundAttachment,
     type HappyInboundMessage,
     type HappyModel,
     type HappySessionSnapshot,
@@ -249,6 +254,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     readonly #taskCatalog: TasksModule;
     readonly #surfaces: SurfacesModule;
     readonly #runners: RunnersModule;
+    readonly #node: NodeModule;
     readonly #sync: ReturnType<typeof createHappySyncDatabase>;
     readonly #projectSync: ReturnType<typeof createHappyProjectSyncDatabase>;
     readonly #integrationDatabase: ReturnType<typeof createHappyIntegrationDatabase>;
@@ -302,6 +308,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         tasks: TasksModule,
         surfaces: SurfacesModule,
         runners: RunnersModule,
+        node: NodeModule,
         team?: TeamModule,
         owner?: TeamUser,
     ) {
@@ -311,6 +318,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         this.#projectSync = createHappyProjectSyncDatabase(owner?.id);
         this.#integrationDatabase = createHappyIntegrationDatabase(owner?.id);
         this.#config = config;
+        this.#node = node;
         this.#compute = compute;
         this.#events = events;
         this.#files = files;
@@ -519,6 +527,13 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
      * themselves, so a project is only ever described by the sessions that belong to it.
      */
     #watchCatalog(ctx: Context): void {
+        this.#unwatchCatalog.push(
+            this.#node.onUpdated(() => {
+                const machine = this.#machine;
+                if (machine !== undefined)
+                    this.#runTask(async () => await machine.refreshNodeName());
+            }),
+        );
         this.#unwatchCatalog.push(
             this.#taskCatalog.onEvent((_eventCtx, event) => {
                 // Creation publishes task_joined in the same transaction; it is the list edge.
@@ -1030,6 +1045,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             configuration,
             context: ctx,
             models: () => this.models(),
+            nodeName: async () => (await this.#node.get(ctx)).name,
             onConnectionChanged: (event) => {
                 void this.#handleMachineConnection(ctx, machine, event).catch((error: unknown) => {
                     ctx.log.error("Happy connection state could not be recorded.", {}, error);
@@ -1569,8 +1585,11 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             );
         }
         const messageOptions = messageOptionsFor(next);
-        const content = messageFrom(message);
         const id = createId();
+        const content = messageFrom(
+            message,
+            await this.#saveAttachments(ctx, agentId, id, message.attachments),
+        );
         const pending: HistoryPendingMessage = {
             ...(this.#connectionOwner === undefined ? {} : { userId: this.#connectionOwner.id }),
             agentId,
@@ -1616,6 +1635,45 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             lastMode: modeForSelection(next) as never,
             initialMode: null as never,
         });
+    }
+
+    /**
+     * Saves each attachment in the agent's folder, on the machine that folder is on, and answers
+     * where, in the order they came; an attachment that could not be saved has no path.
+     *
+     * The folder is the one phone reads already use, and the files go where the phones' direct
+     * chats put theirs, so the agent can open them with its own tools when it needs to.
+     */
+    async #saveAttachments(
+        ctx: Context,
+        agentId: string,
+        messageId: string,
+        attachments: readonly HappyInboundAttachment[],
+    ): Promise<readonly (string | undefined)[]> {
+        if (attachments.length === 0) return [];
+        const root = await this.#readRoot(ctx, agentId).catch(() => undefined);
+        if (root === undefined) return attachments.map(() => undefined);
+        await ignoreHappyUploads(this.#files, root);
+        return await Promise.all(
+            attachments.map(async (attachment, index) => {
+                const path = happyUploadPath(
+                    messageId,
+                    index,
+                    attachment.name,
+                    attachment.mimeType,
+                );
+                try {
+                    await this.#files.write(root, {
+                        content: Buffer.from(attachment.bytes).toString("base64"),
+                        expectedHash: null,
+                        path,
+                    });
+                    return this.#files.absolutePath(root, path);
+                } catch {
+                    return undefined;
+                }
+            }),
+        );
     }
 
     /** Stops whatever the agent is doing. */
@@ -3198,14 +3256,37 @@ function isUnlinkedIntegration(integration: HappyIntegration): boolean {
     );
 }
 
-function messageFrom(message: HappyInboundMessage): SessionUserMessage {
+/**
+ * The conversation's copy of a phone message. Saved attachments are named after the person's
+ * words rather than loaded; a picture that could not be saved anywhere the agent works is shown
+ * inline instead, and any other file that could not be saved is left out, as before.
+ */
+function messageFrom(
+    message: HappyInboundMessage,
+    saved: readonly (string | undefined)[],
+): SessionUserMessage {
     const content: SessionInputBlock[] = structuredClone(message.content ?? []);
-    if (message.content === undefined && (message.text.length > 0 || message.images.length === 0)) {
+    if (message.content === undefined && message.text.length > 0) {
         content.push({ text: message.text, type: "text" });
     }
-    for (const image of message.images) {
-        content.push({ data: image.data, mimeType: image.mimeType, type: "image" });
-    }
+    const note = formatHappyAttachmentNote(
+        message.attachments.flatMap((attachment, index) => {
+            const path = saved[index];
+            return path === undefined
+                ? []
+                : [{ isImage: attachment.mimeType.startsWith("image/"), path }];
+        }),
+    );
+    if (note !== undefined) content.push({ text: note, type: "text" });
+    message.attachments.forEach((attachment, index) => {
+        if (saved[index] !== undefined || !attachment.mimeType.startsWith("image/")) return;
+        content.push({
+            data: Buffer.from(attachment.bytes).toString("base64"),
+            mimeType: attachment.mimeType,
+            type: "image",
+        });
+    });
+    if (content.length === 0) content.push({ text: message.text, type: "text" });
     return { content, role: "user" };
 }
 

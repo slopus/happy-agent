@@ -1022,6 +1022,58 @@ describe("keeping one session in step with Happy", () => {
         await session.close();
     });
 
+    it("hands every file the phone attached to the words that claim them, decrypted", async () => {
+        const server = fakeServer();
+        const { calls, operations } = fakeOperations();
+        const picture = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+        const report = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+        server.attach("blob-picture", picture);
+        server.attach("blob-report", report);
+        const file = (ref: string, name: string, size: number, mimeType?: string) => ({
+            content: {
+                data: {
+                    ev: {
+                        name,
+                        ref,
+                        size,
+                        t: "file",
+                        ...(mimeType === undefined ? {} : { mimeType }),
+                    },
+                    role: "user",
+                },
+                type: "session",
+            },
+            role: "session",
+        });
+        server.deliver([
+            remoteMessage(1, "remote-picture", file("blob-picture", "IMG_1.HEIC", picture.length)),
+            remoteMessage(
+                2,
+                "remote-report",
+                file("blob-report", "report.pdf", report.length, "application/pdf"),
+            ),
+            remoteMessage(3, "remote-words", {
+                content: { text: "Look at these", type: "text" },
+                role: "user",
+            }),
+        ]);
+        const session = client({ operations, server, socket: new FakeSocket() });
+        try {
+            await session.settle();
+            const submitted = calls.filter((call) => call.kind === "submit");
+            expect(submitted).toHaveLength(1);
+            const message = submitted[0]!.detail as HappyInboundMessage;
+            expect(message.text).toBe("Look at these");
+            expect(message.attachments.map((one) => ({ ...one, bytes: [...one.bytes] }))).toEqual([
+                // An older phone that says nothing about a file sent a picture.
+                { bytes: [...picture], mimeType: "image/jpeg", name: "IMG_1.HEIC" },
+                { bytes: [...report], mimeType: "application/pdf", name: "report.pdf" },
+            ]);
+        } finally {
+            await session.close();
+        }
+    });
+
     it("republishes the composer mode the session reports once a message is delivered", async () => {
         const server = fakeServer();
         const socket = new FakeSocket();
