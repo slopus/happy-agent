@@ -320,6 +320,7 @@ const settingsInputSchema = Type.Object(
         menu_bar: Type.Optional(Type.Boolean()),
         show_reasoning: Type.Optional(Type.Boolean()),
         show_usage: Type.Optional(Type.Boolean()),
+        tasks_create_workspaces: Type.Optional(Type.Boolean()),
         tool_result_retention_days: Type.Optional(
             Type.Integer({ minimum: 0, maximum: MAX_TOOL_RESULT_RETENTION_DAYS }),
         ),
@@ -1405,6 +1406,11 @@ const resolvedValuesSchema = Type.Object(
                 menuBar: Type.Boolean(),
                 showReasoning: Type.Boolean(),
                 showUsage: Type.Boolean(),
+                /**
+                 * Whether tasks, and the agents under them, may create project workspaces
+                 * directly. Off, they get one only through a workspace-bound subtask.
+                 */
+                tasksCreateWorkspaces: Type.Boolean(),
                 toolResultRetentionDays: Type.Integer({
                     minimum: 0,
                     maximum: MAX_TOOL_RESULT_RETENTION_DAYS,
@@ -1620,6 +1626,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         menuBar: true,
         showReasoning: false,
         showUsage: false,
+        tasksCreateWorkspaces: false,
         toolResultRetentionDays: 7,
     },
     skills: { directories: [] },
@@ -4909,6 +4916,9 @@ function normalizeSettings(value: NonNullable<PartialValues["settings"]>): Recor
         ...(value.menu_bar === undefined ? {} : { menuBar: value.menu_bar }),
         ...(value.show_reasoning === undefined ? {} : { showReasoning: value.show_reasoning }),
         ...(value.show_usage === undefined ? {} : { showUsage: value.show_usage }),
+        ...(value.tasks_create_workspaces === undefined
+            ? {}
+            : { tasksCreateWorkspaces: value.tasks_create_workspaces }),
         ...(value.tool_result_retention_days === undefined
             ? {}
             : { toolResultRetentionDays: value.tool_result_retention_days }),
@@ -5484,6 +5494,8 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
         max_collaborators: _maxCollaborators,
         // Whether this machine shows a menu bar is the person's business, not a repository's.
         menu_bar: _menuBar,
+        // A repository must not widen what this installation's tasks may do.
+        tasks_create_workspaces: _tasksCreateWorkspaces,
         tool_result_retention_days: _toolResultRetentionDays,
         ...projectSettings
     } = settings ?? {};
@@ -5541,6 +5553,7 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
             menu_bar: "menuBar",
             show_reasoning: "showReasoning",
             show_usage: "showUsage",
+            tasks_create_workspaces: "tasksCreateWorkspaces",
             tool_result_retention_days: "toolResultRetentionDays",
         },
         workspace: {
@@ -5673,6 +5686,7 @@ function readSettings(
             "menu_bar",
             "show_reasoning",
             "show_usage",
+            "tasks_create_workspaces",
             "tool_result_retention_days",
         ],
         settingsInputSchema,

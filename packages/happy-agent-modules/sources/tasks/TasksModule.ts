@@ -264,7 +264,13 @@ export class TasksModule implements AgentModule {
     readonly #hooks: AgentModuleHooks = {
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
             const task = await readTaskByAgent(ctx, scope.agent.id);
-            if (task !== undefined) return formatTaskIdentityPrompt(task, this.ownerLabel(task));
+            if (task !== undefined) {
+                return formatTaskIdentityPrompt(
+                    task,
+                    this.ownerLabel(task),
+                    this.#workspaces.tasksCreateWorkspaces,
+                );
+            }
             // Only the agents offered the task tools hear how to mention a task.
             if (!(await this.#offersTools(ctx, scope.agent.id))) return "";
             return TASK_REFERENCE_INSTRUCTIONS;
@@ -699,6 +705,9 @@ export class TasksModule implements AgentModule {
                         : {}),
                 },
                 modules: {
+                    // Whether a task may create workspaces itself is the installation's choice;
+                    // its subtasks and other agents under it copy this mark.
+                    ...this.#workspaces.taskAgentModules(),
                     compute: {
                         cwd: path,
                         ...(runnerId === undefined ? {} : { runnerId }),

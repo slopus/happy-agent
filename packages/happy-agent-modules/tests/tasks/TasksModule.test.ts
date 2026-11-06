@@ -215,6 +215,8 @@ describe("TasksModule", () => {
                 cwd: task.path,
                 secretScope: { workspaceId: task.workspaceId },
             });
+            // The task gets project workspaces only through workspace-bound subtasks.
+            expect(agent?.modules?.["workspaces"]).toEqual({ task: true });
 
             expect(fixture.agents.sent).toEqual([
                 {
@@ -277,7 +279,7 @@ describe("TasksModule", () => {
                     `- Owner: user ID \`${OTHER_OWNER}\``,
                     `- Created by agent \`${bot.agentId}\``,
                     "",
-                    "Keep this task's own notes and files in its folder. Strongly prefer doing repository work in workspace-bound subtasks: use create_subtask with the relevant project so the work gets its own project workspace, instead of changing directories into a repository from this folder.",
+                    "Keep this task's own notes and files in its folder. Do repository work in workspace-bound subtasks: create_subtask with workspace: { projectId, name } is the only way this task gets a project workspace. A task cannot create a workspace directly, and should not change directories into a repository from this folder.",
                     "",
                     `This task was created by the bot named "Planner" (bot ID \`${bot.id}\`). Its messages arrive as agent messages. Report progress, results, and blockers to it with send_bot_message.`,
                     "",

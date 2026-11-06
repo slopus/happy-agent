@@ -23,6 +23,8 @@ export function createWorkspaceTool(workspaces: WorkspacesModule, agentId: strin
         transactional: true,
         shouldReviewInAutoMode: () => false,
         execute: async (ctx, input: WorkspaceCreateToolInput, call) => {
+            // A stale tool list must not reopen what the agent was created without.
+            await workspaces.assertCreatesProjectWorkspaces(ctx, agentId);
             const { projectRef, ...request } = input;
             const workspace = await workspaces.createWorkspace(
                 ctx,

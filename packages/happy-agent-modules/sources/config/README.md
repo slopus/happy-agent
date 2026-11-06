@@ -49,7 +49,9 @@ providers, MCP servers, Docker, network, observation, permissions, P2P,
 presence, theme, features, workspace sync/protection, and retention
 settings. Ordinary collaboration reads `settings.maxCollaborators` and
 `settings.maxCollaborationDepth` from this snapshot; their persisted TOML spellings are
-`max_collaborators` and `max_collaboration_depth`.
+`max_collaborators` and `max_collaboration_depth`. `settings.tasksCreateWorkspaces`
+(`tasks_create_workspaces`, default `false`) lets tasks and the agents under them create project
+workspaces directly; it is user-wide only, and a repository cannot turn it on.
 
 `[settings.ethan] enabled = true` enables token-max mode for a token-rich user who expects the
 agent to keep consuming tokens rather than accept an error as final. Agent work always retries,

@@ -263,6 +263,22 @@ One task, however many hands, is one workspace.
 
 The workspace tools appear only in a **primary session** (never in a subagent)
 and only when `features.workspaces` is enabled — it is on by default.
+
+A task does not create project workspaces itself by default. `create_workspace` is
+left out of a task's tools and refused if it is called anyway, for the task and for
+every subtask and agent under it. A task gets a project workspace only through
+`create_subtask` with `workspace: { projectId, name }`, which starts a subtask in a
+new workspace. Bots and a person's own project conversations are unaffected. To let
+tasks create workspaces directly, turn the setting on in the user-wide `happy.toml`
+and [reload the daemon](configuration.md#applying-configuration-changes):
+
+```toml
+[settings]
+tasks_create_workspaces = true
+```
+
+A repository `happy.toml` cannot turn it on. With it on, tasks are still told to
+prefer workspace-bound subtasks for repository work.
 `list_projects` additionally requires `features.cross_workspace`; when that is
 off, the tool is not offered at all rather than failing when it is called. A
 bot's owner can also keep one bot and every agent under it away from projects and
@@ -275,6 +291,9 @@ Relevant configuration keys:
 [features]
 workspaces = true
 cross_workspace = false
+
+[settings]
+tasks_create_workspaces = false
 
 [workspace]
 setup_commands = ["pnpm install --frozen-lockfile"]

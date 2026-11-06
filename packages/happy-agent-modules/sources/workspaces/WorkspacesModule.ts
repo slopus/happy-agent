@@ -4,12 +4,14 @@ import {
     withAgentDatabase,
     type AgentKV,
     type AgentModule,
+    type AgentModuleConfig,
     type AgentModuleHooks,
     type AgentModuleScope,
     type AgentSystemRef,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { createId } from "@paralleldrive/cuid2";
+import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 import { backoff, detach, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.kite/stdlib";
@@ -201,6 +203,11 @@ const PRODUCT = computePermissions("full_access");
 /** How an agent offered the workspace tools mentions one, so people see its live name as a link. */
 const WORKSPACE_REFERENCE_INSTRUCTIONS =
     "When you mention a workspace in a reply, link it as [its name](happy://workspaces/<workspaceId>); people see its live name as the link text.";
+/**
+ * This module's settings on an agent that works for a task. They are fixed when the agent is
+ * created, and every agent created under it copies them.
+ */
+const taskAgentSettingsSchema = Type.Object({ task: Type.Literal(true) });
 
 export class WorkspacesModule implements AgentModule {
     readonly name = "workspaces";
@@ -345,7 +352,9 @@ export class WorkspacesModule implements AgentModule {
             if (!(await this.#offersTools(ctx, scope.agent.id))) return [];
             return [
                 createChildWorkspaceTool(this, scope.agent.id),
-                createWorkspaceTool(this, scope.agent.id),
+                ...((await this.#createsProjectWorkspaces(ctx, scope.agent.id))
+                    ? [createWorkspaceTool(this, scope.agent.id)]
+                    : []),
                 listWorkspacesTool(this, scope.agent.id),
                 getWorkspaceTool(this, scope.agent.id),
                 renameWorkspaceTool(this, scope.agent.id),
@@ -372,6 +381,38 @@ export class WorkspacesModule implements AgentModule {
         }
         if ((await agents.parentOf(ctx, agentId)) !== null) return false;
         return (await this.#botSettings?.allowsCrossWorkspace(ctx, agentId)) ?? true;
+    }
+
+    /**
+     * The settings that mark an agent as a task's. The tasks catalog puts them in the agent's
+     * `modules`; unless `settings.tasks_create_workspaces` is on, such an agent gets a project
+     * workspace only by creating a workspace-bound subtask.
+     */
+    taskAgentModules(): Record<string, AgentModuleConfig> {
+        return { [this.name]: { task: true } };
+    }
+
+    /** Whether this installation lets tasks and the agents under them create workspaces. */
+    get tasksCreateWorkspaces(): boolean {
+        return this.#config.configuration.values.settings.tasksCreateWorkspaces;
+    }
+
+    /** Refuses `create_workspace` for a task's agent while tasks may not create workspaces. */
+    async assertCreatesProjectWorkspaces(ctx: Context, agentId: string): Promise<void> {
+        if (await this.#createsProjectWorkspaces(ctx, agentId)) return;
+        throw new Error(
+            "Tasks and their subtasks cannot create project workspaces directly on this installation. Use create_subtask with workspace: { projectId, name } to start a subtask in a new project workspace.",
+        );
+    }
+
+    async #createsProjectWorkspaces(ctx: Context, agentId: string): Promise<boolean> {
+        if (this.tasksCreateWorkspaces) return true;
+        const agents = this.#agents;
+        if (agents === undefined) {
+            throw new Error("The workspaces module was asked about an agent before it started.");
+        }
+        const config = await agents.config(ctx, agentId);
+        return !Value.Check(taskAgentSettingsSchema, config?.modules?.[this.name]);
     }
 
     readonly beforeStart = (ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {

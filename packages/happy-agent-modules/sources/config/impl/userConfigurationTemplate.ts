@@ -37,6 +37,9 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # menu_bar = true
 # show_reasoning = false
 # show_usage = false
+# Let tasks, and the subtasks and agents under them, create project workspaces directly. Off,
+# a task gets a project workspace only through create_subtask with a workspace.
+# tasks_create_workspaces = false
 
 # Ethan mode is token-max mode for token-rich users: always retry forever on every error, keep
 # consuming tokens, and survive failures providers classify as fatal. Explicit cancellation and

@@ -138,6 +138,18 @@ A bot whose owner keeps it inside its own tree is not offered the workspace tool
 or on tasks it opened. Opening or browsing another project's workspaces is the reach the setting
 removes; the bot's own dedicated folder is unaffected.
 
+## Tasks create project workspaces through subtasks unless the installation allows more
+
+Steve asked to hide and prohibit direct workspace creation for tasks, so that their only route to
+a project workspace is `create_subtask` with a workspace, then to make it an option that is off by
+default. `settings.tasks_create_workspaces` decides, read from this module's configuration. This
+module cannot ask the tasks catalog which agents are tasks, because that catalog depends on it, so
+the tasks catalog marks a task's agent with this module's `taskAgentModules()` at creation and
+every agent created under it copies the mark from its parent's `modules`. With the setting off,
+`create_workspace` is left out of the marked agent's tools and its execution refuses the agent.
+Module settings are fixed at creation, so tasks created before the mark existed are not marked and
+keep the tool; nothing backfills them.
+
 ## New workspaces at the top must not grow keys
 
 A new workspace takes a key before its first sibling, and the shared key helper took the midpoint

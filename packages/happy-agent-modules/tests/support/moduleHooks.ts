@@ -31,11 +31,15 @@ export async function resolveModuleHooks<
 }
 
 /**
- * An agent collection where every agent is a person's own conversation rather than a subagent.
- * It is enough for a module that only asks who an agent's parent is.
+ * An agent collection where every agent is a person's own conversation rather than a subagent,
+ * created without any module settings. It is enough for a module that only asks who an agent's
+ * parent is and what it was configured with.
  */
 export function primaryAgents<Database extends AgentDatabase = AgentDatabase>() {
-    return { parentOf: () => Promise.resolve(null) } as unknown as AgentSystemRef<Database>;
+    return {
+        parentOf: () => Promise.resolve(null),
+        config: () => Promise.resolve(undefined),
+    } as unknown as AgentSystemRef<Database>;
 }
 
 /** The same resolution, shaped as the runtime record `Agent.create` accepts. */

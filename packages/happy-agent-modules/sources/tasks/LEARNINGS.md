@@ -109,6 +109,15 @@ created. `BotsModule` takes this module and gives task agents only `list_bots` a
 `send_bot_message`. The dependency points that way so the tasks module never needs to know bots;
 it records the creating agent's ID, and the bots module names the creating bot to the task.
 
+## A task gets project workspaces through subtasks by default
+
+Steve asked that tasks not create workspaces on projects directly, then that it be an option off
+by default. Each task agent is created with the workspaces module's task mark in its `modules`,
+which its subtasks inherit; the workspaces module withholds and refuses `create_workspace` for
+marked agents unless `settings.tasks_create_workspaces` is on. The identity prompt follows the
+same setting: off, it says `create_subtask` with a workspace is the only way; on, it keeps the
+softer advice to prefer workspace-bound subtasks.
+
 ## A task is mentioned by its agent ID
 
 Kirill asked for tasks to be clickable in chat. A Happy link names the conversation a client

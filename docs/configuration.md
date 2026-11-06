@@ -1207,6 +1207,21 @@ daemon_heap_snapshots = true
 Happy Agent retains at most two heap snapshots. Repository `happy.toml` files cannot
 enable this setting.
 
+## Workspaces created by tasks
+
+By default a task, and every subtask and agent under it, gets a project workspace only through
+`create_subtask` with a workspace; `create_workspace` is not offered to it and is refused if
+called. To let tasks create project workspaces directly, set this in the user-wide configuration
+and [reload the daemon](#applying-configuration-changes):
+
+```toml
+[settings]
+tasks_create_workspaces = true
+```
+
+A repository `happy.toml` cannot turn it on. Bots are unaffected either way. See
+[Workspaces](workspaces.md#availability-and-configuration).
+
 ## Workflows and app event synchronization
 
 Workflows are on by default. Disable them globally or per repository:

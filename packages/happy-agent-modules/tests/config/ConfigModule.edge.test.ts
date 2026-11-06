@@ -299,6 +299,7 @@ describe("ConfigModule edge coverage", () => {
                     "happy_integration = false",
                     "inference_max_retries = 1",
                     "menu_bar = false",
+                    "tasks_create_workspaces = true",
                     "tool_result_retention_days = 1",
                     "",
                     "[providers.codex]",
@@ -334,6 +335,7 @@ describe("ConfigModule edge coverage", () => {
                         happyIntegration: false,
                         inferenceMaxRetries: 1,
                         menuBar: false,
+                        tasksCreateWorkspaces: true,
                         toolResultRetentionDays: 1,
                     },
                 });
@@ -348,6 +350,7 @@ describe("ConfigModule edge coverage", () => {
                     happyIntegration: true,
                     inferenceMaxRetries: 10,
                     menuBar: true,
+                    tasksCreateWorkspaces: false,
                     toolResultRetentionDays: 7,
                 });
                 expect(configuration.values).not.toHaveProperty("observation.traces", true);
@@ -572,6 +575,7 @@ describe("ConfigModule edge coverage", () => {
                     "inference_max_retries = 100",
                     "show_reasoning = true",
                     "show_usage = true",
+                    "tasks_create_workspaces = true",
                     "tool_result_retention_days = 36500",
                     "",
                     "[theme]",
@@ -714,6 +718,7 @@ describe("ConfigModule edge coverage", () => {
                         inferenceMaxRetries: 100,
                         showReasoning: true,
                         showUsage: true,
+                        tasksCreateWorkspaces: true,
                         toolResultRetentionDays: 36500,
                     },
                     theme: {

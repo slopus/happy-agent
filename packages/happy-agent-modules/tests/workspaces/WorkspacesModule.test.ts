@@ -1,16 +1,18 @@
 import { join } from "node:path";
 
-import { agentDatabaseRows } from "@slopus/happy-agent-base";
+import { agentDatabaseRows, type AgentConfig, type AgentSystemRef } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
+import { projectMigrations } from "../../sources/projects/index.js";
 import {
     WorkspacesModule,
     workspaceMigrations,
     workspaceSchema,
 } from "../../sources/workspaces/index.js";
+import { createWorkspaceTool } from "../../sources/workspaces/tools/create_workspace.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { primaryAgents, resolveModuleHooks } from "../support/moduleHooks.js";
 import { temporaryWorkspacesCatalog } from "../support/workspacesModule.js";
@@ -102,6 +104,59 @@ describe("WorkspacesModule", () => {
             );
         } finally {
             database.close();
+        }
+    });
+
+    it("keeps create_workspace from a task's agents unless the installation allows it", async () => {
+        const message =
+            "Tasks and their subtasks cannot create project workspaces directly on this installation. Use create_subtask with workspace: { projectId, name } to start a subtask in a new project workspace.";
+        for (const allowed of [false, true]) {
+            const { workspaces } = await temporaryWorkspacesCatalog(
+                allowed ? "[settings]\ntasks_create_workspaces = true\n" : undefined,
+            );
+            const database = moduleDatabase(
+                [...projectMigrations, ...workspaceMigrations],
+                `workspaces-task-agents-${String(allowed)}`,
+            );
+            await database.ready;
+            try {
+                const configs = new Map<string, AgentConfig>([
+                    ["taskagent", { modules: workspaces.taskAgentModules() }],
+                    ["botagent", { modules: { compute: { cwd: "/tmp/bot" } } }],
+                ]);
+                const agents = {
+                    parentOf: async () => null,
+                    config: async (_ctx: unknown, id: string) => configs.get(id),
+                } as unknown as AgentSystemRef;
+                const hooks = await resolveModuleHooks(database.context, workspaces, agents);
+                const offered = async (id: string) =>
+                    (await hooks.tools?.(database.context, { agent: { id } } as never))?.map(
+                        (tool) => tool.name,
+                    );
+
+                expect(workspaces.tasksCreateWorkspaces).toBe(allowed);
+                expect((await offered("taskagent"))?.includes("create_workspace")).toBe(allowed);
+                expect(await offered("botagent")).toContain("create_workspace");
+                await expect(
+                    workspaces.assertCreatesProjectWorkspaces(database.context, "botagent"),
+                ).resolves.toBeUndefined();
+
+                // A call from a stale tool list is refused before anything is reserved; when
+                // tasks may create workspaces, it gets as far as looking for the project.
+                await expect(
+                    database.context.inTx(
+                        async (txCtx) =>
+                            await createWorkspaceTool(workspaces, "taskagent").execute(
+                                txCtx,
+                                { projectRef: "project-1", name: "Escape hatch" },
+                                { id: "call_task_workspace" } as never,
+                            ),
+                    ),
+                ).rejects.toThrow(allowed ? 'Project "project-1" was not found.' : message);
+                expect((await workspaces.listCatalogPage(database.context)).workspaces).toEqual([]);
+            } finally {
+                database.close();
+            }
         }
     });
 

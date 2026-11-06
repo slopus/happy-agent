@@ -1,4 +1,4 @@
-import type { AgentSystemRef } from "@slopus/happy-agent-base";
+import type { AgentConfig, AgentSystemRef } from "@slopus/happy-agent-base";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 
 import { AbortModule } from "../../sources/abort/index.js";
@@ -15,10 +15,16 @@ import { SecretsModule } from "../../sources/secrets/index.js";
  * is recorded rather than performed.
  *
  * The abort is registered on the caller's transaction, the way Agent Base registers a real one, so
- * a test can tell a cancellation that became durable from one whose transaction rolled back.
+ * a test can tell a cancellation that became durable from one whose transaction rolled back. An
+ * agent has no configuration unless a test puts one in `configs`.
  */
 export class TestAgentCollection {
     readonly aborted: string[] = [];
+    readonly configs = new Map<string, AgentConfig>();
+
+    async config(_ctx: Context, agentId: string): Promise<AgentConfig | undefined> {
+        return this.configs.get(agentId);
+    }
 
     async childOf(): Promise<readonly string[]> {
         return [];

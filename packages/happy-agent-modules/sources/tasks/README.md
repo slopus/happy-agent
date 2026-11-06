@@ -96,6 +96,13 @@ A task's own agent receives its identity prompt from this module. `BotsModule` g
 so the task reports back to it. `SubtasksModule` gives it the same coordinator guidance and
 `create_subtask` eligibility as a bot.
 
+A task's agent is created with `WorkspacesModule.taskAgentModules()` in its `modules`, and its
+subtasks and other descendants copy it. Unless `settings.tasks_create_workspaces` is on (it is off
+by default), the workspaces module withholds and refuses `create_workspace` for those agents, and
+the identity prompt says `create_subtask` with a workspace is the only way a task gets a project
+workspace. With the setting on, the tool is offered and the prompt only advises preferring
+workspace-bound subtasks.
+
 ## Public operations
 
 `list`, `listForMember`, `get`, `membership`, `memberFor`, `forAgent`, `forWorkspace`,

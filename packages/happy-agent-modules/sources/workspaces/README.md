@@ -149,6 +149,15 @@ erase. An agent erased with `AgentSystemRef.erase` leaves its placement through 
 They are offered to root agents while `features.workspaces` is on, except to an agent whose bot
 keeps it inside the bot's own tree.
 
+`create_workspace` is also left out for an agent that works for a task, unless
+`settings.tasks_create_workspaces` is on; it is off by default. The tasks catalog marks a task's
+agent with `taskAgentModules()` in its `modules` at creation, and subtasks and other agents created
+under it copy that mark. The tool refuses such an agent itself too, so a stale tool list cannot
+reopen it. A task gets a project workspace through `create_subtask` with a workspace, which calls
+`createWorkspace` directly and is not affected. `createWorkspace`, the API route, and
+`create_child_workspace` do not apply the rule: the API acts for a person, and a task's agent has
+no workspace or project to create a child under.
+
 Every agent offered these tools is also told to mention a workspace as
 `[name](happy://workspaces/<workspaceId>)`, and the two creation tools return that exact link.
 Clients show the workspace's live name as the link text.
