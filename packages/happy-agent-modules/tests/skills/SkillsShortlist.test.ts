@@ -185,6 +185,43 @@ it("filters a disabled global skill out of a persisted shortlist immediately", a
     expect(await hooks.instructions!(f.ctx, scope)).toContain("<name>aaa-global</name>");
 });
 
+it("gives an agent without skills the same instructions on every run of a turn", async () => {
+    const db = moduleDatabase([], "skill-shortlist-empty");
+    ensureAgentDatabaseConnection(db.database);
+    await db.ready;
+    cleanups.push(db.close);
+    const machine = new FakeCompute("/workspace");
+    machine.directories.add("/workspace/.git");
+    const hooks = await resolveModuleHooks(
+        db.context,
+        new SkillsModule(scriptedComputeModule(async () => machine)),
+    );
+    const store = new InMemoryPersistence();
+    const scope: AgentModuleScope = {
+        agent: { id: "empty" } as never,
+        kv: new AgentKV(store, "empty.agent."),
+        runKV: new AgentKV(store, "empty.run."),
+        historyKV: new AgentKV(store, "empty.history."),
+        sharedKV: new AgentKV(store, "shared."),
+    };
+    await hooks.messageAcceptedTransact!(db.context, scope, {
+        id: "message",
+        kind: "send",
+        profile: null,
+        message: { role: "user", content: [{ type: "text", text: "Hello." }] },
+        metadata: { messageOrigin: "user", userId: "alice" },
+    });
+    await hooks.beforeTurn!(db.context, scope, {} as never);
+    // The first run discovers the catalog; later runs of the turn, such as one answering a tool
+    // call, use the stored shortlist. A change between them would restart a foreign agent.
+    const first = await hooks.instructions!(db.context, scope);
+    const later = await hooks.instructions!(db.context, scope);
+    expect(first).toBe("");
+    expect(later).toBe(first);
+    await hooks.beforeTurn!(db.context, scope, {} as never);
+    expect(await hooks.instructions!(db.context, scope)).toBe(first);
+});
+
 it("revalidates permissions without rescanning and reconciles changed precedence at the next catalog boundary", async () => {
     const f = await fixture();
     const scope = f.scope("fast");
