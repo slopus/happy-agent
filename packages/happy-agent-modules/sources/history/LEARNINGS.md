@@ -307,7 +307,10 @@ control and drops the choices, reading only the rows whose JSON mentions either.
 
 Steve asked for one search over everything in the node, messages included. History owns the word
 index and indexes a message in the transaction that archives, replaces, or erases it, so a search
-never finds a message that is gone or misses one that was committed. It searches only what a
+never finds a message that is gone or misses one that was committed. An answer is written block by
+block into the same row: indexing only its first write lost every later paragraph, and indexing
+the whole message again on every block made a long answer quadratic, so each text block is its own
+index row and an answer indexes only the blocks it gains. A query's words must share a block. It searches only what a
 person or an agent wrote, never reasoning, tool traffic, notices, or messages hidden from the
 person, because those are not what anyone remembers saying. The caller passes the conversations
 the person may see and History checks each match against them before reading the message, so a

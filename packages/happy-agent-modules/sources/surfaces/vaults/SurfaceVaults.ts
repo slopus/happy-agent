@@ -49,6 +49,7 @@ import * as store from "./persistence/vaultStore.js";
 import { retentionTiersIncrease, selectPrunedVersions } from "./selectPrunedVersions.js";
 import { artifactManifestBytes, checkVaultBundle } from "./vaultBundle.js";
 import { ContentWriter, removeFile, searchableText, storeContent } from "./vaultContentFiles.js";
+import { vaultSearchText } from "./vaultSearchText.js";
 import type { VaultEvent } from "./VaultEvent.js";
 import {
     MAX_VAULT_DEPTH,
@@ -493,21 +494,31 @@ export class SurfaceVaults {
                 tier,
             });
         };
+        // The snippet comes from the text as search reads it, so HTML shows what a reader sees;
+        // a substring found only inside its markup is no match.
+        const pattern = new RegExp(escapeRegExp(q), "iu");
         const addContent = async (
             hit: { entryId: string; innerPath: string | null },
-            text: string | undefined,
-            at: number | undefined,
+            stored: string | undefined,
         ) => {
-            if (text === undefined || listed.has(hit.entryId) || full()) return;
+            if (stored === undefined || listed.has(hit.entryId) || full()) return;
             const location = await live(hit.entryId);
             if (location === undefined || location.entry.kind === "folder") return;
+            const text = vaultSearchText(location.entry.name, hit.innerPath, stored);
+            const at =
+                tier === "substring"
+                    ? pattern.exec(text)?.index
+                    : (firstSearchWordIndex(text, words) ?? (text === stored ? 0 : undefined));
+            if (at === undefined) return;
             listed.add(hit.entryId);
+            const { line, snippet } = searchLineAt(text, at);
             results.push({
                 found: {
                     item: location.entry,
                     path: location.path,
                     innerPath: hit.innerPath,
-                    ...searchLineAt(text, at ?? 0),
+                    line,
+                    snippet: text === stored ? snippet : snippet.trim(),
                 },
                 tier: tier === "substring" ? "substring" : "content",
             });
@@ -530,12 +541,7 @@ export class SurfaceVaults {
                 SEARCH_SCAN,
             )) {
                 if (full()) break;
-                const text = await searchIndex.readVaultText(ctx, hit.id);
-                await addContent(
-                    hit,
-                    text,
-                    text === undefined ? undefined : firstSearchWordIndex(text, words),
-                );
+                await addContent(hit, await searchIndex.readVaultText(ctx, hit.id));
             }
         tier = "path";
         if (match !== undefined)
@@ -558,17 +564,13 @@ export class SurfaceVaults {
             ))
                 await addName(entry.id);
         if ([...q].length >= 3) {
-            const pattern = new RegExp(escapeRegExp(q), "iu");
             let after = 0;
             for (let scanned = 0; scanned < SEARCH_SCAN && !full(); ) {
                 const hits = await store.searchVaultTexts(ctx, null, q, after, 200);
                 if (hits.length === 0) break;
                 scanned += hits.length;
                 after = hits.at(-1)!.id;
-                for (const hit of hits) {
-                    const at = pattern.exec(hit.text)?.index;
-                    if (at !== undefined) await addContent(hit, hit.text, at);
-                }
+                for (const hit of hits) await addContent(hit, hit.text);
             }
         }
         return results;
@@ -1832,7 +1834,7 @@ export class SurfaceVaults {
                 if (text !== undefined) texts.push({ innerPath: file.path, text });
             }
         }
-        await store.replaceVaultTexts(ctx, entry.surfaceId, entry.id, texts);
+        await store.replaceVaultTexts(ctx, entry, texts);
         return version;
     }
 

@@ -13,6 +13,7 @@ import { sql } from "drizzle-orm";
 import { migrateSurfaceSearch } from "../search/migrateSurfaceSearch.js";
 import { migrateVaultOperations } from "../vaults/persistence/migrateVaultOperations.js";
 import { migrateVaultSearch } from "../vaults/persistence/migrateVaultSearch.js";
+import { migrateVaultHtmlWords } from "../vaults/persistence/migrateVaultHtmlWords.js";
 import { migrateVaults } from "../vaults/persistence/migrateVaults.js";
 
 /** Module-owned AgentKV storage. Current values and immutable revisions use disjoint prefixes. */
@@ -251,4 +252,5 @@ export const surfacesMigrations: readonly AgentModuleMigration[] = [
     ["007-surface-vault-operations", migrateVaultOperations],
     ["008-surface-vault-search", migrateVaultSearch],
     ["009-surface-search", migrateSurfaceSearch],
+    ["010-surface-vault-html-words", migrateVaultHtmlWords],
 ];

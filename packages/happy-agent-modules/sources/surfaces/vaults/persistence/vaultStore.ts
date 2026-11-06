@@ -9,7 +9,9 @@ import type {
 import type { Context } from "@steve.kite/stdlib";
 import { sql, type SQL } from "drizzle-orm";
 
+import { isHtmlPath } from "../../../utils/htmlSearchText.js";
 import { vaultNameKey } from "../vaultNames.js";
+import { vaultSearchText } from "../vaultSearchText.js";
 import {
     deleteVaultName,
     deleteVaultTextWords,
@@ -86,6 +88,13 @@ export async function updateVaultEntry(ctx: Context, entry: VaultItem): Promise<
         sql`UPDATE happy_agent_vault_entries SET parent_id = ${entry.parentId}, name_key = ${vaultNameKey(entry.name)}, size = ${sizeOf(entry)}, updated_at = ${entry.updatedAt}, deleted_at = ${entry.deletedAt}, entry_json = ${JSON.stringify(entry)} WHERE id = ${entry.id}`,
     );
     if (previous?.name === entry.name && previous.parentId === entry.parentId) return;
+    // A plain file's name decides whether search reads its text as HTML.
+    if (
+        entry.kind === "file" &&
+        previous !== undefined &&
+        isHtmlPath(previous.name) !== isHtmlPath(entry.name)
+    )
+        await reindexVaultTextWords(ctx, entry);
     await indexVaultName(ctx, entry);
     if (entry.kind === "folder") await indexVaultNamesBelow(ctx, entry);
 }
@@ -330,25 +339,45 @@ export async function readVaultTexts(
     }));
 }
 
-/** Replace an entry's indexed texts with its newest version's. */
+/**
+ * Replace an entry's indexed texts with its newest version's. The trigram index keeps the text as
+ * stored; the word index reads it as search does, HTML as its readable text.
+ */
 export async function replaceVaultTexts(
     ctx: Context,
-    surfaceId: string,
-    entryId: string,
+    entry: VaultItem,
     texts: readonly { innerPath: string | null; text: string }[],
 ): Promise<void> {
-    await deleteVaultTexts(ctx, entryId);
+    await deleteVaultTexts(ctx, entry.id);
     for (const text of texts) {
         const [row] = await rows<{ id: number }>(
             ctx,
-            sql`INSERT INTO happy_agent_vault_texts (entry_id, surface_id, inner_path) VALUES (${entryId}, ${surfaceId}, ${text.innerPath}) RETURNING id`,
+            sql`INSERT INTO happy_agent_vault_texts (entry_id, surface_id, inner_path) VALUES (${entry.id}, ${entry.surfaceId}, ${text.innerPath}) RETURNING id`,
         );
         await run(
             ctx,
             sql`INSERT INTO happy_agent_vault_text_index (rowid, text) VALUES (${Number(row!.id)}, ${text.text})`,
         );
-        await indexVaultTextWords(ctx, Number(row!.id), text.text);
+        await indexVaultTextWords(
+            ctx,
+            Number(row!.id),
+            vaultSearchText(entry.name, text.innerPath, text.text),
+        );
     }
+}
+
+/** Index an entry's texts' words again, as its current name has search read them. */
+async function reindexVaultTextWords(ctx: Context, entry: VaultItem): Promise<void> {
+    const found = await rows<{ id: number; inner_path: string | null; text: string }>(
+        ctx,
+        sql`SELECT t.id, t.inner_path, i.text FROM happy_agent_vault_texts t JOIN happy_agent_vault_text_index i ON i.rowid = t.id WHERE t.entry_id = ${entry.id}`,
+    );
+    for (const row of found)
+        await indexVaultTextWords(
+            ctx,
+            Number(row.id),
+            vaultSearchText(entry.name, row.inner_path, row.text),
+        );
 }
 
 export async function deleteVaultTexts(ctx: Context, entryId: string): Promise<void> {

@@ -19,4 +19,5 @@ as Surface references do, without importing the API module's projection code.
 `searchWords` splits and folds query words the way the SQLite FTS5 unicode61 tokenizer with
 `remove_diacritics 2` does, builds prefix match expressions, finds a match's line and snippet, and
 ranks short in-memory lists with BM25, so every search provider agrees on what a word is.
-`SearchHit` is the shape a provider returns before fusion assigns its rank.
+`SearchHit` is the shape a provider returns before fusion assigns its rank. `htmlSearchText`
+reads HTML as the text a reader sees, for every provider that indexes HTML.

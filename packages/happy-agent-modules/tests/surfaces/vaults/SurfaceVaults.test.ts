@@ -544,6 +544,102 @@ describe("vault Surfaces", () => {
         expect(await search("friday")).toEqual([]);
     });
 
+    it("searches HTML files and vault apps by the text a reader sees", async () => {
+        const f = await fixture();
+        const page = [
+            "<!doctype html><html><head><style>.secret { color: teal }</style></head>",
+            '<body><h1 style="color:tomato" class="title">Counter 2</h1>',
+            "<script>const hidden = 1;</script>",
+            "<p>Tap &amp; count   the  <b>visitors</b></p></body></html>",
+        ].join("\n");
+        const html = await f.file(null, "tally.html", page);
+        const uploadId = await f.upload(
+            zipSync({
+                "artifact.json": manifest(),
+                "index.html": enc(page.replace("Counter 2", "Launch app")),
+            }),
+        );
+        await f.vaults.createEntry(
+            f.ctx,
+            f.vault.id,
+            {
+                parentId: null,
+                name: "launch.artifact",
+                kind: "artifact",
+                content: {
+                    type: "upload",
+                    uploadId,
+                    prepared: await f.vaults.prepareArtifactUpload(f.ctx, uploadId),
+                },
+            },
+            person,
+        );
+        const found = async (q: string) =>
+            (await f.vaults.search(f.ctx, q, 30)).map((hit) => [
+                hit.name,
+                hit.type === "vault_file" ? hit.innerPath : null,
+                hit.type === "vault_file" ? hit.line : null,
+                hit.type === "vault_file" ? hit.snippet : null,
+            ]);
+        // Snippets are the readable text of their line, entities decoded and spaces collapsed.
+        expect(await found("visitors")).toEqual(
+            expect.arrayContaining([
+                ["tally.html", null, 4, "Tap & count the visitors"],
+                ["launch.artifact", "index.html", 4, "Tap & count the visitors"],
+            ]),
+        );
+        expect(await found("counter")).toEqual([["tally.html", null, 2, "Counter 2"]]);
+        // Tags, attributes, scripts, and styles are no match, by word or by substring.
+        for (const q of ["style", "tomato", "title", "hidden", "secret", "doctype", "teal"])
+            expect(await found(q)).toEqual([]);
+        // Renamed away from .html, the file's text is its source again.
+        await f.vaults.moveEntry(
+            f.ctx,
+            f.vault.id,
+            html.id,
+            html.version,
+            { name: "tally.txt" },
+            person,
+        );
+        expect(await found("tomato")).toEqual([
+            ["tally.txt", null, 2, '<body><h1 style="color:tomato" class="title">Counter 2</h1>'],
+        ]);
+    });
+
+    it("indexes HTML texts again when their words were indexed as source", async () => {
+        const f = await fixture();
+        await f.file(null, "page.html", '<p class="tomato">Hello</p>');
+        await f.file(null, "notes.txt", "Plain tomato soup");
+        // The words of every text as a daemon before readable HTML indexed them: the source.
+        for (const statement of [
+            sql`DELETE FROM happy_agent_vault_text_words`,
+            sql`INSERT INTO happy_agent_vault_text_words (rowid, text) SELECT rowid, text FROM happy_agent_vault_text_index`,
+            sql`INSERT OR REPLACE INTO happy_agent_vault_search_backfill (id, entries_after, texts_after, texts_until, html_only) SELECT 1, coalesce((SELECT max(id) FROM happy_agent_vault_entries), ''), 0, coalesce((SELECT max(id) FROM happy_agent_vault_texts), 0), 1`,
+        ])
+            await agentDatabaseRun(f.ctx.db, statement);
+        // A stale source word finds nothing that a reader could see.
+        expect((await f.vaults.search(f.ctx, "tomato", 30)).map((hit) => hit.name)).toEqual([
+            "notes.txt",
+        ]);
+
+        await f.vaults.maintain(f.ctx, Date.now());
+        expect(
+            await agentDatabaseRows(
+                f.ctx.db,
+                sql`SELECT rowid FROM happy_agent_vault_text_words WHERE happy_agent_vault_text_words MATCH 'tomato'`,
+            ),
+        ).toHaveLength(1);
+        expect(await f.vaults.search(f.ctx, "hello", 30)).toMatchObject([
+            { name: "page.html", snippet: "Hello" },
+        ]);
+        expect(
+            await agentDatabaseRows(
+                f.ctx.db,
+                sql`SELECT id FROM happy_agent_vault_search_backfill`,
+            ),
+        ).toEqual([]);
+    });
+
     it("indexes vaults made before the word indexes in bounded maintenance passes", async () => {
         const f = await fixture();
         const docs = await f.folder(null, "Docs");

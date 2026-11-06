@@ -3,6 +3,8 @@ import type { VaultItem } from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 import { sql, type SQL } from "drizzle-orm";
 
+import { vaultSearchText } from "../vaultSearchText.js";
+
 /**
  * The word indexes behind ranked search, kept in step with entries and texts by `vaultStore`.
  * Every function joins the caller's transaction through `ctx.db`.
@@ -151,13 +153,19 @@ export async function readVaultText(ctx: Context, id: number): Promise<string | 
 }
 
 /**
- * Index up to `limit` entries and texts made before the search indexes existed. Returns false
- * once nothing is left, when the backfill row is gone.
+ * Index up to `limit` entries and texts made before the search indexes existed, or only the HTML
+ * texts when `html_only` says just those need their words again. Returns false once nothing is
+ * left, when the backfill row is gone.
  */
 export async function backfillVaultSearch(ctx: Context, limit: number): Promise<boolean> {
-    const [state] = await rows<{ entries_after: string; texts_after: number; texts_until: number }>(
+    const [state] = await rows<{
+        entries_after: string;
+        texts_after: number;
+        texts_until: number;
+        html_only: number;
+    }>(
         ctx,
-        sql`SELECT entries_after, texts_after, texts_until FROM happy_agent_vault_search_backfill WHERE id = 1`,
+        sql`SELECT entries_after, texts_after, texts_until, html_only FROM happy_agent_vault_search_backfill WHERE id = 1`,
     );
     if (state === undefined) return false;
     const pending = await rows<{ entry_json: string }>(
@@ -165,11 +173,18 @@ export async function backfillVaultSearch(ctx: Context, limit: number): Promise<
         sql`SELECT e.entry_json FROM happy_agent_vault_entries e WHERE e.id > ${state.entries_after} AND NOT EXISTS (SELECT 1 FROM happy_agent_vault_names n WHERE n.entry_id = e.id) ORDER BY e.id LIMIT ${limit}`,
     );
     for (const row of pending) await indexVaultName(ctx, JSON.parse(row.entry_json) as VaultItem);
-    const texts = await rows<{ id: number; text: string }>(
+    // A plain file's own name, or a vault app file's inner path, says whether it is HTML.
+    const path = sql`coalesce(t.inner_path, json_extract(e.entry_json, '$.name'))`;
+    const texts = await rows<{ id: number; text: string; name: string; inner_path: string | null }>(
         ctx,
-        sql`SELECT rowid AS id, text FROM happy_agent_vault_text_index WHERE rowid > ${Number(state.texts_after)} AND rowid <= ${Number(state.texts_until)} ORDER BY rowid LIMIT ${limit}`,
+        sql`SELECT t.id, i.text, json_extract(e.entry_json, '$.name') AS name, t.inner_path FROM happy_agent_vault_texts t JOIN happy_agent_vault_text_index i ON i.rowid = t.id JOIN happy_agent_vault_entries e ON e.id = t.entry_id WHERE t.id > ${Number(state.texts_after)} AND t.id <= ${Number(state.texts_until)} ${Number(state.html_only) === 1 ? sql`AND (lower(${path}) LIKE '%.html' OR lower(${path}) LIKE '%.htm')` : sql``} ORDER BY t.id LIMIT ${limit}`,
     );
-    for (const text of texts) await indexVaultTextWords(ctx, Number(text.id), text.text);
+    for (const text of texts)
+        await indexVaultTextWords(
+            ctx,
+            Number(text.id),
+            vaultSearchText(text.name, text.inner_path, text.text),
+        );
     if (pending.length < limit && texts.length < limit) {
         await run(ctx, sql`DELETE FROM happy_agent_vault_search_backfill WHERE id = 1`);
         return false;

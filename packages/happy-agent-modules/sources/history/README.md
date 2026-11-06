@@ -191,15 +191,17 @@ than being silently truncated or stored.
 ## Message search
 
 `searchMessages(ctx, q, agentIds, limit)` is the message provider of the node's search: messages
-whose text holds every query word, best BM25 first, among the conversations in `agentIds` only.
+with a text block holding every query word, best BM25 first and snippeted from that block, among
+the conversations in `agentIds` only.
 The node search module decides which conversations the caller may see; a message outside them is
 never read, so its text cannot reach a snippet. Only what people wrote (`"user"`) and what agents
 wrote (`"agent"`: assistant messages and `role: "agent"` deliveries) is searched, by its text
 blocks; reasoning, tool calls and output, system and service notices, and messages hidden from the
 person are not.
 
-A contentless FTS5 table indexes the words under an integer row per message, changed in the same
-transaction that appends, replaces, or erases the message; the text itself stays in the history
+A contentless FTS5 table indexes the words under an integer row per text block, changed in the
+same transaction that appends, replaces, or erases the message, or adds blocks to an answer still
+being written, which indexes only the blocks it gains; the text itself stays in the history
 row. Messages archived before the index are indexed after upgrade by the durable
 `history.words.backfill` job, which needs the Durable Functions module, two hundred rows per
 transaction up to the newest row that existed when the migration ran.

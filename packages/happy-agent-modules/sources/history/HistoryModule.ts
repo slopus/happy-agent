@@ -160,8 +160,9 @@ import {
 import {
     eraseHistoryWords,
     historyWordRole,
-    historyWordText,
+    indexHistoryWordBlocks,
     indexHistoryWords,
+    migrateHistoryBlockWords,
     migrateHistoryWords,
     queryHistoryRowsForWords,
     queryHistoryWordBackfill,
@@ -447,6 +448,7 @@ export class HistoryModule implements AgentModule {
             },
         ],
         ["005-history-words", migrateHistoryWords],
+        ["006-history-block-words", migrateHistoryBlockWords],
     ];
 
     /**
@@ -1556,6 +1558,8 @@ export class HistoryModule implements AgentModule {
                 ...updated,
                 blocks: [...pending, block],
             });
+            // Search finds every text block of an answer, so the blocks it gains are indexed.
+            await indexHistoryWordBlocks(ctx, scope.agent.id, updated, existing.blocks.length);
             if (pending.length > 0) {
                 await scope.runKV.delete(ctx, PENDING_BLOCKS_KEY);
             }
@@ -2407,9 +2411,9 @@ export class HistoryModule implements AgentModule {
     }
 
     /**
-     * Messages people and agents wrote whose text holds every query word, best BM25 first, among
-     * the conversations in `agentIds` only. The caller decides which conversations the person may
-     * see; a message outside them is never read.
+     * Messages people and agents wrote with a text block holding every query word, best BM25
+     * first, snippeted from that block, among the conversations in `agentIds` only. The caller
+     * decides which conversations the person may see; a message outside them is never read.
      */
     async searchMessages(
         ctx: Context,
@@ -2431,7 +2435,8 @@ export class HistoryModule implements AgentModule {
                 const message = await this.message(txCtx, found.agentId, found.recordId);
                 const role = message === undefined ? null : historyWordRole(message);
                 if (message === undefined || role === null) continue;
-                const text = historyWordText(message);
+                const block = message.blocks[found.block];
+                const text = block?.type === "text" ? block.text : "";
                 hits.push({
                     type: "message",
                     key: `message:${message.recordId}`,

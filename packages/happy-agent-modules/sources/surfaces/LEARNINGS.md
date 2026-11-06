@@ -349,7 +349,12 @@ locally and fuse with the daemon's answer, and then for vault search to go entir
 per-vault search route and no vault-wide one; `glob_vault` and `grep_vault` keep the trigram
 index. `SurfaceVaults.search` is the vault provider: every vault's live items, each once under its
 best tier, reported as `match: "path"` when only the folders above matched (and for a substring
-found only in the path). Surfaces search their catalog's names in memory; todo text, and calendar
+found only in the path). Desktop found HTML vault apps answering with their source as the snippet,
+and matching words that only appeared in tags. An `.html` file, by a plain file's name or a vault
+app file's inner path, is now indexed and snippeted as the text a reader sees, stripped as artifact
+search strips it; the trigram index keeps the source, so `grep_vault` still reads markup. A plain
+file renamed across `.html` has its words indexed again, and texts indexed as source before this
+are reindexed once by the maintenance backfill, limited to HTML. Surfaces search their catalog's names in memory; todo text, and calendar
 event titles beside their location and notes, live in contentless word indexes changed in the same
 transaction; a document's Markdown and the text of its live comments are indexed in a durable job
 just after each edit, so typing never waits for the projection to be rebuilt. A comment match has

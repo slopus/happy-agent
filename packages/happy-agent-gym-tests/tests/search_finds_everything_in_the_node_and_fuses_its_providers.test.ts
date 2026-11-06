@@ -21,7 +21,14 @@ describe("search through the real daemon", () => {
         const gym = await createAgentGym({
             permissionMode: "full_access",
             timeoutMs: 20000,
-            inference: [{ content: [{ text: "The rocket is fueled.", type: "text" }] }],
+            inference: [
+                {
+                    content: [
+                        { text: "The rocket is fueled.", type: "text" },
+                        { text: "Countdown starts at noon.", type: "text" },
+                    ],
+                },
+            ],
         });
         running.push(gym);
         const client = gym.client;
@@ -101,6 +108,15 @@ describe("search through the real daemon", () => {
             [gym.defaultSessionId, "agent", "The rocket is fueled."],
             [gym.defaultSessionId, "user", "Check the rocket before launch."],
         ]);
+        // Every text block of an answer is searchable, not only the first one written.
+        expect((await client.search({ q: "countdown", types: ["message"] })).results).toMatchObject(
+            [
+                {
+                    key: messages.find((result) => result.role === "agent")?.key,
+                    snippet: "Countdown starts at noon.",
+                },
+            ],
+        );
         expect(new Set(keys(everything).filter((key) => !key.startsWith("message:")))).toEqual(
             new Set([
                 `vault_folder:${plans.id}`,
@@ -163,6 +179,23 @@ describe("search through the real daemon", () => {
         const two = await client.search({ q: "rocket", limit: 2 });
         expect(two.results).toHaveLength(2);
         expect(two.truncated).toBe(true);
+
+        // An HTML file is found by the text a reader sees, never by its markup.
+        const page = (
+            await client.createVaultFile(studio.id, {
+                name: "briefing.html",
+                parentId: null,
+                uploadId: await upload(
+                    client,
+                    '<!doctype html><h1 class="zebra" style="color:teal">Mission &amp; <b>orbit</b></h1>\n<script>const giraffe = 1;</script>',
+                ),
+            })
+        ).file;
+        expect((await client.search({ q: "orbit" })).results).toMatchObject([
+            { key: `vault_file:${page.id}`, match: "content", line: 1, snippet: "Mission & orbit" },
+        ]);
+        for (const q of ["zebra", "teal", "giraffe", "doctype"])
+            expect(keys(await client.search({ q }))).toEqual([]);
 
         // Deleting takes a thing out at once.
         await client.deleteTodo(list.id, venue.id, { ifMatch: venue.version });
