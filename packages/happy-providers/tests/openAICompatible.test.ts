@@ -252,6 +252,36 @@ describe("OpenAI-compatible Chat Completions provider", () => {
         }
     });
 
+    it("keeps caller regex patterns on tool and structured-output schemas", async () => {
+        const transport = mockTransport(() => answer('{"title":"Done"}'));
+        const title = Type.Object({ title: Type.String({ pattern: "^(?=.*\\S).+$" }) });
+        const patterned: SessionTool = {
+            name: "Write",
+            parameters: Type.Object({ path: Type.String({ pattern: "^(?!/).+$" }) }),
+        };
+        const session = await provider(transport.fetch).session("patterns", {
+            instructions: "",
+            tools: [patterned],
+        });
+        try {
+            await collect(
+                session.run(testContext, {
+                    context,
+                    structuredOutput: { name: "title", schema: title },
+                }),
+            );
+            const body = transport.requests[0]!.body;
+            expect(body.tools[0].function.parameters).toEqual(
+                JSON.parse(JSON.stringify(patterned.parameters)),
+            );
+            expect(body.response_format.json_schema.schema).toEqual(
+                JSON.parse(JSON.stringify(title)),
+            );
+        } finally {
+            session.destroy();
+        }
+    });
+
     it("leaves reasoning off the wire unless a replay field is configured", async () => {
         const transport = mockTransport(() => answer());
         const session = await provider(transport.fetch).session("no-replay", { instructions: "" });

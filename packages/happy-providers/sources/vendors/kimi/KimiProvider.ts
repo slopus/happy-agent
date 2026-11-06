@@ -53,6 +53,7 @@ export class KimiProvider extends BaseProvider {
                 endpoint: this.options.endpoint ?? bedrockRuntimeOpenAIEndpoint(region),
                 userAgent: this.options.userAgent ?? "kimi-code",
             }),
+            stripSchemaPatterns: true,
             resolveModel: (selected) => resolveKimiModel(selected, region),
             generation: (request) => {
                 const effort = request.effort ?? "max";

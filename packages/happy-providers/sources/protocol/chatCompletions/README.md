@@ -23,6 +23,11 @@ Assistant `reasoning_content` is replayed alongside text and tool calls. Namespa
 encoded as `namespace__name` and mapped back on the response. Deferred tools are sent eagerly;
 neither provider advertises native tool discovery or server tools.
 
+Bedrock rejects regex look-around in Kimi and GLM tool and structured-output schemas, so both
+providers set `stripSchemaPatterns`: every `pattern` and `patternProperties` is replaced with a
+readable description on the wire, while the caller's schema keeps its patterns for local
+validation. OpenAI-compatible endpoints receive the caller's schemas unchanged.
+
 Each inference attempt has a rollback boundary. Connection failures, throttling, retryable HTTP
 failures, empty output, and prematurely closed streams may retry within the provider budget.
 Authentication and invalid requests remain terminal. Cancellation closes the response stream,
