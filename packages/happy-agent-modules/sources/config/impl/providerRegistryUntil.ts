@@ -10,6 +10,8 @@ import {
 } from "@slopus/happy-providers";
 import { withLifetime, type Context } from "@steve.kite/stdlib";
 
+import { contextHasSentImages, imagesByReference } from "./imagesByReference.js";
+
 /** One resettable cancellation boundary per configured provider. */
 export class ProviderEnablement {
     readonly #controllers = new Map<string, AbortController>();
@@ -44,7 +46,11 @@ export class ProviderEnablement {
     }
 }
 
-/** Wrap every provider session so daemon shutdown cancels provider work from any agent lifetime. */
+/**
+ * Wrap every provider session so daemon shutdown cancels provider work from any agent lifetime.
+ * With `imageCachePath`, images a person or agent sent reach the model by reference to a file
+ * there, as {@link imagesByReference} describes.
+ */
 export function providerRegistryUntil(
     source: AgentProviders,
     shutdown: AbortSignal,
@@ -55,6 +61,7 @@ export function providerRegistryUntil(
         request: SessionRunRequest,
         provider: BaseProvider,
     ) => Promise<void>,
+    imageCachePath?: string,
 ): AgentProviders {
     const providers = new AgentProviders();
     const wrappedProviders = new WeakSet<BaseProvider>();
@@ -77,6 +84,7 @@ export function providerRegistryUntil(
                     validateRequest === undefined
                         ? undefined
                         : (request) => validateRequest(id, request, provider),
+                    imageCachePath,
                 );
             },
             type,
@@ -92,6 +100,7 @@ function providerUntil(
     wrappedProviders: WeakSet<BaseProvider>,
     wrappedSessions: WeakSet<BaseSession>,
     validateRequest: ((request: SessionRunRequest) => Promise<void>) | undefined,
+    imageCachePath: string | undefined,
 ): BaseProvider {
     if (wrappedProviders.has(provider)) return provider;
     const openSession = provider.session.bind(provider);
@@ -104,6 +113,7 @@ function providerUntil(
                 providerLifetime,
                 wrappedSessions,
                 validateRequest,
+                imageCachePath,
             ),
         writable: true,
     });
@@ -117,6 +127,7 @@ function sessionUntil(
     providerLifetime: () => AbortSignal,
     wrappedSessions: WeakSet<BaseSession>,
     validateRequest: ((request: SessionRunRequest) => Promise<void>) | undefined,
+    imageCachePath: string | undefined,
 ): BaseSession {
     if (wrappedSessions.has(session)) return session;
     const run = session.run.bind(session);
@@ -126,11 +137,22 @@ function sessionUntil(
             configurable: true,
             value: (ctx: Context, request: SessionRunRequest): SessionStream => {
                 const runCtx = until(ctx, shutdown, providerLifetime());
-                if (validateRequest === undefined || request.serviceTier !== "ultrafast")
-                    return run(runCtx, request);
+                const validate =
+                    validateRequest !== undefined && request.serviceTier === "ultrafast";
+                const byReference =
+                    imageCachePath !== undefined && contextHasSentImages(request.context);
+                if (!validate && !byReference) return run(runCtx, request);
                 return (async function* () {
-                    await validateRequest(request);
-                    yield* run(runCtx, request);
+                    if (validate) await validateRequest(request);
+                    yield* run(
+                        runCtx,
+                        byReference
+                            ? {
+                                  ...request,
+                                  context: await imagesByReference(request.context, imageCachePath),
+                              }
+                            : request,
+                    );
                 })();
             },
             writable: true,
@@ -141,7 +163,15 @@ function sessionUntil(
                 ctx: Context,
                 options: SessionCompactionOptions,
             ): Promise<SessionCompaction> =>
-                await compact(until(ctx, shutdown, providerLifetime()), options),
+                await compact(
+                    until(ctx, shutdown, providerLifetime()),
+                    imageCachePath === undefined
+                        ? options
+                        : {
+                              ...options,
+                              context: await imagesByReference(options.context, imageCachePath),
+                          },
+                ),
             writable: true,
         },
     });

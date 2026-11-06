@@ -551,6 +551,33 @@ must match `^[a-z_][a-z0-9_-]{0,31}$` and must not be `root`; the executable mus
 path; per-bot keys must be bot IDs. The table is refused beside `[runners]`, where nothing runs on
 this machine to separate, and on Windows, which has no sudo. Changing it takes a restart.
 
+## Sent images reach the model by reference
+
+A person pasted two PNG screenshots of more than 5 MB each into a bot's only chat. History replays
+every image inline on each turn, so Claude Code refused every request after that with "Image
+base64 size (5MB) exceeds API limit (5MB)" and the bot was unusable. A first fix re-encoded each
+image to fit before every request, with a cache and a text fallback. The maintainer rejected that
+as too much magic: images should always go to the model by reference, the read tool should do any
+conversion, and an image it cannot fit should be an error the model can act on.
+
+The provider registry decoration now writes each image in a user, system, or agent message to
+`~/.happy/cache/images` under its digest and sends one line naming the file instead. Nothing is
+resized there. The reading tools do the conversion. Because the swap happens per request, it also
+fixes conversations that already hold such an image, without touching stored data. History and the
+API still carry the image inline, so clients keep showing it. Converting at intake instead would
+change the send and history contract and Desktop.
+
+The user did not want these copies in the visible `~/Happy` folder, or cleanup they would notice.
+The folder is a hidden cache under the Happy root, outside the private `~/.happy/agent`, which
+sandboxed commands may not read. It is pruned only of files no request has named for 180 days,
+with no size limit. Each request renews the modification time of the copies it names and writes a
+missing copy again under the same path, so the prompt text stays stable and only conversations
+idle for half a year ever lose a copy, which their next turn restores.
+
+The file lives on the daemon's host. An agent whose machine is a container or a runner cannot open
+it, the same as `~/Happy/Generated`. Reading it in Auto is reviewed like any path outside the
+workspace.
+
 ## Friendly account names do not change identity
 
 Every provider accepts optional `name`. Built-in Claude, Codex, and Grok slots default to Current

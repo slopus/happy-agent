@@ -81,6 +81,7 @@ import {
     type ProviderUsageReadMethod,
 } from "./impl/loadConfiguredProviderUsage.js";
 import { ProviderEnablement, providerRegistryUntil } from "./impl/providerRegistryUntil.js";
+import { pruneImageCache } from "./impl/pruneImageCache.js";
 import { ProviderServiceTiers } from "./impl/ProviderServiceTiers.js";
 import {
     RoundRobinRouterProvider,
@@ -188,6 +189,8 @@ const DEFAULT_MOBILE_CONNECTOR_PORT = 24_781;
 const TAILCAT_EXPOSURE_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/u;
 const PROVIDER_CREDENTIAL_REFRESH_INTERVAL_MS = 3 * 60 * 60 * 1_000;
 const PROVIDER_SERVICE_TIER_REFRESH_INTERVAL_MS = 60_000;
+/** Image copies are pruned at startup and once a day after that. */
+const IMAGE_CACHE_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 
 const pathSchema = Type.String({
     minLength: 1,
@@ -1468,6 +1471,7 @@ const pathSchemaSet = Type.Object(
         globalConfigPath: pathSchema,
         happyHome: pathSchema,
         historyDumpHome: pathSchema,
+        imageCachePath: pathSchema,
         instructionsPath: pathSchema,
         localConfigPath: pathSchema,
         logPath: pathSchema,
@@ -2290,6 +2294,28 @@ export class ConfigModule implements AgentModule {
                 if (!lifetime.aborted)
                     tierOwner.log.warn("Background provider capability refresh stopped.");
             });
+            const imageCacheOwner = withLifetime(
+                detach(ctx).named("image-cache-pruning"),
+                lifetime,
+            );
+            void forever(
+                imageCacheOwner,
+                {
+                    delay: IMAGE_CACHE_PRUNE_INTERVAL_MS,
+                    delayFirst: false,
+                    name: "prune-image-cache",
+                },
+                async (pruneCtx) => {
+                    await pruneImageCache(this.configuration.paths.imageCachePath).catch(
+                        (error: unknown) => {
+                            pruneCtx.log.warn("Could not prune the image cache.", {}, error);
+                        },
+                    );
+                },
+            ).catch(() => {
+                if (!lifetime.aborted)
+                    imageCacheOwner.log.warn("Background image cache pruning stopped.");
+            });
         },
     };
 
@@ -2492,6 +2518,7 @@ export class ConfigModule implements AgentModule {
             (id) => this.isProviderEnabled(id),
             (id, request, provider) =>
                 this.validateProviderServiceTier(id, request.model, request.serviceTier, provider),
+            this.configuration.paths.imageCachePath,
         );
         return this.#providers;
     }
@@ -4575,6 +4602,10 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         globalConfigPath: join(configHome, "happy.toml"),
         happyHome,
         historyDumpHome: join(observationHome, "history"),
+        // Copies of the images people and agents send, which the model opens by reference. They
+        // derive from history, so this is a cache: outside the private agent root, which commands
+        // may not read, and pruned of files no request has named for half a year.
+        imageCachePath: join(happyHome, "cache", "images"),
         instructionsPath: join(configHome, "AGENTS.md"),
         localConfigPath: join(process.cwd(), "happy.toml"),
         logPath: join(observationHome, "agent.log"),
