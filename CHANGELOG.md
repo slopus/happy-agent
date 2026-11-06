@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added protocol 34 owner-only HTTP routes to add and remove standalone server connections by
+  URL, so desktop can connect to a cloud team without asking an admin bot.
 - Added required local-plugin author/category metadata and an authenticated, generation-bound PNG
   icon capability for local and remote `rig-connect` catalog clients. This is a hard protocol 5
   cut: older Happy clients are incompatible, legacy manifests without `author`, `category`, or a

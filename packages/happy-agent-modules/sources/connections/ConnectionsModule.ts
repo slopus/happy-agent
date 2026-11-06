@@ -345,6 +345,21 @@ export class ConnectionsModule implements AgentModule {
         entry: RemoteConnectionEntry,
     ): Promise<Connection[]> {
         await this.#requireAdmin(ctx, agentId);
+        return await this.#set(ctx, id, entry);
+    }
+
+    /** The API has authenticated the standalone owner before calling this operation. */
+    async removeServerForOwner(ctx: Context, id: string): Promise<Connection[]> {
+        this.#requireStandalone();
+        return await this.#set(ctx, id, { enabled: false }, true);
+    }
+
+    async #set(
+        ctx: Context,
+        id: string,
+        entry: RemoteConnectionEntry,
+        serverOnly = false,
+    ): Promise<Connection[]> {
         return await this.#lock.runInLock(ctx, async () => {
             if (this.#closed)
                 throw new RemoteConnectionError(
@@ -352,6 +367,17 @@ export class ConnectionsModule implements AgentModule {
                     "remote_unavailable",
                     "Remote connections have stopped.",
                 );
+            if (serverOnly) {
+                const current = Object.hasOwn(this.#config.connections, id)
+                    ? this.#config.connections[id]
+                    : undefined;
+                if (current === undefined || current.enabled === false || !("url" in current))
+                    throw new RemoteConnectionError(
+                        404,
+                        "not_found",
+                        "The server connection was not found.",
+                    );
+            }
             if (
                 Object.hasOwn(this.#config.connections, id) &&
                 isDeepStrictEqual(this.#config.connections[id], entry)
@@ -590,17 +616,33 @@ export class ConnectionsModule implements AgentModule {
         name?: string,
     ): Promise<Connection[]> {
         await this.#requireAdmin(ctx, agentId);
+        return await this.addServerForOwner(ctx, url, name);
+    }
+
+    #requireStandalone(): void {
         if (this.#config.configuration.values.feature.team.enabled) {
-            throw new Error(
+            throw new RemoteConnectionError(
+                501,
+                "unsupported",
                 "A server connection by URL can be added only on a personal Happy Agent.",
             );
         }
+    }
+
+    /** The API has authenticated the standalone owner before calling this operation. */
+    async addServerForOwner(ctx: Context, url: string, name?: string): Promise<Connection[]> {
+        this.#requireStandalone();
         const normalized = normalizeServerUrl(url);
         if (normalized === undefined) {
-            throw new Error("Use an https:// address without a user name, query, or fragment.");
+            throw new RemoteConnectionError(
+                400,
+                "invalid_request",
+                "Use an https:// address without a user name, query, or fragment.",
+            );
         }
         const entry = { name: name ?? new URL(normalized).hostname, url: normalized };
-        if (!Value.Check(this.entrySchema, entry)) throw new Error("The server name is invalid.");
+        if (!Value.Check(this.entrySchema, entry))
+            throw new RemoteConnectionError(400, "invalid_request", "The server name is invalid.");
         return await this.#lock.runInLock(ctx, async () => {
             if (this.#closed)
                 throw new RemoteConnectionError(
@@ -613,10 +655,18 @@ export class ConnectionsModule implements AgentModule {
                 ([, candidate]) => "url" in candidate && candidate.url === normalized,
             );
             if (existing !== undefined) {
-                throw new Error(`That server is already connected as ${existing[0]}.`);
+                throw new RemoteConnectionError(
+                    400,
+                    "invalid_request",
+                    `That server is already connected as ${existing[0]}.`,
+                );
             }
             if (Object.keys(configured).length >= 100) {
-                throw new Error("At most 100 remote connections can be added.");
+                throw new RemoteConnectionError(
+                    400,
+                    "invalid_request",
+                    "At most 100 remote connections can be added.",
+                );
             }
             await requireServerSignIn(normalized);
             const instanceId = (await readServerHealth(normalized))?.instanceId;
