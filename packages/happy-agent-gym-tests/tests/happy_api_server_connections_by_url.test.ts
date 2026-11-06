@@ -10,6 +10,8 @@ import type { Socket } from "node:net";
 import { createAgentGym, type AgentGym } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
+import { GymHttpClient } from "@slopus/happy-agent-gym";
+import { surfaceTeamClients } from "./support/surfaceTeamClients.js";
 
 const INSTANCE = "k3x9q2m7p0a4b8c1d5e6f7g2";
 const gyms = new Set<AgentGym>();
@@ -22,6 +24,140 @@ afterEach(async () => {
 });
 
 describe("server connections by URL", () => {
+    it("lets the desktop owner add, sign in, restart, and remove a server over HTTP", async () => {
+        const gym = await createAgentGym();
+        gyms.add(gym);
+        const server = await teamServer();
+        const added = await gym.raw.post("/v0/connections/servers", {
+            url: server.url,
+            name: "Cloud team",
+        });
+        expect(added.status).toBe(200);
+        expect(added.body).toEqual({
+            connections: [
+                {
+                    id: "localhost",
+                    name: "Cloud team",
+                    orderKey: expect.any(String),
+                    authentication: "oauth",
+                    url: `${server.url}/`,
+                },
+            ],
+            version: expect.any(String),
+        });
+        expect((await gym.raw.get("/v0/connections")).body).toEqual(added.body);
+        const health = await rawRequest(gym, "/v0/connections/localhost/api/v0/health", {
+            "happy-remote-authorization": "Bearer access-1",
+        });
+        expect(health.status).toBe(200);
+        expect(JSON.parse(health.body)).toMatchObject({ instanceId: INSTANCE });
+        await gym.restart();
+        expect((await gym.client.listConnections()).connections).toMatchObject([
+            { id: "localhost", name: "Cloud team", url: `${server.url}/` },
+        ]);
+        const removed = await gym.raw.delete("/v0/connections/localhost");
+        expect(removed.status).toBe(200);
+        expect(removed.body).toEqual({ connections: [], version: expect.any(String) });
+        expect(await gym.raw.delete("/v0/connections/localhost")).toMatchObject({
+            status: 404,
+            body: { code: "not_found" },
+        });
+        await gym.restart();
+        expect((await gym.raw.get("/v0/connections")).body).toEqual(removed.body);
+        const readded = await gym.raw.post("/v0/connections/servers", { url: server.url });
+        expect(readded).toMatchObject({
+            status: 200,
+            body: { connections: [{ id: "localhost-2", authentication: "oauth" }] },
+        });
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
+    it("rejects HTTP mutations without authority or valid OAuth discovery and preserves managed entries", async () => {
+        const gym = await createAgentGym({
+            config:
+                '[connections.builder]\nname = "Builder"\naddress = "tcBuilder"\ntoken = "' +
+                "s".repeat(43) +
+                '"\n',
+        });
+        gyms.add(gym);
+        const unauthorized = new GymHttpClient({ socketPath: gym.socketPath, token: "invalid" });
+        expect(
+            await unauthorized.post("/v0/connections/servers", { url: "https://example.com" }),
+        ).toMatchObject({ status: 401, body: { code: "unauthorized" } });
+        expect(await unauthorized.delete("/v0/connections/builder")).toMatchObject({
+            status: 401,
+            body: { code: "unauthorized" },
+        });
+        const server = await teamServer();
+        for (const body of [
+            { url: "http://example.com" },
+            { url: server.url, token: "never-store" },
+            { url: server.url, name: "" },
+        ]) {
+            expect(await gym.raw.post("/v0/connections/servers", body)).toMatchObject({
+                status: 400,
+                body: { code: "invalid_request" },
+            });
+        }
+        server.edge = "redirect";
+        expect(await gym.raw.post("/v0/connections/servers", { url: server.url })).toMatchObject({
+            status: 400,
+            body: { code: "invalid_request" },
+        });
+        server.edge = "none";
+        server.offersOAuth = false;
+        expect(await gym.raw.post("/v0/connections/servers", { url: server.url })).toMatchObject({
+            status: 400,
+            body: { code: "invalid_request" },
+        });
+        for (const id of ["builder", "missing", "Invalid-ID"]) {
+            expect(await gym.raw.delete(`/v0/connections/${id}`)).toMatchObject({
+                status: 404,
+                body: { code: "not_found" },
+            });
+        }
+        server.offersOAuth = true;
+        expect(await gym.raw.post("/v0/connections/servers", { url: server.url })).toMatchObject({
+            status: 200,
+        });
+        expect(
+            await gym.raw.post("/v0/connections/servers", { url: `${server.url}/` }),
+        ).toMatchObject({ status: 400, body: { code: "invalid_request" } });
+        expect((await gym.client.listConnections()).connections).toMatchObject([
+            { id: "builder", authentication: "bearer" },
+            { id: "localhost", authentication: "oauth" },
+        ]);
+        expect(gym.errors).toEqual([]);
+    }, 30_000);
+
+    it("refuses team members and does not enable URL connections for team owners", async () => {
+        const { gym, tokenFor } = await surfaceTeamClients();
+        gyms.add(gym);
+        for (const [subject, status, code] of [
+            ["alice", 501, "unsupported"],
+            ["bob", 403, "forbidden"],
+        ] as const) {
+            for (const [method, path] of [
+                ["POST", "/v0/connections/servers"],
+                ["DELETE", "/v0/connections/localhost"],
+            ] as const) {
+                const response = await fetch(new URL(path, gym.daemon.httpUrl), {
+                    method,
+                    headers: {
+                        authorization: `Bearer ${tokenFor(subject)}`,
+                        "content-type": "application/json",
+                    },
+                    ...(method === "POST"
+                        ? { body: JSON.stringify({ url: "https://example.com" }) }
+                        : {}),
+                });
+                expect(response.status).toBe(status);
+                expect(await response.json()).toMatchObject({ code });
+            }
+        }
+        expect(gym.errors).toEqual([]);
+    }, 30_000);
+
     it("is added by the Chief of Staff and reached only with the app's own token", async () => {
         const f = await started();
         const server = await teamServer();

@@ -41,7 +41,9 @@ Tailcat, in standalone mode only. A person adds one by asking an active admin bo
 Chief of Staff: `add_server_connection { url, name? }` normalizes the URL, refuses it unless the
 server's discovery, read without a credential, is a Happy response that offers an `oauth` method,
 generates the ID from the host, and saves the entry in generated `runtime.toml`.
-`remove_remote_connection` removes it like any other entry. No HTTP route adds or removes one.
+`remove_remote_connection` removes it like any other entry. The standalone owner can also call
+`POST /v0/connections/servers` with `{ url, name? }` and `DELETE /v0/connections/:id` for URL
+entries only. Both routes return the complete versioned roster and reuse the module's validation.
 Its address never changes: `set_remote_connection` may rename it but refuses a different URL, a
 new URL entry, or another kind of connection under its ID. An ID that ever named a server is
 reserved permanently in the database, so after removal no connection of any kind takes it, and

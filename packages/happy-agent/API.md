@@ -379,7 +379,7 @@ mobile credentials with separate authority, as specified under "Credentials on t
 
 All routes are prefixed with `/v0`. Independently of the path version, every daemon advertises
 its identity through the health endpoint as a single `version` object: a numeric `protocol`
-(integer, currently 31) and the `daemon` product version string. Protocol versions from 22 onward
+(integer, currently 34) and the `daemon` product version string. Protocol versions from 22 onward
 are backward-compatible and additive. Clients support that compatibility range for existing
 capabilities instead of requiring equality with their own protocol number. A client may require
 a newer protocol for a capability it needs and must explain that an upgrade is required when the
@@ -1006,11 +1006,12 @@ deployments and standalone secondaries. Tailcat provides encrypted connectivity,
 authorization. Managed connections use WorkOS or fixed bearer authentication; they do not require
 the former invitation/emoji pairing flow.
 
-Only machine configuration and tools restricted to active admin bots may add, replace, or remove
-roster entries, including server connections by URL. Tool authority is rechecked at execution.
-Public HTTP callers may reorder existing entries, but cannot add, replace, or remove them. Project configuration cannot register connections
-or supply credentials. Live changes
-are persisted in generated `runtime.toml`; configured connections are restored after restart.
+Machine configuration and tools restricted to active admin bots may add, replace, or remove
+roster entries. Tool authority is rechecked at execution.
+Public HTTP callers may reorder existing entries. The standalone owner may also add and remove
+server connections by URL through the routes below, but cannot mutate managed Tailcat entries.
+Project configuration cannot register connections or supply credentials. Live changes are
+persisted in generated `runtime.toml`; configured connections are restored after restart.
 Removing a connection closes its transport and active requests, but never deletes remote data.
 
 Machine configuration uses `[connections.<id>]`, with `name`, `address` (a case-sensitive Tailcat
@@ -1145,8 +1146,8 @@ the team server directly and keep their own tokens.
 Server connections by URL exist only in standalone mode. A person adds one by asking an active
 admin bot, such as the Chief of Staff, whose tool takes the server's URL, or by listing it in
 machine configuration as a `[connections.<id>]` entry with a `url`; like every other entry, it is
-removed the same ways. No HTTP route adds or removes one. Entries an admin bot adds are persisted
-in generated `runtime.toml`. In team mode a `url` entry is a configuration error, reported at
+removed the same ways. The standalone owner may also use the HTTP routes below. Added entries
+are persisted in generated `runtime.toml`. In team mode a `url` entry is a configuration error, reported at
 startup like any invalid entry, and an admin bot cannot add one.
 
 A URL is normalized before use. It must be absolute and use `https`, or `http` with a loopback
@@ -1156,8 +1157,9 @@ always ends in `/`, so `https://Happy.Example.com/team` becomes `https://happy.e
 API paths are resolved against it: the server's health is `<url>v0/health`. Two entries never
 share one normalized URL.
 
-Before adding a server, the admin bot's tool reads `<url>v0/authentication` without a credential,
-following no redirects. It adds the server only when discovery is a Happy response that lists an
+Before adding a server, both the HTTP route and the admin bot's tool read
+`<url>v0/authentication` without a credential, following no redirects. They add the server only
+when discovery is a Happy response that lists an
 `oauth` method, so a redirect or an edge sign-in page is refused. The ID is generated from the
 URL's host, such as `happy-example-com` for `happy.example.com`, appending `-2`, `-3`, and so on
 when the ID is taken, and the entry is appended to the end of the roster. Adding or removing one
@@ -1168,6 +1170,34 @@ the tokens it kept for that server.
 The roster learns the server's `instanceId` from its health: when the server is added, and from
 every health response the daemon relays from it. An app reads
 `GET /v0/connections/:id/api/v0/health` after signing in, so the roster has it from then on.
+
+#### `POST /v0/connections/servers`
+
+Protocol 34 adds a server by URL for the authenticated standalone owner. Body:
+`{ "url": "https://team.example.com/", "name"?: "My team" }`. Unknown fields are refused.
+`url` is a string of 1–2048 characters; optional `name` is 1–256 characters and defaults to the
+normalized URL's host. Normalization, OAuth discovery, unique URLs, immutable server IDs, the
+100-entry roster limit, persistence, and events follow the server rules above.
+
+Response `200`: `{ "connections": [ ... ], "version": "..." }`, the complete current roster,
+as returned by `GET /v0/connections`. The app signs in separately; no token is accepted or stored.
+
+Errors: `401 unauthorized` without authentication; `403 forbidden` for a guest or non-owner;
+`501 unsupported` for a team owner because URL connections are standalone-only;
+`400 invalid_request` for an invalid body, URL, name, duplicate URL, full roster, or discovery
+that does not offer OAuth (including redirects); `503 remote_unavailable` when discovery cannot
+be reached or connections have stopped; `504 remote_timeout` when discovery times out.
+
+#### `DELETE /v0/connections/:id`
+
+Protocol 34 removes an enabled server connection by URL for the authenticated standalone owner.
+No body or `If-Match` header is required. Response `200` is the complete current roster with its
+`version`, as above. It closes the connection's streams and preserves the server's data and the
+permanent reservation of its ID. It cannot remove managed Tailcat connections.
+
+Authentication and team-mode errors are the same as addition. A missing, malformed, disabled,
+or non-URL connection ID returns `404 not_found`. Stopped connections return
+`503 remote_unavailable`.
 
 #### `/v0/connections/:id/api/*`
 

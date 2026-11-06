@@ -85,6 +85,102 @@ async function fixture() {
 }
 
 describe("configured remote roster", () => {
+    it("shares owner URL addition validation and removes only URL entries", async () => {
+        const f = await fixture();
+        const discovery = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+            expect(init?.redirect).toBe("manual");
+            expect(init?.headers).toEqual({ accept: "application/json" });
+            return new URL(String(input)).pathname.endsWith("authentication")
+                ? Response.json({
+                      authenticated: false,
+                      userId: null,
+                      methods: [
+                          {
+                              type: "oauth",
+                              id: "jwt",
+                              name: "Cloud",
+                              authorizationUrl: "https://auth.example.com/authorize",
+                              tokenUrl: "https://auth.example.com/token",
+                              clientId: "happy",
+                          },
+                      ],
+                  })
+                : new Response(null, { status: 401 });
+        });
+        try {
+            const added = await f.module.addServerForOwner(
+                f.context,
+                "https://TEAM.example.com/cloud",
+                "Cloud team",
+            );
+            expect(added).toEqual([
+                {
+                    id: "mac",
+                    name: "Build Mac",
+                    authentication: "bearer",
+                    orderKey: expect.any(String),
+                },
+                {
+                    id: "team-example-com",
+                    name: "Cloud team",
+                    authentication: "oauth",
+                    url: "https://team.example.com/cloud/",
+                    orderKey: expect.any(String),
+                },
+            ]);
+            expect(discovery.mock.calls.map(([url]) => String(url))).toEqual([
+                "https://team.example.com/cloud/v0/authentication",
+                "https://team.example.com/cloud/v0/health",
+            ]);
+            await expect(
+                f.module.addServerForOwner(f.context, "https://team.example.com/cloud/"),
+            ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+            await expect(f.module.removeServerForOwner(f.context, "mac")).rejects.toMatchObject({
+                status: 404,
+                code: "not_found",
+            });
+            const removed = await f.module.removeServerForOwner(f.context, "team-example-com");
+            expect(removed).toEqual([added[0]]);
+            await expect(
+                f.module.removeServerForOwner(f.context, "team-example-com"),
+            ).rejects.toMatchObject({ status: 404, code: "not_found" });
+            expect(
+                await f.module.addServerForOwner(f.context, "https://team.example.com/cloud/"),
+            ).toMatchObject([{ id: "mac" }, { id: "team-example-com-2" }]);
+        } finally {
+            await f.module.close(f.context);
+        }
+    });
+
+    it("refuses owner additions when discovery redirects or offers no OAuth", async () => {
+        const f = await fixture();
+        const request = vi.spyOn(globalThis, "fetch");
+        try {
+            for (const response of [
+                new Response(null, {
+                    status: 302,
+                    headers: { location: "https://edge.example.com" },
+                }),
+                Response.json({ authenticated: false, userId: null, methods: [] }),
+            ]) {
+                request.mockResolvedValueOnce(response);
+                await expect(
+                    f.module.addServerForOwner(f.context, "https://team.example.com/"),
+                ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+            }
+            expect(await f.module.list(f.context)).toEqual([
+                {
+                    id: "mac",
+                    name: "Build Mac",
+                    authentication: "bearer",
+                    orderKey: expect.any(String),
+                },
+            ]);
+        } finally {
+            await f.module.close(f.context);
+        }
+    });
+
     it("reorders without replacing an existing pool or carrier", async () => {
         const f = await fixture();
         vi.spyOn(RemoteProxyConnection.prototype, "health").mockResolvedValue({

@@ -426,9 +426,98 @@ describe("Cloud HTTP API", () => {
     });
 });
 
+describe("owner server connection HTTP routes", () => {
+    it("returns the complete roster after desktop addition and removal", async () => {
+        const snapshot = {
+            connections: [
+                {
+                    id: "team-example-com",
+                    name: "Cloud",
+                    authentication: "oauth",
+                    url: "https://team.example.com/",
+                    orderKey: "a0",
+                },
+            ],
+            version: VERSION_1,
+        };
+        const connections = {
+            onUpdated: () => () => undefined,
+            getSnapshot: async () => snapshot,
+            addServerForOwner: vi.fn(async () => snapshot.connections),
+            removeServerForOwner: vi.fn(async () => {
+                snapshot.connections = [];
+                snapshot.version = VERSION_2;
+            }),
+        };
+        const f = await apiFixture(disconnected, { connections });
+        const call = apiFetch(f.api, f.context);
+        const headers = { authorization: `Bearer ${f.token}`, "content-type": "application/json" };
+        const added = await call("http://happy-agent.test/v0/connections/servers", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ url: "https://team.example.com/", name: "Cloud" }),
+        });
+        expect(added.status).toBe(200);
+        expect(await added.json()).toEqual(snapshot);
+        expect(connections.addServerForOwner).toHaveBeenCalledWith(
+            expect.anything(),
+            "https://team.example.com/",
+            "Cloud",
+        );
+        const removed = await call("http://happy-agent.test/v0/connections/team-example-com", {
+            method: "DELETE",
+            headers,
+        });
+        expect(removed.status).toBe(200);
+        expect(await removed.json()).toEqual({ connections: [], version: VERSION_2 });
+        expect(connections.removeServerForOwner).toHaveBeenCalledWith(
+            expect.anything(),
+            "team-example-com",
+        );
+        const invalid = await call("http://happy-agent.test/v0/connections/servers", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ url: "https://team.example.com/", token: "not-accepted" }),
+        });
+        expect(invalid.status).toBe(400);
+        expect(await invalid.json()).toMatchObject({ code: "invalid_request" });
+    });
+
+    it.each([
+        { owner: false, guest: false, status: 403, code: "forbidden" },
+        { owner: true, guest: false, status: 501, code: "unsupported" },
+        { owner: false, guest: true, status: 403, code: "forbidden" },
+    ])(
+        "refuses team server mutations for $code owner=$owner guest=$guest",
+        async ({ owner, guest, status, code }) => {
+            const f = await apiFixture(disconnected, { team: true, owner, guest });
+            for (const [method, path] of [
+                ["POST", "/v0/connections/servers"],
+                ["DELETE", "/v0/connections/server"],
+            ] as const) {
+                const response = await apiFetch(f.api, f.context)(
+                    `http://happy-agent.test${path}`,
+                    {
+                        method,
+                        headers: { authorization: `Bearer ${f.token}` },
+                        ...(method === "POST" ? { body: "not-json" } : {}),
+                    },
+                );
+                expect(response.status).toBe(status);
+                expect(await response.json()).toMatchObject({ code });
+            }
+        },
+    );
+});
+
 async function apiFixture(
     initial: Cloud = disconnected,
-    options: { readonly team?: boolean } = {},
+    options: {
+        readonly team?: boolean;
+        readonly owner?: boolean;
+        readonly guest?: boolean;
+        readonly connections?: unknown;
+    } = {},
 ) {
     const directory = await mkdtemp(join(tmpdir(), "happy-cloud-api-"));
     const root = createRootContext().named("cloud-api-test");
@@ -439,12 +528,12 @@ async function apiFixture(
                   email: user.email,
                   firstName: user.firstName,
                   id: "teamuser",
-                  isOwner: false,
+                  isOwner: options.owner ?? false,
                   lastName: user.lastName,
                   photo: null,
                   updatedAt: 0,
                   version: VERSION_1,
-                  authentication: "workos",
+                  authentication: options.guest ? "guest" : "workos",
                   subject: user.id,
               })
             : root;
@@ -505,7 +594,7 @@ async function apiFixture(
                   authenticationMethods: () => [],
               }
             : undefined;
-    const api = createApi(cloud, config, subscriptions, team);
+    const api = createApi(cloud, config, subscriptions, team, options.connections);
     await api.beforeStart(context, {} as never);
     await api.markReady();
     const token = api.token() ?? "team-token";
@@ -579,6 +668,7 @@ function createApi(
         onDraftUpdated: () => () => undefined,
         authenticationMethods: () => [],
     },
+    connections: unknown = { list: () => [], onUpdated: () => () => {} },
 ): ApiModule {
     return new ApiModule(
         subscriptions as never,
@@ -604,7 +694,7 @@ function createApi(
         subscriptions as never,
         subscriptions as never,
         team as never,
-        { list: () => [], onUpdated: () => () => {} } as never,
+        connections as never,
         { onUpdated: () => () => {} } as never,
     );
 }

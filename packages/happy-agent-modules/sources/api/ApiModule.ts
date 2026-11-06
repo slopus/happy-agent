@@ -112,6 +112,7 @@ import {
     storyMetadataSchema,
     reorderBotRequestSchema,
     reorderConnectionRequestSchema,
+    connectionIdSchema,
     unarchiveBotRequestSchema,
     configPatchSchema,
     deleteArtifactRequestSchema,
@@ -443,7 +444,15 @@ import {
 } from "./projectCredentialDiagnostics.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 
-const API_PROTOCOL_VERSION = 33;
+const API_PROTOCOL_VERSION = 34;
+
+const addServerConnectionRequestSchema = Type.Object(
+    {
+        url: Type.String({ minLength: 1, maxLength: 2048 }),
+        name: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+    },
+    { additionalProperties: false },
+);
 const createArtifactRequestSchema = Type.Composite([
     Type.Omit(publishedCreateArtifactRequestSchema, ["type"]),
     Type.Object({ type: artifactTypeSchema }),
@@ -1376,6 +1385,38 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/connections") {
+                sendJson(response, 200, await this.#connections.getSnapshot(ctx));
+                return;
+            }
+            const serverRemoval = /^\/v0\/connections\/([^/]+)$/.exec(url.pathname);
+            if (
+                (request.method === "POST" && url.pathname === "/v0/connections/servers") ||
+                (request.method === "DELETE" && serverRemoval !== null)
+            ) {
+                const user = teamUser(ctx);
+                if (user !== undefined && (isTeamGuest(user) || !user.isOwner))
+                    throw new ApiError(
+                        403,
+                        "forbidden",
+                        "Only the owner can manage server connections.",
+                    );
+                if (this.#team.enabled)
+                    throw unsupported(
+                        "Server connections by URL are available only on a personal Happy Agent.",
+                    );
+                if (request.method === "POST") {
+                    const body = await bodyAs(
+                        request,
+                        addServerConnectionRequestSchema,
+                        "server connection",
+                    );
+                    await this.#connections.addServerForOwner(ctx, body.url, body.name);
+                } else {
+                    const id = serverRemoval![1]!;
+                    if (!Value.Check(connectionIdSchema, id))
+                        throw notFound("The server connection was not found.");
+                    await this.#connections.removeServerForOwner(ctx, id);
+                }
                 sendJson(response, 200, await this.#connections.getSnapshot(ctx));
                 return;
             }

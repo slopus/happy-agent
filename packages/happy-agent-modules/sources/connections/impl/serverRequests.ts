@@ -18,12 +18,18 @@ export async function requireServerSignIn(url: string): Promise<void> {
     const response = await get(url, "v0/authentication");
     const body = response.status === 200 ? await readJson(response) : undefined;
     if (!Value.Check(authenticationResponseSchema, body)) {
-        throw new Error(
+        throw new RemoteConnectionError(
+            400,
+            "invalid_request",
             "This address is not a Happy server, or something in front of it, such as a sign-in page, answered instead.",
         );
     }
     if (!body.methods.some((method) => method.type === "oauth")) {
-        throw new Error("This server does not offer a sign-in the Happy apps can use.");
+        throw new RemoteConnectionError(
+            400,
+            "invalid_request",
+            "This server does not offer a sign-in the Happy apps can use.",
+        );
     }
 }
 

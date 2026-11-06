@@ -107,12 +107,13 @@ There is no keychain module, no refresh, no sign-in route, and no status. Agents
 cannot reach these servers, which is accepted. The token travels only in that header, never in a
 URL, including on WebSocket upgrades and CONNECT, as the customer requires.
 
-## People add servers through the Chief of Staff
+## The owner can connect a cloud team directly
 
-An HTTP route let the owner add and remove servers by URL, which bypassed the rule that only
-machine configuration and admin bots change the roster. Steve chose the Chief of Staff instead.
-`add_server_connection` checks the server's discovery before adding it, and removal is the
-ordinary `remove_remote_connection`.
+Adding a cloud team from desktop requires an owner-only HTTP path, as well as the Chief of Staff.
+The standalone owner can add and remove URL server entries through the API. Both addition paths
+share URL normalization, OAuth discovery without redirects, persistence, and permanent ID
+reservation. HTTP removal cannot affect managed Tailcat entries. Team mode still refuses URL
+connections, and the daemon never holds the person's server token.
 
 ## A server's address is fixed for its connection ID
 
