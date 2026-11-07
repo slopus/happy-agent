@@ -16,7 +16,7 @@ export function createAnthropicBedrockClient(options: {
     const clientOptions = {
         awsRegion: options.region,
         maxRetries: 0,
-        ...(options.endpoint === undefined ? {} : { baseURL: options.endpoint }),
+        ...(options.endpoint === undefined ? {} : endpointOptions(options.endpoint)),
         // Left to the SDK unless the caller would rather its traffic be recognizable as its own.
         ...(userAgent === undefined || userAgent.length === 0
             ? {}
@@ -49,4 +49,21 @@ export function createAnthropicBedrockClient(options: {
         apiKey: "",
         providerChainResolver,
     });
+}
+
+/**
+ * The SDK appends each request path to `baseURL` as text, so a query on the endpoint would swallow
+ * the path and the Runtime rewrite would never match. The query travels as default parameters
+ * instead, merged with each request's own.
+ */
+function endpointOptions(endpoint: string): {
+    baseURL: string;
+    defaultQuery?: Record<string, string>;
+} {
+    const url = new URL(endpoint);
+    if (url.search === "") return { baseURL: endpoint };
+    const defaultQuery = Object.fromEntries(url.searchParams);
+    url.search = "";
+    url.hash = "";
+    return { baseURL: url.toString(), defaultQuery };
 }
