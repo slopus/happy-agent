@@ -2,6 +2,10 @@ import { AnthropicBedrock, AnthropicBedrockMantle } from "@anthropic-ai/bedrock-
 
 import type { BedrockCredential } from "@/vendors/VendorCredential.js";
 import type { AnthropicBedrockTransport } from "@/vendors/bedrock/AnthropicBedrockTransport.js";
+import {
+    bedrockRuntimeEndpoint,
+    isBedrockChinaRegion,
+} from "@/vendors/bedrock/impl/bedrockConstants.js";
 
 export type AnthropicBedrockClient = Pick<AnthropicBedrock | AnthropicBedrockMantle, "beta">;
 
@@ -16,7 +20,12 @@ export function createAnthropicBedrockClient(options: {
     const clientOptions = {
         awsRegion: options.region,
         maxRetries: 0,
-        ...(options.endpoint === undefined ? {} : endpointOptions(options.endpoint)),
+        ...(options.endpoint !== undefined
+            ? endpointOptions(options.endpoint)
+            : // The SDK's own Runtime default only knows the commercial partition's domain.
+              options.transport === "runtime" && isBedrockChinaRegion(options.region)
+              ? { baseURL: bedrockRuntimeEndpoint(options.region) }
+              : {}),
         // Left to the SDK unless the caller would rather its traffic be recognizable as its own.
         ...(userAgent === undefined || userAgent.length === 0
             ? {}

@@ -8,8 +8,14 @@ export function anthropicBedrockMantleEndpoint(region: string): string {
     return `https://bedrock-mantle.${region}.api.aws/anthropic`;
 }
 
+/** China regions form their own AWS partition, served under a separate DNS suffix. */
+export function isBedrockChinaRegion(region: string): boolean {
+    return region.startsWith("cn-");
+}
+
 export function bedrockRuntimeEndpoint(region: string): string {
-    return `https://bedrock-runtime.${region}.amazonaws.com`;
+    const domain = isBedrockChinaRegion(region) ? "amazonaws.com.cn" : "amazonaws.com";
+    return `https://bedrock-runtime.${region}.${domain}`;
 }
 
 export function bedrockRuntimeOpenAIEndpoint(region: string): string {
