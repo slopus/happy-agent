@@ -1361,8 +1361,26 @@ describe("collaboration", () => {
         expect(instructions.split("\n")).toEqual([
             "Your Agent ID is parent.",
             expect.stringContaining("happy://agents/parent/files/"),
-            "Collaborators you created: sibling, child. Each reports back on its own when it finishes; nothing waits for them.",
+            "Collaborators you created: child, sibling. Each reports back on its own when it finishes; nothing waits for them.",
         ]);
+    });
+
+    it("lists collaborators identically whatever order the collection returns them in", async () => {
+        const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
+        const collection = new Collection();
+        collection.seed("zeta", "parent");
+        collection.seed("alpha", "parent");
+        const { hooks, ctx } = await started(collection, config);
+        const scope = { agent: { id: "parent" } } as never;
+        const before = await hooks.instructions!(ctx, scope);
+
+        // A restart rebuilds the child index in storage key order instead of creation order.
+        collection.parents.delete("zeta");
+        collection.parents.set("zeta", "parent");
+        const after = await hooks.instructions!(ctx, scope);
+
+        expect(after).toBe(before);
+        expect(before).toContain("Collaborators you created: alpha, zeta.");
     });
 
     it("always tells an agent its own Agent ID", async () => {

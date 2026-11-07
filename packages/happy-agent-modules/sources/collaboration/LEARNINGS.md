@@ -175,3 +175,10 @@ creator's mode is read from the module scope the tool is built with, never from 
 context, because an Auto review may lend that call Full access for one action. The check throws
 before the spawn presentation or the child exists. A first message to a conversation that never
 ran starts it no wider than the sender's mode, since that message is the one that sets it.
+
+## The collaborator list is sorted
+
+The parity export showed "Collaborators you created" listing the same children in a different
+order between runs: the collection appends children in creation order while running but rebuilds
+its index in storage key order after a restart. The system prompt then changed between turns for
+no reason, breaking prompt caching and parity fixtures. The list is now sorted by agent ID.

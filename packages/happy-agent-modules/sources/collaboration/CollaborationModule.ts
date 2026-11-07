@@ -588,8 +588,10 @@ export class CollaborationModule implements AgentModule {
                 );
             }
             if (children.length > 0) {
+                // The collection's order changes across restarts; a stable prompt keeps the cache.
+                const sorted = [...children].sort();
                 lines.push(
-                    `Collaborators you created: ${children.join(", ")}. Each reports back on its own when it finishes; nothing waits for them.`,
+                    `Collaborators you created: ${sorted.join(", ")}. Each reports back on its own when it finishes; nothing waits for them.`,
                 );
             }
             if (await this.#reachesAcrossWorkspaces(ctx, scope.agent.id)) {

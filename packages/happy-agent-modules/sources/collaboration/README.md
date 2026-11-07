@@ -67,6 +67,8 @@ for them.
 That matters because the `Message from agent ...` line ages out of history on compaction, while the
 relationship does not — an agent that could not name its creator would have no way to answer it.
 Nothing is stored to make this work; the ancestry is read from the agent collection each turn.
+Collaborators are listed in ID order, because the collection's own order differs before and after
+a restart and a changing system prompt would defeat prompt caching.
 
 The Agent ID also addresses the agent's files. A bare `path:line` is read against the reader's own
 workspace, so a file mentioned in a message, a report, or a relay from another workspace is written
