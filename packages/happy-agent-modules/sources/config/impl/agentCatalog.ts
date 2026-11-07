@@ -1243,13 +1243,14 @@ async function createProvider(
         selectedModel === undefined ? undefined : provider.modelOverrides?.[selectedModel];
     const transport = resolveAnthropicBedrockTransport(provider, selectedModel);
     // A `model_id` replaces only the wire model; the curated key keeps choosing tools and prompts.
+    // It and Kimi's and GLM's `bedrockTransport` are written as explicit properties below, never
+    // spread, so a provider library without them fails the type check instead of ignoring them.
     const bedrockModelIds = Object.fromEntries(
         Object.entries(provider.modelOverrides ?? {}).flatMap(([model, entry]) =>
             entry.model_id === undefined ? [] : [[model, entry.model_id] as const],
         ),
     );
     const shared = {
-        ...(Object.keys(bedrockModelIds).length === 0 ? {} : { bedrockModelIds }),
         credential,
         ...(override?.endpoint === undefined ? {} : { endpoint: override.endpoint }),
         ...(selectedModel === undefined ? {} : { model: selectedModel }),
@@ -1264,21 +1265,20 @@ async function createProvider(
     ) {
         // AWS serves neither on Mantle, so a Mantle route is an opt-in that names its own endpoint;
         // without one the provider refuses it with an explanation.
-        const chat = {
-            ...shared,
-            ...(override?.transport === undefined ? {} : { bedrockTransport: override.transport }),
-        };
+        const bedrockTransport = override?.transport ?? "runtime";
         return selectedModel.startsWith("moonshotai/")
-            ? new KimiProvider(chat)
-            : new GlmProvider(chat);
+            ? new KimiProvider({ ...shared, bedrockModelIds, bedrockTransport })
+            : new GlmProvider({ ...shared, bedrockModelIds, bedrockTransport });
     }
     return selectedModel?.startsWith("anthropic/") === true
         ? new AnthropicProvider({
               ...shared,
+              bedrockModelIds,
               ...(transport === undefined ? {} : { transport }),
           })
         : new CodexProvider({
               ...shared,
+              bedrockModelIds,
               ...(override?.transport === undefined
                   ? {}
                   : { bedrockTransport: override.transport }),
