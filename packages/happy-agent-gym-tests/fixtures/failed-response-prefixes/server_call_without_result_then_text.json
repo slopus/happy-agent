@@ -1,0 +1,310 @@
+{
+  "cuts": [
+    {
+      "afterEvents": 1,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "callId": "toolu_search_alone",
+        "name": "ToolSearch",
+        "server": true,
+        "type": "toolcall_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case server_call_without_result_then_text.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 2,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "callId": "toolu_search_alone",
+        "delta": "{\"query\":\"select:Read\"}",
+        "type": "toolcall_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case server_call_without_result_then_text.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 3,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "arguments": "{\"query\":\"select:Read\"}",
+        "callId": "toolu_search_alone",
+        "type": "toolcall_end"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case server_call_without_result_then_text.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 4,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "type": "text_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case server_call_without_result_then_text.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 5,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "delta": "Found it.",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case server_call_without_result_then_text.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 6,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "arguments": "{\"query\":\"select:Read\"}",
+              "callId": "toolu_search_alone",
+              "name": "ToolSearch",
+              "server": true,
+              "type": "tool_call"
+            },
+            {
+              "text": "Found it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "arguments": "{\"query\":\"select:Read\"}",
+              "callId": "toolu_search_alone",
+              "name": "ToolSearch",
+              "server": true,
+              "type": "tool_call"
+            },
+            {
+              "text": "Found it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "text_end"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case server_call_without_result_then_text.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "arguments": "{\"query\":\"select:Read\"}",
+              "callId": "toolu_search_alone",
+              "name": "ToolSearch",
+              "server": true,
+              "type": "tool_call"
+            },
+            {
+              "text": "Found it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Found it.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    }
+  ],
+  "description": "A provider-run call that exposes no result, then text, ending normally.",
+  "events": [
+    {
+      "callId": "toolu_search_alone",
+      "name": "ToolSearch",
+      "server": true,
+      "type": "toolcall_start"
+    },
+    {
+      "callId": "toolu_search_alone",
+      "delta": "{\"query\":\"select:Read\"}",
+      "type": "toolcall_delta"
+    },
+    {
+      "arguments": "{\"query\":\"select:Read\"}",
+      "callId": "toolu_search_alone",
+      "type": "toolcall_end"
+    },
+    {
+      "type": "text_start"
+    },
+    {
+      "delta": "Found it.",
+      "type": "text_delta"
+    },
+    {
+      "type": "text_end"
+    },
+    {
+      "state": "normal",
+      "tokens": {
+        "input": 1,
+        "output": 1
+      },
+      "type": "done"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "server_call_without_result_then_text",
+  "stop": "cancelled",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  }
+}

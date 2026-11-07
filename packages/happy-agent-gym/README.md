@@ -160,6 +160,9 @@ Fields a turn may set:
 
 - `content` — text, reasoning, and tool-call blocks, in order.
 - `events` — exact `SessionEvent`s instead of `content`, for streams no ordinary turn produces.
+- `hold` — with `events`, stop after `afterEvents` of them and keep the stream open until the turn
+  is aborted. `onHeld` runs once the agent has handled every event before the hold, so a scenario
+  can abort at an exact point in the stream.
 - `delayMs`, `textDeltaChunkSize`, `textDeltaDelayMs` — deterministic streaming and delays that
   stop early when the turn is aborted.
 - `retries` — provider-owned retry progress reported before any content.

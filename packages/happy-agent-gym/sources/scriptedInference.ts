@@ -67,6 +67,12 @@ export interface GymTurn {
      * turn produces — a reset block, an interleaved usage report, a truncated tool call.
      */
     readonly events?: readonly SessionEvent[];
+    /**
+     * Stops after this many of `events` and keeps the stream open, as a provider still streaming
+     * would, until the turn is aborted. `onHeld` runs when the agent asks for the next event, so
+     * the agent has finished handling every event before the hold.
+     */
+    readonly hold?: { readonly afterEvents: number; readonly onHeld?: () => void };
     /** Waits before the first event, and stops early when the turn is aborted. */
     readonly delayMs?: number;
     /** Splits text into deltas of at most this many UTF-16 code units. */
@@ -429,7 +435,15 @@ async function* streamTurn(ctx: Context, turn: GymTurn): AsyncGenerator<SessionE
     if (turn.delayMs !== undefined) await pause(ctx, turn.delayMs);
 
     if (turn.events !== undefined) {
-        for (const event of turn.events) yield event;
+        const held = turn.hold?.afterEvents ?? turn.events.length + 1;
+        for (const [index, event] of turn.events.entries()) {
+            if (index === held) break;
+            yield event;
+        }
+        if (turn.hold !== undefined && held <= turn.events.length) {
+            turn.hold.onHeld?.();
+            await untilAborted(ctx);
+        }
         return;
     }
 
@@ -510,6 +524,14 @@ function chunks(text: string, size: number | undefined): readonly string[] {
 }
 
 /** A scripted delay is still a real delay, and an aborted turn must stop waiting immediately. */
+async function untilAborted(ctx: Context): Promise<void> {
+    const lifetime = ctx.lifetime;
+    if (lifetime === undefined || lifetime.aborted) return;
+    await new Promise<void>((resolve) =>
+        lifetime.addEventListener("abort", () => resolve(), { once: true }),
+    );
+}
+
 async function pause(ctx: Context, ms: number): Promise<void> {
     const lifetime = ctx.lifetime;
     await sleep(ms, undefined, lifetime === undefined ? {} : { signal: lifetime }).catch(

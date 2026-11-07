@@ -1,0 +1,679 @@
+{
+  "cuts": [
+    {
+      "afterEvents": 1,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "type": "block_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case finished_text_reset_then_retry.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 2,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "type": "text_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case finished_text_reset_then_retry.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 3,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "delta": "First try.",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case finished_text_reset_then_retry.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 4,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "text_end"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case finished_text_reset_then_retry.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 5,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "block_reset"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case finished_text_reset_then_retry.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 6,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "block_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case finished_text_reset_then_retry.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 7,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "text_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case finished_text_reset_then_retry.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 8,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "Second try.",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case finished_text_reset_then_retry.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 9,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            },
+            {
+              "text": "Second try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            },
+            {
+              "text": "Second try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "text_end"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case finished_text_reset_then_retry.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            },
+            {
+              "text": "Second try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            },
+            {
+              "text": "Second try.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 10,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            },
+            {
+              "text": "Second try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            },
+            {
+              "text": "Second try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "block_stop"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case finished_text_reset_then_retry.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            },
+            {
+              "text": "Second try.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "First try.",
+              "type": "text"
+            },
+            {
+              "text": "Second try.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    }
+  ],
+  "description": "A finished text block reset by the provider, retried, ending normally.",
+  "events": [
+    {
+      "type": "block_start"
+    },
+    {
+      "type": "text_start"
+    },
+    {
+      "delta": "First try.",
+      "type": "text_delta"
+    },
+    {
+      "type": "text_end"
+    },
+    {
+      "type": "block_reset"
+    },
+    {
+      "type": "block_start"
+    },
+    {
+      "type": "text_start"
+    },
+    {
+      "delta": "Second try.",
+      "type": "text_delta"
+    },
+    {
+      "type": "text_end"
+    },
+    {
+      "type": "block_stop"
+    },
+    {
+      "state": "normal",
+      "tokens": {
+        "input": 1,
+        "output": 1
+      },
+      "type": "done"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "finished_text_reset_then_retry",
+  "stop": "cancelled",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  }
+}

@@ -1,0 +1,319 @@
+{
+  "cuts": [
+    {
+      "afterEvents": 1,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "type": "text_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case stream_end_without_done.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 2,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "delta": "Reading it.",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case stream_end_without_done.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 3,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "text_end"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case stream_end_without_done.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 4,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "callId": "toolu_read_eof",
+        "name": "Read",
+        "type": "toolcall_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case stream_end_without_done.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 5,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "callId": "toolu_read_eof",
+        "delta": "{\"file_path\":\"README.md\"}",
+        "type": "toolcall_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case stream_end_without_done.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Reading it.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    }
+  ],
+  "description": "Finished text and an unfinished call, then the stream ends without done.",
+  "events": [
+    {
+      "type": "text_start"
+    },
+    {
+      "delta": "Reading it.",
+      "type": "text_delta"
+    },
+    {
+      "type": "text_end"
+    },
+    {
+      "callId": "toolu_read_eof",
+      "name": "Read",
+      "type": "toolcall_start"
+    },
+    {
+      "callId": "toolu_read_eof",
+      "delta": "{\"file_path\":\"README.md\"}",
+      "type": "toolcall_delta"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "stream_end_without_done",
+  "stop": "cancelled",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  }
+}

@@ -1,0 +1,1588 @@
+{
+  "cuts": [
+    {
+      "afterEvents": 1,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "type": "block_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 2,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "type": "reasoning_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 3,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "delta": "Thinking it through.",
+        "type": "reasoning_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 4,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "reasoning": "Thinking it through.",
+        "type": "reasoning_end"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 5,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "block_stop"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 6,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "block_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 7,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "text_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 8,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "Part",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 9,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "ial ",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 10,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "answ",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 11,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "er t",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 12,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "hat ",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 13,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "keep",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 14,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "s go",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 15,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "ing ",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 16,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "and ",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 17,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "goin",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 18,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "delta": "g.",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 19,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "text_end"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 20,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "block_stop"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 21,
+      "failureNote": null,
+      "finishedMessage": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "keptMessages": [
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        }
+      ],
+      "lastEvent": {
+        "type": "token_usage",
+        "usage": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0,
+          "output": 0,
+          "totalTokens": 0
+        }
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case abort_mid_text_after_reasoning.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "reasoning": "Thinking it through.",
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "assistant"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [
+        {
+          "content": [
+            {
+              "text": "Thinking it through.",
+              "type": "reasoning"
+            },
+            {
+              "text": "Partial answer that keeps going and going.",
+              "type": "text"
+            }
+          ],
+          "role": "agent"
+        }
+      ],
+      "settlementMessages": []
+    }
+  ],
+  "description": "Finished reasoning, then text cut off by an abort.",
+  "events": [
+    {
+      "type": "block_start"
+    },
+    {
+      "type": "reasoning_start"
+    },
+    {
+      "delta": "Thinking it through.",
+      "type": "reasoning_delta"
+    },
+    {
+      "reasoning": "Thinking it through.",
+      "type": "reasoning_end"
+    },
+    {
+      "type": "block_stop"
+    },
+    {
+      "type": "block_start"
+    },
+    {
+      "type": "text_start"
+    },
+    {
+      "delta": "Part",
+      "type": "text_delta"
+    },
+    {
+      "delta": "ial ",
+      "type": "text_delta"
+    },
+    {
+      "delta": "answ",
+      "type": "text_delta"
+    },
+    {
+      "delta": "er t",
+      "type": "text_delta"
+    },
+    {
+      "delta": "hat ",
+      "type": "text_delta"
+    },
+    {
+      "delta": "keep",
+      "type": "text_delta"
+    },
+    {
+      "delta": "s go",
+      "type": "text_delta"
+    },
+    {
+      "delta": "ing ",
+      "type": "text_delta"
+    },
+    {
+      "delta": "and ",
+      "type": "text_delta"
+    },
+    {
+      "delta": "goin",
+      "type": "text_delta"
+    },
+    {
+      "delta": "g.",
+      "type": "text_delta"
+    },
+    {
+      "type": "text_end"
+    },
+    {
+      "type": "block_stop"
+    },
+    {
+      "type": "token_usage",
+      "usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 0,
+        "output": 0,
+        "totalTokens": 0
+      }
+    },
+    {
+      "state": "normal",
+      "tokens": {
+        "input": 0,
+        "output": 0
+      },
+      "type": "done"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "abort_mid_text_after_reasoning",
+  "stop": "cancelled",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  }
+}

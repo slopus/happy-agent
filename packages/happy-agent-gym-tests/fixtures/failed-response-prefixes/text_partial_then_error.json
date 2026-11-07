@@ -1,0 +1,98 @@
+{
+  "cuts": [
+    {
+      "afterEvents": 1,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "type": "text_start"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case text_partial_then_error.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    },
+    {
+      "afterEvents": 2,
+      "failureNote": null,
+      "finishedMessage": null,
+      "keptMessages": [],
+      "lastEvent": {
+        "delta": "Half a sen",
+        "type": "text_delta"
+      },
+      "nextRequestMessages": [
+        {
+          "content": [
+            {
+              "text": "Case text_partial_then_error.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        },
+        {
+          "content": [
+            {
+              "text": "Continue.",
+              "type": "text"
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "publishedAtCut": [],
+      "settlementMessages": []
+    }
+  ],
+  "description": "A text block that never ends, then a provider error.",
+  "events": [
+    {
+      "type": "text_start"
+    },
+    {
+      "delta": "Half a sen",
+      "type": "text_delta"
+    },
+    {
+      "kind": "internal_error",
+      "message": "The provider connection failed.",
+      "state": "error",
+      "type": "done"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "text_partial_then_error",
+  "stop": "cancelled",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  }
+}
