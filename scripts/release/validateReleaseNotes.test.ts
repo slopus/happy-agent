@@ -142,23 +142,23 @@ test("the command checks the released tag's file and fails when it is missing or
     try {
         await mkdir(join(directory, "release-notes"));
         await writeFile(
-            join(directory, "release-notes", "v1.2.3-preview.4.md"),
+            join(directory, "release-notes", "v2026.11.3-preview.4.md"),
             "## Features\n- New work appears instantly\n",
         );
         await writeFile(
-            join(directory, "release-notes", "v1.2.3.md"),
+            join(directory, "release-notes", "v2026.11.3.md"),
             "New work appears instantly\n",
         );
 
-        const valid = run("v1.2.3-preview.4");
+        const valid = run("v2026.11.3-preview.4");
         assert.equal(valid.status, 0, valid.stderr);
-        const invalid = run("v1.2.3");
+        const invalid = run("v2026.11.3");
         assert.equal(invalid.status, 1);
-        assert.match(invalid.stderr, /release-notes\/v1\.2\.3\.md is not valid/u);
-        const missing = run("v1.2.4");
+        assert.match(invalid.stderr, /release-notes\/v2026\.11\.3\.md is not valid/u);
+        const missing = run("v2026.11.4");
         assert.equal(missing.status, 1);
-        assert.match(missing.stderr, /release-notes\/v1\.2\.4\.md is missing/u);
-        assert.notEqual(run("1.2.3").status, 0);
+        assert.match(missing.stderr, /release-notes\/v2026\.11\.4\.md is missing/u);
+        assert.notEqual(run("2026.11.3").status, 0);
     } finally {
         await rm(directory, { force: true, recursive: true });
     }

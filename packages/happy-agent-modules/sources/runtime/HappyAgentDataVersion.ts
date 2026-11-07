@@ -115,8 +115,8 @@ export async function stampHappyAgentDataVersion(
 }
 
 /**
- * Order two Happy Agent versions, `X.Y.Z` or `X.Y.Z-preview.N`, as semantic versions: a preview
- * comes before its release. A version that does not parse orders after every one that does and
+ * Order two Happy Agent versions, `YYYY.M.C` or `YYYY.M.C-preview.N`, as semantic versions: a
+ * preview comes before its release, and every CalVer release follows the legacy `0.4.x` ones. A version that does not parse orders after every one that does and
  * equal to another that does not, so an unknown version is never taken for an older release.
  */
 export function compareHappyAgentVersions(left: string, right: string): number {

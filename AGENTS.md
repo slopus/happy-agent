@@ -176,16 +176,23 @@ available, ask the user to configure one; never place WorkOS credentials in the 
 ## Default release versions
 
 When the user asks to "release" without naming a product or version, release a Happy Agent
-preview. "Release production" or "release stable" requests the next stable patch directly;
+preview. "Release production" or "release stable" requests the next stable release directly;
 no prior preview is required. Do not treat an unqualified release as a library release.
 
-Agent previews use the next stable patch followed by `-preview.N`; choose the next unused N
-from existing releases and tags. Never publish previews automatically on push or to npm.
+Happy Agent uses calendar versions. A stable release is `YYYY.M.C`: the UTC year, the month
+without zero padding, and C, one more than this month's highest stable C, or 1. A preview is
+`YYYY.M.C-preview.N` for the stable release it previews, with N one more than the highest N
+already taken for that `YYYY.M.C`, or 1. Only stable releases move C, and a new month starts
+again at 1. Legacy `0.4.x` releases do not count. Never type the version by hand: after fetching
+tags, `node scripts/release/nextHappyAgentVersion.ts preview` (or `stable`) prints it, and the
+workflow computes the same value and refuses any other. Never publish previews automatically on
+push or to npm.
 Release Happy Agent only by manually dispatching
 [`.github/workflows/release-happy-agent.yml`](.github/workflows/release-happy-agent.yml)
-from `main`; do not create or push its release tag locally. Supply the workflow's required
-`version` and `release_notes` inputs, and set `prerelease=true` only for previews. The existing
-workflow builds and publishes in one run; no separate preparation or intermediate bump commit.
+from `main`; do not create or push its release tag locally. Supply the workflow's
+`release_notes` input, set `prerelease=true` only for previews, and either leave `version` empty
+or pass the computed version. The existing workflow builds and publishes in one run; no separate
+preparation or intermediate bump commit.
 Follow the release-agent skill using existing Git and GitHub CLI commands. Build release notes
 from every included commit since the previous release of that channel. Write a polished,
 user-facing Markdown summary rather than pasting commit subjects or a raw changelog. Monitor to
@@ -204,6 +211,8 @@ When the user explicitly names another product or library but does not name a ve
 - Release libraries as the next patch version.
 
 Use an explicitly requested version or release channel instead whenever the user provides one.
+A Happy Agent version is always computed; when a requested one differs, explain the computed
+version instead of forcing it.
 
 Libraries release through trusted publishing by pushing their release Git tags; Agent tags are
 created only by their workflow. Never publish from local npm credentials.

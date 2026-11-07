@@ -11,6 +11,11 @@ describe("windowsExecutableVersion", () => {
         expect(windowsExecutableVersion("0.4.87-preview.3")).toBe("0.4.87.0");
     });
 
+    it("carries a calendar version", () => {
+        expect(windowsExecutableVersion("2026.11.2")).toBe("2026.11.2.0");
+        expect(windowsExecutableVersion("2026.12.1-preview.3")).toBe("2026.12.1.0");
+    });
+
     it("drops build metadata", () => {
         expect(windowsExecutableVersion("1.2.3+build.7")).toBe("1.2.3.0");
     });

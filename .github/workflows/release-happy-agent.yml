@@ -1,12 +1,13 @@
 name: Release Happy Agent
-run-name: Release Happy Agent v${{ inputs.version }}
+run-name: Release Happy Agent ${{ inputs.version && format('v{0}', inputs.version) || (inputs.prerelease && 'preview' || 'stable') }}
 
 on:
     workflow_dispatch:
         inputs:
             version:
-                description: Stable X.Y.Z or preview X.Y.Z-preview.N, without the leading v
-                required: true
+                description: Empty computes the next YYYY.M.C or YYYY.M.C-preview.N; a given version, without the leading v, must equal it
+                required: false
+                default: ""
                 type: string
             release_notes:
                 description: Markdown change notes for the GitHub Release
@@ -26,8 +27,6 @@ concurrency:
     cancel-in-progress: false
 
 env:
-    RELEASE_TAG: v${{ inputs.version }}
-    RELEASE_VERSION: ${{ inputs.version }}
     RELEASE_PRERELEASE: ${{ inputs.prerelease }}
 
 jobs:
@@ -38,12 +37,14 @@ jobs:
         needs: validate
         uses: ./.github/workflows/build-windows.yml
         with:
-            version: ${{ inputs.version }}
+            version: ${{ needs.validate.outputs.version }}
 
     validate:
         name: Validate release inputs
         runs-on: ubuntu-24.04
         timeout-minutes: 5
+        outputs:
+            version: ${{ steps.release.outputs.version }}
 
         steps:
             - name: Check out main
@@ -51,22 +52,40 @@ jobs:
               with:
                   fetch-depth: 0
 
+            - name: Set up Node.js
+              uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: "24"
+                  package-manager-cache: false
+
             - name: Validate release inputs
+              id: release
               shell: bash
               env:
                   GH_TOKEN: ${{ github.token }}
                   RELEASE_NOTES: ${{ inputs.release_notes }}
+                  REQUESTED_VERSION: ${{ inputs.version }}
               run: |
                   if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
                       echo "Happy Agent releases must be dispatched from main." >&2
                       exit 1
                   fi
-                  if [[ ! "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-preview\.(0|[1-9][0-9]*))?$ ]]; then
-                      echo "Version must be X.Y.Z or X.Y.Z-preview.N, without a leading v or leading zeroes." >&2
-                      exit 1
+                  if [[ -n "$REQUESTED_VERSION" ]]; then
+                      if [[ ! "$REQUESTED_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-preview\.(0|[1-9][0-9]*))?$ ]]; then
+                          echo "Version must be YYYY.M.C or YYYY.M.C-preview.N, without a leading v or leading zeroes." >&2
+                          exit 1
+                      fi
+                      if [[ "$REQUESTED_VERSION" == *-preview.* && "$RELEASE_PRERELEASE" != "true" ]] || \
+                         [[ "$REQUESTED_VERSION" != *-preview.* && "$RELEASE_PRERELEASE" != "false" ]]; then
+                          echo "Preview versions require prerelease=true; stable versions require prerelease=false." >&2
+                          exit 1
+                      fi
                   fi
-                  if [[ "$RELEASE_VERSION" == *-preview.* && "$RELEASE_PRERELEASE" != "true" ]] || \
-                     [[ "$RELEASE_VERSION" != *-preview.* && "$RELEASE_PRERELEASE" != "false" ]]; then
+                  if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+                      channel=preview
+                  elif [[ "$RELEASE_PRERELEASE" == "false" ]]; then
+                      channel=stable
+                  else
                       echo "Preview versions require prerelease=true; stable versions require prerelease=false." >&2
                       exit 1
                   fi
@@ -79,6 +98,12 @@ jobs:
                       echo "Happy Agent releases must start from the current main branch." >&2
                       exit 1
                   fi
+                  version="$(node scripts/release/nextHappyAgentVersion.ts "$channel")"
+                  if [[ -n "$REQUESTED_VERSION" && "$REQUESTED_VERSION" != "$version" ]]; then
+                      echo "The next $channel release is $version, not $REQUESTED_VERSION. Leave the version empty to use it." >&2
+                      exit 1
+                  fi
+                  RELEASE_TAG="v$version"
                   if git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null; then
                       echo "Tag $RELEASE_TAG already exists." >&2
                       exit 1
@@ -87,12 +112,9 @@ jobs:
                       echo "Release $RELEASE_TAG already exists." >&2
                       exit 1
                   fi
-
-            - name: Set up Node.js
-              uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-              with:
-                  node-version: "24"
-                  package-manager-cache: false
+                  printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+                  printf 'RELEASE_TAG=%s\n' "$RELEASE_TAG" >> "$GITHUB_ENV"
+                  printf 'Releasing Happy Agent %s.\n' "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
 
             - name: Validate the short release notes file
               run: node scripts/release/validateReleaseNotes.ts "$RELEASE_TAG"
@@ -173,6 +195,7 @@ jobs:
         runs-on: ${{ matrix.runner }}
         timeout-minutes: 60
         env:
+            RELEASE_VERSION: ${{ needs.validate.outputs.version }}
             APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
             APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
             APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
@@ -368,7 +391,7 @@ jobs:
               run: |
                   pnpm --filter @slopus/happy-agent build:bun --target "$TARGET"
               env:
-                  HAPPY_AGENT_RELEASE_VERSION: ${{ inputs.version }}
+                  HAPPY_AGENT_RELEASE_VERSION: ${{ needs.validate.outputs.version }}
                   TARGET: ${{ matrix.target }}
 
             - name: Sign Happy Agent
@@ -496,6 +519,7 @@ jobs:
     publish:
         name: Publish GitHub Release
         needs:
+            - validate
             - verify
             - build
             - windows
@@ -503,6 +527,9 @@ jobs:
         timeout-minutes: 15
         permissions:
             contents: write
+        env:
+            RELEASE_TAG: v${{ needs.validate.outputs.version }}
+            RELEASE_VERSION: ${{ needs.validate.outputs.version }}
 
         steps:
             - name: Check out the verified commit

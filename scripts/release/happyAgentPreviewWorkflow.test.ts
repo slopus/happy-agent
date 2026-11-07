@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 const workflowUrl = new URL("../../.github/workflows/release-happy-agent.yml", import.meta.url);
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 async function workflowStep(name: string): Promise<string> {
     const workflow = await readFile(workflowUrl, "utf8");
@@ -19,8 +21,13 @@ async function workflowStep(name: string): Promise<string> {
         .join("\n");
 }
 
-test("Agent workflow accepts stable and numbered preview versions only with matching release flags", async () => {
+test("Agent workflow computes the next CalVer version and accepts only that one with matching release flags", async () => {
     const script = await workflowStep("Validate release inputs");
+    const directory = await mkdtemp(join(tmpdir(), "agent-release-inputs-"));
+    // The version script runs Git as a child process, so it sees this executable, not the stubs.
+    await writeFile(join(directory, "git"), '#!/bin/sh\nprintf "%s\\n" $FAKE_TAGS\n', {
+        mode: 0o755,
+    });
     const stubs = `
 git() {
     if [[ "$1" == fetch ]]; then return 0; fi
@@ -29,40 +36,99 @@ git() {
 }
 gh() { return 1; }
 `;
-    for (const [version, prerelease, accepted] of [
-        ["0.4.67", "false", true],
-        ["1.2.3", "false", true],
-        ["0.4.67-preview.0", "true", true],
-        ["0.4.67-preview.1", "true", true],
-        ["0.4.67-preview.12", "true", true],
-        ["0.4.67", "true", false],
-        ["0.4.67-preview.1", "false", false],
-        ["0.4.67-beta.1", "true", false],
-        ["0.4.67-canary.1.abcdef0", "true", false],
-        ["0.4.67-preview", "true", false],
-        ["0.4.67-preview.01", "true", false],
-        ["0.4.67+metadata", "false", false],
-        ["00.4.67", "false", false],
-        ["v0.4.67", "false", false],
-        ["0.4.67", "not-a-boolean", false],
-    ] as const) {
-        const result = spawnSync("bash", ["-e", "-c", `${stubs}\n${script}`], {
-            encoding: "utf8",
-            env: {
-                ...process.env,
-                GITHUB_REF: "refs/heads/main",
-                RELEASE_VERSION: version,
-                RELEASE_TAG: `v${version}`,
-                RELEASE_PRERELEASE: prerelease,
-                RELEASE_NOTES: "Release notes.",
-            },
-        });
-        assert.equal(
-            result.status,
-            accepted ? 0 : 1,
-            `${version}, prerelease=${prerelease}: ${result.stderr}`,
-        );
+    const now = new Date();
+    const year = now.getUTCFullYear();
+    const month = `${year}.${now.getUTCMonth() + 1}`;
+    const legacy = "v0.4.114 v0.4.115-preview.1 happy-agent-client-v0.0.105";
+    const previewed = `${legacy} v${month}.1-preview.1 v${month}.1-preview.2`;
+    const shipped = `${previewed} v${month}.1`;
+    try {
+        for (const [requested, prerelease, tags, released] of [
+            ["", "true", legacy, `${month}.1-preview.1`],
+            ["", "false", legacy, `${month}.1`],
+            [`${month}.1-preview.1`, "true", legacy, `${month}.1-preview.1`],
+            [`${month}.1`, "false", legacy, `${month}.1`],
+            ["", "true", previewed, `${month}.1-preview.3`],
+            ["", "false", previewed, `${month}.1`],
+            ["", "true", shipped, `${month}.2-preview.1`],
+            [`${month}.2`, "false", shipped, `${month}.2`],
+            [`${month}.1-preview.2`, "true", previewed, undefined],
+            [`${month}.2-preview.1`, "true", previewed, undefined],
+            [`${month}.1`, "false", shipped, undefined],
+            ["0.4.116", "false", legacy, undefined],
+            ["0.4.116-preview.1", "true", legacy, undefined],
+            [`${month}.1`, "true", legacy, undefined],
+            [`${month}.1-preview.1`, "false", legacy, undefined],
+            [`${month}.1-beta.1`, "true", legacy, undefined],
+            [`${month}.1-canary.1.abcdef0`, "true", legacy, undefined],
+            [`${month}.1-preview`, "true", legacy, undefined],
+            [`${month}.1-preview.01`, "true", legacy, undefined],
+            [`${month}.1+metadata`, "false", legacy, undefined],
+            [`${year}.0${now.getUTCMonth() + 1}.1`, "false", legacy, undefined],
+            [`v${month}.1`, "false", legacy, undefined],
+            ["", "not-a-boolean", legacy, undefined],
+            [`${month}.1`, "not-a-boolean", legacy, undefined],
+        ] as const) {
+            const githubOutput = join(directory, "output");
+            const githubEnvironment = join(directory, "environment");
+            await writeFile(githubOutput, "");
+            await writeFile(githubEnvironment, "");
+            const result = spawnSync("bash", ["-e", "-c", `${stubs}\n${script}`], {
+                cwd: repositoryRoot,
+                encoding: "utf8",
+                env: {
+                    ...process.env,
+                    PATH: `${directory}:${process.env.PATH}`,
+                    FAKE_TAGS: tags,
+                    GITHUB_ENV: githubEnvironment,
+                    GITHUB_OUTPUT: githubOutput,
+                    GITHUB_REF: "refs/heads/main",
+                    GITHUB_STEP_SUMMARY: join(directory, "summary"),
+                    REQUESTED_VERSION: requested,
+                    RELEASE_PRERELEASE: prerelease,
+                    RELEASE_NOTES: "Release notes.",
+                },
+            });
+            const label = `${requested || "(computed)"}, prerelease=${prerelease}, tags=${tags}`;
+            assert.equal(
+                result.status,
+                released === undefined ? 1 : 0,
+                `${label}: ${result.stderr}`,
+            );
+            if (released !== undefined) {
+                assert.equal(await readFile(githubOutput, "utf8"), `version=${released}\n`, label);
+                assert.equal(
+                    await readFile(githubEnvironment, "utf8"),
+                    `RELEASE_TAG=v${released}\n`,
+                    label,
+                );
+            }
+        }
+    } finally {
+        await rm(directory, { recursive: true, force: true });
     }
+});
+
+test("only release-input validation reads the requested version; every job releases the validated one", async () => {
+    const workflow = await readFile(workflowUrl, "utf8");
+    const jobs = workflow.slice(workflow.indexOf("\njobs:\n"));
+    assert.deepEqual(
+        [...jobs.matchAll(/^.*inputs\.version.*$/gmu)].map((match) => match[0].trim()),
+        ["REQUESTED_VERSION: ${{ inputs.version }}"],
+    );
+    assert.doesNotMatch(
+        workflow.slice(0, workflow.indexOf("\njobs:\n")),
+        /RELEASE_(?:TAG|VERSION):/u,
+    );
+    assert.match(jobs, /outputs:\n {12}version: \$\{\{ steps\.release\.outputs\.version \}\}/u);
+    assert.match(jobs, /with:\n {12}version: \$\{\{ needs\.validate\.outputs\.version \}\}/u);
+    assert.match(
+        jobs,
+        /HAPPY_AGENT_RELEASE_VERSION: \$\{\{ needs\.validate\.outputs\.version \}\}/u,
+    );
+    const publish = jobs.slice(jobs.indexOf("\n    publish:\n"));
+    assert.match(publish, /needs:\n {12}- validate\n/u);
+    assert.match(publish, /RELEASE_TAG: v\$\{\{ needs\.validate\.outputs\.version \}\}/u);
 });
 
 test("Agent preview creation and publication explicitly stay off latest; stable publication keeps latest", async () => {
@@ -91,8 +157,8 @@ ${script}`,
                         GH_CALLS: callsPath,
                         GITHUB_SHA: "verified-commit",
                         GITHUB_STEP_SUMMARY: join(directory, "summary"),
-                        RELEASE_VERSION: preview ? "0.4.67-preview.1" : "0.4.67",
-                        RELEASE_TAG: preview ? "v0.4.67-preview.1" : "v0.4.67",
+                        RELEASE_VERSION: preview ? "2026.11.1-preview.1" : "2026.11.1",
+                        RELEASE_TAG: preview ? "v2026.11.1-preview.1" : "v2026.11.1",
                         RELEASE_PRERELEASE: String(preview),
                         RELEASE_NOTES: "The actual notes, not a path.",
                     },

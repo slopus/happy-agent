@@ -101,17 +101,20 @@ identifiers into natural English before rendering them.
 ## Publishing
 
 Ask an agent to release; it follows the [release instructions](.agent/skills/release-agent/SKILL.md).
-An unqualified request publishes a Happy Agent preview (`X.Y.Z-preview.N`) for
-Nightly Desktop. Explicit production requests publish the next stable patch.
-Both use the existing manually dispatched workflow: version and notes in,
-build/test/sign and publication in one run. Previews never move GitHub's stable
+An unqualified request publishes a Happy Agent preview (`YYYY.M.C-preview.N`) for
+Nightly Desktop. Explicit production requests publish the next stable `YYYY.M.C`.
+Versions are calendar versions computed from the release tags by
+`scripts/release/nextHappyAgentVersion.ts`; C counts the UTC month's stable releases
+and N the previews of the next one. Both use the existing manually dispatched workflow:
+notes in, the computed version validated, build/test/sign and publication in one run. Previews never move GitHub's stable
 latest release. Previews are requested, not triggered by pushes.
 
 SDKs keep their existing tagged publication workflows, which publish through npm Trusted
 Publishing without a long-lived npm token.
 
-If publication fails before a tag exists, fix the issue and rerun the version.
-Never move or reuse an existing tag; advance the release version instead.
+If publication fails before a tag exists, fix the issue and rerun; the rerun computes the
+same version. Never move or reuse an existing tag. Libraries keep semantic versions and
+advance their patch instead.
 
 ### Contributors with push permissions
 

@@ -1,5 +1,5 @@
 // Self-contained so the release workflow can run it with Node's own type stripping before
-// installing dependencies: `node scripts/release/validateReleaseNotes.ts v0.4.106`.
+// installing dependencies: `node scripts/release/validateReleaseNotes.ts v2026.11.1`.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -106,7 +106,7 @@ export function validateReleaseNotes(markdown: string): string[] {
 
 function main(tag: string | undefined): void {
     if (tag === undefined || !/^v\d+\.\d+\.\d+(-preview\.\d+)?$/u.test(tag)) {
-        throw new Error("Pass the release tag, for example v0.4.106 or v0.4.106-preview.5.");
+        throw new Error("Pass the release tag, for example v2026.11.1 or v2026.11.2-preview.5.");
     }
     const path = releaseNotesPath(tag);
     let markdown: string;

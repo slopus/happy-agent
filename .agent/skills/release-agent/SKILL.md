@@ -34,27 +34,33 @@ it to production. Passing tests or CI alone does not count as that use. If the c
 been used, keep it in preview and explain what still needs to be tried. No fixed soak duration or
 previously published preview is required.
 
-| Request              | Product      | Version                              |
-| -------------------- | ------------ | ------------------------------------ |
-| "release"            | Happy Agent  | next patch followed by `-preview.N`  |
-| "release production" | Happy Agent  | next stable patch; no preview needed |
-| "release stable"     | Happy Agent  | same as production                   |
-| a named library      | that library | next patch                           |
+| Request              | Product      | Version                                |
+| -------------------- | ------------ | -------------------------------------- |
+| "release"            | Happy Agent  | computed `YYYY.M.C-preview.N`          |
+| "release production" | Happy Agent  | computed `YYYY.M.C`; no preview needed |
+| "release stable"     | Happy Agent  | same as production                     |
+| a named library      | that library | next patch                             |
 
-Read Agent versions from GitHub releases/tags, not its npm package or source manifest.
-Use npm for libraries. Fetch tags before choosing an unused version:
+Happy Agent uses calendar versions, computed from its `v` release tags rather than chosen.
+A stable release is `YYYY.M.C`: the UTC year, the month without zero padding, and C, one more
+than this month's highest stable C, or 1. A preview is `YYYY.M.C-preview.N`, where C is the
+stable release it previews and N is one more than the highest N already taken for it, or 1.
+Only stable releases move C, and a new UTC month starts again at 1. In November 2026:
+`2026.11.1-preview.1`, `2026.11.1-preview.2`, stable `2026.11.1`, then `2026.11.2-preview.1`.
+If the month ends before that stable ships, the next preview is `2026.12.1-preview.1`.
+Legacy `0.4.x` releases never count. Fetch tags, then print the version:
 
 ```bash
-gh release list --limit 30
-gh api repos/slopus/happy-agent/releases/latest --jq .tag_name
-git tag --list 'v[0-9]*' --sort=-v:refname | head -10 # Happy Agent
+git fetch origin --tags
+node scripts/release/nextHappyAgentVersion.ts preview # or: stable
 ```
 
-For stable `X.Y.Z`, use the next patch after the latest stable Agent release. For previews,
-append the next unused `-preview.N` (start at 1). Example: `0.4.67-preview.1`.
-No package manifest bump or SDK publication is required just to assign this binary identity.
-Existing pinned SDK dependencies must still resolve. Never reuse or move a failed tag;
-advance the preview number or stable patch as appropriate. A push never publishes a preview.
+The workflow runs the same script and refuses any other version, so if `main` gains a
+release while you prepare, compute again and rename the update card file. Libraries keep
+semantic versions; read theirs from npm. No package manifest bump or SDK publication is
+required just to assign this binary identity. Existing pinned SDK dependencies must still
+resolve. A failed run that published nothing leaves no tag, so the rerun computes the same
+version; never reuse or move a tag that exists. A push never publishes a preview.
 
 ## Before dispatching
 
@@ -83,7 +89,7 @@ any kind. For the first preview of a stable target, start from the latest stable
 production notes include everything since the previous stable, including previewed changes:
 
 ```bash
-git log --format='%h %s' v0.3.17..origin/main
+git log --format='%h %s' v2026.11.1..origin/main
 ```
 
 Do not scope this count to the product's package directory. Happy Agent ships the modules
@@ -96,7 +102,7 @@ Read the commit bodies, not just the subjects. The bodies explain what actually 
 what the user will notice:
 
 ```bash
-git log --format='%h%n%s%n%b%n---' v0.3.17..origin/main
+git log --format='%h%n%s%n%b%n---' v2026.11.1..origin/main
 ```
 
 ## Writing the notes
@@ -121,8 +127,8 @@ Write the notes to a file under `.context/`, which is scratch and gitignored:
 ## Writing the update card file
 
 Every Agent release, preview and production alike, also gets a very short file at
-`release-notes/<tag>.md`, for example `release-notes/v0.4.106.md` or
-`release-notes/v0.4.106-preview.5.md`. Happy Desktop's update card reads it from `main` and lists
+`release-notes/<tag>.md`, for example `release-notes/v2026.11.1.md` or
+`release-notes/v2026.11.2-preview.5.md`. Happy Desktop's update card reads it from `main` and lists
 the bullets of every release between the installed version and the new one, newest first, without
 rewriting them. It is an extra artifact; keep writing the full notes above for the GitHub Release.
 
@@ -187,9 +193,9 @@ release — the workflow only runs from the current `origin/main`, and it fails 
 when the file is missing or invalid:
 
 ```bash
-node scripts/release/validateReleaseNotes.ts v0.4.67-preview.1
-git add release-notes/v0.4.67-preview.1.md
-git commit -m "Add release notes for v0.4.67-preview.1"
+node scripts/release/validateReleaseNotes.ts v2026.11.1-preview.1
+git add release-notes/v2026.11.1-preview.1.md
+git commit -m "Add release notes for v2026.11.1-preview.1"
 git push origin HEAD:main
 ```
 
@@ -203,17 +209,21 @@ submitted as the release body, the workflow succeeds, and the published release 
 not catch this, because a path is not blank.
 
 ```bash
-# Preview example — use the version you selected, not this literal example
+# Preview example — use the version the script printed, not this literal example
 gh workflow run release-happy-agent.yml --ref main \
-    -f version=0.4.67-preview.1 -F prerelease=true \
+    -f version=2026.11.1-preview.1 -F prerelease=true \
     -F release_notes=@.context/release-notes.md
 ```
+
+`version` is optional: left empty, the workflow releases the version it computes. Passing the
+one you computed and named the update card file after makes the run fail instead of releasing
+under a different number.
 
 `-f` is a literal string; `-F` reads a file only when the value begins with `@`. For short
 single-line values `-f` is fine.
 
 Immediately before a production dispatch, verify both the explicit user request for this product
-and our actual use of this candidate. Only then supply the stable version and `-F prerelease=false`.
+and our actual use of this candidate. Only then supply the computed stable version and `-F prerelease=false`.
 CI builds, tests, signs, and publishes the same artifacts within one workflow run.
 Do not introduce a separate prepare/publish dispatch or bump commit between those jobs.
 Source verification and platform builds overlap after release-input validation;
@@ -228,27 +238,27 @@ catches the `@` mistake:
 
 ```bash
 gh run watch <run-id> --exit-status
-gh release view v0.4.67-preview.1 --json body -q .body
+gh release view v2026.11.1-preview.1 --json body -q .body
 ```
 
 The body must be the notes. If it is a file path, repair it in place — the artifacts are fine,
 only the body is wrong, so there is no need to re-release:
 
 ```bash
-gh release edit v0.4.67-preview.1 --notes-file .context/release-notes.md
+gh release edit v2026.11.1-preview.1 --notes-file .context/release-notes.md
 ```
 
 Confirm the update card can read the short file:
 
 ```bash
-curl -fsS https://raw.githubusercontent.com/slopus/happy-agent/main/release-notes/v0.4.67-preview.1.md
+curl -fsS https://raw.githubusercontent.com/slopus/happy-agent/main/release-notes/v2026.11.1-preview.1.md
 ```
 
 Then confirm the rest:
 
 ```bash
 # Happy Agent: four platform archives plus a .sha256 for each; never a draft
-gh release view v0.4.67-preview.1 --json tagName,isDraft,isPrerelease,assets \
+gh release view v2026.11.1-preview.1 --json tagName,isDraft,isPrerelease,assets \
     -q '"tag=\(.tagName) draft=\(.isDraft) pre=\(.isPrerelease)", (.assets[] | .name)'
 ```
 

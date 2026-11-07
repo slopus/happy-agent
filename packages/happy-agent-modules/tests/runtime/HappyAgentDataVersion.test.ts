@@ -36,6 +36,14 @@ describe("compareHappyAgentVersions", () => {
             "0.4.105-preview.10",
             "0.4.105",
             "1.0.0",
+            "2026.11.1-preview.1",
+            "2026.11.1-preview.2",
+            "2026.11.1",
+            "2026.11.2-preview.1",
+            "2026.11.2",
+            "2026.11.10",
+            "2026.12.1-preview.1",
+            "2027.1.1",
         ];
         for (let index = 1; index < ordered.length; index += 1) {
             expect(compareHappyAgentVersions(ordered[index - 1]!, ordered[index]!)).toBe(-1);
@@ -72,6 +80,17 @@ describe("stampHappyAgentDataVersion", () => {
             minimumVersion: "0.4.107",
         });
         if (process.platform !== "win32") expect((await stat(path)).mode & 0o777).toBe(0o600);
+    });
+
+    it("keeps a calendar release's minimum above every legacy release", async () => {
+        const path = await stampPath();
+        await stampHappyAgentDataVersion(path, "0.4.114", { raiseMinimum: true });
+        await expect(
+            stampHappyAgentDataVersion(path, "2026.11.1-preview.1", { raiseMinimum: true }),
+        ).resolves.toMatchObject({ minimumVersion: "2026.11.1-preview.1" });
+        await expect(
+            stampHappyAgentDataVersion(path, "0.4.115-preview.1", { raiseMinimum: true }),
+        ).resolves.toMatchObject({ minimumVersion: "2026.11.1-preview.1" });
     });
 
     it("lets a development build record itself without ever raising the minimum", async () => {

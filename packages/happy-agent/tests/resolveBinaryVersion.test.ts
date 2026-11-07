@@ -9,6 +9,7 @@ describe("resolveBinaryVersion", () => {
 
     it("uses the explicit version for a GitHub release build", () => {
         expect(resolveBinaryVersion("0.0.0", "1.2.3-beta.4")).toBe("1.2.3-beta.4");
+        expect(resolveBinaryVersion("0.0.0", "2026.11.1-preview.2")).toBe("2026.11.1-preview.2");
     });
 
     it("rejects a value that cannot identify a release", () => {
