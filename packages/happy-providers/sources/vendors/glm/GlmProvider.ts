@@ -8,6 +8,10 @@ import {
 } from "@/core/inferenceRetrySettings.js";
 import type { BedrockCredential } from "@/vendors/VendorCredential.js";
 import { assertBedrockCredential } from "@/vendors/bedrock/impl/assertBedrockCredential.js";
+import {
+    assertBedrockModelIds,
+    mappedBedrockModelId,
+} from "@/vendors/bedrock/impl/assertBedrockModelIds.js";
 import { isBedrockModelArn } from "@/vendors/bedrock/impl/isBedrockModelArn.js";
 import { bedrockRuntimeOpenAIEndpoint } from "@/vendors/bedrock/impl/bedrockConstants.js";
 import { ChatCompletionsConnection } from "@/protocol/chatCompletions/ChatCompletionsConnection.js";
@@ -16,6 +20,11 @@ import { glmCompactionInstructions } from "./prompts/glm_compaction_instructions
 import { createGlmCompactedContext } from "./impl/createGlmCompactedContext.js";
 
 export interface GlmProviderOptions extends InferenceRetryOptions {
+    /**
+     * Wire model IDs keyed by the caller's model ID, such as an application-inference-profile ARN.
+     * Only the request's `model` changes; everything else stays keyed by the caller's model ID.
+     */
+    bedrockModelIds?: Readonly<Record<string, string>>;
     /**
      * Runtime by default. AWS does not serve this model on Mantle, so Mantle has no default
      * endpoint and is selected only together with an explicit `endpoint`, signed as `bedrock-mantle`.
@@ -40,6 +49,7 @@ export class GlmProvider extends BaseProvider {
     constructor(options: GlmProviderOptions) {
         super();
         assertBedrockCredential(options.credential);
+        assertBedrockModelIds(options.bedrockModelIds);
         if (options.bedrockTransport === "mantle" && options.endpoint === undefined) {
             throw new Error(
                 "AWS does not serve GLM 5.3 on Bedrock Mantle. Pass the endpoint of a Mantle-compatible route to use the Mantle transport.",
@@ -53,7 +63,10 @@ export class GlmProvider extends BaseProvider {
         const region = this.options.region ?? "us-east-1";
         const transport = this.options.bedrockTransport ?? "runtime";
         const model = this.options.model ?? "zai/glm-5.3";
-        resolveGlmModel(model, region, transport);
+        const wireModel = (selected: string) =>
+            mappedBedrockModelId(this.options.bedrockModelIds, selected) ??
+            resolveGlmModel(selected, region, transport);
+        wireModel(model);
         return new ChatCompletionsSession(id, {
             ...this.options,
             ...options,
@@ -67,7 +80,7 @@ export class GlmProvider extends BaseProvider {
                 userAgent: this.options.userAgent ?? "claude-code/2.1.207",
             }),
             stripSchemaPatterns: true,
-            resolveModel: (selected) => resolveGlmModel(selected, region, transport),
+            resolveModel: wireModel,
             generation: (request) => {
                 const effort = request.effort ?? "max";
                 if (effort !== "low" && effort !== "high" && effort !== "max")

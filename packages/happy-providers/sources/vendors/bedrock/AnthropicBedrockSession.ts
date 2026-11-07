@@ -1,3 +1,7 @@
+import {
+    assertBedrockModelIds,
+    mappedBedrockModelId,
+} from "@/vendors/bedrock/impl/assertBedrockModelIds.js";
 import { BaseSession } from "@/core/BaseSession.js";
 import { emptyResponseDoneEvent, isEmptyResponseError } from "@/core/EmptyResponseError.js";
 import {
@@ -40,6 +44,12 @@ import type { Context } from "@steve.kite/stdlib";
 export type AnthropicBedrockClient = CreatedAnthropicBedrockClient;
 
 export interface AnthropicBedrockSessionOptions extends InferenceRetryOptions {
+    /**
+     * Wire model IDs keyed by the caller's model ID, such as an application-inference-profile ARN
+     * for `anthropic/opus-5-5`. Only the request's `model` changes; tools, instructions, and every
+     * other choice stay keyed by the caller's model ID.
+     */
+    bedrockModelIds?: Readonly<Record<string, string>>;
     client?: AnthropicBedrockClient;
     instructions: string;
     credential: BedrockCredential;
@@ -53,6 +63,7 @@ export interface AnthropicBedrockSessionOptions extends InferenceRetryOptions {
 }
 
 export class AnthropicBedrockSession extends BaseSession {
+    readonly bedrockModelIds: Readonly<Record<string, string>> | undefined;
     readonly credential: BedrockCredential;
     readonly endpoint: string | undefined;
     readonly model: string | undefined;
@@ -75,6 +86,8 @@ export class AnthropicBedrockSession extends BaseSession {
 
     constructor(id: string, options: AnthropicBedrockSessionOptions) {
         super(id);
+        assertBedrockModelIds(options.bedrockModelIds);
+        this.bedrockModelIds = options.bedrockModelIds;
         this.credential = options.credential;
         this.endpoint = options.endpoint;
         this.model = options.model;
@@ -334,7 +347,9 @@ export class AnthropicBedrockSession extends BaseSession {
                   };
         return createAnthropicRequest({
             context,
-            model: resolveAnthropicBedrockModelId(options.model, this.region, this.transport),
+            model:
+                mappedBedrockModelId(this.bedrockModelIds, options.model) ??
+                resolveAnthropicBedrockModelId(options.model, this.region, this.transport),
             ...(options.structuredOutput === undefined
                 ? {}
                 : { structuredOutput: options.structuredOutput }),

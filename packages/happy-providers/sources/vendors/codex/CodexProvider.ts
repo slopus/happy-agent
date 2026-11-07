@@ -1,3 +1,4 @@
+import { assertBedrockModelIds } from "@/vendors/bedrock/impl/assertBedrockModelIds.js";
 import type { ProviderModality } from "@/core/ProviderModality.js";
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import type { SessionOptions } from "@/core/SessionOptions.js";
@@ -35,6 +36,12 @@ import {
 } from "@/vendors/codex/generateCodexImage.js";
 
 export interface CodexProviderOptions extends InferenceRetryOptions {
+    /**
+     * Bedrock wire model IDs keyed by the caller's model ID, such as an application-inference-profile
+     * ARN for `openai/gpt-6-sol`. Only the request's `model` changes; tools, instructions, effort, and
+     * headers stay keyed by the caller's model ID.
+     */
+    bedrockModelIds?: Readonly<Record<string, string>>;
     bedrockTransport?: CodexBedrockTransport;
     credential: CodexProviderCredential;
     endpoint?: string;
@@ -59,6 +66,7 @@ export class CodexProvider extends ResponsesProvider {
     static override readonly outputTypes: readonly ProviderModality[] = ["text"];
 
     readonly credential: CodexProviderCredential;
+    readonly bedrockModelIds: Readonly<Record<string, string>> | undefined;
     readonly bedrockTransport: CodexBedrockTransport | undefined;
     readonly endpoint: string;
     readonly onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
@@ -74,6 +82,11 @@ export class CodexProvider extends ResponsesProvider {
     constructor(options: CodexProviderOptions) {
         super();
         assertCodexCredential(options.credential);
+        assertBedrockModelIds(options.bedrockModelIds);
+        if (options.bedrockModelIds !== undefined && !isBedrockCredential(options.credential)) {
+            throw new Error("Bedrock model IDs apply only to a Bedrock credential.");
+        }
+        this.bedrockModelIds = options.bedrockModelIds;
         this.credential = options.credential;
         this.onAccountUsage = options.onAccountUsage;
         const isBedrock = isBedrockCredential(options.credential);
@@ -149,6 +162,9 @@ export class CodexProvider extends ResponsesProvider {
         const userAgent = this.userAgent ?? (await resolveCodexUserAgent());
         return new CodexSession(id, {
             ...options,
+            ...(this.bedrockModelIds === undefined
+                ? {}
+                : { bedrockModelIds: this.bedrockModelIds }),
             ...(this.bedrockTransport === undefined
                 ? {}
                 : { bedrockTransport: this.bedrockTransport }),

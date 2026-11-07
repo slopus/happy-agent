@@ -187,15 +187,26 @@ login files observed after the exchange are not overwritten. Failures do not rep
 Model catalogs are curated in source. The library never fetches a model list during startup or
 session creation.
 
-Kimi and GLM currently support Bedrock Runtime only. Both accept `credential`, optional `region`,
-`endpoint`, `model`, `userAgent`, `fetch`, and the ordinary inference retry settings. Defaults are
-`us-east-1` and that region's `/openai/v1` Runtime endpoint. A query on an explicit `endpoint` is
+Kimi and GLM run on Bedrock Runtime, which is where AWS serves them. Both accept `credential`,
+optional `region`, `endpoint`, `model`, `bedrockTransport`, `bedrockModelIds`, `userAgent`, `fetch`,
+and the ordinary inference retry settings. Defaults are `us-east-1` and that region's `/openai/v1`
+Runtime endpoint. `bedrockTransport: "mantle"` is an opt-in for a Mantle-compatible route: it has no
+default endpoint, so it requires `endpoint`, and it signs as `bedrock-mantle`. A query on an explicit `endpoint` is
 kept apart from its base path and sent, and signed under SigV4, with every request; a name it
 repeats keeps only its last value. Canonical models are
 `moonshotai/kimi-k3` and `zai/glm-5.3`; the providers select US/global inference profiles and accept
-explicit profile IDs. Both always reason, with `low`, `high`, and `max` effort (default `max`).
+explicit profile IDs and Bedrock ARNs. Both always reason, with `low`, `high`, and `max` effort (default `max`).
 Kimi accepts text and images; GLM accepts text only. Compaction uses each documented harness's
 summary prompt and continuation contract. AWS determines account and regional availability.
+
+Every Bedrock route, Anthropic, Codex with a Bedrock credential, Kimi, and GLM, accepts
+`bedrockModelIds`: wire model IDs keyed by the caller's model ID, such as
+`{ "anthropic/opus-5-5": "arn:aws:bedrock:…:application-inference-profile/…" }`. Only the
+request's model changes, verbatim, with no profile prefix. Run selection, tools, instructions,
+effort, and headers stay keyed by the caller's model ID, which an ARN passed as the model itself
+cannot keep. A value must be a Bedrock ARN for a foundation model, inference profile, or
+application inference profile, or a model or inference-profile ID (`<segment>.<rest>`, such as
+`anthropic.claude-opus-5-5` or `us.zai.glm-5.3`); anything else is rejected on construction.
 
 `OpenAICompatibleProvider` takes an explicit `endpoint`, `apiKey`, `vendor` display name, and the
 exact `models` the caller serves, each with its input types, accepted efforts, and extra request

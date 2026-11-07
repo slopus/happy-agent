@@ -1,3 +1,4 @@
+import { assertBedrockModelIds } from "@/vendors/bedrock/impl/assertBedrockModelIds.js";
 import { randomUUID } from "node:crypto";
 
 import type OpenAI from "openai";
@@ -82,6 +83,12 @@ const CODEX_COMPACTION_MAX_RETRIES = 2;
 const CODEX_TOOL_SEARCH_MAX_ROUNDS = 4;
 
 export interface CodexSessionOptions extends InferenceRetryOptions {
+    /**
+     * Bedrock wire model IDs keyed by the caller's model ID, such as an application-inference-profile
+     * ARN for `openai/gpt-6-sol`. Only the request's `model` changes; tools, instructions, effort, and
+     * headers stay keyed by the caller's model ID.
+     */
+    bedrockModelIds?: Readonly<Record<string, string>>;
     bedrockTransport?: CodexBedrockTransport;
     instructions: string;
     credential: CodexProviderCredential;
@@ -119,6 +126,8 @@ export class CodexSession extends BaseSession {
     private forceSse = false;
     private readonly installationId: string;
     private readonly modelConfigurations = new Map<string, SessionModelConfiguration>();
+    /** Wire model IDs keyed by the resolved model ID the session works with. */
+    private readonly wireModelIds = new Map<string, string>();
     readonly #resolveInferenceMaxRetries: () => number;
     readonly #emptyResponseRetryWait: NonNullable<InferenceRetryOptions["waitForInferenceRetry"]>;
     private turnId = randomUUID();
@@ -130,8 +139,18 @@ export class CodexSession extends BaseSession {
 
     constructor(id: string, options: CodexSessionOptions) {
         super(id);
+        assertBedrockModelIds(options.bedrockModelIds);
+        if (options.bedrockModelIds !== undefined && !isBedrockCredential(options.credential)) {
+            throw new Error("Bedrock model IDs apply only to a Bedrock credential.");
+        }
         this.credential = options.credential;
         this.bedrockTransport = options.bedrockTransport;
+        for (const [model, wire] of Object.entries(options.bedrockModelIds ?? {})) {
+            this.wireModelIds.set(
+                resolveCodexSessionModelId(model, true, options.bedrockTransport),
+                wire,
+            );
+        }
         this.endpoint = options.endpoint;
         this.installationId = options.installationId;
         this.model = options.model;
@@ -911,7 +930,7 @@ export class CodexSession extends BaseSession {
         serviceTier?: CodexServiceTier,
         structuredOutput?: SessionRunRequest["structuredOutput"],
     ): CodexResponseRequest {
-        return createCodexCliRequest({
+        const request = createCodexCliRequest({
             clientMetadata: createCodexClientMetadata({
                 installationId: this.installationId,
                 requestKind: "turn",
@@ -930,6 +949,8 @@ export class CodexSession extends BaseSession {
             ...(structuredOutput === undefined ? {} : { structuredOutput }),
             tools: configuration.tools ?? [],
         });
+        const wire = this.wireModelIds.get(model);
+        return wire === undefined ? request : { ...request, model: wire };
     }
 
     private resolveClient(): OpenAI {

@@ -13,9 +13,16 @@ import {
 } from "@/vendors/bedrock/AnthropicBedrockSession.js";
 import type { AnthropicBedrockTransport } from "@/vendors/bedrock/AnthropicBedrockTransport.js";
 import { assertBedrockCredential } from "@/vendors/bedrock/impl/assertBedrockCredential.js";
+import { assertBedrockModelIds } from "@/vendors/bedrock/impl/assertBedrockModelIds.js";
 import { BEDROCK_DEFAULT_REGION } from "@/vendors/bedrock/impl/bedrockConstants.js";
 
 export interface AnthropicBedrockProviderOptions extends InferenceRetryOptions {
+    /**
+     * Wire model IDs keyed by the caller's model ID, such as an application-inference-profile ARN
+     * for `anthropic/opus-5-5`. Only the request's `model` changes; tools, instructions, and every
+     * other choice stay keyed by the caller's model ID.
+     */
+    bedrockModelIds?: Readonly<Record<string, string>>;
     credential: BedrockCredential;
     client?: AnthropicBedrockClient;
     endpoint?: string;
@@ -31,6 +38,7 @@ export class AnthropicBedrockProvider extends BaseProvider {
     static override readonly inputTypes: readonly ProviderModality[] = ["text", "image"];
     static override readonly outputTypes: readonly ProviderModality[] = ["text"];
 
+    readonly bedrockModelIds: Readonly<Record<string, string>> | undefined;
     readonly credential: BedrockCredential;
     readonly client: AnthropicBedrockClient | undefined;
     readonly endpoint: string | undefined;
@@ -44,6 +52,8 @@ export class AnthropicBedrockProvider extends BaseProvider {
     constructor(options: AnthropicBedrockProviderOptions) {
         super();
         assertBedrockCredential(options.credential);
+        assertBedrockModelIds(options.bedrockModelIds);
+        this.bedrockModelIds = options.bedrockModelIds;
         this.credential = options.credential;
         this.client = options.client;
         this.endpoint = options.endpoint;
@@ -58,6 +68,9 @@ export class AnthropicBedrockProvider extends BaseProvider {
     override async session(id: string, options: SessionOptions): Promise<AnthropicBedrockSession> {
         return new AnthropicBedrockSession(id, {
             ...options,
+            ...(this.bedrockModelIds === undefined
+                ? {}
+                : { bedrockModelIds: this.bedrockModelIds }),
             credential: this.credential,
             ...(this.client === undefined ? {} : { client: this.client }),
             ...(this.endpoint === undefined ? {} : { endpoint: this.endpoint }),
