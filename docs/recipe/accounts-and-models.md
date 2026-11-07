@@ -40,6 +40,7 @@ names verbatim; it never shortens emails or appends plan names automatically.
 | Codex             | `type = "codex"`, `auth_file`                                     | Sign in with a separate home, e.g. `CODEX_HOME=~/.codex-work codex login`; point at its `auth.json`. |
 | Grok              | `type = "grok"`, `auth_file`                                      | That account's Grok auth file.                                                                       |
 | Bedrock           | `type = "bedrock"`, `profile`, `region`                           | An AWS profile for that account.                                                                     |
+| Claude gateway    | `type = "claude"`, `base_url`, `auth_token` or `api_key`          | The gateway's URL and token; `base_url` reaches Claude Code as `ANTHROPIC_BASE_URL`.                 |
 | OpenAI-compatible | `type = "openai_compatible"`, `base_url`, `api_key_env`, `models` | An API key from the vendor, exported in the daemon environment. See below.                           |
 
 **Add an OpenAI-compatible vendor** (OpenRouter, Together, Fireworks, DeepSeek, vLLM, LM Studio)

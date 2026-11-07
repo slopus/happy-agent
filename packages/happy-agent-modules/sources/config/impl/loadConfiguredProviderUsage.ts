@@ -90,7 +90,11 @@ export async function loadConfiguredProviderUsage(
                               (env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude")),
                       )
                   ).env;
-        const claudeEnv = { ...env, ...settings };
+        const claudeEnv: NodeJS.ProcessEnv = {
+            ...env,
+            ...settings,
+            ...(provider.baseUrl === undefined ? {} : { ANTHROPIC_BASE_URL: provider.baseUrl }),
+        };
         const configuredToken =
             provider.oauthToken ??
             provider.authToken ??

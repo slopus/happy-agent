@@ -189,6 +189,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # [providers.claude]
 # type = "claude"
 # enabled = true
+# Sent to Claude Code as ANTHROPIC_BASE_URL, over the env block of Claude Code's settings.json.
+# base_url = "https://gateway.example.com"
 # config_dir = "/absolute/path/to/claude/config"
 # executable = "/absolute/path/to/claude"
 # oauth_token = "token"

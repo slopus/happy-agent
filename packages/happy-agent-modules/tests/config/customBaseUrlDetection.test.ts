@@ -151,6 +151,59 @@ describe("Claude Code configured for a gateway", () => {
     });
 });
 
+describe("Claude base_url in happy.toml", () => {
+    it("sends the configured base URL to Claude Code with the configured token", async () => {
+        const { credential, env } = await claudeSession(
+            await claudeConfig(
+                'auth_token = "configured-token"\nbase_url = "https://configured-gateway.example"',
+            ),
+        );
+
+        expect(credential).toMatchObject({ credential: { authToken: "configured-token" } });
+        expect(env.ANTHROPIC_BASE_URL).toBe("https://configured-gateway.example");
+    });
+
+    it("outranks the base URL in Claude Code's settings and the shell", async () => {
+        vi.stubEnv("ANTHROPIC_BASE_URL", "https://shell-gateway.example");
+        await claudeSettings({
+            ANTHROPIC_AUTH_TOKEN: "settings-token",
+            ANTHROPIC_BASE_URL: "https://settings-gateway.example",
+        });
+
+        const { credential, env } = await claudeSession(
+            await claudeConfig('base_url = "https://configured-gateway.example"'),
+        );
+
+        expect(credential).toMatchObject({ credential: { authToken: "settings-token" } });
+        expect(env.ANTHROPIC_BASE_URL).toBe("https://configured-gateway.example");
+    });
+
+    it("applies under credential isolation, where settings are ignored", async () => {
+        await claudeSettings({ ANTHROPIC_BASE_URL: "https://settings-gateway.example" });
+
+        const { env } = await claudeSession(
+            await claudeConfig(
+                'credential_isolation = true\napi_key = "isolated-key"\nbase_url = "https://configured-gateway.example"',
+            ),
+        );
+
+        expect(env.ANTHROPIC_BASE_URL).toBe("https://configured-gateway.example");
+    });
+
+    it("counts as a gateway, so an exported key outranks the sign-in", async () => {
+        await claudeLogin();
+        vi.stubEnv("ANTHROPIC_API_KEY", "gateway-key");
+
+        expect(
+            (
+                await claudeSession(
+                    await claudeConfig('base_url = "https://configured-gateway.example"'),
+                )
+            ).credential,
+        ).toMatchObject({ credential: { apiKey: "gateway-key" } });
+    });
+});
+
 describe("Codex configured for a gateway", () => {
     it("uses a custom model provider's base URL and env_key", async () => {
         vi.stubEnv("GATEWAY_KEY", "gateway-secret");

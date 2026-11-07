@@ -934,12 +934,20 @@ async function createProvider(
                       (process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), ".claude")),
               )
             : undefined;
-        const configuredEnvironment =
-            settings === undefined || Object.keys(settings.env).length === 0
+        const fromSettingsFile = settings !== undefined && Object.keys(settings.env).length > 0;
+        // A configured `base_url` names this account's endpoint, over the settings file's.
+        const configuredEnvironment: NodeJS.ProcessEnv | undefined =
+            !fromSettingsFile && provider.baseUrl === undefined
                 ? undefined
-                : { ...process.env, ...settings.env };
+                : {
+                      ...process.env,
+                      ...settings?.env,
+                      ...(provider.baseUrl === undefined
+                          ? {}
+                          : { ANTHROPIC_BASE_URL: provider.baseUrl }),
+                  };
         const environment = configuredEnvironment ?? process.env;
-        if (configuredEnvironment !== undefined) sources.path(settings?.path);
+        if (fromSettingsFile) sources.path(settings.path);
         const fromSettings = (name: string) => (settings?.env[name]?.trim().length ?? 0) > 0;
         const baseUrl = environment.ANTHROPIC_BASE_URL?.trim().replace(/\/+$/u, "");
         const customEndpoint =

@@ -132,6 +132,36 @@ describe("provider usage method", () => {
         expect(usage?.windows.fiveHour?.usedPercent).toBe(25);
     });
 
+    it("measures an account at the base_url its happy.toml table names", async () => {
+        const config = await testConfigRootedAt(
+            await directory(),
+            [
+                "[providers.claude]",
+                "enabled = true",
+                "credential_isolation = true",
+                'oauth_token = "setup-token"',
+                'base_url = "https://configured.example/anthropic"',
+            ].join("\n"),
+        );
+        const urls: string[] = [];
+        vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+            urls.push(String(input));
+            return Response.json(
+                {},
+                {
+                    headers: {
+                        "anthropic-ratelimit-unified-status": "allowed",
+                        "anthropic-ratelimit-unified-5h-utilization": "0.25",
+                    },
+                },
+            );
+        });
+
+        await config.readProviderUsage(createRootContext(), "claude");
+
+        expect(urls).toEqual(["https://configured.example/anthropic/v1/messages"]);
+    });
+
     it("knows which accounts have any usage source to ask", async () => {
         const config = await testConfigRootedAt(
             await directory(),

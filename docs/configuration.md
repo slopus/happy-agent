@@ -721,7 +721,11 @@ pool offers it when the pool or one of its members names it. A `[defaults]` mode
 because Bedrock does not serve GPT-6.1 Sol.
 
 Codex instances also accept `auth_file`, `base_url`, and `transport`.
-Claude Code instances accept `config_dir`, `executable`, and `oauth_token`.
+Claude Code instances accept `config_dir`, `executable`, `oauth_token`, `api_key`, `auth_token`,
+and `base_url`. `base_url` is passed to Claude Code as `ANTHROPIC_BASE_URL` for a gateway or
+proxy, and the usage reading measures the account there too. It outranks an `ANTHROPIC_BASE_URL`
+in the `env` block of Claude Code's own `settings.json`, which keeps working when `base_url` is
+not set, and it applies under `credential_isolation`.
 Run `claude setup-token` while signed in to the additional Claude account to
 create the long-lived token used by `oauth_token`. The token applies only to
 that provider instance. Grok instances
