@@ -1,7 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 import {
     createAgentGym,
@@ -10,7 +18,10 @@ import {
     type GymInferenceRequest,
     type GymTurn,
 } from "@slopus/happy-agent-gym";
+import type { HappyAgentClient } from "@slopus/happy-agent-client";
 import { expect, it } from "vitest";
+
+import { surfaceTeamClients } from "./support/surfaceTeamClients.js";
 
 /**
  * Exports every system prompt and tool array the real daemon hands a model, so another codebase
@@ -22,6 +33,7 @@ import { expect, it } from "vitest";
  * tools in `tools/definitions/`. Run-specific values become `{{placeholders}}`, listed per context
  * in `prompts/index.json`; instruction documents are marker files, such as `{{globalAgentsMd}}`.
  * `variants.json` lists what each context adds, removes, or changes against `permission.auto`.
+ * Contexts prefixed `team.` ran on a team server; `flows/` holds provider sign-in API exchanges.
  */
 const FIXTURES = resolve(import.meta.dirname, "../fixtures/agent-surface");
 const UPDATE = process.env.HAPPY_AGENT_SURFACE_UPDATE === "1";
@@ -70,263 +82,713 @@ const BASELINE = "permission.auto";
 
 const PERMISSION_MODES = ["read_only", "workspace_write", "auto", "full_access"] as const;
 
+interface Substitutions {
+    readonly ids: Readonly<Record<string, string>>;
+    readonly paths: readonly (readonly [string, string])[];
+}
+
 interface Capture {
     readonly context: string;
     readonly builtBy: string;
     readonly request: GymInferenceRequest;
+    readonly substitutions: Substitutions;
+}
+
+type PendingCapture = Omit<Capture, "substitutions">;
+
+/** A 1×1 transparent PNG, the smallest image a person can attach. */
+const PIXEL =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const ECHO_SERVER = fileURLToPath(new URL("./fixtures/echoMcpServer.mjs", import.meta.url));
+const REVIEW_PROMPT = "You are judging one planned coding-agent action.";
+
+/**
+ * The scripted model. A user message naming a scripted turn gets it once; a permission review
+ * answers with the verdict the scenario set; everything else just finishes.
+ */
+function scriptedModel() {
+    const turns = new Map<string, GymTurn>();
+    let verdict: "allow" | "deny" | "garbled" = "allow";
+    const handler = (request: GymInferenceRequest): GymTurn => {
+        if (request.instructions.startsWith(REVIEW_PROMPT)) {
+            const text =
+                verdict === "garbled"
+                    ? "I could not decide."
+                    : `<review>\n<risk_level>high</risk_level>\n<user_authorization>low</user_authorization>\n<outcome>${verdict}</outcome>\n<rationale>Scripted ${verdict}.</rationale>\n</review>`;
+            return { content: [{ type: "text", text }] };
+        }
+        if (request.sessionId.startsWith("naming:"))
+            return { content: [{ type: "text", text: "<title>Surface export</title>" }] };
+        const last = request.messages.at(-1);
+        const text =
+            last?.role === "user"
+                ? last.content.map((block) => (block.type === "text" ? block.text : "")).join("")
+                : "";
+        const turn = turns.get(text.trim());
+        if (turn !== undefined) {
+            turns.delete(text.trim());
+            return turn;
+        }
+        return { content: [{ type: "text", text: "Done." }] };
+    };
+    return {
+        handler,
+        script: (message: string, name: string, args: Record<string, unknown>) =>
+            turns.set(message, {
+                content: [{ type: "tool_call", name, callId: `surface_${name}`, arguments: args }],
+            }),
+        review: (next: typeof verdict) => {
+            verdict = next;
+        },
+    };
+}
+
+const INSTRUCTION_FILES = {
+    "AGENTS.md": "{{projectAgentsMd}}\n",
+    "AGENTS_SECURITY.md": "{{projectSecurityMd}}\n",
+    "README.md": "{{readme}}\n",
+    ".agents/skills/example/SKILL.md":
+        "---\nname: example\ndescription: '{{skillDescription}}'\n---\n\n{{skillBody}}\n",
+};
+
+async function writeHomeInstructions(gym: AgentGym): Promise<void> {
+    await writeFile(join(gym.publicHomePath, "config", "AGENTS.md"), "{{globalAgentsMd}}\n");
+    await writeFile(join(gym.publicHomePath, "config", "SECURITY.md"), "{{globalSecurityMd}}\n");
+    await writeFile(join(gym.publicHomePath, "AGENTS_SECURITY.md"), "{{homeSecurityMd}}\n");
+}
+
+function gymPaths(gym: AgentGym): [string, string][] {
+    return [
+        [gym.workspacePath, "workspacePath"],
+        [gym.happyHome, "happyHome"],
+        [gym.publicHomePath, "happyPublicHome"],
+        [join(gym.workspacePath, ".."), "installationRoot"],
+    ];
+}
+
+async function firstRequest(gym: AgentGym, sessionId: string): Promise<GymInferenceRequest> {
+    return await gym.waitUntil(
+        async () => gym.inference.requests.find((request) => request.sessionId === sessionId),
+        `the first request of ${sessionId}`,
+    );
+}
+
+/**
+ * Drives every agent kind once on a running gym and returns what each first inference was asked,
+ * with the IDs that run minted named for their role.
+ */
+async function driveAgentKinds(
+    gym: AgentGym,
+    model: ReturnType<typeof scriptedModel>,
+    prefix: string,
+    mains: readonly (typeof MAIN)[number][],
+): Promise<{ captures: PendingCapture[]; ids: Record<string, string> }> {
+    const captures: PendingCapture[] = [];
+    for (const [label, entry] of mains) {
+        const agent = await gym.createSession({ title: label });
+        await gym.send("Hello.", {
+            sessionId: agent.id,
+            providerId: entry.providerId,
+            modelId: entry.id,
+            permissionMode: "auto",
+        });
+        captures.push({
+            context: `${prefix}main.${label}`,
+            builtBy: "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
+            request: await firstRequest(gym, agent.id),
+        });
+    }
+
+    for (const mode of PERMISSION_MODES) {
+        const agent = await gym.createSession({ title: mode });
+        await gym.send("Hello.", { sessionId: agent.id, permissionMode: mode });
+        captures.push({
+            context: `${prefix}permission.${mode}`,
+            builtBy: "permissions/PermissionsModule.ts:PermissionsModule",
+            request: await firstRequest(gym, agent.id),
+        });
+    }
+
+    const chief = (await gym.client.listBots()).bots.find((bot) => bot.isAdmin)!;
+    await gym.send("Hello.", { sessionId: chief.agent.id, permissionMode: "auto" });
+    captures.push({
+        context: `${prefix}chief_of_staff`,
+        builtBy: "bots/impl/formatChiefOfStaffInstructions.ts:formatChiefOfStaffInstructions",
+        request: await firstRequest(gym, chief.agent.id),
+    });
+
+    const bot = (await gym.client.createBot({ name: "Research Bot" })).bot;
+    await gym.send("Hello.", { sessionId: bot.agent.id, permissionMode: "auto" });
+    captures.push({
+        context: `${prefix}bot`,
+        builtBy: "bots/BotsModule.ts:BotsModule",
+        request: await firstRequest(gym, bot.agent.id),
+    });
+
+    const { task } = await gym.client.createTask({ name: "Quarterly review" });
+    await gym.send("Hello.", { sessionId: task.agent.id, permissionMode: "auto" });
+    captures.push({
+        context: `${prefix}task`,
+        builtBy: "tasks/TasksModule.ts:TasksModule",
+        request: await firstRequest(gym, task.agent.id),
+    });
+
+    const selection = gym.selection;
+    const spawn = { model: selection.modelId, provider: selection.providerId, effort: "medium" };
+    model.script("Start a subtask.", "create_subtask", {
+        title: "Subtask",
+        text: "Subtask hello.",
+        ...spawn,
+    });
+    await gym.send("Start a subtask.", { sessionId: task.agent.id, permissionMode: "auto" });
+    captures.push({
+        context: `${prefix}subtask`,
+        builtBy: "subtasks/SubtasksModule.ts:SubtasksModule",
+        request: await firstRequestWithText(gym, "Subtask hello."),
+    });
+
+    model.script("Start a collaborator.", "create_agent", {
+        title: "Collaborator",
+        text: "Collaborator hello.",
+        ...spawn,
+    });
+    await gym.send("Start a collaborator.", { permissionMode: "auto" });
+    captures.push({
+        context: `${prefix}collaborator`,
+        builtBy: "collaboration/CollaborationModule.ts:CollaborationModule",
+        request: await firstRequestWithText(gym, "Collaborator hello."),
+    });
+
+    const sessions = new Set(captures.map((capture) => capture.request.sessionId));
+    const outside = {
+        command: "ls /",
+        description: "List the root folder",
+        dangerouslyDisableSandbox: true,
+    };
+    for (const verdict of ["allow", "deny", "garbled"] as const) {
+        const message = `Run outside the sandbox (${verdict}).`;
+        model.review(verdict);
+        model.script(message, "Bash", outside);
+        const before = gym.inference.requests.length;
+        await gym.send(message, { permissionMode: "auto" });
+        const after = gym.inference.requests.slice(before);
+        const reviews = after.filter(
+            (request) =>
+                !sessions.has(request.sessionId) &&
+                request.sessionId !== gym.defaultSessionId &&
+                !request.sessionId.startsWith("naming:"),
+        );
+        expect(reviews.length).toBeGreaterThan(0);
+        if (verdict === "allow")
+            captures.push({
+                context: `${prefix}auto_review`,
+                builtBy: "auto/prompts/guardian-policy-template.md",
+                request: reviews[0]!,
+            });
+        const answered = after.filter((request) => request.sessionId === gym.defaultSessionId);
+        captures.push({
+            context: `${prefix}auto_review.${verdict}.result`,
+            builtBy: "auto/AutoModule.ts:AutoModule",
+            request: answered.at(-1)!,
+        });
+    }
+    model.review("allow");
+
+    const naming = gym.inference.requests.find((request) =>
+        request.sessionId.startsWith("naming:"),
+    );
+    expect(naming).toBeDefined();
+    captures.push({
+        context: `${prefix}naming`,
+        builtBy: "titles/impl/runNamingInference.ts:runNamingInference",
+        request: naming!,
+    });
+
+    const ids: Record<string, string> = {
+        [gym.defaultSessionId]: "mainAgentId",
+        [chief.agent.id]: "chiefOfStaffAgentId",
+        [chief.id]: "chiefOfStaffBotId",
+        [bot.agent.id]: "botAgentId",
+        [bot.id]: "botId",
+        [task.agent.id]: "taskAgentId",
+        [task.id]: "taskId",
+    };
+    for (const workspace of [chief.workspaceId, bot.workspaceId, task.agent.workspaceId])
+        ids[workspace] ??= "workspaceId";
+    return { captures, ids };
+}
+
+/** A follow-up turn after a tool call, then a message carrying an image. */
+async function driveConversation(
+    gym: AgentGym,
+    model: ReturnType<typeof scriptedModel>,
+): Promise<PendingCapture[]> {
+    const agent = await gym.createSession({ title: "Conversation" });
+    model.script("Read the readme.", "Read", {
+        file_path: join(gym.workspacePath, "README.md"),
+    });
+    await gym.send("Read the readme.", { sessionId: agent.id, permissionMode: "auto" });
+    const response = await gym.client.sendMessage(agent.id, {
+        text: "What is in this picture?",
+        content: [{ type: "image", mimeType: "image/png", data: PIXEL }],
+        mode: {
+            effort: "medium",
+            modelId: gym.selection.modelId,
+            permissionMode: "auto",
+            providerId: gym.selection.providerId,
+            serviceTier: null,
+        },
+    });
+    await gym.waitUntil(
+        async () =>
+            gym.inference.requests.findLast(
+                (request) =>
+                    request.sessionId === agent.id &&
+                    JSON.stringify(request.messages).includes(PIXEL),
+            ),
+        "the image turn",
+    );
+    void response;
+    await gym
+        .steer("Also describe the colors.", { sessionId: agent.id, wait: true })
+        .catch(() => undefined);
+    const last = await gym.waitUntil(
+        async () =>
+            gym.inference.requests.findLast(
+                (request) =>
+                    request.sessionId === agent.id &&
+                    JSON.stringify(request.messages).includes("Also describe the colors."),
+            ),
+        "the steered turn",
+    );
+    return [
+        {
+            context: "conversation.multi_turn",
+            builtBy: "happy-agent-base:AgentBase",
+            request: last,
+        },
+    ];
+}
+
+async function driveWorkflow(
+    gym: AgentGym,
+    model: ReturnType<typeof scriptedModel>,
+): Promise<PendingCapture[]> {
+    model.script("Run a workflow.", "run_workflow", {
+        input: {
+            script: `agent("Workflow hello.", {"model": "${gym.selection.modelId}", "provider": "${gym.selection.providerId}", "effort": "medium", "label": "Step"})`,
+        },
+    });
+    await gym.send("Run a workflow.", { permissionMode: "auto" });
+    return [
+        {
+            context: "workflow_agent",
+            builtBy: "workflows/WorkflowsModule.ts:WorkflowsModule",
+            request: await firstRequestWithText(gym, "Workflow hello."),
+        },
+    ];
+}
+
+async function startRemoteMcpServer(): Promise<{ url: string; close: () => Promise<void> }> {
+    const server = new McpServer({ name: "remote-notes", version: "1.0.0" });
+    server.registerTool("lookup", { description: "Look a note up by its title." }, async () => ({
+        content: [{ type: "text", text: "A note." }],
+    }));
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomUUID() });
+    // The SDK's own transport types disagree with exactOptionalPropertyTypes.
+    await server.connect(transport as unknown as Transport);
+    const http: Server = createServer((request, response) => {
+        void transport.handleRequest(request, response);
+    });
+    await new Promise<void>((done) => http.listen(0, "127.0.0.1", done));
+    const { port } = http.address() as AddressInfo;
+    return {
+        url: `http://127.0.0.1:${String(port)}/mcp`,
+        close: async () => {
+            await server.close();
+            await new Promise<void>((done) => http.close(() => done()));
+        },
+    };
+}
+
+/** One user-wide stdio server and one project-level remote server, on Claude and Codex. */
+async function driveMcp(): Promise<Capture[]> {
+    const remote = await startRemoteMcpServer();
+    const model = scriptedModel();
+    const gym = await createAgentGym({
+        timeoutMs: 30_000,
+        providerIds: ["claude", "codex"],
+        providerTypes: { claude: "claude", codex: "codex" },
+        models: MAIN.filter(([, entry]) => ["claude", "codex"].includes(entry.providerId)).map(
+            ([, entry]) => entry,
+        ),
+        files: {
+            ...INSTRUCTION_FILES,
+            "mcp.toml": [
+                `[mcp_servers.remote_notes]\nurl = "${remote.url}"\n`,
+                `[mcp_servers.echo]\ncommand = ${JSON.stringify(process.execPath)}`,
+                `args = ${JSON.stringify([ECHO_SERVER, "echo"])}\n`,
+            ].join("\n"),
+        },
+        inference: model.handler,
+    });
+    try {
+        await writeHomeInstructions(gym);
+        const captures: Capture[] = [];
+        for (const label of ["claude-opus-5-5", "codex-gpt-6-1-sol"]) {
+            const entry = MAIN.find(([candidate]) => candidate === label)![1];
+            const send = async (sessionId: string) =>
+                await gym.send("Hello.", {
+                    sessionId,
+                    providerId: entry.providerId,
+                    modelId: entry.id,
+                    permissionMode: "auto",
+                });
+            // Servers connect in the background; a probe agent waits until both have listed.
+            const probe = await gym.createSession({ title: `${label} probe` });
+            await gym.waitUntil(async () => {
+                await send(probe.id);
+                const names = (
+                    gym.inference.requests.findLast((candidate) => candidate.sessionId === probe.id)
+                        ?.tools ?? []
+                ).map((tool) => tool.name);
+                return names.includes("mcp__echo__echo") &&
+                    names.includes("mcp__remote_notes__lookup")
+                    ? true
+                    : undefined;
+            }, `${label} to be offered both MCP servers`);
+            const agent = await gym.createSession({ title: label });
+            await send(agent.id);
+            const request = await firstRequest(gym, agent.id);
+            captures.push({
+                context: `mcp.${label}`,
+                builtBy: "mcp/McpModule.ts:McpModule",
+                request,
+                substitutions: {
+                    ids: { [gym.defaultSessionId]: "mainAgentId" },
+                    paths: [
+                        [remote.url, "mcpRemoteUrl"],
+                        [ECHO_SERVER, "mcpStdioServerPath"],
+                        [process.execPath, "mcpStdioCommand"],
+                        ...gymPaths(gym),
+                    ],
+                },
+            });
+        }
+        return captures;
+    } finally {
+        await gym.dispose();
+        await remote.close();
+    }
+}
+
+/** The same agent kinds as a team server's owner and member see them. */
+async function driveTeam(): Promise<Capture[]> {
+    const model = scriptedModel();
+    const team = await surfaceTeamClients({
+        timeoutMs: 30_000,
+        providerIds: Object.keys(PROVIDER_TYPES),
+        providerTypes: PROVIDER_TYPES,
+        models: MAIN.map(([, entry]) => entry),
+        files: INSTRUCTION_FILES,
+        inference: model.handler,
+    });
+    const { gym } = team;
+    try {
+        await writeHomeInstructions(gym);
+        const mains = MAIN.filter(([label]) =>
+            ["claude-opus-5-5", "codex-gpt-6-1-sol", "grok-family-fallback"].includes(label),
+        );
+        const { captures, ids } = await driveAgentKinds(gym, model, "team.", mains);
+        const owned = await gym.createSession({ title: "Shared" });
+        const member = await sendAs(team.bob, gym, owned.workspaceId);
+        captures.push({
+            context: "team.member.main",
+            builtBy: "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
+            request: await firstRequest(gym, member),
+        });
+        ids[team.aliceId] = "ownerUserId";
+        ids[team.bobId] = "memberUserId";
+        return captures.map((capture) => ({
+            ...capture,
+            substitutions: { ids, paths: gymPaths(gym) },
+        }));
+    } finally {
+        await gym.dispose();
+    }
+}
+
+async function sendAs(
+    client: HappyAgentClient,
+    gym: AgentGym,
+    workspaceId: string,
+): Promise<string> {
+    const { agent } = await client.createAgent({ workspaceId, title: "Member" });
+    await client.sendMessage(agent.id, {
+        text: "Hello.",
+        mode: {
+            effort: "medium",
+            modelId: gym.selection.modelId,
+            permissionMode: "auto",
+            providerId: gym.selection.providerId,
+            serviceTier: null,
+        },
+    });
+    return agent.id;
 }
 
 // The fixtures describe a Linux host; other platforms are told about their own sandbox and paths.
 it.runIf(process.platform === "linux")(
     "exports the prompts and tools every agent kind receives",
     async () => {
-        const scripted = new Map<string, GymTurn>();
+        const model = scriptedModel();
         const gym = await createAgentGym({
             timeoutMs: 30_000,
             providerIds: Object.keys(PROVIDER_TYPES),
             providerTypes: PROVIDER_TYPES,
             models: MAIN.map(([, entry]) => entry),
-            files: {
-                "AGENTS.md": "{{projectAgentsMd}}\n",
-                "AGENTS_SECURITY.md": "{{projectSecurityMd}}\n",
-                ".agents/skills/example/SKILL.md":
-                    "---\nname: example\ndescription: '{{skillDescription}}'\n---\n\n{{skillBody}}\n",
-            },
-            inference: (request) => {
-                const last = request.messages.at(-1);
-                const text =
-                    last?.role === "user"
-                        ? last.content
-                              .map((block) => (block.type === "text" ? block.text : ""))
-                              .join("")
-                        : "";
-                const turn = scripted.get(text.trim());
-                if (turn !== undefined) {
-                    scripted.delete(text.trim());
-                    return turn;
-                }
-                if (request.sessionId.startsWith("naming:"))
-                    return { content: [{ type: "text", text: "<title>Surface export</title>" }] };
-                return { content: [{ type: "text", text: "Done." }] };
-            },
+            files: INSTRUCTION_FILES,
+            inference: model.handler,
         });
+        let captures: Capture[];
+        let compaction: GymCompactionRequest;
+        let protocol: number;
+        let standalone: Substitutions;
         try {
-            await writeFile(
-                join(gym.publicHomePath, "config", "AGENTS.md"),
-                "{{globalAgentsMd}}\n",
-            );
-            await writeFile(
-                join(gym.publicHomePath, "config", "SECURITY.md"),
-                "{{globalSecurityMd}}\n",
-            );
-            await writeFile(join(gym.publicHomePath, "AGENTS_SECURITY.md"), "{{homeSecurityMd}}\n");
-            const captures: Capture[] = [];
-            const firstRequest = (sessionId: string) =>
-                gym.waitUntil(
-                    async () =>
-                        gym.inference.requests.find((request) => request.sessionId === sessionId),
-                    `the first request of ${sessionId}`,
-                );
-
-            for (const [label, entry] of MAIN) {
-                const agent = await gym.createSession({ title: label });
-                await gym.send("Hello.", {
-                    sessionId: agent.id,
-                    providerId: entry.providerId,
-                    modelId: entry.id,
-                    permissionMode: "auto",
-                });
-                captures.push({
-                    context: `main.${label}`,
-                    builtBy: "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
-                    request: await firstRequest(agent.id),
-                });
-            }
-
-            for (const mode of PERMISSION_MODES) {
-                const agent = await gym.createSession({ title: mode });
-                await gym.send("Hello.", { sessionId: agent.id, permissionMode: mode });
-                captures.push({
-                    context: `permission.${mode}`,
-                    builtBy: "permissions/PermissionsModule.ts:PermissionsModule",
-                    request: await firstRequest(agent.id),
-                });
-            }
-
-            const chief = (await gym.client.listBots()).bots.find((bot) => bot.isAdmin)!;
-            await gym.send("Hello.", { sessionId: chief.agent.id, permissionMode: "auto" });
-            captures.push({
-                context: "chief_of_staff",
-                builtBy:
-                    "bots/impl/formatChiefOfStaffInstructions.ts:formatChiefOfStaffInstructions",
-                request: await firstRequest(chief.agent.id),
-            });
-
-            const bot = (await gym.client.createBot({ name: "Research Bot" })).bot;
-            await gym.send("Hello.", { sessionId: bot.agent.id, permissionMode: "auto" });
-            captures.push({
-                context: "bot",
-                builtBy: "bots/BotsModule.ts:BotsModule",
-                request: await firstRequest(bot.agent.id),
-            });
-
-            const { task } = await gym.client.createTask({ name: "Quarterly review" });
-            await gym.send("Hello.", { sessionId: task.agent.id, permissionMode: "auto" });
-            captures.push({
-                context: "task",
-                builtBy: "tasks/TasksModule.ts:TasksModule",
-                request: await firstRequest(task.agent.id),
-            });
-
-            const selection = gym.selection;
-            scripted.set("Start a subtask.", {
-                content: [
-                    {
-                        type: "tool_call",
-                        name: "create_subtask",
-                        callId: "surface_subtask",
-                        arguments: {
-                            title: "Subtask",
-                            text: "Subtask hello.",
-                            model: selection.modelId,
-                            provider: selection.providerId,
-                            effort: "medium",
-                        },
-                    },
-                ],
-            });
-            await gym.send("Start a subtask.", {
-                sessionId: task.agent.id,
-                permissionMode: "auto",
-            });
-            captures.push({
-                context: "subtask",
-                builtBy: "subtasks/SubtasksModule.ts:SubtasksModule",
-                request: await firstRequestWithText(gym, "Subtask hello."),
-            });
-
-            scripted.set("Start a collaborator.", {
-                content: [
-                    {
-                        type: "tool_call",
-                        name: "create_agent",
-                        callId: "surface_collaborator",
-                        arguments: {
-                            title: "Collaborator",
-                            text: "Collaborator hello.",
-                            model: selection.modelId,
-                            provider: selection.providerId,
-                            effort: "medium",
-                        },
-                    },
-                ],
-            });
-            await gym.send("Start a collaborator.", { permissionMode: "auto" });
-            captures.push({
-                context: "collaborator",
-                builtBy: "collaboration/CollaborationModule.ts:CollaborationModule",
-                request: await firstRequestWithText(gym, "Collaborator hello."),
-            });
-
-            scripted.set("Run outside the sandbox.", {
-                content: [
-                    {
-                        type: "tool_call",
-                        name: "Bash",
-                        callId: "surface_review",
-                        arguments: {
-                            command: "ls /",
-                            description: "List the root folder",
-                            dangerouslyDisableSandbox: true,
-                        },
-                    },
-                ],
-            });
-            const before = gym.inference.requests.length;
-            await gym.send("Run outside the sandbox.", { permissionMode: "auto" });
-            const sessions = new Set(captures.map((capture) => capture.request.sessionId));
-            const reviews = gym.inference.requests
-                .slice(before)
-                .filter(
-                    (request) =>
-                        !sessions.has(request.sessionId) &&
-                        request.sessionId !== gym.defaultSessionId &&
-                        !request.sessionId.startsWith("naming:"),
-                );
-            expect(reviews).toHaveLength(1);
-            captures.push({
-                context: "auto_review",
-                builtBy: "auto/prompts/guardian-policy-template.md",
-                request: reviews[0]!,
-            });
-
-            const naming = gym.inference.requests.find((request) =>
-                request.sessionId.startsWith("naming:"),
-            );
-            expect(naming).toBeDefined();
-            captures.push({
-                context: "naming",
-                builtBy: "titles/impl/runNamingInference.ts:runNamingInference",
-                request: naming!,
-            });
-
-            await gym.compact();
-            const compaction = await gym.waitUntil(
+            await writeHomeInstructions(gym);
+            const driven = await driveAgentKinds(gym, model, "", MAIN);
+            const pending = [
+                ...driven.captures,
+                ...(await driveConversation(gym, model)),
+                ...(await driveWorkflow(gym, model)),
+            ];
+            const conversation = pending.find(
+                (capture) => capture.context === "conversation.multi_turn",
+            )!;
+            // The default agent lists its collaborators in an order the daemon does not fix.
+            await gym.compact(conversation.request.sessionId);
+            compaction = await gym.waitUntil(
                 async () => gym.inference.compactions[0],
                 "the compaction request",
             );
-
-            const ids: Record<string, string> = {
-                [gym.defaultSessionId]: "mainAgentId",
-                [chief.agent.id]: "chiefOfStaffAgentId",
-                [chief.id]: "chiefOfStaffBotId",
-                [bot.agent.id]: "botAgentId",
-                [bot.id]: "botId",
-                [task.agent.id]: "taskAgentId",
-                [task.id]: "taskId",
-            };
-            for (const capture of captures)
-                ids[capture.request.sessionId] ??= `${capture.context.replace(/\W/g, "_")}_agentId`;
-            for (const workspace of [chief.workspaceId, bot.workspaceId, task.agent.workspaceId])
-                ids[workspace] ??= `workspaceId`;
-            const paths: [string, string][] = [
-                [gym.workspacePath, "workspacePath"],
-                [gym.happyHome, "happyHome"],
-                [gym.publicHomePath, "happyPublicHome"],
-                [join(gym.workspacePath, ".."), "installationRoot"],
-            ];
-            const surface = exportSurface(captures, compaction, ids, paths);
-            const health = await gym.client.getHealth();
-            const manifest = {
-                contexts: captures.map((capture) => capture.context),
-                generatedBy: SCRIPT,
-                happyAgentCommit: UPDATE ? headCommit() : "",
-                protocol: health.version.protocol,
-            };
-            if (UPDATE) {
-                await rm(FIXTURES, { recursive: true, force: true });
-                for (const [path, content] of surface) {
-                    await mkdir(join(FIXTURES, path, ".."), { recursive: true });
-                    await writeFile(join(FIXTURES, path), content);
-                }
-                await writeFile(join(FIXTURES, "manifest.json"), stableJson(manifest));
-            }
-            const written = await readTree(FIXTURES);
-            const committed = JSON.parse(written.get("manifest.json") ?? "{}") as typeof manifest;
-            written.delete("manifest.json");
-            expect({ ...committed, happyAgentCommit: "" }).toEqual({
-                ...manifest,
-                happyAgentCommit: "",
-            });
-            expect(committed.happyAgentCommit).toMatch(/^[0-9a-f]{40}$/);
-            expect([...written.keys()].sort()).toEqual([...surface.keys()].sort());
-            for (const [path, content] of surface) expect(written.get(path), path).toBe(content);
+            for (const capture of pending)
+                driven.ids[capture.request.sessionId] ??=
+                    `${capture.context.replace(/\W/g, "_")}_agentId`;
+            standalone = { ids: driven.ids, paths: gymPaths(gym) };
+            captures = pending.map((capture) => ({ ...capture, substitutions: standalone }));
+            protocol = (await gym.client.getHealth()).version.protocol;
         } finally {
             await gym.dispose();
         }
+        captures.push(...(await driveMcp()), ...(await driveTeam()));
+        for (const capture of captures) {
+            const ids = { ...capture.substitutions.ids };
+            for (const other of captures)
+                ids[other.request.sessionId] ??= `${other.context.replace(/\W/g, "_")}_agentId`;
+            Object.assign(capture, { substitutions: { ...capture.substitutions, ids } });
+        }
+
+        const surface = exportSurface(captures, compaction, standalone);
+        for (const [path, content] of await driveProviderSignIns()) surface.set(path, content);
+        const manifest = {
+            contexts: captures.map((capture) => capture.context),
+            flows: [...surface.keys()].filter((path) => path.startsWith("flows/")).sort(),
+            generatedBy: SCRIPT,
+            happyAgentCommit: UPDATE ? headCommit() : "",
+            protocol,
+        };
+        if (UPDATE) {
+            await rm(FIXTURES, { recursive: true, force: true });
+            for (const [path, content] of surface) {
+                await mkdir(join(FIXTURES, path, ".."), { recursive: true });
+                await writeFile(join(FIXTURES, path), content);
+            }
+            await writeFile(join(FIXTURES, "manifest.json"), stableJson(manifest));
+        }
+        const written = await readTree(FIXTURES);
+        const committed = JSON.parse(written.get("manifest.json") ?? "{}") as typeof manifest;
+        written.delete("manifest.json");
+        expect({ ...committed, happyAgentCommit: "" }).toEqual({
+            ...manifest,
+            happyAgentCommit: "",
+        });
+        expect(committed.happyAgentCommit).toMatch(/^[0-9a-f]{40}$/);
+        expect([...written.keys()].sort()).toEqual([...surface.keys()].sort());
+        for (const [path, content] of surface) expect(written.get(path), path).toBe(content);
     },
-    300_000,
+    600_000,
 );
+
+/** A stand-in Claude Code that signs in only with the code `good-code`. */
+const CLAUDE_CLI = `#!/bin/sh
+state="$HOME/.stub-claude-signed-in"
+case "$*" in
+  "--version") echo "2.1.312 (Claude Code)" ;;
+  "auth status --json")
+    if [ -f "$state" ]; then
+      echo '{"loggedIn":true,"authMethod":"claude.ai","email":"ada@example.com","subscriptionType":"max"}'
+    else
+      echo '{"loggedIn":false,"authMethod":"none"}'; exit 1
+    fi ;;
+  "auth login --claudeai")
+    echo "Opening browser to sign in…"
+    echo "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&state=stub"
+    printf "Paste code here if prompted > "
+    read code
+    if [ "$code" = "good-code" ]; then touch "$state"; echo "Login successful."; else echo "Login failed." >&2; exit 1; fi ;;
+  *) exit 2 ;;
+esac
+`;
+
+/** A stand-in Codex whose device sign-in finishes once the test approves it. */
+const CODEX_CLI = `#!/bin/sh
+case "$*" in
+  "--version") echo "codex-cli 0.164.0" ;;
+  "login status")
+    if [ -f "$CODEX_HOME/auth.json" ]; then echo "Logged in using ChatGPT"; else echo "Not logged in"; exit 1; fi ;;
+  "login --device-auth")
+    echo "Follow these steps to sign in with ChatGPT using device code authorization:"
+    echo "1. Open this link in your browser and sign in to your account"
+    echo "   https://auth.openai.com/codex/device"
+    echo "2. Enter this one-time code (expires in 15 minutes)"
+    echo "   ABCD-EFGH"
+    while [ ! -f "$HOME/.approve-codex" ]; do sleep 0.1; done
+    echo "Successfully logged in" ;;
+  *) exit 2 ;;
+esac
+`;
+
+async function executable(path: string, content: string): Promise<void> {
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(path, content);
+    await chmod(path, 0o755);
+}
+
+/**
+ * Every request and event of a Claude browser sign-in with a pasted code and a Codex device
+ * sign-in, against stand-ins for the vendors' programs, so a client can match the shapes.
+ */
+async function driveProviderSignIns(): Promise<Map<string, string>> {
+    const root = await mkdtemp(join(tmpdir(), "surface-clis-"));
+    const home = join(root, "home");
+    await executable(join(home, ".local", "bin", "claude"), CLAUDE_CLI);
+    await executable(join(home, ".local", "bin", "codex"), CODEX_CLI);
+    const gym = await createAgentGym({
+        timeoutMs: 20_000,
+        environment: {
+            CODEX_HOME: join(home, ".codex"),
+            GROK_HOME: join(home, ".grok"),
+            HAPPY_AGENT_APPLICATIONS_DIRECTORY: join(root, "Applications"),
+            HAPPY_AGENT_PROGRAM_DIRECTORIES: "",
+            HOME: home,
+            PATH: `${join(home, ".local", "bin")}:/usr/bin:/bin`,
+        },
+    });
+    const files = new Map<string, string>();
+    try {
+        type Step = { request?: unknown; status?: number; response?: unknown; event?: unknown };
+        const record = async (steps: Step[], method: string, path: string, body?: unknown) => {
+            const response = await gym.http.request(method, path, body);
+            steps.push({
+                request: { method, path, ...(body === undefined ? {} : { body }) },
+                status: response.status,
+                response: JSON.parse(response.text) as unknown,
+            });
+        };
+        const until = async (steps: Step[], cli: string, status: string) => {
+            const event = (await gym.waitForEvent((candidate) => {
+                const untyped = candidate as { type: string; payload: unknown };
+                if (untyped.type !== "provider_cli.updated") return false;
+                const object = (
+                    untyped.payload as {
+                        providerCli: {
+                            id: string;
+                            operation: {
+                                kind: string;
+                                status: string;
+                                authorization: { method: string; userCode: string | null } | null;
+                            } | null;
+                        };
+                    }
+                ).providerCli;
+                return (
+                    object.id === cli &&
+                    object.operation?.kind === "sign_in" &&
+                    object.operation.status === status &&
+                    // A device code may reach the page in a later update than its URL.
+                    (object.operation.authorization?.method !== "device" ||
+                        object.operation.authorization.userCode !== null)
+                );
+            }, `${cli} ${status}`)) as { type: string; payload: unknown };
+            steps.push({ event: { type: event.type, payload: event.payload } });
+        };
+
+        const claude: Step[] = [];
+        await record(claude, "GET", "/v0/provider-clis/claude");
+        await record(claude, "POST", "/v0/provider-clis/claude/sign-in", {
+            mutationId: "sign-in",
+        });
+        await until(claude, "claude", "waiting");
+        await record(claude, "POST", "/v0/provider-clis/claude/sign-in/code", {
+            code: "good-code",
+        });
+        await until(claude, "claude", "succeeded");
+        files.set(
+            "flows/provider-cli-sign-in.claude.json",
+            stableJson(normalizeFlow(claude, home)),
+        );
+
+        const codex: Step[] = [];
+        await record(codex, "GET", "/v0/provider-clis/codex");
+        await record(codex, "POST", "/v0/provider-clis/codex/sign-in", {
+            method: "device",
+        });
+        await until(codex, "codex", "waiting");
+        await mkdir(join(home, ".codex"), { recursive: true });
+        const part = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
+        await writeFile(
+            join(home, ".codex", "auth.json"),
+            JSON.stringify({
+                tokens: {
+                    id_token: `${part({ alg: "none" })}.${part({ email: "ada@example.com", "https://api.openai.com/auth": { chatgpt_plan_type: "plus" } })}.signature`,
+                },
+            }),
+        );
+        await writeFile(join(home, ".approve-codex"), "");
+        await until(codex, "codex", "succeeded");
+        await record(codex, "POST", "/v0/provider-clis/codex/cancel", {});
+        files.set("flows/provider-cli-sign-in.codex.json", stableJson(normalizeFlow(codex, home)));
+    } finally {
+        await gym.dispose();
+        await rm(root, { recursive: true, force: true });
+    }
+    return files;
+}
+
+/** Replaces the values each run mints, by field name, so the flow compares across runs. */
+function normalizeFlow(steps: unknown, home: string): unknown {
+    const ids = new Map<string, string>();
+    const visit = (value: unknown, key: string): unknown => {
+        // How many lines the vendor's program had printed by each event is a race.
+        if (Array.isArray(value))
+            return key === "output" ? "{{programOutput}}" : value.map((item) => visit(item, key));
+        if (value !== null && typeof value === "object")
+            return Object.fromEntries(
+                Object.entries(value).map(([field, item]) => [field, visit(item, field)]),
+            );
+        if (typeof value === "number" && key.endsWith("At")) return `{{${key}}}`;
+        if (typeof value === "string") {
+            if (key === "version" && /^[0-9a-f-]{36}$/.test(value)) return "{{version}}";
+            if (key === "id" && /^[a-z][a-z0-9]{23}$/.test(value)) {
+                if (!ids.has(value)) ids.set(value, `{{operationId${String(ids.size + 1)}}}`);
+                return ids.get(value);
+            }
+            return value.split(home).join("{{home}}");
+        }
+        return value;
+    };
+    return visit(steps, "");
+}
 
 async function firstRequestWithText(gym: AgentGym, text: string): Promise<GymInferenceRequest> {
     return await gym.waitUntil(
@@ -348,8 +810,7 @@ async function firstRequestWithText(gym: AgentGym, text: string): Promise<GymInf
 function exportSurface(
     captures: readonly Capture[],
     compaction: GymCompactionRequest,
-    ids: Readonly<Record<string, string>>,
-    paths: readonly (readonly [string, string])[],
+    standalone: Substitutions,
 ): Map<string, string> {
     const files = new Map<string, string>();
     const promptIndex: Record<string, unknown>[] = [];
@@ -358,6 +819,7 @@ function exportSurface(
     const toolLists = new Map<string, { readonly hash: string; readonly name: string }[]>();
     for (const capture of captures) {
         const { request, context } = capture;
+        const { ids, paths } = capture.substitutions;
         const template = (text: string) =>
             templated(text, { ...ids, [request.sessionId]: "agentId" }, paths, context);
         const instructions = template(request.instructions);
@@ -446,16 +908,22 @@ function exportSurface(
             ),
         ),
     );
-    const main = captures.find((capture) => capture.context === "main.claude-opus-5-5")!;
+    const main = captures.find((capture) => capture.context === "conversation.multi_turn")!;
     const conversation = (text: string) =>
-        templated(text, { ...ids, [compaction.sessionId]: "agentId" }, paths, "compaction");
+        templated(
+            text,
+            { ...standalone.ids, [compaction.sessionId]: "agentId" },
+            standalone.paths,
+            "compaction",
+        );
     files.set(
         "compaction.json",
         stableJson({
             contextInstructionsEqualPrompt:
                 compaction.context.instructions === main.request.instructions
-                    ? "main.claude-opus-5-5"
+                    ? main.context
                     : conversation(compaction.context.instructions ?? ""),
+            messages: JSON.parse(conversation(JSON.stringify(compaction.messages))) as unknown,
             model: compaction.model,
             note: "The daemon hands the provider the agent's own instructions and history; the summarizing prompt is the vendor's native compaction inside happy-providers.",
         }),
