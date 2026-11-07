@@ -289,6 +289,12 @@ importers:
       '@slopus/happy-agent-gym':
         specifier: workspace:*
         version: link:../happy-agent-gym
+      '@slopus/happy-providers':
+        specifier: 0.0.54
+        version: 0.0.54(ws@8.21.1)(zod@4.4.3)
+      '@steve.kite/stdlib':
+        specifier: 0.0.12
+        version: 0.0.12
       '@types/node':
         specifier: ^24.0.10
         version: 24.13.3

@@ -35,7 +35,8 @@ import { surfaceTeamClients } from "./support/surfaceTeamClients.js";
  * `variants.json` lists what each context adds, removes, or changes against `permission.auto`.
  * Contexts prefixed `team.` ran on a team server; `flows/` holds provider sign-in API exchanges.
  * `wire/<family>/` holds each tool exactly as the real provider serialized it into its vendor
- * request, in the original key order, with `wire/<family>/order.json` giving the sent order.
+ * request, in the original key order, with `wire/<family>/order.json` giving the sent order and
+ * `wire/<family>/request.json` the request target the vendor saw.
  */
 const FIXTURES = resolve(import.meta.dirname, "../fixtures/agent-surface");
 const UPDATE = process.env.HAPPY_AGENT_SURFACE_UPDATE === "1";
@@ -643,7 +644,64 @@ const WIRE_FAMILIES = [
     { family: "grok", providerId: "wire_grok", modelId: "xai/grok-4.5" },
     { family: "openai_compatible", providerId: "wire_compatible", modelId: "zai/glm-5.3" },
     { family: "bedrock", providerId: "wire_bedrock", modelId: "anthropic/opus-5-5" },
+    {
+        family: "bedrock_anthropic_mantle",
+        providerId: "wire_bedrock_mantle",
+        modelId: "anthropic/opus-5-5",
+    },
+    {
+        family: "bedrock_responses_mantle",
+        providerId: "wire_bedrock_families",
+        modelId: "openai/gpt-5.4",
+    },
+    {
+        family: "bedrock_responses_runtime",
+        providerId: "wire_bedrock_families",
+        modelId: "openai/gpt-6-astra",
+    },
+    {
+        family: "bedrock_kimi_runtime",
+        providerId: "wire_bedrock_families",
+        modelId: "moonshotai/kimi-k3",
+        effort: "high",
+    },
+    {
+        family: "bedrock_glm_runtime",
+        providerId: "wire_bedrock_families",
+        modelId: "zai/glm-5.3",
+        effort: "high",
+    },
 ] as const;
+
+/** Bedrock endpoints for the families above; each carries a query, which must survive. */
+function bedrockFamilyConfig(base: string): string[] {
+    const route = (family: string, transport?: string) => [
+        `endpoint = "${base}/${family}?route=fixture"`,
+        ...(transport === undefined ? [] : [`transport = "${transport}"`]),
+    ];
+    return [
+        "[providers.wire_bedrock_mantle]",
+        'type = "bedrock"',
+        "enabled = true",
+        'bearer_token = "wire-key"',
+        'region = "us-east-1"',
+        '[providers.wire_bedrock_mantle.model_overrides."anthropic/opus-5-5"]',
+        ...route("bedrock_anthropic_mantle", "mantle"),
+        "[providers.wire_bedrock_families]",
+        'type = "bedrock"',
+        "enabled = true",
+        'bearer_token = "wire-key"',
+        'region = "us-east-1"',
+        '[providers.wire_bedrock_families.model_overrides."openai/gpt-5.4"]',
+        ...route("bedrock_responses_mantle", "mantle"),
+        '[providers.wire_bedrock_families.model_overrides."openai/gpt-6-astra"]',
+        ...route("bedrock_responses_runtime", "runtime"),
+        '[providers.wire_bedrock_families.model_overrides."moonshotai/kimi-k3"]',
+        ...route("bedrock_kimi_runtime"),
+        '[providers.wire_bedrock_families.model_overrides."zai/glm-5.3"]',
+        ...route("bedrock_glm_runtime"),
+    ];
+}
 
 /**
  * Runs each real provider against a local vendor that records the first request body and refuses
@@ -651,7 +709,7 @@ const WIRE_FAMILIES = [
  * binary, so its serialization is pinned with the dependency.
  */
 async function driveWire(): Promise<Map<string, string>> {
-    const bodies = new Map<string, string>();
+    const bodies = new Map<string, { body: string; target: string }>();
     const http = createServer((request, response) => {
         const chunks: Buffer[] = [];
         request.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -662,8 +720,10 @@ async function driveWire(): Promise<Map<string, string>> {
                 response.end("{}");
                 return;
             }
-            const family = (request.url ?? "").split("/")[1]!;
-            if (!bodies.has(family)) bodies.set(family, Buffer.concat(chunks).toString("utf8"));
+            const target = request.url ?? "";
+            const family = new URL(target, "http://wire").pathname.split("/")[1]!;
+            if (!bodies.has(family))
+                bodies.set(family, { body: Buffer.concat(chunks).toString("utf8"), target });
             response.writeHead(400, { "content-type": "application/json" });
             response.end(
                 JSON.stringify({
@@ -710,28 +770,33 @@ async function driveWire(): Promise<Map<string, string>> {
             '[providers.wire_bedrock.model_overrides."anthropic/opus-5-5"]',
             `endpoint = "${base}/bedrock"`,
             'transport = "runtime"',
+            ...bedrockFamilyConfig(base),
             "",
         ].join("\n"),
-        liveProviders: WIRE_FAMILIES.map(({ providerId }) => providerId),
+        liveProviders: [...new Set(WIRE_FAMILIES.map(({ providerId }) => providerId))],
     });
     const files = new Map<string, string>();
     try {
         await writeHomeInstructions(gym);
         const ids: Record<string, string> = { [gym.defaultSessionId]: "mainAgentId" };
-        for (const { family, providerId, modelId } of WIRE_FAMILIES) {
+        for (const wire of WIRE_FAMILIES) {
+            const { family, providerId, modelId } = wire;
             const agent = await gym.createSession({ title: family });
             ids[agent.id] = "agentId";
             await gym.send("Hello.", {
                 sessionId: agent.id,
                 providerId,
                 modelId,
+                // Kimi and GLM offer no medium effort.
+                effort: "effort" in wire ? wire.effort : "medium",
                 permissionMode: "auto",
                 wait: false,
             });
-            const body = await gym.waitUntil(
+            const { body, target } = await gym.waitUntil(
                 async () => bodies.get(family),
                 `the ${family} request`,
             );
+            files.set(`wire/${family}/request.json`, stableJson({ method: "POST", target }));
             await gym.abort(agent.id);
             // Every body is compact JSON whose parse and stringify reproduce it byte for byte, so
             // each tool's stringified element is exactly its slice of the request.
@@ -763,7 +828,7 @@ function wireHashes(files: ReadonlyMap<string, string>): Record<string, Record<s
     const hashes: Record<string, Record<string, string>> = {};
     for (const [path, content] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
         const [, family, file] = path.split("/") as [string, string, string];
-        if (file === "order.json") continue;
+        if (file === "order.json" || file === "request.json") continue;
         (hashes[family] ??= {})[file.slice(0, -".json".length)] = createHash("sha256")
             .update(content)
             .digest("hex");
