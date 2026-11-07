@@ -578,6 +578,9 @@ same terms: a client that does not know it shows such a link's label as inert te
 described in the same section, are additive on the same terms, in both their `happy://` and
 `happy-file://` forms. Legacy reference tags stay readable; a client that does not render them
 shows the tag text as written.
+Settings links and the `button` title are additive on the same terms: a client that does not know
+the `settings` host shows such a link's label as inert text, and one that does not know the
+`button` title shows an ordinary link.
 
 Artifacts are additive and do not increment the protocol version. Clients detect them through
 `GET /v0/artifacts`: `404` means the daemon has no artifacts, not that the catalog is empty. The
@@ -7632,16 +7635,21 @@ Happy mobile app registers `happy://` for its own deep links, such as `happy://s
 | `service`   | `happy://workspaces/<workspaceId>/services/<id>`               | a service in a workspace                                      |
 | `surface`   | `happy://surfaces/<id>`                                        | a Surface of any type, such as a todo list, document, or chat |
 | `user`      | `happy://users/<id>`                                           | a person, by their Happy user ID                              |
+| `settings`  | `happy://settings/<page>`                                      | a page of the client's settings; see "Settings links"         |
 
 **Grammar.** In ABNF, with `ALPHA` and `DIGIT` as in RFC 5234:
 
 ```text
-entity-url = "happy://" ( artifact / service / other )
+entity-url = "happy://" ( artifact / service / other / settings )
 artifact   = "artifacts/" id [ "?version=" version ]
 service    = "workspaces/" id "/services/" id
 other      = ( "agents/" / "projects/" / "workspaces/" / "surfaces/" / "users/" ) id
+settings   = "settings/" page
 id         = 1*128( ALPHA / DIGIT / "_" / "-" )
 version    = %x31-39 *8DIGIT
+page       = "general" / "account" / "sharing" / "servers" / "instructions" / "secrets"
+           / "providers" / "providers/import" / "usage" / "voice" / "mobile-access"
+           / "members" / "roles" / "policy" / "mcp" / "computes"
 ```
 
 - Matching is case-sensitive: the scheme, hosts, `services/`, and `?version=` are written exactly
@@ -7660,7 +7668,7 @@ of a Happy URL:
 ```text
 instance-url    = "happy://" instance-id "/" happy-rest
 instance-id     = %x61-7A 23( %x61-7A / DIGIT )
-happy-rest      = artifact / service / other / happy-form-rest
+happy-rest      = artifact / service / other / settings / happy-form-rest
 happy-form-rest = target "/files/" path [ "#" lines ]
 ```
 
@@ -7732,6 +7740,51 @@ is literal text, as in Markdown.
 The label of an entity link is the writer's fallback: the name the agent knows. It may be empty,
 `[](happy://artifacts/…)`, which asks the client to fill in the name.
 
+**Buttons.** A Happy link whose CommonMark title is exactly `button`, quoted with `"`, `'`, or
+parentheses and with no escapes, asks the client to show it as a button instead of inline text:
+
+```markdown
+[Add your team's tokens](happy://settings/providers "button")
+```
+
+Any Happy link kind may be a button, and the link means exactly what it means without the title. A
+button opens what the link names, the same as the link would; it never performs an action of its
+own. Any other title, or none, shows an ordinary link. A Markdown renderer that does not know Happy
+links shows an ordinary link with a tooltip, and the fallback below is the same for both displays.
+A malformed or inert link that asks for a button shows its label as inert text, not a button.
+
+**Settings links.** `happy://settings/<page>` names a page of the client's own settings, so an
+agent can send a person straight to where something is set up, such as adding provider
+credentials during onboarding. A settings link names no entity: it never resolves through a route,
+never shows a live title or busy state, and its label is what the client shows. It must therefore
+have a non-blank label. The pages are a closed list; any other page is malformed:
+
+| Page               | Settings it opens                                     |
+| ------------------ | ----------------------------------------------------- |
+| `general`          | general preferences                                   |
+| `account`          | the person's own account                              |
+| `sharing`          | sharing, such as shared Surfaces and tasks            |
+| `servers`          | the Happy servers this client is connected to         |
+| `instructions`     | instructions, such as the global `AGENTS.md`          |
+| `secrets`          | secrets                                               |
+| `providers`        | model providers and their credentials                 |
+| `providers/import` | importing provider credentials found on this computer |
+| `usage`            | usage and limits                                      |
+| `voice`            | voice                                                 |
+| `mobile-access`    | pairing and access from phones                        |
+| `members`          | the members of a team server                          |
+| `roles`            | the roles of a team server                            |
+| `policy`           | a team server's policy                                |
+| `mcp`              | MCP servers                                           |
+| `computes`         | the computers agents work on                          |
+
+Not every client has every page; Happy Cloud, for example, has pages a local desktop does not, and
+the reverse. A client that has no such page shows the link's label as inert text. Opening a
+settings link only navigates within the client: it never changes a setting, starts a sign-in, or
+performs any other action, as a link or as a button. An instance link to settings opens that
+installation's settings page under the rule in "Instance links", and a settings link reaching the
+client from outside follows that rule too.
+
 **Resolution.** Each kind resolves through routes that already exist:
 
 | Kind        | Resolved through                                                        | Live title                                                       | Busy while                                                                |
@@ -7776,8 +7829,9 @@ an incomplete link is ordinary text.
 **Fallback.** A surface that cannot render Happy links gets plain Markdown in which each Happy
 link is replaced. An entity link becomes the entity's live title when the surface can resolve it,
 escaped as literal text; otherwise its label as written; otherwise the inert placeholder. A file
-link becomes what "File links" describes. A malformed link becomes its label, or nothing when the
-label is blank. The daemon applies this fallback to text it relays to integrations that cannot
+link becomes what "File links" describes. A settings link becomes its label, or "Settings" when the
+label is blank. A malformed link becomes its label, or nothing when the label is blank. The
+daemon applies this fallback to text it relays to integrations that cannot
 render links, including the Happy mobile app.
 
 **Legacy reference tags.** Before Happy links, agents mentioned entities with reference tags such
@@ -7817,9 +7871,11 @@ type HappyReference = {
     version?: number; // artifacts only
     workspaceId?: string; // services only
 };
+type HappySettingsPage = (typeof HAPPY_SETTINGS_PAGES)[number]; // "providers", "providers/import", …
 type HappyLink = (
     | { type: "reference"; reference: HappyReference }
     | { type: "file"; file: HappyFileLink } // see "File links"
+    | { type: "settings"; page: HappySettingsPage } // see "Settings links"
 ) & { instanceId?: string }; // present only for an instance link
 type HappyLinkMatch = {
     link: HappyLink | undefined; // undefined when malformed
@@ -7827,6 +7883,7 @@ type HappyLinkMatch = {
     image: boolean;
     source: string; // exactly as written
     syntax: "link" | "legacyTag";
+    display: "link" | "button"; // "button" only for a link titled exactly `button`
 };
 
 parseHappyUrl(url: string): HappyLink | undefined; // happy://, instance links, happy-file://
@@ -7845,8 +7902,9 @@ rewriteLegacyHappyReferenceTags(markdown: string, options?: { streaming?: boolea
 happyReferencePlaceholder(reference: HappyReference): string; // "an unavailable artifact"
 ```
 
-`HAPPY_REFERENCE_KINDS` lists the kinds. Clients and the daemon use these rather than their own
-parsers, so every surface agrees on exactly what a link names.
+`HAPPY_REFERENCE_KINDS` lists the entity kinds and `HAPPY_SETTINGS_PAGES` the settings pages.
+Clients and the daemon use these rather than their own parsers, so every surface agrees on
+exactly what a link names.
 
 Happy links are additive and do not increment the protocol version. Request and response schemas
 are unchanged. A client that does not know them shows them as Markdown links with an unknown

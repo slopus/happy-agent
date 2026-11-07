@@ -636,6 +636,7 @@ API.md specifies under "Happy links":
 | User                         | `happy://users/<id>`                                         |
 | File in an agent's workspace | `happy://agents/<id>/files/<path>#L42-L50`                   |
 | File in a workspace          | `happy://workspaces/<id>/files/<path>#L42`                   |
+| Settings page                | `happy://settings/<page>`, such as `providers`               |
 
 A file link may equally use the API's `happy-file` form,
 `happy-file://agents/<id>/<path>#L42-L50` or `happy-file://workspaces/<id>/<path>`, which puts the
@@ -646,7 +647,8 @@ names:
 
 - `parseHappyUrl(url)` returns a `HappyLink`, either `{ type: "reference", reference }` with a
   `HappyReference` `{ kind, id, version?, workspaceId? }`, or `{ type: "file", file }` with a
-  `HappyFileLink` `{ target, path, lines? }`. It returns `undefined` for anything malformed,
+  `HappyFileLink` `{ target, path, lines? }`, or `{ type: "settings", page }` with a page from
+  `HAPPY_SETTINGS_PAGES`. It returns `undefined` for anything malformed,
   including the Happy mobile app's own deep links. An instance link,
   `happy://<instanceId>/artifacts/<id>`, parses to the same value with `instanceId` set, and
   `formatHappyUrl` writes one when `link.instanceId` is set. Open an instance link only on the
@@ -654,8 +656,8 @@ names:
   `happy://` URL arriving from outside the app only when it carries an instance ID.
   `isHappyUrl(url)` tells whether a URL is one
   Happy owns, well-formed or not; never hand such a URL to the operating system or a browser.
-- `formatHappyUrl(link)`, `formatHappyReferenceUrl(reference)`, and
-  `formatHappyFileUrl(file, scheme?)` write canonical URLs and throw a `TypeError` for anything the
+- `formatHappyUrl(link)`, `formatHappyReferenceUrl(reference)`,
+  `formatHappySettingsUrl(page)`, and `formatHappyFileUrl(file, scheme?)` write canonical URLs and throw a `TypeError` for anything the
   grammar cannot express. `formatHappyFileUrl` writes the `happy://` form by default, and the
   `happy-file://` form with `scheme` `"happy-file"`.
   `formatHappyMarkdownLink(link, label?)` writes a ready-to-paste `[label](happy://…)` with the
@@ -663,21 +665,26 @@ names:
 - `parseHappyLinks(markdown, { streaming? })` splits text into `text` and `link` segments, and
   `replaceHappyLinks(markdown, replace, { streaming? })` substitutes each link in the Markdown
   source. Each match carries the parsed `link` (undefined when malformed), its `label`, whether it
-  is an `image`, its `source`, and its `syntax`. Links in code spans, fenced code, or after a
-  backslash stay text.
+  is an `image`, its `source`, its `syntax`, and its `display`: `"button"` when the link's title
+  is exactly `button`, as in `[Add tokens](happy://settings/providers "button")`, otherwise
+  `"link"`. Links in code spans, fenced code, or after a backslash stay text.
 - With `streaming: true`, both drop a trailing unfinished Happy link, from `[label]` on, while its
   destination could still become `happy:` or `happy-file:`. `happyLinkPartialLength(markdown)` reports how many
   characters that is.
 - `renderHappyLinksAsText(markdown, resolve?)` is the plain-Markdown fallback. An entity link
   becomes the name `resolve` returns, else its label, else `happyReferencePlaceholder(reference)`;
-  a file link becomes its label or its decoded path. `escapeMarkdownText(text)` is the escaping it
+  a file link becomes its label or its decoded path; a settings link becomes its label, or
+  "Settings" when it is blank. `escapeMarkdownText(text)` is the escaping it
   uses for names.
 
 Show an entity link as a link whose text is the entity's live title, falling back to the label the
 agent wrote, and indicate a busy entity on it. Show a file link with its label as written, and
 open it read-only inside the reader's own conversation: resolve an agent target through
-`GET /v0/agents/:agentId` to its `workspaceId`, then read the file from that workspace. Show
-malformed and unresolvable links as inert text.
+`GET /v0/agents/:agentId` to its `workspaceId`, then read the file from that workspace. Show a
+settings link with its label, and open that settings page; it only navigates and never changes a
+setting. Show it inert when the client has no such page. Show a link whose `display` is `"button"`
+as a button that opens the same thing. Show malformed and unresolvable links as inert text, never
+as buttons.
 
 **Legacy reference tags.** Older history holds `<happy-KIND id="…"/>` reference tags. Nothing
 writes them any more, but the Markdown functions still read them onto the same model, reporting

@@ -37,6 +37,11 @@ export interface HappyLinkMatch {
      * `<happy-KIND id="…"/>` reference tag.
      */
     syntax: "link" | "legacyTag";
+    /**
+     * `button` when the link's title is exactly `button`, asking the client to show it as a button;
+     * otherwise `link`. Either way the link opens what it names and nothing more.
+     */
+    display: "link" | "button";
 }
 
 /** Markdown split around its Happy links. Adjacent text is merged and empty text omitted. */
@@ -91,7 +96,8 @@ export function happyLinkPartialLength(markdown: string): number {
  * Plain Markdown for surfaces that cannot open Happy links. An entity link becomes the name
  * `resolve` returns, escaped as literal text, else its label as written, else a placeholder such
  * as "an unavailable artifact". A file link becomes its label, or its decoded path when the label
- * is blank. A malformed link becomes its label.
+ * is blank. A settings link becomes its label, or "Settings" when it is blank. A malformed link
+ * becomes its label.
  */
 export function renderHappyLinksAsText(
     markdown: string,
@@ -108,6 +114,7 @@ export function renderHappyLinksAsText(
             }
             if (label.trim() !== "") return label;
             if (link?.type === "file") return escapeMarkdownText(link.file.path);
+            if (link?.type === "settings") return "Settings";
             return syntax === "legacyTag" ? "an unavailable reference" : "";
         },
         options,
@@ -177,6 +184,7 @@ function scan(
                             image: false,
                             source: markdown.slice(index, tag.end),
                             syntax: "legacyTag",
+                            display: "link",
                         },
                     });
                     index = tag.end;
@@ -202,6 +210,7 @@ function scan(
                             image,
                             source: markdown.slice(index, found.end),
                             syntax: "link",
+                            display: found.title === "button" ? "button" : "link",
                         },
                     });
                     index = found.end;

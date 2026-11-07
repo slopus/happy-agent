@@ -6,7 +6,9 @@ import {
     formatHappyFileUrl,
     formatHappyMarkdownLink,
     formatHappyReferenceUrl,
+    formatHappySettingsUrl,
     formatHappyUrl,
+    HAPPY_SETTINGS_PAGES,
     happyFileLinkSchema,
     happyReferencePlaceholder,
     isHappyUrl,
@@ -409,5 +411,46 @@ describe("instance links", () => {
             instanceId: INSTANCE,
         };
         expect(() => formatHappyUrl(file)).toThrow(TypeError);
+    });
+});
+
+describe("settings URLs", () => {
+    it("name every listed page and nothing else", () => {
+        for (const page of HAPPY_SETTINGS_PAGES) {
+            const url = `happy://settings/${page}`;
+            expect(parseHappyUrl(url)).toEqual({ type: "settings", page });
+            expect(formatHappySettingsUrl(page)).toBe(url);
+            expect(formatHappyUrl({ type: "settings", page })).toBe(url);
+        }
+        for (const url of [
+            "happy://settings",
+            "happy://settings/",
+            "happy://settings/providers/",
+            "happy://settings/Providers",
+            "happy://settings/billing",
+            "happy://settings/providers/export",
+            "happy://settings/import",
+            "happy://settings/providers?tab=keys",
+            "happy://settings/providers#keys",
+            "happy://setting/providers",
+            "happy-file://settings/providers",
+        ]) {
+            expect(parseHappyUrl(url), url).toBeUndefined();
+        }
+        expect(() => formatHappySettingsUrl("billing" as never)).toThrow(TypeError);
+    });
+
+    it("take the instance form", () => {
+        const instanceId = "k3x9q2m7p0a4b8c1d5e6f7g2";
+        const url = `happy://${instanceId}/settings/mobile-access`;
+        expect(parseHappyUrl(url)).toEqual({ type: "settings", page: "mobile-access", instanceId });
+        expect(formatHappyUrl({ type: "settings", page: "mobile-access", instanceId })).toBe(url);
+        expect(parseHappyUrl(`happy://${instanceId}/settings/nowhere`)).toBeUndefined();
+    });
+
+    it("are written as ready-to-paste Markdown links", () => {
+        expect(formatHappyMarkdownLink({ type: "settings", page: "providers" }, "Providers")).toBe(
+            "[Providers](happy://settings/providers)",
+        );
     });
 });

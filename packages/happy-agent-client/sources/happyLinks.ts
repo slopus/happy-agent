@@ -19,6 +19,9 @@
  * host alone tells the forms apart: no plural noun, and not `oauth`, is a 24-character instance
  * ID. The grammar is strict: anything else under `happy://` is malformed and
  * never partly interpreted, and no client hands a Happy URL to the operating system.
+ *
+ * A settings link, `happy://settings/providers`, names a page of the client's own settings rather
+ * than an entity. Opening it only navigates; it never changes a setting or performs an action.
  */
 
 import { type Static, Type } from "@sinclair/typebox";
@@ -37,6 +40,30 @@ export const HAPPY_REFERENCE_KINDS = [
     "user",
 ] as const;
 export type HappyReferenceKind = (typeof HAPPY_REFERENCE_KINDS)[number];
+
+/**
+ * The settings pages a `happy://settings/<page>` link may open. A client without one of them shows
+ * the link's label as inert text.
+ */
+export const HAPPY_SETTINGS_PAGES = [
+    "general",
+    "account",
+    "sharing",
+    "servers",
+    "instructions",
+    "secrets",
+    "providers",
+    "providers/import",
+    "usage",
+    "voice",
+    "mobile-access",
+    "members",
+    "roles",
+    "policy",
+    "mcp",
+    "computes",
+] as const;
+export type HappySettingsPage = (typeof HAPPY_SETTINGS_PAGES)[number];
 
 /** The scheme of every Happy URL in Markdown. */
 export const HAPPY_URL_SCHEME = "happy";
@@ -106,12 +133,13 @@ export const happyFileLinkSchema = Type.Object(
 export type HappyFileLink = Static<typeof happyFileLinkSchema>;
 
 /**
- * What a `happy://` URL names: an entity or a file. `instanceId` is present only for an instance
+ * What a `happy://` URL names: an entity, a file, or a settings page. `instanceId` is present only for an instance
  * link, `happy://<instanceId>/…`, which names that installation and no other.
  */
 export type HappyLink =
     | { type: "reference"; reference: HappyReference; instanceId?: string }
-    | { type: "file"; file: HappyFileLink; instanceId?: string };
+    | { type: "file"; file: HappyFileLink; instanceId?: string }
+    | { type: "settings"; page: HappySettingsPage; instanceId?: string };
 
 const HOSTS: Record<HappyReferenceKind, string> = {
     artifact: "artifacts",
@@ -135,6 +163,7 @@ const FILE_URL = new RegExp(
 const HAPPY_FILE_URL = new RegExp(
     `^happy-file://(agents|workspaces)/(${ID_PATTERN})/(${ENCODED_PATH_PATTERN})(?:${LINES_PATTERN})?$`,
 );
+const SETTINGS_URL = /^happy:\/\/settings\/([a-z][a-z/-]*)$/;
 const HAPPY_URL = /^happy(?:-file)?:/i;
 /** An instance link: an installation's health `instanceId` in front of a `happy://` URL. */
 const INSTANCE_URL = /^happy:\/\/([a-z][a-z0-9]{23})\/(.*)$/su;
@@ -163,6 +192,11 @@ export function parseHappyUrl(url: string): HappyLink | undefined {
 }
 
 function parseInstanceFreeUrl(url: string): HappyLink | undefined {
+    const settings = SETTINGS_URL.exec(url);
+    if (settings !== null) {
+        const page = HAPPY_SETTINGS_PAGES.find((candidate) => candidate === settings[1]);
+        return page === undefined ? undefined : { type: "settings", page };
+    }
     const entity = ENTITY_URL.exec(url);
     if (entity !== null) {
         const [, host, id = "", version] = entity;
@@ -202,7 +236,9 @@ export function formatHappyUrl(link: HappyLink): string {
     const url =
         link.type === "reference"
             ? formatHappyReferenceUrl(link.reference)
-            : formatHappyFileUrl(link.file);
+            : link.type === "file"
+              ? formatHappyFileUrl(link.file)
+              : formatHappySettingsUrl(link.page);
     if (link.instanceId === undefined) return url;
     if (!Value.Check(instanceIdSchema, link.instanceId)) {
         throw new TypeError("The Happy instance ID is invalid.");
@@ -213,6 +249,14 @@ export function formatHappyUrl(link: HappyLink): string {
         throw new TypeError("The Happy link is too long.");
     }
     return instanceUrl;
+}
+
+/** The URL for a settings page, such as `happy://settings/providers`. */
+export function formatHappySettingsUrl(page: HappySettingsPage): string {
+    if (!(HAPPY_SETTINGS_PAGES as readonly string[]).includes(page)) {
+        throw new TypeError("The Happy settings page is invalid.");
+    }
+    return `happy://settings/${page}`;
 }
 
 /** The canonical URL for an entity, such as `happy://artifacts/<id>?version=2`. */

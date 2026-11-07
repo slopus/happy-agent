@@ -13,6 +13,8 @@ export interface MarkdownInlineLink {
     label: string;
     /** The destination with its backslash escapes removed. */
     url: string;
+    /** The title exactly as written between its quotes or parentheses, when the link has one. */
+    title?: string;
     /** The index after the closing parenthesis. */
     end: number;
 }
@@ -34,14 +36,20 @@ export function matchInlineLink(
     index = destination.end;
     const beforeTitle = index;
     index = skipWhitespace(markdown, index, end);
+    let title: string | undefined;
     if (index > beforeTitle) {
-        const title = titleEnd(markdown, index, end);
-        if (title !== undefined) index = skipWhitespace(markdown, title, end);
+        const titleStart = index;
+        const after = titleEnd(markdown, index, end);
+        if (after !== undefined) {
+            title = markdown.slice(titleStart + 1, after - 1);
+            index = skipWhitespace(markdown, after, end);
+        }
     }
     if (markdown[index] !== ")" || index >= end) return undefined;
     return {
         label: markdown.slice(open + 1, close),
         url: destination.url.replace(ASCII_PUNCTUATION_ESCAPE, "$1"),
+        ...(title === undefined ? {} : { title }),
         end: index + 1,
     };
 }

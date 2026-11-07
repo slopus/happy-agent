@@ -39,6 +39,7 @@ describe("parseHappyLinks", () => {
                 image: false,
                 source: link,
                 syntax: "link",
+                display: "link",
             },
             { type: "text", text: ", " },
             {
@@ -48,6 +49,7 @@ describe("parseHappyLinks", () => {
                 image: false,
                 source: tag,
                 syntax: "legacyTag",
+                display: "link",
             },
             { type: "text", text: ",\n\n" },
             {
@@ -63,6 +65,7 @@ describe("parseHappyLinks", () => {
                 image: false,
                 source: fileLink,
                 syntax: "link",
+                display: "link",
             },
             { type: "text", text: " and " },
             {
@@ -79,6 +82,7 @@ describe("parseHappyLinks", () => {
                 image: true,
                 source: `![](${FILE_URL})`,
                 syntax: "link",
+                display: "link",
             },
             { type: "text", text: "." },
         ]);
@@ -310,5 +314,57 @@ describe("rewriteLegacyHappyReferenceTags", () => {
         expect(
             rewriteLegacyHappyReferenceTags(`<happy-service id="web"/> <happy-x id="y"/> ${kept}`),
         ).toBe(`an unavailable service an unavailable reference ${kept}`);
+    });
+});
+
+describe("buttons", () => {
+    it("asks for a button only when the title is exactly button", () => {
+        const displays = parseHappyLinks(
+            [
+                `[a](happy://settings/providers "button")`,
+                `[b](${ARTIFACT_URL} 'button')`,
+                `[c](${FILE_URL} (button))`,
+                `[d](happy://settings/providers "Button")`,
+                `[e](happy://settings/providers "button ")`,
+                `[f](happy://settings/providers "butto\\n")`,
+                `[g](happy://settings/providers "Open")`,
+                `[h](happy://settings/providers)`,
+                `[i](happy://settings/nowhere "button")`,
+                `<happy-agent id="${AGENT}"/>`,
+            ].join(" "),
+        ).flatMap((segment) => (segment.type === "link" ? [[segment.label, segment.display]] : []));
+        expect(displays).toEqual([
+            ["a", "button"],
+            ["b", "button"],
+            ["c", "button"],
+            ["d", "link"],
+            ["e", "link"],
+            ["f", "link"],
+            ["g", "link"],
+            ["h", "link"],
+            ["i", "button"],
+            ["", "link"],
+        ]);
+    });
+
+    it("falls back to the same text as a link", () => {
+        expect(
+            renderHappyLinksAsText(
+                `[Add your tokens](happy://settings/providers "button") or [](happy://settings/secrets "button")`,
+            ),
+        ).toBe("Add your tokens or Settings");
+    });
+});
+
+describe("settings links", () => {
+    it("parse inside Markdown and fall back to their label", () => {
+        const [segment] = parseHappyLinks(`[Providers](happy://settings/providers/import)`);
+        expect(segment).toMatchObject({
+            type: "link",
+            link: { type: "settings", page: "providers/import" },
+            label: "Providers",
+            display: "link",
+        });
+        expect(renderHappyLinksAsText("Open [Voice](happy://settings/voice).")).toBe("Open Voice.");
     });
 });
