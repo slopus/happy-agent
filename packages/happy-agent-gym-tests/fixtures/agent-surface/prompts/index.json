@@ -709,6 +709,32 @@
     "toolCount": 107
   },
   {
+    "builtBy": "collaboration/CollaborationModule.ts:CollaborationModule",
+    "id": "main.with_collaborators",
+    "model": "anthropic/opus-5-5",
+    "placeholders": [
+      "agentId",
+      "collaboratorAgentIdsSortedById",
+      "collaborator_agentId",
+      "globalAgentsMd",
+      "happyHome",
+      "happyPublicHome",
+      "modelId",
+      "modelName",
+      "osVersion",
+      "platform",
+      "projectAgentsMd",
+      "projectSecurityMd",
+      "providerId",
+      "shell",
+      "skillDescription",
+      "workflowRunId",
+      "workspacePath"
+    ],
+    "providerKind": "claude",
+    "toolCount": 131
+  },
+  {
     "builtBy": "mcp/McpModule.ts:McpModule",
     "id": "mcp.claude-opus-5-5",
     "model": "anthropic/opus-5-5",

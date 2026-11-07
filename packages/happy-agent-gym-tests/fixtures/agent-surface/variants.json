@@ -464,6 +464,11 @@
         "BashInput"
       ]
     },
+    "main.with_collaborators": {
+      "added": [],
+      "changed": [],
+      "removed": []
+    },
     "mcp.claude-opus-5-5": {
       "added": [
         "mcp__echo__echo",

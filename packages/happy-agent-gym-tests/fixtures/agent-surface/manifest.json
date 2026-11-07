@@ -32,6 +32,7 @@
     "naming",
     "conversation.multi_turn",
     "workflow_agent",
+    "main.with_collaborators",
     "mcp.claude-opus-5-5",
     "mcp.codex-gpt-6-1-sol",
     "team.main.claude-opus-5-5",
@@ -58,6 +59,6 @@
     "flows/provider-cli-sign-in.codex.json"
   ],
   "generatedBy": "pnpm --filter @slopus/happy-agent-gym-tests export:agent-surface",
-  "happyAgentCommit": "eac318575379c31bc185ec49a3d43373dc9d47dd",
+  "happyAgentCommit": "d863cf7d6d080a11b9d92602ffe35df22d3ef328",
   "protocol": 34
 }
