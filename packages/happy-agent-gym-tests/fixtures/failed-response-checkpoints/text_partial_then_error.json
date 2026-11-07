@@ -1,5 +1,14 @@
 {
   "description": "A text block that never ends, then a provider error.",
+  "failureNote": {
+    "content": [
+      {
+        "text": "The last turn failed: The provider connection failed.",
+        "type": "text"
+      }
+    ],
+    "role": "system"
+  },
   "finishedMessage": null,
   "keptMessages": [],
   "model": "anthropic/opus-5-5",

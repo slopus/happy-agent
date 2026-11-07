@@ -1,5 +1,6 @@
 {
   "description": "A provider-run call with its result, then text, ending normally.",
+  "failureNote": null,
   "finishedMessage": [
     {
       "content": [

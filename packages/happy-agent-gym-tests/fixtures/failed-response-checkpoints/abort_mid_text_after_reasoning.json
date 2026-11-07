@@ -1,6 +1,7 @@
 {
   "abortedAfterText": "answ",
   "description": "Finished reasoning, then text cut off by an abort.",
+  "failureNote": null,
   "finishedMessage": [
     {
       "content": [

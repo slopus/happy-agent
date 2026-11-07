@@ -1,0 +1,127 @@
+{
+  "description": "A finished text block reset by the provider, retried, ending normally.",
+  "failureNote": null,
+  "finishedMessage": [
+    {
+      "content": [
+        {
+          "text": "First try.",
+          "type": "text"
+        },
+        {
+          "text": "Second try.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "keptMessages": [
+    {
+      "content": [
+        {
+          "text": "First try.",
+          "type": "text"
+        },
+        {
+          "text": "Second try.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "finished_text_reset_then_retry",
+  "nextRequestMessages": [
+    {
+      "content": [
+        {
+          "text": "Case finished_text_reset_then_retry.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "First try.",
+          "type": "text"
+        },
+        {
+          "text": "Second try.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "Continue.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "settlementMessages": [],
+  "stop": "normal",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  },
+  "turn": {
+    "events": [
+      {
+        "type": "block_start"
+      },
+      {
+        "type": "text_start"
+      },
+      {
+        "delta": "First try.",
+        "type": "text_delta"
+      },
+      {
+        "type": "text_end"
+      },
+      {
+        "type": "block_reset"
+      },
+      {
+        "type": "block_start"
+      },
+      {
+        "type": "text_start"
+      },
+      {
+        "delta": "Second try.",
+        "type": "text_delta"
+      },
+      {
+        "type": "text_end"
+      },
+      {
+        "type": "block_stop"
+      },
+      {
+        "state": "normal",
+        "tokens": {
+          "input": 1,
+          "output": 1
+        },
+        "type": "done"
+      }
+    ]
+  }
+}

@@ -1,5 +1,6 @@
 {
   "description": "A call reset mid-stream by the provider, replaced by text, ending normally.",
+  "failureNote": null,
   "finishedMessage": [
     {
       "content": [

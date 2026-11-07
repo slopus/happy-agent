@@ -1,5 +1,14 @@
 {
   "description": "Finished text and a finished client tool call, then a provider error.",
+  "failureNote": {
+    "content": [
+      {
+        "text": "The last turn failed: The provider connection failed.",
+        "type": "text"
+      }
+    ],
+    "role": "system"
+  },
   "finishedMessage": [
     {
       "content": [

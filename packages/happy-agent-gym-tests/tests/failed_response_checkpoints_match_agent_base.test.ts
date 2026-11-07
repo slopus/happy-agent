@@ -129,6 +129,22 @@ const CASES: readonly Case[] = [
         stop: "normal",
     },
     {
+        name: "finished_text_reset_then_retry",
+        description: "A finished text block reset by the provider, retried, ending normally.",
+        turn: {
+            events: [
+                { type: "block_start" },
+                ...text("First try."),
+                { type: "block_reset" },
+                { type: "block_start" },
+                ...text("Second try."),
+                { type: "block_stop" },
+                { type: "done", state: "normal", tokens: TOKENS },
+            ],
+        },
+        stop: "normal",
+    },
+    {
         name: "abort_mid_text_after_reasoning",
         description: "Finished reasoning, then text cut off by an abort.",
         turn: {
@@ -229,6 +245,8 @@ it.runIf(process.platform === "linux")(
                 );
                 const kept = followUp === -1 ? added : added.slice(0, followUp);
                 const finished = kept.filter((message) => message.role === "assistant");
+                // Base's raw failure note, kept apart so a port can compare its own wording.
+                const note = followUp === -1 ? undefined : added[followUp];
                 results[entry.name] = {
                     name: entry.name,
                     description: entry.description,
@@ -245,6 +263,10 @@ it.runIf(process.platform === "linux")(
                         agent.id,
                     ),
                     keptMessages: normalize(kept, agent.id),
+                    failureNote:
+                        note?.role === "system"
+                            ? (normalize([note], agent.id) as unknown[])[0]
+                            : null,
                     nextRequestMessages: normalize(next!.messages, agent.id),
                 };
             }
@@ -271,8 +293,35 @@ it.runIf(process.platform === "linux")(
         );
         expect(JSON.stringify(kept("server_call_with_result"))).toContain("Read is loaded.");
         expect(JSON.stringify(kept("block_reset_mid_call"))).not.toContain("toolu_reset");
+        // A reset does not take back a text block that had already finished.
+        expect(kept("finished_text_reset_then_retry")).toMatchObject([
+            {
+                role: "assistant",
+                content: [
+                    { type: "text", text: "First try." },
+                    { type: "text", text: "Second try." },
+                ],
+            },
+        ]);
         expect(JSON.stringify(kept("abort_mid_text_after_reasoning"))).not.toContain("Partial");
         expect(JSON.stringify(kept("stream_end_without_done"))).not.toContain("toolu_read_eof");
+        // Only a provider error leaves a note, placed right after the kept messages.
+        for (const [name, result] of Object.entries(results)) {
+            const note = (result as { failureNote: SessionMessage | null }).failureNote;
+            if ((result as { stop: string }).stop === "error") {
+                expect(note, name).toMatchObject({
+                    role: "system",
+                    content: [
+                        {
+                            type: "text",
+                            text: "The last turn failed: The provider connection failed.",
+                        },
+                    ],
+                });
+            } else {
+                expect(note, name).toBeNull();
+            }
+        }
 
         if (UPDATE) await mkdir(FIXTURES, { recursive: true });
         for (const [name, result] of Object.entries(results)) {
