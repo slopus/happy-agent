@@ -189,7 +189,9 @@ session creation.
 
 Kimi and GLM currently support Bedrock Runtime only. Both accept `credential`, optional `region`,
 `endpoint`, `model`, `userAgent`, `fetch`, and the ordinary inference retry settings. Defaults are
-`us-east-1` and that region's `/openai/v1` Runtime endpoint. Canonical models are
+`us-east-1` and that region's `/openai/v1` Runtime endpoint. A query on an explicit `endpoint` is
+kept apart from its base path and sent, and signed under SigV4, with every request; a name it
+repeats keeps only its last value. Canonical models are
 `moonshotai/kimi-k3` and `zai/glm-5.3`; the providers select US/global inference profiles and accept
 explicit profile IDs. Both always reason, with `low`, `high`, and `max` effort (default `max`).
 Kimi accepts text and images; GLM accepts text only. Compaction uses each documented harness's

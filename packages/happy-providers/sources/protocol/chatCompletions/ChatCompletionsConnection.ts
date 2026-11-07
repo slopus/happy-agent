@@ -4,6 +4,10 @@ import { Value } from "@sinclair/typebox/value";
 import { Hash } from "@smithy/hash-node";
 import { SignatureV4 } from "@smithy/signature-v4";
 import type { BedrockCredential } from "@/vendors/VendorCredential.js";
+import {
+    bedrockEndpointOptions,
+    bedrockSigningQuery,
+} from "@/vendors/bedrock/impl/bedrockEndpointOptions.js";
 import { readServerSentEvents } from "./readServerSentEvents.js";
 
 /** Gateways may omit `choices` on a usage-only chunk and `delta` or `finish_reason` on a choice. */
@@ -144,7 +148,7 @@ export class ChatCompletionsConnection {
                 credential.name === "bedrock-bearer-token"
                     ? credential.credential.bearerToken
                     : "bedrock-runtime-sigv4",
-            baseURL: options.endpoint,
+            ...bedrockEndpointOptions(options.endpoint),
             defaultHeaders: { "user-agent": options.userAgent },
             maxRetries: 0,
             fetch:
@@ -166,6 +170,7 @@ export class ChatCompletionsConnection {
                               hostname: url.hostname,
                               ...(url.port ? { port: Number(url.port) } : {}),
                               path: url.pathname,
+                              query: bedrockSigningQuery(url),
                               headers: Object.fromEntries(headers),
                               body: init.body,
                           });

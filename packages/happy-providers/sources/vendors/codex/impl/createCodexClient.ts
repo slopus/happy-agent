@@ -3,6 +3,10 @@ import { bedrock, type AwsCredentialsProvider } from "openai/providers/bedrock/a
 import { Hash } from "@smithy/hash-node";
 import { SignatureV4 } from "@smithy/signature-v4";
 
+import {
+    bedrockEndpointOptions,
+    bedrockSigningQuery,
+} from "@/vendors/bedrock/impl/bedrockEndpointOptions.js";
 import { isBedrockCredential, type CodexProviderCredential } from "@/vendors/VendorCredential.js";
 import type { CodexBedrockTransport } from "@/vendors/codex/CodexProvider.js";
 
@@ -60,10 +64,13 @@ export function createCodexClient(options: {
             "x-codex-installation-id": options.installationId,
             "x-codex-window-id": options.windowId,
         };
+        const { baseURL, defaultQuery } = bedrockEndpointOptions(options.endpoint);
+        const query = defaultQuery === undefined ? {} : { defaultQuery };
         if (options.bedrockTransport === "runtime" && options.credential.name === "bedrock-aws") {
             return new BedrockOpenAI({
                 apiKey: "bedrock-runtime-sigv4",
-                baseURL: options.endpoint,
+                baseURL,
+                ...query,
                 defaultHeaders,
                 fetch: createBedrockRuntimeFetch(
                     options.credential.credential.provider,
@@ -77,11 +84,12 @@ export function createCodexClient(options: {
                 ? { apiKey: options.credential.credential.bearerToken }
                 : { credentialProvider: options.credential.credential.provider };
         return new BedrockOpenAI({
+            ...query,
             defaultHeaders,
             maxRetries: 0,
             provider: bedrock({
                 ...authentication,
-                baseURL: options.endpoint,
+                baseURL,
                 region: options.region,
             }),
         });
@@ -146,7 +154,7 @@ function createBedrockRuntimeFetch(
             ...(url.port ? { port: Number(url.port) } : {}),
             method,
             path: url.pathname,
-            query: requestQuery(url),
+            query: bedrockSigningQuery(url),
             headers: Object.fromEntries(headers.entries()),
             ...(body === undefined ? {} : { body }),
         });
@@ -157,20 +165,6 @@ function createBedrockRuntimeFetch(
             redirect: "manual",
         });
     };
-}
-
-function requestQuery(url: URL): Record<string, string | string[]> {
-    const query: Record<string, string | string[]> = {};
-    for (const [name, value] of url.searchParams) {
-        const existing = query[name];
-        query[name] =
-            existing === undefined
-                ? value
-                : typeof existing === "string"
-                  ? [existing, value]
-                  : [...existing, value];
-    }
-    return query;
 }
 
 function signableBody(
