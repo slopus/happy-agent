@@ -6294,6 +6294,17 @@ Fields:
   from exactly where the snapshot left off.
 - `createdAt`, `updatedAt`, `archivedAt` — lifecycle timestamps; `archivedAt` is `null` while
   active.
+- `compute` — optional additive object, sent only by Happy Cloud; Happy Agent never emits it.
+  Where the agent's work runs: `{ "type": "none" }` when detached,
+  `{ "type": "pool", "poolId": "…" }`, or `{ "type": "runner", "runnerId": "…" }`. A pool or
+  runner may also carry `label`, a display name (the pool's name or the runner's hostname, or its
+  ID once the pool or runner is gone), and `status`, `"online"` or `"offline"`. Changes arrive as
+  `agent.updated` changes carrying the whole object. Absent means the server does not report
+  compute. Clients tolerate additional properties.
+- `enforcedCompute` — optional additive object or `null`, sent only by Happy Cloud. The pool or
+  runner the agent is held to: `{ "type": "pool", "poolId": "…" }` or
+  `{ "type": "runner", "runnerId": "…" }`, without `label` or `status`. `null` means none is
+  enforced. Changes arrive as `agent.updated` changes.
 
 ### `POST /v0/agents`
 

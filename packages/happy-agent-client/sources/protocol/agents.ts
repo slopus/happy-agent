@@ -121,13 +121,49 @@ export const agentStatusLineSchema = Type.Object({
 });
 export type AgentStatusLine = Static<typeof agentStatusLineSchema>;
 
+/** Whether a Happy Cloud pool or runner is reachable. */
+const computeStatusSchema = Type.Union([Type.Literal("online"), Type.Literal("offline")]);
+
+/**
+ * Where a Happy Cloud agent's work runs; `none` means detached. Happy Agent never sends it. A pool
+ * or runner may carry a display `label`, the pool's name or the runner's hostname, and its
+ * `status`. Objects stay open to fields a newer server adds.
+ */
+export const agentComputeSchema = Type.Union([
+    Type.Object({ type: Type.Literal("none") }),
+    Type.Object({
+        type: Type.Literal("pool"),
+        poolId: Type.String(),
+        label: Type.Optional(Type.String()),
+        status: Type.Optional(computeStatusSchema),
+    }),
+    Type.Object({
+        type: Type.Literal("runner"),
+        runnerId: Type.String(),
+        label: Type.Optional(Type.String()),
+        status: Type.Optional(computeStatusSchema),
+    }),
+]);
+export type AgentCompute = Static<typeof agentComputeSchema>;
+
+/** The pool or runner a Happy Cloud agent is held to, without display details. */
+export const agentEnforcedComputeSchema = Type.Union([
+    Type.Object({ type: Type.Literal("pool"), poolId: Type.String() }),
+    Type.Object({ type: Type.Literal("runner"), runnerId: Type.String() }),
+]);
+export type AgentEnforcedCompute = Static<typeof agentEnforcedComputeSchema>;
+
 /** The agent object. */
 export const agentSchema = Type.Recursive((agent) =>
     Type.Object({
         archivedAt: Nullable(timestampSchema),
         /** Whether the user-facing send route accepts messages for this agent. */
         canSendMessages: Type.Optional(Type.Boolean()),
+        /** Where a Happy Cloud agent runs; Happy Agent never sends it. */
+        compute: Type.Optional(agentComputeSchema),
         createdAt: timestampSchema,
+        /** The pool or runner a Happy Cloud agent is held to, or null; Happy Agent never sends it. */
+        enforcedCompute: Type.Optional(Nullable(agentEnforcedComputeSchema)),
         id: cuid2Schema,
         /**
          * When a person last wrote here or the status line last changed, else `createdAt`; it
