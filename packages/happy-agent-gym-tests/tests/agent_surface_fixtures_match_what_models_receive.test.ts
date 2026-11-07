@@ -380,11 +380,18 @@ async function driveWorkflow(
         },
     });
     await gym.send("Run a workflow.", { permissionMode: "auto" });
+    const workflowAgent = await firstRequestWithText(gym, "Workflow hello.");
+    await gym.send("Anything else?", { permissionMode: "auto" });
     return [
         {
             context: "workflow_agent",
             builtBy: "workflows/WorkflowsModule.ts:WorkflowsModule",
-            request: await firstRequestWithText(gym, "Workflow hello."),
+            request: workflowAgent,
+        },
+        {
+            context: "main.with_collaborators",
+            builtBy: "collaboration/CollaborationModule.ts:CollaborationModule",
+            request: await firstRequestWithText(gym, "Anything else?"),
         },
     ];
 }
@@ -565,7 +572,7 @@ it.runIf(process.platform === "linux")(
             const conversation = pending.find(
                 (capture) => capture.context === "conversation.multi_turn",
             )!;
-            // The default agent lists its collaborators in an order the daemon does not fix.
+            // The richest history the run built: a tool result, an image, and a follow-up.
             await gym.compact(conversation.request.sessionId);
             compaction = await gym.waitUntil(
                 async () => gym.inference.compactions[0],
@@ -574,6 +581,11 @@ it.runIf(process.platform === "linux")(
             for (const capture of pending)
                 driven.ids[capture.request.sessionId] ??=
                     `${capture.context.replace(/\W/g, "_")}_agentId`;
+            const workflowRun = /workflow \((\w+)\) is running/.exec(
+                JSON.stringify(gym.inference.toolResults()),
+            )?.[1];
+            expect(workflowRun).toBeDefined();
+            driven.ids[workflowRun!] = "workflowRunId";
             standalone = { ids: driven.ids, paths: gymPaths(gym) };
             captures = pending.map((capture) => ({ ...capture, substitutions: standalone }));
             protocol = (await gym.client.getHealth()).version.protocol;
@@ -937,7 +949,11 @@ function templated(
     paths: readonly (readonly [string, string])[],
     context: string,
 ): string {
-    let result = text;
+    // Collaborators are listed by agent ID, so two random IDs come out in either order.
+    let result = text.replace(
+        /^Collaborators you created: ([a-z0-9]{24}(?:, [a-z0-9]{24})+)\./gm,
+        "Collaborators you created: {{collaboratorAgentIdsSortedById}}.",
+    );
     for (const [path, name] of paths) result = result.split(path).join(`{{${name}}}`);
     for (const [id, name] of Object.entries(ids)) result = result.split(id).join(`{{${name}}}`);
     result = result
