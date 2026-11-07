@@ -737,7 +737,14 @@ accept `region`, `model_overrides`, `bearer_token_env_var`, `profile`,
 credential chain, including a profile's `credential_process`; the two file
 settings optionally replace the standard AWS shared config and credentials
 paths. `region` is the provider default. Each exact Happy Agent model ID under `model_overrides` may set
-`region`, `endpoint`, `transport`, or any combination. Anthropic models prefer
+`region`, `endpoint`, `transport`, `model_id`, or any combination. `model_id` is sent to AWS as
+that model's wire ID, verbatim: a foundation-model, inference-profile, or
+application-inference-profile ARN, or a model or inference-profile ID such as
+`us.anthropic.claude-opus-5-5`. The model keeps its Happy Agent ID, so its picker entry, efforts,
+context window, prompts, and tools are unchanged; anything else is a configuration error naming
+the setting. AWS serves Kimi K3 and GLM 5.3 only on Bedrock Runtime, so `transport = "mantle"` for
+them is an opt-in for a Mantle-compatible gateway and needs its own `endpoint`; without one the
+model is not offered. Anthropic models prefer
 Mantle in regions where both the endpoint and model are available in-region,
 then fall back to Bedrock Runtime regional or global inference profiles. A full
 `endpoint` URL overrides the endpoint selected for that model and bypasses

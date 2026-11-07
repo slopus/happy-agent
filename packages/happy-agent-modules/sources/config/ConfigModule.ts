@@ -409,6 +409,19 @@ const openAICompatibleModelOverrideSchema = Type.Object(
     },
     { additionalProperties: false },
 );
+/**
+ * A Bedrock wire model ID sent verbatim in place of a curated model's own: a foundation-model,
+ * inference-profile, or application-inference-profile ARN, or a model or inference-profile ID such
+ * as `anthropic.claude-opus-5-5` or `us.zai.glm-5.3`.
+ */
+const bedrockWireModelIdSchema = Type.Union([
+    Type.String({
+        maxLength: 2_048,
+        pattern:
+            "^arn:aws(?:-cn|-us-gov)?:bedrock:[a-z0-9-]+:\\d*:(?:foundation-model|inference-profile|application-inference-profile)/\\S+$",
+    }),
+    Type.String({ maxLength: 2_048, pattern: "^[a-z0-9-]+\\.[A-Za-z0-9][A-Za-z0-9._:-]*$" }),
+]);
 const reasoningFieldSchema = Type.Union([
     Type.Literal("reasoning_content"),
     Type.Literal("reasoning"),
@@ -449,6 +462,9 @@ const providerInputSchemas = {
                     Type.Object(
                         {
                             endpoint: Type.Optional(configStringSchema),
+                            // Its shape is checked where the overrides are read, so the error
+                            // can name the exact setting.
+                            model_id: Type.Optional(configStringSchema),
                             region: Type.Optional(configStringSchema),
                             transport: Type.Optional(
                                 Type.Union([Type.Literal("mantle"), Type.Literal("runtime")]),
@@ -948,6 +964,7 @@ const providerSchemas = {
                     Type.Object(
                         {
                             endpoint: Type.Optional(configStringSchema),
+                            model_id: Type.Optional(bedrockWireModelIdSchema),
                             region: Type.Optional(configStringSchema),
                             transport: Type.Optional(
                                 Type.Union([Type.Literal("mantle"), Type.Literal("runtime")]),
@@ -6448,6 +6465,7 @@ function readModelOverrides(
     const schema = Type.Object(
         {
             endpoint: Type.Optional(configStringSchema),
+            model_id: Type.Optional(bedrockWireModelIdSchema),
             region: Type.Optional(configStringSchema),
             transport: Type.Optional(Type.Union([Type.Literal("mantle"), Type.Literal("runtime")])),
         },
@@ -6457,11 +6475,21 @@ function readModelOverrides(
     for (const [model, override] of Object.entries(value)) {
         if (!isTable(override)) throw new Error(`${name}.${model} must be a TOML table.`);
         assertTableSize(override, `${name}.${model}`);
+        // The wire ID is sent to AWS verbatim, so a wrong one is named precisely here rather than
+        // failing as an unexplained request later.
+        if (
+            override["model_id"] !== undefined &&
+            !Value.Check(bedrockWireModelIdSchema, override["model_id"])
+        ) {
+            throw new Error(
+                `${name}."${model}".model_id must be a Bedrock model or inference-profile ARN or ID.`,
+            );
+        }
         result[model] = readTableValues(
             override,
             `${name}.${model}`,
             unknown,
-            ["endpoint", "region", "transport"],
+            ["endpoint", "model_id", "region", "transport"],
             schema,
         );
     }

@@ -228,6 +228,8 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # endpoint = "https://bedrock-mantle.us-east-1.api.aws"
 # region = "us-east-1"
 # transport = "mantle"
+# Sent to AWS verbatim as this model's wire ID, such as an application inference profile.
+# model_id = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abc123"
 
 # A smart provider is a virtual account backed by compatible concrete providers. It picks a
 # random starting account for each agent, stays there, and advances through this list only when

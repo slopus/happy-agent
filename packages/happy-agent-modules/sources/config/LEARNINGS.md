@@ -192,12 +192,25 @@ session and securing a folder on Windows starts PowerShell, so an existing folde
 
 AWS documents Kimi K3 and GLM 5.3 on the Runtime Chat Completions API. Their curated entries
 use the canonical IDs `moonshotai/kimi-k3` and `zai/glm-5.3`; the provider resolves the US or
-global inference profile while preserving explicit region and endpoint overrides. A forced
-Mantle override hides that route and fails visibly if requested directly. Both offer only
+global inference profile while preserving explicit region and endpoint overrides. AWS serves
+neither on Mantle, so `transport = "mantle"` is an opt-in for a Mantle-compatible gateway that
+must name its own `endpoint`, signed as `bedrock-mantle`. Without an endpoint the route is hidden
+and fails visibly if requested directly, rather than sending requests AWS would reject. Both offer only
 low, high, and max effort. Kimi defaults to its coding harness's high effort; GLM defaults
 to the API's max effort. Their 1M windows compact at 850k: Kimi's published strategy triggers
 at 85%, and the same threshold leaves GLM room for its documented 128k output and a summary.
 They remain absent from native Codex, Claude, and Grok catalogs.
+
+## A Bedrock model_id changes only the wire model
+
+People reach Bedrock through application inference profiles and other ARNs, and the cluster asked
+for every endpoint form the cloud supports. Making an ARN a model of its own would need its name,
+windows, efforts, prompts, and tools invented in configuration, against the curated catalog. A
+`model_id` on a curated model's `model_overrides` entry is sent to AWS verbatim instead, through
+the provider's `bedrockModelIds`, while the curated ID keeps choosing everything else. Passing the
+ARN as the run model was not an option: providers select tools and instructions by that ID, and
+Codex refuses a model it has no configuration for. The value must be a Bedrock ARN or a model or
+inference-profile ID, checked where the overrides are read so the error names the exact setting.
 
 ## OpenAI-compatible endpoints are configuration
 

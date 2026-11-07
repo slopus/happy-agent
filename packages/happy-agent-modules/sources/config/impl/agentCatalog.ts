@@ -751,9 +751,11 @@ const BEDROCK_MANTLE_REGIONS: Readonly<Record<string, readonly string[]>> = Obje
  */
 function modelAvailableOnProvider(provider: ConcreteConfiguredProvider, modelId: string): boolean {
     if (provider.type !== "bedrock") return true;
+    // AWS serves Kimi and GLM only on Runtime: a Mantle route exists only where an endpoint is named.
     if (
         (modelId === "moonshotai/kimi-k3" || modelId === "zai/glm-5.3") &&
-        provider.modelOverrides?.[modelId]?.transport === "mantle"
+        provider.modelOverrides?.[modelId]?.transport === "mantle" &&
+        provider.modelOverrides[modelId]?.endpoint === undefined
     )
         return false;
     const mantleRegions = BEDROCK_MANTLE_REGIONS[modelId];
@@ -1240,7 +1242,14 @@ async function createProvider(
     const override =
         selectedModel === undefined ? undefined : provider.modelOverrides?.[selectedModel];
     const transport = resolveAnthropicBedrockTransport(provider, selectedModel);
+    // A `model_id` replaces only the wire model; the curated key keeps choosing tools and prompts.
+    const bedrockModelIds = Object.fromEntries(
+        Object.entries(provider.modelOverrides ?? {}).flatMap(([model, entry]) =>
+            entry.model_id === undefined ? [] : [[model, entry.model_id] as const],
+        ),
+    );
     const shared = {
+        ...(Object.keys(bedrockModelIds).length === 0 ? {} : { bedrockModelIds }),
         credential,
         ...(override?.endpoint === undefined ? {} : { endpoint: override.endpoint }),
         ...(selectedModel === undefined ? {} : { model: selectedModel }),
@@ -1253,14 +1262,15 @@ async function createProvider(
         selectedModel?.startsWith("moonshotai/") === true ||
         selectedModel?.startsWith("zai/") === true
     ) {
-        if (override?.transport === "mantle") {
-            throw new Error(
-                `${selectedModel === "moonshotai/kimi-k3" ? "Kimi K3" : "GLM 5.3"} requires Bedrock Runtime.`,
-            );
-        }
+        // AWS serves neither on Mantle, so a Mantle route is an opt-in that names its own endpoint;
+        // without one the provider refuses it with an explanation.
+        const chat = {
+            ...shared,
+            ...(override?.transport === undefined ? {} : { bedrockTransport: override.transport }),
+        };
         return selectedModel.startsWith("moonshotai/")
-            ? new KimiProvider(shared)
-            : new GlmProvider(shared);
+            ? new KimiProvider(chat)
+            : new GlmProvider(chat);
     }
     return selectedModel?.startsWith("anthropic/") === true
         ? new AnthropicProvider({
