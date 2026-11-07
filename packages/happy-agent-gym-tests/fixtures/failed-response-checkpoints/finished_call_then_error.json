@@ -1,0 +1,166 @@
+{
+  "description": "Finished text and a finished client tool call, then a provider error.",
+  "finishedMessage": [
+    {
+      "content": [
+        {
+          "text": "Reading it.",
+          "type": "text"
+        },
+        {
+          "arguments": "{\"file_path\":\"README.md\"}",
+          "callId": "toolu_read_error",
+          "name": "Read",
+          "type": "tool_call"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "keptMessages": [
+    {
+      "content": [
+        {
+          "text": "Reading it.",
+          "type": "text"
+        },
+        {
+          "arguments": "{\"file_path\":\"README.md\"}",
+          "callId": "toolu_read_error",
+          "name": "Read",
+          "type": "tool_call"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "callId": "toolu_read_error",
+      "content": [
+        {
+          "text": "The response ended before this tool call was dispatched.",
+          "type": "text"
+        }
+      ],
+      "isError": true,
+      "role": "tool"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "finished_call_then_error",
+  "nextRequestMessages": [
+    {
+      "content": [
+        {
+          "text": "Case finished_call_then_error.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "Reading it.",
+          "type": "text"
+        },
+        {
+          "arguments": "{\"file_path\":\"README.md\"}",
+          "callId": "toolu_read_error",
+          "name": "Read",
+          "type": "tool_call"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "callId": "toolu_read_error",
+      "content": [
+        {
+          "text": "The response ended before this tool call was dispatched.",
+          "type": "text"
+        }
+      ],
+      "isError": true,
+      "role": "tool"
+    },
+    {
+      "content": [
+        {
+          "text": "The last turn failed: The provider connection failed.",
+          "type": "text"
+        }
+      ],
+      "role": "system"
+    },
+    {
+      "content": [
+        {
+          "text": "Continue.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "settlementMessages": [
+    {
+      "callId": "toolu_read_error",
+      "content": [
+        {
+          "text": "The response ended before this tool call was dispatched.",
+          "type": "text"
+        }
+      ],
+      "isError": true,
+      "role": "tool"
+    }
+  ],
+  "stop": "error",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  },
+  "turn": {
+    "events": [
+      {
+        "type": "text_start"
+      },
+      {
+        "delta": "Reading it.",
+        "type": "text_delta"
+      },
+      {
+        "type": "text_end"
+      },
+      {
+        "callId": "toolu_read_error",
+        "name": "Read",
+        "type": "toolcall_start"
+      },
+      {
+        "callId": "toolu_read_error",
+        "delta": "{\"file_path\":\"README.md\"}",
+        "type": "toolcall_delta"
+      },
+      {
+        "arguments": "{\"file_path\":\"README.md\"}",
+        "callId": "toolu_read_error",
+        "type": "toolcall_end"
+      },
+      {
+        "kind": "internal_error",
+        "message": "The provider connection failed.",
+        "state": "error",
+        "type": "done"
+      }
+    ]
+  }
+}

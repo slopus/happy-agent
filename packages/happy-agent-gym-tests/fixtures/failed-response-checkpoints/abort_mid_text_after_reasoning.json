@@ -1,0 +1,88 @@
+{
+  "abortedAfterText": "answ",
+  "description": "Finished reasoning, then text cut off by an abort.",
+  "finishedMessage": [
+    {
+      "content": [
+        {
+          "reasoning": "Thinking it through.",
+          "text": "Thinking it through.",
+          "type": "reasoning"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "keptMessages": [
+    {
+      "content": [
+        {
+          "reasoning": "Thinking it through.",
+          "text": "Thinking it through.",
+          "type": "reasoning"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "abort_mid_text_after_reasoning",
+  "nextRequestMessages": [
+    {
+      "content": [
+        {
+          "text": "Case abort_mid_text_after_reasoning.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "reasoning": "Thinking it through.",
+          "text": "Thinking it through.",
+          "type": "reasoning"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "Continue.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "settlementMessages": [],
+  "stop": "cancelled",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  },
+  "turn": {
+    "content": [
+      {
+        "text": "Thinking it through.",
+        "type": "reasoning"
+      },
+      {
+        "text": "Partial answer that keeps going and going.",
+        "type": "text"
+      }
+    ],
+    "textDeltaChunkSize": 4,
+    "textDeltaDelayMs": 400
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "description": "A provider-run call that exposes no result, then text, ending normally.",
+  "finishedMessage": [
+    {
+      "content": [
+        {
+          "arguments": "{\"query\":\"select:Read\"}",
+          "callId": "toolu_search_alone",
+          "name": "ToolSearch",
+          "server": true,
+          "type": "tool_call"
+        },
+        {
+          "text": "Found it.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "keptMessages": [
+    {
+      "content": [
+        {
+          "arguments": "{\"query\":\"select:Read\"}",
+          "callId": "toolu_search_alone",
+          "name": "ToolSearch",
+          "server": true,
+          "type": "tool_call"
+        },
+        {
+          "text": "Found it.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "server_call_without_result_then_text",
+  "nextRequestMessages": [
+    {
+      "content": [
+        {
+          "text": "Case server_call_without_result_then_text.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "arguments": "{\"query\":\"select:Read\"}",
+          "callId": "toolu_search_alone",
+          "name": "ToolSearch",
+          "server": true,
+          "type": "tool_call"
+        },
+        {
+          "text": "Found it.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "Continue.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "settlementMessages": [],
+  "stop": "normal",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  },
+  "turn": {
+    "events": [
+      {
+        "callId": "toolu_search_alone",
+        "name": "ToolSearch",
+        "server": true,
+        "type": "toolcall_start"
+      },
+      {
+        "callId": "toolu_search_alone",
+        "delta": "{\"query\":\"select:Read\"}",
+        "type": "toolcall_delta"
+      },
+      {
+        "arguments": "{\"query\":\"select:Read\"}",
+        "callId": "toolu_search_alone",
+        "type": "toolcall_end"
+      },
+      {
+        "type": "text_start"
+      },
+      {
+        "delta": "Found it.",
+        "type": "text_delta"
+      },
+      {
+        "type": "text_end"
+      },
+      {
+        "state": "normal",
+        "tokens": {
+          "input": 1,
+          "output": 1
+        },
+        "type": "done"
+      }
+    ]
+  }
+}

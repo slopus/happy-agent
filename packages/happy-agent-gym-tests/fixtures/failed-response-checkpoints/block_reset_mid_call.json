@@ -1,0 +1,136 @@
+{
+  "description": "A call reset mid-stream by the provider, replaced by text, ending normally.",
+  "finishedMessage": [
+    {
+      "content": [
+        {
+          "text": "Let me look.",
+          "type": "text"
+        },
+        {
+          "text": "Never mind.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "keptMessages": [
+    {
+      "content": [
+        {
+          "text": "Let me look.",
+          "type": "text"
+        },
+        {
+          "text": "Never mind.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "block_reset_mid_call",
+  "nextRequestMessages": [
+    {
+      "content": [
+        {
+          "text": "Case block_reset_mid_call.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "Let me look.",
+          "type": "text"
+        },
+        {
+          "text": "Never mind.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "Continue.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "settlementMessages": [],
+  "stop": "normal",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  },
+  "turn": {
+    "events": [
+      {
+        "type": "text_start"
+      },
+      {
+        "delta": "Let me look.",
+        "type": "text_delta"
+      },
+      {
+        "type": "text_end"
+      },
+      {
+        "type": "block_start"
+      },
+      {
+        "callId": "toolu_reset",
+        "name": "Read",
+        "type": "toolcall_start"
+      },
+      {
+        "callId": "toolu_reset",
+        "delta": "{\"file_path\":\"README.md\"}",
+        "type": "toolcall_delta"
+      },
+      {
+        "type": "block_reset"
+      },
+      {
+        "type": "block_start"
+      },
+      {
+        "type": "text_start"
+      },
+      {
+        "delta": "Never mind.",
+        "type": "text_delta"
+      },
+      {
+        "type": "text_end"
+      },
+      {
+        "type": "block_stop"
+      },
+      {
+        "state": "normal",
+        "tokens": {
+          "input": 1,
+          "output": 1
+        },
+        "type": "done"
+      }
+    ]
+  }
+}

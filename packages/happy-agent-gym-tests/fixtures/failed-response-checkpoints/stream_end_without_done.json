@@ -1,0 +1,94 @@
+{
+  "description": "Finished text and an unfinished call, then the stream ends without done.",
+  "finishedMessage": [
+    {
+      "content": [
+        {
+          "text": "Reading it.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "keptMessages": [
+    {
+      "content": [
+        {
+          "text": "Reading it.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    }
+  ],
+  "model": "anthropic/opus-5-5",
+  "name": "stream_end_without_done",
+  "nextRequestMessages": [
+    {
+      "content": [
+        {
+          "text": "Case stream_end_without_done.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "Reading it.",
+          "type": "text"
+        }
+      ],
+      "role": "assistant"
+    },
+    {
+      "content": [
+        {
+          "text": "Continue.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "settlementMessages": [],
+  "stop": "eof",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  },
+  "turn": {
+    "events": [
+      {
+        "type": "text_start"
+      },
+      {
+        "delta": "Reading it.",
+        "type": "text_delta"
+      },
+      {
+        "type": "text_end"
+      },
+      {
+        "callId": "toolu_read_eof",
+        "name": "Read",
+        "type": "toolcall_start"
+      },
+      {
+        "callId": "toolu_read_eof",
+        "delta": "{\"file_path\":\"README.md\"}",
+        "type": "toolcall_delta"
+      }
+    ]
+  }
+}

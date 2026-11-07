@@ -1,0 +1,67 @@
+{
+  "description": "A text block that never ends, then a provider error.",
+  "finishedMessage": null,
+  "keptMessages": [],
+  "model": "anthropic/opus-5-5",
+  "name": "text_partial_then_error",
+  "nextRequestMessages": [
+    {
+      "content": [
+        {
+          "text": "Case text_partial_then_error.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    },
+    {
+      "content": [
+        {
+          "text": "The last turn failed: The provider connection failed.",
+          "type": "text"
+        }
+      ],
+      "role": "system"
+    },
+    {
+      "content": [
+        {
+          "text": "Continue.",
+          "type": "text"
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "settlementMessages": [],
+  "stop": "error",
+  "toolPolicies": {
+    "Read": {
+      "persistInHistory": true,
+      "server": false,
+      "visibleToUser": true
+    },
+    "ToolSearch": {
+      "persistInHistory": false,
+      "server": true,
+      "visibleToUser": false
+    }
+  },
+  "turn": {
+    "events": [
+      {
+        "type": "text_start"
+      },
+      {
+        "delta": "Half a sen",
+        "type": "text_delta"
+      },
+      {
+        "kind": "internal_error",
+        "message": "The provider connection failed.",
+        "state": "error",
+        "type": "done"
+      }
+    ]
+  }
+}
