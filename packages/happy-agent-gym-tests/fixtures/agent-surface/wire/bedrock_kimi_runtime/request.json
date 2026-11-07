@@ -1,0 +1,4 @@
+{
+  "method": "POST",
+  "target": "/bedrock_kimi_runtime?route=fixture%2Fchat%2Fcompletions"
+}

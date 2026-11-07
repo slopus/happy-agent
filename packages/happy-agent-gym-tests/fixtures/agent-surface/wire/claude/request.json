@@ -1,0 +1,4 @@
+{
+  "method": "POST",
+  "target": "/claude/v1/messages?beta=true"
+}

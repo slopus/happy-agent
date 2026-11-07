@@ -1,0 +1,4 @@
+{
+  "method": "POST",
+  "target": "/bedrock_responses_mantle?route=fixture%2Fresponses"
+}

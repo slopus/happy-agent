@@ -1,0 +1,1 @@
+{"type":"function","name":"get_agent_tree_usage","description":"Report exact lifetime token usage for this agent and every recursively linked descendant, including hidden and delegated agents. Access requires host authorization; completed agents remain in the bounded snapshot.","strict":false,"parameters":{"additionalProperties":false,"type":"object","properties":{}}}

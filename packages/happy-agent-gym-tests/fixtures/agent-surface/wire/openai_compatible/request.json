@@ -1,0 +1,4 @@
+{
+  "method": "POST",
+  "target": "/openai_compatible/v1/chat/completions"
+}

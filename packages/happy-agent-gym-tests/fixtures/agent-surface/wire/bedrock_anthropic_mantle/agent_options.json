@@ -1,0 +1,1 @@
+{"name":"agent_options","description":"The current models you can start agents and subtasks on, by harness and provider. usage: true adds the quota each account reports.","input_schema":{"additionalProperties":false,"type":"object","properties":{"usage":{"type":"boolean"}}}}

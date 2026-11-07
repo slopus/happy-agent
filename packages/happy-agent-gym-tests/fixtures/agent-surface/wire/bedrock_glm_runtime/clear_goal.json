@@ -1,0 +1,1 @@
+{"type":"function","function":{"name":"clear_goal","description":"Clear the persistent goal when the user explicitly abandons it. Use update_goal with blocked when work cannot continue but the objective should remain recorded.","parameters":{"additionalProperties":false,"type":"object","properties":{}}}}

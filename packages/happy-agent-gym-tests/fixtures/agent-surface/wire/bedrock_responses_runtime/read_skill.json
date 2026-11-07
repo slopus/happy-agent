@@ -1,0 +1,1 @@
+{"type":"function","name":"read_skill","description":"Read the complete instructions for one available skill.","strict":false,"parameters":{"additionalProperties":false,"type":"object","required":["name"],"properties":{"name":{"minLength":1,"maxLength":128,"type":"string","description":"Must satisfy the required format."}}}}

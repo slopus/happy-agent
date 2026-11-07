@@ -1,0 +1,4 @@
+{
+  "method": "POST",
+  "target": "/codex/responses"
+}

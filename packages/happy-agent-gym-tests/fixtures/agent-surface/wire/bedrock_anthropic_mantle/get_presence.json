@@ -1,0 +1,1 @@
+{"name":"get_presence","description":"Read the user's current presence status and optional status message.","input_schema":{"additionalProperties":false,"type":"object","properties":{}}}

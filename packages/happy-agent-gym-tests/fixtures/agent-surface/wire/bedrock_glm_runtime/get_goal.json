@@ -1,0 +1,1 @@
+{"type":"function","function":{"name":"get_goal","description":"Get the persistent goal for this agent, including its objective and status.","parameters":{"additionalProperties":false,"type":"object","properties":{}}}}

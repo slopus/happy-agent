@@ -1,0 +1,4 @@
+{
+  "method": "POST",
+  "target": "/bedrock/model/us.anthropic.claude-opus-5-5/invoke-with-response-stream"
+}
