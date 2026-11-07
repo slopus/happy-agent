@@ -1374,7 +1374,7 @@ While runners are configured and one of them is the default:
     "default": true,
     "status": "connected",
     "machine": {
-        "version": "0.4.70",
+        "version": "2026.11.1",
         "platform": "linux",
         "arch": "x64",
         "hostname": "build-1",
@@ -1521,7 +1521,7 @@ Response — `200`:
     "healthy": true,
     "ready": true,
     "status": "ready",
-    "version": { "protocol": 22, "daemon": "1.2.3" },
+    "version": { "protocol": 22, "daemon": "2026.11.1" },
     "instanceId": "k3x9q2m7p0a4b8c1d5e6f7g2",
     "draining": true,
     "drainWaitingFor": [
@@ -1538,8 +1538,8 @@ Response — `200`:
     "drain": {
         "intent": "restart",
         "cause": "reload",
-        "currentVersion": "1.2.3",
-        "targetVersion": "1.2.3",
+        "currentVersion": "2026.11.1",
+        "targetVersion": "2026.11.1",
         "startedAt": 1755400000000
     },
     "shuttingDown": true,
@@ -2466,7 +2466,7 @@ process to exit.
 Request — optional JSON body naming why the daemon is going away:
 
 ```json
-{ "intent": "restart", "cause": "update", "targetVersion": "1.2.4" }
+{ "intent": "restart", "cause": "update", "targetVersion": "2026.11.2" }
 ```
 
 - `intent` — optional; `"restart"` when the caller will start a replacement daemon once this one
@@ -2495,8 +2495,8 @@ Response — `202`:
     "drain": {
         "intent": "restart",
         "cause": "update",
-        "currentVersion": "1.2.3",
-        "targetVersion": "1.2.4",
+        "currentVersion": "2026.11.1",
+        "targetVersion": "2026.11.2",
         "startedAt": 1755400000000
     }
 }

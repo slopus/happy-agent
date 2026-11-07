@@ -38,12 +38,15 @@ production delivery requires explicit native-release scope.
 
 ## Versions and distribution
 
-Use `X.Y.Z-preview.N`, for example `0.4.67-preview.1`. The agent selects the
-intended stable version and next unused preview number from release history;
-CI validates the input. Keep the existing version input. Embed preview identity
-in the binary without requiring package manifest bumps or npm publication.
-A stable request supplies `X.Y.Z`; no intervening bump commit is required
-between building and publishing.
+Agent versions are calendar versions in UTC, with the month not zero-padded:
+stable `YYYY.M.C`, for example `2026.11.1`, and preview `YYYY.M.C-preview.N`,
+for example `2026.11.1-preview.1`. The version is never chosen by the agent:
+`scripts/release/nextHappyAgentVersion.ts` computes it from the `v*` release
+tags, and CI computes the same value and refuses any other. Keep the existing
+version input, now optional. Embed preview identity in the binary without
+requiring package manifest bumps or npm publication. A stable request releases
+the computed `YYYY.M.C`; no intervening bump commit is required between
+building and publishing.
 
 Nightly accepts supported stable and preview Agent versions; standard Desktop
 accepts stable only. Previews must not replace GitHub's latest stable release.
