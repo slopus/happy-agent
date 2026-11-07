@@ -85,11 +85,13 @@ class BedrockChatClient extends OpenAI {
     }
 }
 
-/** A Bedrock Runtime route, signed with SigV4 or sent with a Bedrock bearer token. */
+/** A Bedrock Runtime or Mantle route, signed with SigV4 or sent with a Bedrock bearer token. */
 export interface BedrockChatCompletionsConnectionOptions {
     credential: BedrockCredential;
     endpoint: string;
     region: string;
+    /** The SigV4 service: `bedrock` for Runtime, `bedrock-mantle` for Mantle. */
+    service: "bedrock" | "bedrock-mantle";
     userAgent: string;
     fetch?: typeof fetch;
 }
@@ -139,7 +141,7 @@ export class ChatCompletionsConnection {
                 ? new SignatureV4({
                       credentials: async () => await credential.credential.provider(),
                       region: options.region,
-                      service: "bedrock",
+                      service: options.service,
                       sha256: Hash.bind(null, "sha256"),
                   })
                 : undefined;

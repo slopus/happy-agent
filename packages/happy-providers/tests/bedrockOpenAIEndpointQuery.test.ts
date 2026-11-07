@@ -65,6 +65,32 @@ const routes = [
         provider: (credential: BedrockCredential, endpoint: string) =>
             new GlmProvider({ credential, endpoint, region: "us-east-1", inferenceMaxRetries: 0 }),
     },
+    {
+        name: "Kimi on a Bedrock Mantle route",
+        service: "bedrock-mantle",
+        path: "/chat/completions",
+        provider: (credential: BedrockCredential, endpoint: string) =>
+            new KimiProvider({
+                credential,
+                endpoint,
+                region: "us-east-1",
+                bedrockTransport: "mantle",
+                inferenceMaxRetries: 0,
+            }),
+    },
+    {
+        name: "GLM on a Bedrock Mantle route",
+        service: "bedrock-mantle",
+        path: "/chat/completions",
+        provider: (credential: BedrockCredential, endpoint: string) =>
+            new GlmProvider({
+                credential,
+                endpoint,
+                region: "us-east-1",
+                bedrockTransport: "mantle",
+                inferenceMaxRetries: 0,
+            }),
+    },
 ] as const;
 
 describe.each(routes)("$name endpoint with a query string", (route) => {
@@ -94,6 +120,60 @@ describe.each(routes)("$name endpoint with a query string", (route) => {
     });
 });
 
+// The test server's own port is never a scheme's default, so these also cover a custom port.
+describe.each(routes)("$name endpoint on a port of its own", (route) => {
+    it("signs the host and port the request is sent to for the route's service", async () => {
+        const request = await capture(route, "aws", "/gw/openai/v1");
+        expect(request.url).toBe(`/gw/openai/v1${route.path}`);
+        expect(request.headers.host).toBe(`127.0.0.1:${request.port}`);
+        expect(request.headers.authorization).toMatch(
+            new RegExp(`/us-east-1/${route.service}/aws4_request,`, "u"),
+        );
+        expect(await signatureMatches(request, route.service)).toBe(true);
+    });
+
+    it("sends a bearer token unsigned", async () => {
+        const request = await capture(route, "bearer", "/gw/openai/v1");
+        expect(request.headers.authorization).toBe("Bearer bedrock-query-token");
+        expect(request.headers["x-amz-date"]).toBeUndefined();
+    });
+});
+
+describe.each(["runtime", "mantle"] as const)(
+    "Codex on Bedrock %s with a model ARN",
+    (transport) => {
+        it.each([
+            "arn:aws:bedrock:us-east-1:123456789012:inference-profile/global.openai.gpt-6-astra",
+            "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/a1b2c3d4e5f6",
+        ])("sends %s unchanged as the model", async (arn) => {
+            const request = await capture(
+                {
+                    name: `Codex on Bedrock ${transport}`,
+                    effort: "medium",
+                    provider: (credential, endpoint) =>
+                        new CodexProvider({
+                            credential,
+                            endpoint,
+                            model: arn,
+                            region: "us-east-1",
+                            bedrockTransport: transport,
+                            inferenceMaxRetries: 0,
+                        }),
+                },
+                "aws",
+                "/gw/openai/v1",
+            );
+            expect(JSON.parse(request.body)).toMatchObject({ model: arn });
+            expect(
+                await signatureMatches(
+                    request,
+                    transport === "runtime" ? "bedrock" : "bedrock-mantle",
+                ),
+            ).toBe(true);
+        });
+    },
+);
+
 interface CapturedRequest {
     method: string;
     url: string;
@@ -102,8 +182,15 @@ interface CapturedRequest {
     port: number;
 }
 
+interface Route {
+    name: string;
+    provider: (credential: BedrockCredential, endpoint: string) => BaseProvider;
+    /** Codex requires an explicit effort for a model it does not recognize, such as an ARN. */
+    effort?: "medium";
+}
+
 async function capture(
-    route: (typeof routes)[number],
+    route: Route,
     authentication: Authentication,
     endpointPath: string,
 ): Promise<CapturedRequest> {
@@ -145,6 +232,7 @@ async function capture(
     });
     try {
         for await (const _event of session.run(testContext, {
+            ...(route.effort === undefined ? {} : { effort: route.effort }),
             context: {
                 instructions: "",
                 messages: [{ role: "user", content: [{ type: "text" as const, text: "Hello." }] }],

@@ -1,8 +1,13 @@
 # Kimi on Bedrock
 
-`KimiProvider` serves Kimi K3 exclusively through Bedrock Runtime's OpenAI-compatible Chat
-Completions endpoint. It accepts existing Bedrock bearer-token and AWS credentials. There is no
-Moonshot API account type, model discovery, Mantle route, or video input.
+`KimiProvider` serves Kimi K3 through Bedrock Runtime's OpenAI-compatible Chat Completions
+endpoint. It accepts existing Bedrock bearer-token and AWS credentials. There is no Moonshot API
+account type, model discovery, or video input.
+
+AWS does not serve K3 on Bedrock Mantle, so Runtime is the default and Mantle has no default
+endpoint. `bedrockTransport: "mantle"` is an opt-in for a Mantle-compatible route and requires an
+explicit `endpoint`; it signs SigV4 as `bedrock-mantle` and names the model without a profile
+(`moonshotai.kimi-k3`).
 
 ```text
 KimiProvider -> shared Chat Completions session -> Bedrock Runtime
@@ -13,8 +18,9 @@ KimiProvider -> shared Chat Completions session -> Bedrock Runtime
 ```
 
 Canonical model ID: `moonshotai/kimi-k3`. US source regions use `us.moonshotai.kimi-k3`; other
-regions use `global.moonshotai.kimi-k3`. Explicit US/global profile IDs are accepted. AWS controls
-the availability of each profile in the selected region.
+regions use `global.moonshotai.kimi-k3`. Explicit US, India (`in.`), and global profile IDs, and
+Bedrock foundation-model, inference-profile, and application-inference-profile ARNs, are sent
+unchanged. AWS controls the availability of each profile in the selected region.
 
 K3 always thinks, using the top-level `reasoning_effort` field (`low`, `high`, or `max`, default
 `max`). Earlier Kimi models' nested `thinking` object is not its contract. Replay all assistant

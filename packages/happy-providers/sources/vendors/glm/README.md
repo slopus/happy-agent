@@ -1,8 +1,12 @@
 # GLM on Bedrock
 
 `GlmProvider` serves GLM 5.3 through Bedrock Runtime's OpenAI-compatible Chat Completions endpoint.
-It accepts existing Bedrock bearer-token and AWS credentials. There is no direct Z.ai provider or
-Mantle transport.
+It accepts existing Bedrock bearer-token and AWS credentials. There is no direct Z.ai provider.
+
+AWS does not serve GLM 5.3 on Bedrock Mantle, so Runtime is the default and Mantle has no default
+endpoint. `bedrockTransport: "mantle"` is an opt-in for a Mantle-compatible route and requires an
+explicit `endpoint`; it signs SigV4 as `bedrock-mantle` and names the model without a profile
+(`zai.glm-5.3`).
 
 ```text
 GlmProvider -> shared Chat Completions session -> Bedrock Runtime
@@ -12,7 +16,8 @@ GlmProvider -> shared Chat Completions session -> Bedrock Runtime
 ```
 
 Canonical model ID: `zai/glm-5.3`. US source regions select `us.zai.glm-5.3`; other regions select
-`global.zai.glm-5.3`. Explicit profile IDs are accepted. The unprefixed native ID cannot be used
+`global.zai.glm-5.3`. Explicit profile IDs and Bedrock foundation-model, inference-profile, and
+application-inference-profile ARNs are sent unchanged. The unprefixed native ID cannot be used
 for on-demand inference; AWS requires a cross-region inference profile and eligible account.
 
 GLM 5.3 supports text input, tool calls, structured output, and streamed reasoning. Reasoning effort

@@ -198,6 +198,91 @@ describe.each(providers)("$name on Bedrock Runtime", (vendor) => {
         }
     });
 
+    it.each([
+        `arn:aws:bedrock:us-east-1::foundation-model/${vendor.runtimeModel}`,
+        `arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.${vendor.runtimeModel}`,
+        "arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/a1b2c3d4e5f6",
+        "arn:aws-us-gov:bedrock:us-gov-west-1:123456789012:application-inference-profile/g7h8",
+    ])("sends the Bedrock ARN %s unchanged from the constructor and per run", async (arn) => {
+        const transport = mockTransport(() => answer());
+        const credential = await bearer();
+        const constructed = await new vendor.Provider({
+            credential,
+            model: arn,
+            fetch: transport.fetch,
+        }).session("arn-model", { instructions: "" });
+        const selected = await new vendor.Provider({ credential, fetch: transport.fetch }).session(
+            "arn-run-model",
+            { instructions: "" },
+        );
+        try {
+            await collect(constructed.run(testContext, { context }));
+            await collect(selected.run(testContext, { context, model: arn }));
+            expect(transport.requests.map((request) => request.body.model)).toEqual([arn, arn]);
+        } finally {
+            constructed.destroy();
+            selected.destroy();
+        }
+    });
+
+    it("rejects the unprofiled model ID on Runtime, which AWS serves only through a profile", async () => {
+        const credential = await bearer();
+        await expect(
+            new vendor.Provider({ credential, model: vendor.runtimeModel }).session(
+                "unprofiled-model",
+                { instructions: "" },
+            ),
+        ).rejects.toThrow(/Bedrock model selection/u);
+    });
+
+    it("requires an explicit endpoint for the Mantle transport, where AWS does not serve it", async () => {
+        const credential = await bearer();
+        expect(() => new vendor.Provider({ credential, bedrockTransport: "mantle" })).toThrow(
+            `AWS does not serve ${vendor.name} on Bedrock Mantle. Pass the endpoint of a Mantle-compatible route to use the Mantle transport.`,
+        );
+    });
+
+    it("sends the unprofiled model to an explicit Mantle route, SigV4-signed for bedrock-mantle", async () => {
+        const credential = await BedrockAwsCredential.tryLoad({
+            credentialProvider: async () => ({
+                accessKeyId: "TESTACCESS",
+                secretAccessKey: "test-secret-key",
+            }),
+        });
+        if (credential === null) throw new Error("Missing AWS test credential.");
+        const transport = mockTransport(() => answer());
+        const provider = new vendor.Provider({
+            credential,
+            bedrockTransport: "mantle",
+            endpoint: "https://bedrock-mantle.eu-west-1.api.aws/v1",
+            region: "eu-west-1",
+            fetch: transport.fetch,
+        });
+        const session = await provider.session("mantle", { instructions: context.instructions });
+        try {
+            await collect(session.run(testContext, { context }));
+            await collect(
+                session.run(testContext, { context, model: `global.${vendor.runtimeModel}` }),
+            );
+            expect(transport.requests.map((request) => request.url)).toEqual([
+                "https://bedrock-mantle.eu-west-1.api.aws/v1/chat/completions",
+                "https://bedrock-mantle.eu-west-1.api.aws/v1/chat/completions",
+            ]);
+            expect(transport.requests.map((request) => request.body.model)).toEqual([
+                vendor.runtimeModel,
+                `global.${vendor.runtimeModel}`,
+            ]);
+            for (const request of transport.requests) {
+                expect(request.headers.get("authorization")).toMatch(
+                    /^AWS4-HMAC-SHA256 Credential=TESTACCESS\/\d{8}\/eu-west-1\/bedrock-mantle\/aws4_request,/u,
+                );
+                expect(request.headers.get("host")).toBe("bedrock-mantle.eu-west-1.api.aws");
+            }
+        } finally {
+            session.destroy();
+        }
+    });
+
     it("replays parallel fragmented tool calls with reasoning and caller-selected identities", async () => {
         const transport = mockTransport((attempt) =>
             attempt === 0 ? toolAnswer() : answer("Both files checked."),
@@ -1341,3 +1426,32 @@ function errorResponse(status: number, type: string): Response {
         },
     );
 }
+
+describe("Kimi K3 India profile", () => {
+    it("sends the explicit in. profile while India regions keep defaulting to global", async () => {
+        const transport = mockTransport(() => answer());
+        const credential = await bearer();
+        const explicit = await new KimiProvider({
+            credential,
+            region: "ap-south-1",
+            model: "in.moonshotai.kimi-k3",
+            fetch: transport.fetch,
+        }).session("india-explicit", { instructions: "" });
+        const defaulted = await new KimiProvider({
+            credential,
+            region: "ap-south-1",
+            fetch: transport.fetch,
+        }).session("india-default", { instructions: "" });
+        try {
+            await collect(explicit.run(testContext, { context }));
+            await collect(defaulted.run(testContext, { context }));
+            expect(transport.requests.map((request) => request.body.model)).toEqual([
+                "in.moonshotai.kimi-k3",
+                "global.moonshotai.kimi-k3",
+            ]);
+        } finally {
+            explicit.destroy();
+            defaulted.destroy();
+        }
+    });
+});

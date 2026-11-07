@@ -8,6 +8,7 @@ import {
 } from "@/core/inferenceRetrySettings.js";
 import type { BedrockCredential } from "@/vendors/VendorCredential.js";
 import { assertBedrockCredential } from "@/vendors/bedrock/impl/assertBedrockCredential.js";
+import { isBedrockModelArn } from "@/vendors/bedrock/impl/isBedrockModelArn.js";
 import { bedrockRuntimeOpenAIEndpoint } from "@/vendors/bedrock/impl/bedrockConstants.js";
 import { ChatCompletionsConnection } from "@/protocol/chatCompletions/ChatCompletionsConnection.js";
 import { ChatCompletionsSession } from "@/protocol/chatCompletions/ChatCompletionsSession.js";
@@ -15,6 +16,11 @@ import { kimiCompactionInstructions } from "./prompts/kimi_compaction_instructio
 import { createKimiCompactedContext } from "./impl/createKimiCompactedContext.js";
 
 export interface KimiProviderOptions extends InferenceRetryOptions {
+    /**
+     * Runtime by default. AWS does not serve this model on Mantle, so Mantle has no default
+     * endpoint and is selected only together with an explicit `endpoint`, signed as `bedrock-mantle`.
+     */
+    bedrockTransport?: "runtime" | "mantle";
     credential: BedrockCredential;
     region?: string;
     endpoint?: string;
@@ -34,14 +40,20 @@ export class KimiProvider extends BaseProvider {
     constructor(options: KimiProviderOptions) {
         super();
         assertBedrockCredential(options.credential);
+        if (options.bedrockTransport === "mantle" && options.endpoint === undefined) {
+            throw new Error(
+                "AWS does not serve Kimi K3 on Bedrock Mantle. Pass the endpoint of a Mantle-compatible route to use the Mantle transport.",
+            );
+        }
         this.options = options;
         this.retries = createInferenceMaxRetriesResolver(options);
     }
 
     async session(id: string, options: SessionOptions): Promise<ChatCompletionsSession> {
         const region = this.options.region ?? "us-east-1";
+        const transport = this.options.bedrockTransport ?? "runtime";
         const model = this.options.model ?? "moonshotai/kimi-k3";
-        resolveKimiModel(model, region);
+        resolveKimiModel(model, region, transport);
         return new ChatCompletionsSession(id, {
             ...this.options,
             ...options,
@@ -51,10 +63,11 @@ export class KimiProvider extends BaseProvider {
                 ...this.options,
                 region,
                 endpoint: this.options.endpoint ?? bedrockRuntimeOpenAIEndpoint(region),
+                service: transport === "mantle" ? "bedrock-mantle" : "bedrock",
                 userAgent: this.options.userAgent ?? "kimi-code",
             }),
             stripSchemaPatterns: true,
-            resolveModel: (selected) => resolveKimiModel(selected, region),
+            resolveModel: (selected) => resolveKimiModel(selected, region, transport),
             generation: (request) => {
                 const effort = request.effort ?? "max";
                 if (effort !== "low" && effort !== "high" && effort !== "max") {
@@ -68,9 +81,22 @@ export class KimiProvider extends BaseProvider {
     }
 }
 
-function resolveKimiModel(model: string, region: string): string {
-    if (model === "moonshotai/kimi-k3" || model === "kimi-k3")
+/**
+ * Runtime needs a cross-region profile, chosen by source region; Mantle names models without one.
+ * Explicit profiles and Bedrock ARNs are sent unchanged.
+ */
+function resolveKimiModel(model: string, region: string, transport: "runtime" | "mantle"): string {
+    if (model === "moonshotai/kimi-k3" || model === "kimi-k3") {
+        if (transport === "mantle") return "moonshotai.kimi-k3";
         return `${region.startsWith("us-") ? "us" : "global"}.moonshotai.kimi-k3`;
-    if (model === "us.moonshotai.kimi-k3" || model === "global.moonshotai.kimi-k3") return model;
+    }
+    if (
+        model === "us.moonshotai.kimi-k3" ||
+        model === "global.moonshotai.kimi-k3" ||
+        model === "in.moonshotai.kimi-k3"
+    )
+        return model;
+    if (transport === "mantle" && model === "moonshotai.kimi-k3") return model;
+    if (isBedrockModelArn(model)) return model;
     throw new Error(`Kimi K3 is not available through this Bedrock model selection: ${model}.`);
 }

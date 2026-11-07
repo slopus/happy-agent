@@ -1,3 +1,4 @@
+import { isBedrockModelArn } from "@/vendors/bedrock/impl/isBedrockModelArn.js";
 import { resolveBedrockModelId } from "@/vendors/bedrock/impl/resolveBedrockModelId.js";
 import { resolveCodexModelId } from "@/vendors/codex/impl/resolveCodexModelId.js";
 import type { CodexBedrockTransport } from "@/vendors/codex/CodexProvider.js";
@@ -8,7 +9,7 @@ import type { CodexBedrockTransport } from "@/vendors/codex/CodexProvider.js";
  * Bedrock Mantle serves OpenAI models under dotted ids (openai.gpt-5.6-sol), while Runtime uses
  * routed variants such as global.openai.gpt-6-astra. Both follow the v1 wire contract. Native
  * Codex uses the bare model name (gpt-5.6-sol), so the credential and Bedrock transport decide
- * which mapping applies.
+ * which mapping applies. A Bedrock model or inference-profile ARN is sent unchanged on either.
  */
 export function resolveCodexSessionModelId(
     modelId: string,
@@ -17,6 +18,12 @@ export function resolveCodexSessionModelId(
 ): string {
     if (!isBedrock) return resolveCodexModelId(modelId);
     const resolved = resolveBedrockModelId(modelId);
-    if (bedrockTransport === "mantle" || /^(?:global|us)\./u.test(resolved)) return resolved;
+    if (
+        bedrockTransport === "mantle" ||
+        /^(?:global|us)\./u.test(resolved) ||
+        isBedrockModelArn(resolved)
+    ) {
+        return resolved;
+    }
     return `global.${resolved}`;
 }
