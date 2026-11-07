@@ -1,0 +1,275 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v0/provider-clis/codex"
+    },
+    "response": {
+      "providerCli": {
+        "commands": {
+          "run": "codex",
+          "signIn": "codex login"
+        },
+        "id": "codex",
+        "installation": {
+          "desktopApp": null,
+          "path": "{{home}}/.local/bin/codex",
+          "source": "standalone",
+          "status": "installed",
+          "version": "0.164.0"
+        },
+        "installer": {
+          "command": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+          "sourceHost": "chatgpt.com",
+          "sourceUrl": "https://chatgpt.com/codex/install.sh",
+          "vendorSite": "https://openai.com"
+        },
+        "name": "Codex",
+        "operation": null,
+        "providerId": null,
+        "signIn": {
+          "account": null,
+          "methods": [
+            "browser",
+            "device"
+          ],
+          "status": "signed_out"
+        },
+        "updatedAt": "{{updatedAt}}",
+        "vendor": "OpenAI",
+        "version": "{{version}}",
+        "website": "https://openai.com/codex"
+      }
+    },
+    "status": 200
+  },
+  {
+    "request": {
+      "body": {
+        "method": "device"
+      },
+      "method": "POST",
+      "path": "/v0/provider-clis/codex/sign-in"
+    },
+    "response": {
+      "providerCli": {
+        "commands": {
+          "run": "codex",
+          "signIn": "codex login"
+        },
+        "id": "codex",
+        "installation": {
+          "desktopApp": null,
+          "path": "{{home}}/.local/bin/codex",
+          "source": "standalone",
+          "status": "installed",
+          "version": "0.164.0"
+        },
+        "installer": {
+          "command": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+          "sourceHost": "chatgpt.com",
+          "sourceUrl": "https://chatgpt.com/codex/install.sh",
+          "vendorSite": "https://openai.com"
+        },
+        "name": "Codex",
+        "operation": {
+          "authorization": null,
+          "error": null,
+          "finishedAt": null,
+          "id": "{{operationId1}}",
+          "kind": "sign_in",
+          "message": "Starting to sign in to Codex…",
+          "output": "{{programOutput}}",
+          "startedAt": "{{startedAt}}",
+          "status": "running"
+        },
+        "providerId": null,
+        "signIn": {
+          "account": null,
+          "methods": [
+            "browser",
+            "device"
+          ],
+          "status": "signed_out"
+        },
+        "updatedAt": "{{updatedAt}}",
+        "vendor": "OpenAI",
+        "version": "{{version}}",
+        "website": "https://openai.com/codex"
+      }
+    },
+    "status": 200
+  },
+  {
+    "event": {
+      "payload": {
+        "providerCli": {
+          "commands": {
+            "run": "codex",
+            "signIn": "codex login"
+          },
+          "id": "codex",
+          "installation": {
+            "desktopApp": null,
+            "path": "{{home}}/.local/bin/codex",
+            "source": "standalone",
+            "status": "installed",
+            "version": "0.164.0"
+          },
+          "installer": {
+            "command": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+            "sourceHost": "chatgpt.com",
+            "sourceUrl": "https://chatgpt.com/codex/install.sh",
+            "vendorSite": "https://openai.com"
+          },
+          "name": "Codex",
+          "operation": {
+            "authorization": {
+              "acceptsCode": false,
+              "expiresAt": "{{expiresAt}}",
+              "method": "device",
+              "openedByProgram": false,
+              "url": "https://auth.openai.com/codex/device",
+              "userCode": "ABCD-EFGH"
+            },
+            "error": null,
+            "finishedAt": null,
+            "id": "{{operationId1}}",
+            "kind": "sign_in",
+            "message": "Open the page and confirm the code to sign in to Codex.",
+            "output": "{{programOutput}}",
+            "startedAt": "{{startedAt}}",
+            "status": "waiting"
+          },
+          "providerId": null,
+          "signIn": {
+            "account": null,
+            "methods": [
+              "browser",
+              "device"
+            ],
+            "status": "signed_out"
+          },
+          "updatedAt": "{{updatedAt}}",
+          "vendor": "OpenAI",
+          "version": "{{version}}",
+          "website": "https://openai.com/codex"
+        }
+      },
+      "type": "provider_cli.updated"
+    }
+  },
+  {
+    "event": {
+      "payload": {
+        "providerCli": {
+          "commands": {
+            "run": "codex",
+            "signIn": "codex login"
+          },
+          "id": "codex",
+          "installation": {
+            "desktopApp": null,
+            "path": "{{home}}/.local/bin/codex",
+            "source": "standalone",
+            "status": "installed",
+            "version": "0.164.0"
+          },
+          "installer": {
+            "command": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+            "sourceHost": "chatgpt.com",
+            "sourceUrl": "https://chatgpt.com/codex/install.sh",
+            "vendorSite": "https://openai.com"
+          },
+          "name": "Codex",
+          "operation": {
+            "authorization": null,
+            "error": null,
+            "finishedAt": "{{finishedAt}}",
+            "id": "{{operationId1}}",
+            "kind": "sign_in",
+            "message": "Signed in to Codex as ada@example.com · Plus.",
+            "output": "{{programOutput}}",
+            "startedAt": "{{startedAt}}",
+            "status": "succeeded"
+          },
+          "providerId": null,
+          "signIn": {
+            "account": {
+              "email": "ada@example.com",
+              "plan": "Plus"
+            },
+            "methods": [
+              "browser",
+              "device"
+            ],
+            "status": "signed_in"
+          },
+          "updatedAt": "{{updatedAt}}",
+          "vendor": "OpenAI",
+          "version": "{{version}}",
+          "website": "https://openai.com/codex"
+        }
+      },
+      "type": "provider_cli.updated"
+    }
+  },
+  {
+    "request": {
+      "body": {},
+      "method": "POST",
+      "path": "/v0/provider-clis/codex/cancel"
+    },
+    "response": {
+      "providerCli": {
+        "commands": {
+          "run": "codex",
+          "signIn": "codex login"
+        },
+        "id": "codex",
+        "installation": {
+          "desktopApp": null,
+          "path": "{{home}}/.local/bin/codex",
+          "source": "standalone",
+          "status": "installed",
+          "version": "0.164.0"
+        },
+        "installer": {
+          "command": "curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh",
+          "sourceHost": "chatgpt.com",
+          "sourceUrl": "https://chatgpt.com/codex/install.sh",
+          "vendorSite": "https://openai.com"
+        },
+        "name": "Codex",
+        "operation": {
+          "authorization": null,
+          "error": null,
+          "finishedAt": "{{finishedAt}}",
+          "id": "{{operationId1}}",
+          "kind": "sign_in",
+          "message": "Signed in to Codex as ada@example.com · Plus.",
+          "output": "{{programOutput}}",
+          "startedAt": "{{startedAt}}",
+          "status": "succeeded"
+        },
+        "providerId": null,
+        "signIn": {
+          "account": {
+            "email": "ada@example.com",
+            "plan": "Plus"
+          },
+          "methods": [
+            "browser",
+            "device"
+          ],
+          "status": "signed_in"
+        },
+        "updatedAt": "{{updatedAt}}",
+        "vendor": "OpenAI",
+        "version": "{{version}}",
+        "website": "https://openai.com/codex"
+      }
+    },
+    "status": 200
+  }
+]

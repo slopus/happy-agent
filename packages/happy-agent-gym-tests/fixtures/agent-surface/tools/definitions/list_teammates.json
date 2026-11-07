@@ -1,0 +1,60 @@
+{
+  "capabilities": [
+    "See who is on the team and loop a teammate into this task."
+  ],
+  "defer": true,
+  "description": "List the people on the team with their user ID, name, role, and what they follow, so you can tell whom this work concerns. Guests of exported bots are not listed.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+  },
+  "name": "list_teammates",
+  "returnType": {
+    "items": {
+      "additionalProperties": false,
+      "properties": {
+        "follows": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "role",
+        "follows"
+      ],
+      "type": "object"
+    },
+    "type": "array"
+  },
+  "searchKeywords": [
+    "teammates",
+    "team directory",
+    "who follows",
+    "loop in"
+  ]
+}

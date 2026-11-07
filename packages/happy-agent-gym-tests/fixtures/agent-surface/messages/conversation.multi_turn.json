@@ -1,0 +1,73 @@
+[
+  {
+    "content": [
+      {
+        "text": "Read the readme.",
+        "type": "text"
+      }
+    ],
+    "role": "user"
+  },
+  {
+    "content": [
+      {
+        "arguments": "{\"file_path\":\"{{workspacePath}}/README.md\"}",
+        "callId": "surface_Read",
+        "name": "Read",
+        "type": "tool_call"
+      }
+    ],
+    "role": "assistant"
+  },
+  {
+    "callId": "surface_Read",
+    "content": [
+      {
+        "text": "1\t{{readme}}\n2\t",
+        "type": "text"
+      }
+    ],
+    "role": "tool"
+  },
+  {
+    "content": [
+      {
+        "text": "Done.",
+        "type": "text"
+      }
+    ],
+    "role": "assistant"
+  },
+  {
+    "content": [
+      {
+        "text": "What is in this picture?",
+        "type": "text"
+      },
+      {
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+        "mimeType": "image/png",
+        "type": "image"
+      }
+    ],
+    "role": "user"
+  },
+  {
+    "content": [
+      {
+        "text": "Done.",
+        "type": "text"
+      }
+    ],
+    "role": "assistant"
+  },
+  {
+    "content": [
+      {
+        "text": "Also describe the colors.",
+        "type": "text"
+      }
+    ],
+    "role": "user"
+  }
+]

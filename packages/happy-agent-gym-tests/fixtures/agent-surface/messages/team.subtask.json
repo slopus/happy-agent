@@ -1,0 +1,15 @@
+[
+  {
+    "author": {
+      "description": "Agent {{taskAgentId}}",
+      "id": "{{taskAgentId}}"
+    },
+    "content": [
+      {
+        "text": "Message from agent {{taskAgentId}}:\n\nSubtask hello.",
+        "type": "text"
+      }
+    ],
+    "role": "agent"
+  }
+]

@@ -1,0 +1,137 @@
+{
+  "capabilities": [
+    "Discover and use configured MCP servers, resources, prompts, and tools."
+  ],
+  "defer": true,
+  "description": "Lists reusable prompts exposed by an MCP server. Available servers: Echo, Remote Notes. Use the returned next cursor to continue pagination.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "maxLength": 32,
+        "minLength": 1,
+        "type": "string"
+      },
+      "server": {
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "server"
+    ],
+    "type": "object"
+  },
+  "name": "list_mcp_prompts",
+  "reloadable": true,
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "nextCursor": {
+        "maxLength": 32,
+        "minLength": 1,
+        "type": "string"
+      },
+      "prompts": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "_meta": {
+              "maxProperties": 2048,
+              "patternProperties": {
+                "^(.*)$": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "maxLength": 1000000,
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    {
+                      "maxItems": 2048,
+                      "type": "array"
+                    },
+                    {
+                      "maxProperties": 2048,
+                      "type": "object"
+                    }
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "arguments": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "maxLength": 16384,
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 128,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "title": {
+                    "maxLength": 16384,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              },
+              "maxItems": 100,
+              "type": "array"
+            },
+            "description": {
+              "maxLength": 16384,
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": {
+              "maxLength": 16384,
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        },
+        "maxItems": 100,
+        "type": "array"
+      }
+    },
+    "required": [
+      "prompts"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "list MCP prompts",
+    "remote reusable prompts"
+  ]
+}

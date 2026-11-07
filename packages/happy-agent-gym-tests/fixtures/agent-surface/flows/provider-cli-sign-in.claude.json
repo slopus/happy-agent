@@ -1,0 +1,271 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "path": "/v0/provider-clis/claude"
+    },
+    "response": {
+      "providerCli": {
+        "commands": {
+          "run": "claude",
+          "signIn": "claude auth login"
+        },
+        "id": "claude",
+        "installation": {
+          "desktopApp": null,
+          "path": "{{home}}/.local/bin/claude",
+          "source": "standalone",
+          "status": "installed",
+          "version": "2.1.312"
+        },
+        "installer": {
+          "command": "curl -fsSL https://claude.ai/install.sh | bash",
+          "sourceHost": "claude.ai",
+          "sourceUrl": "https://claude.ai/install.sh",
+          "vendorSite": "https://claude.com"
+        },
+        "name": "Claude Code",
+        "operation": null,
+        "providerId": null,
+        "signIn": {
+          "account": null,
+          "methods": [
+            "browser"
+          ],
+          "status": "signed_out"
+        },
+        "updatedAt": "{{updatedAt}}",
+        "vendor": "Anthropic",
+        "version": "{{version}}",
+        "website": "https://claude.com/product/claude-code"
+      }
+    },
+    "status": 200
+  },
+  {
+    "request": {
+      "body": {
+        "mutationId": "sign-in"
+      },
+      "method": "POST",
+      "path": "/v0/provider-clis/claude/sign-in"
+    },
+    "response": {
+      "providerCli": {
+        "commands": {
+          "run": "claude",
+          "signIn": "claude auth login"
+        },
+        "id": "claude",
+        "installation": {
+          "desktopApp": null,
+          "path": "{{home}}/.local/bin/claude",
+          "source": "standalone",
+          "status": "installed",
+          "version": "2.1.312"
+        },
+        "installer": {
+          "command": "curl -fsSL https://claude.ai/install.sh | bash",
+          "sourceHost": "claude.ai",
+          "sourceUrl": "https://claude.ai/install.sh",
+          "vendorSite": "https://claude.com"
+        },
+        "name": "Claude Code",
+        "operation": {
+          "authorization": null,
+          "error": null,
+          "finishedAt": null,
+          "id": "{{operationId1}}",
+          "kind": "sign_in",
+          "message": "Starting to sign in to Claude Code…",
+          "output": "{{programOutput}}",
+          "startedAt": "{{startedAt}}",
+          "status": "running"
+        },
+        "providerId": null,
+        "signIn": {
+          "account": null,
+          "methods": [
+            "browser"
+          ],
+          "status": "signed_out"
+        },
+        "updatedAt": "{{updatedAt}}",
+        "vendor": "Anthropic",
+        "version": "{{version}}",
+        "website": "https://claude.com/product/claude-code"
+      }
+    },
+    "status": 200
+  },
+  {
+    "event": {
+      "payload": {
+        "mutationId": "sign-in",
+        "providerCli": {
+          "commands": {
+            "run": "claude",
+            "signIn": "claude auth login"
+          },
+          "id": "claude",
+          "installation": {
+            "desktopApp": null,
+            "path": "{{home}}/.local/bin/claude",
+            "source": "standalone",
+            "status": "installed",
+            "version": "2.1.312"
+          },
+          "installer": {
+            "command": "curl -fsSL https://claude.ai/install.sh | bash",
+            "sourceHost": "claude.ai",
+            "sourceUrl": "https://claude.ai/install.sh",
+            "vendorSite": "https://claude.com"
+          },
+          "name": "Claude Code",
+          "operation": {
+            "authorization": {
+              "acceptsCode": true,
+              "expiresAt": "{{expiresAt}}",
+              "method": "browser",
+              "openedByProgram": true,
+              "url": "https://claude.com/cai/oauth/authorize?code=true&state=stub",
+              "userCode": null
+            },
+            "error": null,
+            "finishedAt": null,
+            "id": "{{operationId1}}",
+            "kind": "sign_in",
+            "message": "Finish signing in to Claude Code in your browser.",
+            "output": "{{programOutput}}",
+            "startedAt": "{{startedAt}}",
+            "status": "waiting"
+          },
+          "providerId": null,
+          "signIn": {
+            "account": null,
+            "methods": [
+              "browser"
+            ],
+            "status": "signed_out"
+          },
+          "updatedAt": "{{updatedAt}}",
+          "vendor": "Anthropic",
+          "version": "{{version}}",
+          "website": "https://claude.com/product/claude-code"
+        }
+      },
+      "type": "provider_cli.updated"
+    }
+  },
+  {
+    "request": {
+      "body": {
+        "code": "good-code"
+      },
+      "method": "POST",
+      "path": "/v0/provider-clis/claude/sign-in/code"
+    },
+    "response": {
+      "providerCli": {
+        "commands": {
+          "run": "claude",
+          "signIn": "claude auth login"
+        },
+        "id": "claude",
+        "installation": {
+          "desktopApp": null,
+          "path": "{{home}}/.local/bin/claude",
+          "source": "standalone",
+          "status": "installed",
+          "version": "2.1.312"
+        },
+        "installer": {
+          "command": "curl -fsSL https://claude.ai/install.sh | bash",
+          "sourceHost": "claude.ai",
+          "sourceUrl": "https://claude.ai/install.sh",
+          "vendorSite": "https://claude.com"
+        },
+        "name": "Claude Code",
+        "operation": {
+          "authorization": null,
+          "error": null,
+          "finishedAt": null,
+          "id": "{{operationId1}}",
+          "kind": "sign_in",
+          "message": "Checking the code…",
+          "output": "{{programOutput}}",
+          "startedAt": "{{startedAt}}",
+          "status": "running"
+        },
+        "providerId": null,
+        "signIn": {
+          "account": null,
+          "methods": [
+            "browser"
+          ],
+          "status": "signed_out"
+        },
+        "updatedAt": "{{updatedAt}}",
+        "vendor": "Anthropic",
+        "version": "{{version}}",
+        "website": "https://claude.com/product/claude-code"
+      }
+    },
+    "status": 200
+  },
+  {
+    "event": {
+      "payload": {
+        "mutationId": "sign-in",
+        "providerCli": {
+          "commands": {
+            "run": "claude",
+            "signIn": "claude auth login"
+          },
+          "id": "claude",
+          "installation": {
+            "desktopApp": null,
+            "path": "{{home}}/.local/bin/claude",
+            "source": "standalone",
+            "status": "installed",
+            "version": "2.1.312"
+          },
+          "installer": {
+            "command": "curl -fsSL https://claude.ai/install.sh | bash",
+            "sourceHost": "claude.ai",
+            "sourceUrl": "https://claude.ai/install.sh",
+            "vendorSite": "https://claude.com"
+          },
+          "name": "Claude Code",
+          "operation": {
+            "authorization": null,
+            "error": null,
+            "finishedAt": "{{finishedAt}}",
+            "id": "{{operationId1}}",
+            "kind": "sign_in",
+            "message": "Signed in to Claude Code as ada@example.com · Max.",
+            "output": "{{programOutput}}",
+            "startedAt": "{{startedAt}}",
+            "status": "succeeded"
+          },
+          "providerId": null,
+          "signIn": {
+            "account": {
+              "email": "ada@example.com",
+              "plan": "Max"
+            },
+            "methods": [
+              "browser"
+            ],
+            "status": "signed_in"
+          },
+          "updatedAt": "{{updatedAt}}",
+          "vendor": "Anthropic",
+          "version": "{{version}}",
+          "website": "https://claude.com/product/claude-code"
+        }
+      },
+      "type": "provider_cli.updated"
+    }
+  }
+]

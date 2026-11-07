@@ -1,0 +1,206 @@
+{
+  "capabilities": [
+    "Create, list, message, and archive persistent tasks with their own folders."
+  ],
+  "defer": true,
+  "description": "Create one persistent task: a user-visible conversation with its own dedicated folder, owned by the person you are working for. A task has no avatar; it can create its own subtasks for project work.\n\nGive it a short name such as \"Fix login redirect\"; prefer 2–3 words, 4 at most. Omit the name to let the task name itself from its first message. Put the details in text, which is delivered as the task's first message and starts its work. Omit text to create an idle task for the person to open.\n\nReturns the task without waiting. Talk to it later with send_task_message; there is no wait tool.\n\nChoose an optional model and effort; harness and provider default to yours when they serve the model.\n\nModels you can start agents on (* = default effort):\nanthropic/opus-5-5 (Opus 5.5) on happy via claude: medium*\nanthropic/opus-5 (Opus 5) on happy via claude: medium*\nanthropic/sonnet-5-5 (Sonnet 5.5) on happy via claude: medium*\nanthropic/sonnet-5 (Sonnet 5) on happy via claude: medium*\nanthropic/fable-5-1 (Fable 5.1) on happy via claude: medium*\nanthropic/fable-5 (Fable 5) on happy via claude: medium*\nanthropic/opus-4-8 (Opus 4.8) on happy via claude: medium*\nanthropic/future-model (Future Claude) on happy via claude: medium*\nopenai/gpt-6.1-sol (GPT-6.1 Sol) on happy via codex: medium*\nopenai/gpt-6.1-terra (GPT-6.1 Terra) on happy via codex: medium*\nopenai/future-model (Future GPT) on happy via codex: medium*\n\nCall agent_options for the current list.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "effort": {
+        "anyOf": [
+          {
+            "const": "off",
+            "type": "string"
+          },
+          {
+            "const": "minimal",
+            "type": "string"
+          },
+          {
+            "const": "low",
+            "type": "string"
+          },
+          {
+            "const": "medium",
+            "type": "string"
+          },
+          {
+            "const": "high",
+            "type": "string"
+          },
+          {
+            "const": "xhigh",
+            "type": "string"
+          },
+          {
+            "const": "max",
+            "type": "string"
+          }
+        ]
+      },
+      "harness": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "model": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "provider": {
+        "maxLength": 256,
+        "minLength": 1,
+        "type": "string"
+      },
+      "serviceTier": {
+        "const": "priority",
+        "type": "string"
+      },
+      "text": {
+        "maxLength": 100000,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "name": "create_task",
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "archivedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "createdAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "creatorAgentId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "folderName": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+        "type": "string"
+      },
+      "id": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "name": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "nameConfigured": {
+        "type": "boolean"
+      },
+      "ownerUserId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "path": {
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "runnerId": {
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "shortName": {
+        "maxLength": 256,
+        "minLength": 1,
+        "pattern": "^(?=.*\\S)[^\\x00-\\x1f\\x7f]+$",
+        "type": "string"
+      },
+      "status": {
+        "anyOf": [
+          {
+            "const": "active",
+            "type": "string"
+          },
+          {
+            "const": "archived",
+            "type": "string"
+          }
+        ]
+      },
+      "updatedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "version": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "workspaceId": {
+        "maxLength": 32,
+        "minLength": 2,
+        "pattern": "^[a-z][a-z0-9]*$",
+        "type": "string"
+      },
+      "workspaceUpdatedAt": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "workspaceVersion": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "id",
+      "name",
+      "nameConfigured",
+      "folderName",
+      "workspaceId",
+      "workspaceVersion",
+      "workspaceUpdatedAt",
+      "agentId",
+      "path",
+      "status",
+      "version",
+      "createdAt",
+      "updatedAt"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "make a task",
+    "new task",
+    "create task",
+    "task folder"
+  ]
+}

@@ -1,0 +1,202 @@
+{
+  "capabilities": [
+    "Discover and use configured MCP servers, resources, prompts, and tools."
+  ],
+  "defer": true,
+  "description": "Reads a resource from an MCP server. Available servers: Echo, Remote Notes. Use a URI returned by list_mcp_resources or constructed from a listed resource template.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "server": {
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      },
+      "uri": {
+        "maxLength": 128,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "server",
+      "uri"
+    ],
+    "type": "object"
+  },
+  "name": "read_mcp_resource",
+  "reloadable": true,
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "additionalProperties": false,
+    "properties": {
+      "_meta": {
+        "maxProperties": 2048,
+        "patternProperties": {
+          "^(.*)$": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "maxLength": 1000000,
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              {
+                "maxItems": 2048,
+                "type": "array"
+              },
+              {
+                "maxProperties": 2048,
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "contents": {
+        "items": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "_meta": {
+                  "maxProperties": 2048,
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "maxLength": 1000000,
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        {
+                          "maxItems": 2048,
+                          "type": "array"
+                        },
+                        {
+                          "maxProperties": 2048,
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "mimeType": {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "text": {
+                  "maxLength": 4194304,
+                  "type": "string"
+                },
+                "uri": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "uri",
+                "text"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "_meta": {
+                  "maxProperties": 2048,
+                  "patternProperties": {
+                    "^(.*)$": {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "maxLength": 1000000,
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        {
+                          "maxItems": 2048,
+                          "type": "array"
+                        },
+                        {
+                          "maxProperties": 2048,
+                          "type": "object"
+                        }
+                      ]
+                    }
+                  },
+                  "type": "object"
+                },
+                "blob": {
+                  "maxLength": 10485760,
+                  "type": "string"
+                },
+                "mimeType": {
+                  "maxLength": 128,
+                  "type": "string"
+                },
+                "uri": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "uri",
+                "blob"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "maxItems": 2048,
+        "type": "array"
+      }
+    },
+    "required": [
+      "contents"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "read MCP resource",
+    "load remote URI"
+  ]
+}
