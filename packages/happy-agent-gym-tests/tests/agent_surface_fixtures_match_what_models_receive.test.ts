@@ -19,7 +19,7 @@ import {
     type GymTurn,
 } from "@slopus/happy-agent-gym";
 import type { HappyAgentClient } from "@slopus/happy-agent-client";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { surfaceTeamClients } from "./support/surfaceTeamClients.js";
 
@@ -34,6 +34,8 @@ import { surfaceTeamClients } from "./support/surfaceTeamClients.js";
  * in `prompts/index.json`; instruction documents are marker files, such as `{{globalAgentsMd}}`.
  * `variants.json` lists what each context adds, removes, or changes against `permission.auto`.
  * Contexts prefixed `team.` ran on a team server; `flows/` holds provider sign-in API exchanges.
+ * `wire/<family>/` holds each tool exactly as the real provider serialized it into its vendor
+ * request, in the original key order, with `wire/<family>/order.json` giving the sent order.
  */
 const FIXTURES = resolve(import.meta.dirname, "../fixtures/agent-surface");
 const UPDATE = process.env.HAPPY_AGENT_SURFACE_UPDATE === "1";
@@ -602,12 +604,15 @@ it.runIf(process.platform === "linux")(
 
         const surface = exportSurface(captures, compaction, standalone);
         for (const [path, content] of await driveProviderSignIns()) surface.set(path, content);
+        const wire = await driveWire();
+        for (const [path, content] of wire) surface.set(path, content);
         const manifest = {
             contexts: captures.map((capture) => capture.context),
             flows: [...surface.keys()].filter((path) => path.startsWith("flows/")).sort(),
             generatedBy: SCRIPT,
             happyAgentCommit: UPDATE ? headCommit() : "",
             protocol,
+            wire: wireHashes(wire),
         };
         if (UPDATE) {
             await rm(FIXTURES, { recursive: true, force: true });
@@ -630,6 +635,141 @@ it.runIf(process.platform === "linux")(
     },
     600_000,
 );
+
+/** Each provider family as the daemon configures it, pointed at the capturing vendor. */
+const WIRE_FAMILIES = [
+    { family: "claude", providerId: "wire_claude", modelId: "anthropic/opus-5-5" },
+    { family: "codex", providerId: "wire_codex", modelId: "openai/gpt-6.1-sol" },
+    { family: "grok", providerId: "wire_grok", modelId: "xai/grok-4.5" },
+    { family: "openai_compatible", providerId: "wire_compatible", modelId: "zai/glm-5.3" },
+    { family: "bedrock", providerId: "wire_bedrock", modelId: "anthropic/opus-5-5" },
+] as const;
+
+/**
+ * Runs each real provider against a local vendor that records the first request body and refuses
+ * it, then keeps every tool exactly as it appeared on the wire. Claude Code is the SDK's bundled
+ * binary, so its serialization is pinned with the dependency.
+ */
+async function driveWire(): Promise<Map<string, string>> {
+    const bodies = new Map<string, string>();
+    const http = createServer((request, response) => {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.on("end", () => {
+            // Claude Code checks that its API answers before it sends anything.
+            if (request.method !== "POST") {
+                response.writeHead(200, { "content-type": "application/json" });
+                response.end("{}");
+                return;
+            }
+            const family = (request.url ?? "").split("/")[1]!;
+            if (!bodies.has(family)) bodies.set(family, Buffer.concat(chunks).toString("utf8"));
+            response.writeHead(400, { "content-type": "application/json" });
+            response.end(
+                JSON.stringify({
+                    type: "error",
+                    error: { type: "invalid_request_error", message: "Captured." },
+                }),
+            );
+        });
+    });
+    await new Promise<void>((done) => http.listen(0, "127.0.0.1", done));
+    const base = `http://127.0.0.1:${String((http.address() as AddressInfo).port)}`;
+    vi.stubEnv("ANTHROPIC_BASE_URL", `${base}/claude`);
+    const gym = await createAgentGym({
+        timeoutMs: 60_000,
+        files: INSTRUCTION_FILES,
+        config: [
+            "[providers.wire_claude]",
+            "enabled = true",
+            'type = "claude"',
+            'api_key = "wire-key"',
+            "[providers.wire_codex]",
+            "enabled = true",
+            'type = "codex"',
+            'api_key = "wire-key"',
+            `base_url = "${base}/codex"`,
+            'transport = "sse"',
+            "[providers.wire_grok]",
+            "enabled = true",
+            'type = "grok"',
+            'api_key = "wire-key"',
+            `base_url = "${base}/grok"`,
+            "[providers.wire_compatible]",
+            "enabled = true",
+            'type = "openai_compatible"',
+            'name = "Wire"',
+            `base_url = "${base}/openai_compatible/v1/"`,
+            'api_key = "wire-key"',
+            'models = ["zai/glm-5.3"]',
+            "[providers.wire_bedrock]",
+            "enabled = true",
+            'type = "bedrock"',
+            'bearer_token = "wire-key"',
+            'region = "us-east-1"',
+            '[providers.wire_bedrock.model_overrides."anthropic/opus-5-5"]',
+            `endpoint = "${base}/bedrock"`,
+            'transport = "runtime"',
+            "",
+        ].join("\n"),
+        liveProviders: WIRE_FAMILIES.map(({ providerId }) => providerId),
+    });
+    const files = new Map<string, string>();
+    try {
+        await writeHomeInstructions(gym);
+        const ids: Record<string, string> = { [gym.defaultSessionId]: "mainAgentId" };
+        for (const { family, providerId, modelId } of WIRE_FAMILIES) {
+            const agent = await gym.createSession({ title: family });
+            ids[agent.id] = "agentId";
+            await gym.send("Hello.", {
+                sessionId: agent.id,
+                providerId,
+                modelId,
+                permissionMode: "auto",
+                wait: false,
+            });
+            const body = await gym.waitUntil(
+                async () => bodies.get(family),
+                `the ${family} request`,
+            );
+            await gym.abort(agent.id);
+            // Every body is compact JSON whose parse and stringify reproduce it byte for byte, so
+            // each tool's stringified element is exactly its slice of the request.
+            const parsed = JSON.parse(body) as { tools?: Record<string, unknown>[] };
+            expect(JSON.stringify(parsed), `${family} request is canonical JSON`).toBe(body);
+            const keys: string[] = [];
+            for (const tool of parsed.tools ?? []) {
+                const fn = tool["function"] as { name?: string } | undefined;
+                const name = String(tool["name"] ?? fn?.name ?? tool["type"]);
+                const key = keys.includes(name) ? `${name}.${String(keys.length)}` : name;
+                keys.push(key);
+                files.set(
+                    `wire/${family}/${key}.json`,
+                    templated(JSON.stringify(tool), ids, gymPaths(gym), `wire.${family}`),
+                );
+            }
+            files.set(`wire/${family}/order.json`, stableJson(keys));
+        }
+    } finally {
+        await gym.dispose();
+        vi.unstubAllEnvs();
+        await new Promise<void>((done) => http.close(() => done()));
+    }
+    return files;
+}
+
+/** The SHA-256 of every wire tool file, by family and tool key. */
+function wireHashes(files: ReadonlyMap<string, string>): Record<string, Record<string, string>> {
+    const hashes: Record<string, Record<string, string>> = {};
+    for (const [path, content] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
+        const [, family, file] = path.split("/") as [string, string, string];
+        if (file === "order.json") continue;
+        (hashes[family] ??= {})[file.slice(0, -".json".length)] = createHash("sha256")
+            .update(content)
+            .digest("hex");
+    }
+    return hashes;
+}
 
 /** A stand-in Claude Code that signs in only with the code `good-code`. */
 const CLAUDE_CLI = `#!/bin/sh
