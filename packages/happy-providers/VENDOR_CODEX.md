@@ -144,6 +144,9 @@ The reviewed model contracts are:
   `global.openai.gpt-6-astra`, `global.openai.gpt-6-sol`, and `global.openai.gpt-6-luna`, which
   works from any region; `bedrockTransport: "mantle"` selects Mantle instead. Both Bedrock routes
   inherit the 5.5-style request and compaction contract.
+- A query on a Bedrock `endpoint`, such as `https://gw.example/openai/v1?route=a`, is kept apart
+  from the base path and sent, and signed under SigV4, with every request, so `/responses` still
+  lands under `/openai/v1`. A name the endpoint repeats keeps only its last value.
 
 Astra's active Codex context is 272,000 tokens and its automatic compaction threshold is 244,800.
 Codex metadata also advertises an opt-in 872,000-token ceiling; Rig does not currently expose that

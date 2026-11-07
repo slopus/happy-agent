@@ -6,6 +6,7 @@ import {
     bedrockRuntimeEndpoint,
     isBedrockChinaRegion,
 } from "@/vendors/bedrock/impl/bedrockConstants.js";
+import { bedrockEndpointOptions } from "@/vendors/bedrock/impl/bedrockEndpointOptions.js";
 
 export type AnthropicBedrockClient = Pick<AnthropicBedrock | AnthropicBedrockMantle, "beta">;
 
@@ -21,7 +22,7 @@ export function createAnthropicBedrockClient(options: {
         awsRegion: options.region,
         maxRetries: 0,
         ...(options.endpoint !== undefined
-            ? endpointOptions(options.endpoint)
+            ? bedrockEndpointOptions(options.endpoint)
             : // The SDK's own Runtime default only knows the commercial partition's domain.
               options.transport === "runtime" && isBedrockChinaRegion(options.region)
               ? { baseURL: bedrockRuntimeEndpoint(options.region) }
@@ -58,21 +59,4 @@ export function createAnthropicBedrockClient(options: {
         apiKey: "",
         providerChainResolver,
     });
-}
-
-/**
- * The SDK appends each request path to `baseURL` as text, so a query on the endpoint would swallow
- * the path and the Runtime rewrite would never match. The query travels as default parameters
- * instead, merged with each request's own.
- */
-function endpointOptions(endpoint: string): {
-    baseURL: string;
-    defaultQuery?: Record<string, string>;
-} {
-    const url = new URL(endpoint);
-    if (url.search === "") return { baseURL: endpoint };
-    const defaultQuery = Object.fromEntries(url.searchParams);
-    url.search = "";
-    url.hash = "";
-    return { baseURL: url.toString(), defaultQuery };
 }

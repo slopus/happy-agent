@@ -61,7 +61,9 @@ documented in-region availability. Runtime remains the fallback because it suppo
 and global inference profiles. A per-model `transport = "mantle"` or `transport = "runtime"`
 override can force one supported surface; pairing it with `endpoint` supports a custom gateway.
 A query on that endpoint, such as `https://gw.example/bedrock?route=a`, is kept apart from the path
-and sent with every request, so the Runtime rewrite still applies.
+and sent with every request, so the Runtime rewrite still applies. A name the endpoint repeats
+keeps only its last value, and an endpoint `beta` replaces the `beta=true` marker Mantle requests
+carry.
 Without an endpoint, Runtime in the China partition (`cn-north-1`, `cn-northwest-1`) is reached at
 `bedrock-runtime.<region>.amazonaws.com.cn`.
 Fable 5.1 defaults to Runtime because AWS documents US and global inference profiles but no
