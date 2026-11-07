@@ -1,3 +1,4 @@
+export { HAPPY_PROVIDERS_VERSION } from "@/core/happyProvidersVersion.js";
 export { BaseCredential } from "@/core/BaseCredential.js";
 export { BaseProvider } from "@/core/BaseProvider.js";
 export { BaseSession } from "@/core/BaseSession.js";
