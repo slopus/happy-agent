@@ -1,0 +1,1 @@
+{"type":"function","name":"list_presences","parameters":{"additionalProperties":false,"type":"object","properties":{}},"description":"List the configured presence states and their waiting guidance."}

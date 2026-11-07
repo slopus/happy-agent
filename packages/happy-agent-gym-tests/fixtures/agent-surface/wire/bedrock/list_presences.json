@@ -1,0 +1,1 @@
+{"name":"list_presences","description":"List the configured presence states and their waiting guidance.\n\nSearch keywords: presence states, availability options, do not disturb status.","input_schema":{"additionalProperties":false,"type":"object","properties":{}},"defer_loading":true}

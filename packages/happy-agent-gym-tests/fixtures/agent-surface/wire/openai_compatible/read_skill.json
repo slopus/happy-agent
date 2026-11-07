@@ -1,0 +1,1 @@
+{"type":"function","function":{"name":"read_skill","description":"Read the complete instructions for one available skill.","parameters":{"additionalProperties":false,"type":"object","required":["name"],"properties":{"name":{"minLength":1,"maxLength":128,"pattern":"^[a-zA-Z0-9][a-zA-Z0-9._-]*$","type":"string"}}}}}

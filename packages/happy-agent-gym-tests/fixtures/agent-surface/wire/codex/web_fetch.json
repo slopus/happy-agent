@@ -1,0 +1,1 @@
+{"type":"function","name":"web_fetch","description":"Fetch one web page and read it as bounded text. HTML comes back as markdown.","strict":false,"defer_loading":true,"parameters":{"additionalProperties":false,"type":"object","required":["url"],"properties":{"url":{"minLength":1,"maxLength":200,"type":"string"},"maxCharacters":{"minimum":1000,"maximum":100000,"type":"integer"}}}}

@@ -1,0 +1,1 @@
+{"type":"function","function":{"name":"get_presence","description":"Read the user's current presence status and optional status message.","parameters":{"additionalProperties":false,"type":"object","properties":{}}}}
