@@ -87,6 +87,7 @@ function plainWords(
     }
     if (label.trim() !== "") return label;
     if (link?.type === "file") return link.file.path;
+    if (link?.type === "settings") return "Settings";
     return syntax === "legacyTag" ? "an unavailable reference" : "";
 }
 
