@@ -63,7 +63,10 @@ override can force one supported surface; pairing it with `endpoint` supports a 
 A query on that endpoint, such as `https://gw.example/bedrock?route=a`, is kept apart from the path
 and sent with every request, so the Runtime rewrite still applies. A name the endpoint repeats
 keeps only its last value, and an endpoint `beta` replaces the `beta=true` marker Mantle requests
-carry.
+carry. Runtime requests never carry `beta`: the SDK removes Anthropic's marker and an endpoint's
+own `beta` with it, so a gateway behind Runtime cannot receive a parameter by that name. An
+endpoint with an explicit port is signed under SigV4 over the host and port the request is sent
+to; the SDK alone would sign the hostname without the port.
 Without an endpoint, Runtime in the China partition (`cn-north-1`, `cn-northwest-1`) is reached at
 `bedrock-runtime.<region>.amazonaws.com.cn`.
 Fable 5.1 defaults to Runtime because AWS documents US and global inference profiles but no

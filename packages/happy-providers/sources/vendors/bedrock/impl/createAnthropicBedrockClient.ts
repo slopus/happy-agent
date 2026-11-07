@@ -7,6 +7,7 @@ import {
     isBedrockChinaRegion,
 } from "@/vendors/bedrock/impl/bedrockConstants.js";
 import { bedrockEndpointOptions } from "@/vendors/bedrock/impl/bedrockEndpointOptions.js";
+import { signBedrockEndpointPort } from "@/vendors/bedrock/impl/signBedrockEndpointPort.js";
 
 export type AnthropicBedrockClient = Pick<AnthropicBedrock | AnthropicBedrockMantle, "beta">;
 
@@ -43,9 +44,20 @@ export function createAnthropicBedrockClient(options: {
     }
     const provider = options.credential.credential.provider;
     const providerChainResolver = async () => async () => await provider();
+    const portFetch =
+        options.endpoint !== undefined && new URL(options.endpoint).port !== ""
+            ? {
+                  fetch: signBedrockEndpointPort(
+                      provider,
+                      options.region,
+                      options.transport === "mantle" ? "bedrock-mantle" : "bedrock",
+                  ),
+              }
+            : {};
     if (options.transport === "mantle") {
         return new AnthropicBedrockMantle({
             ...clientOptions,
+            ...portFetch,
             // A profile selects SigV4 ahead of an ambient bearer token. The custom provider still
             // supplies the credentials, so this name is only the SDK's authentication-mode flag.
             awsProfile: options.credential.credential.profile ?? "default",
@@ -54,6 +66,7 @@ export function createAnthropicBedrockClient(options: {
     }
     return new AnthropicBedrock({
         ...clientOptions,
+        ...portFetch,
         // Runtime defaults an omitted key from AWS_BEARER_TOKEN_BEDROCK. An explicit empty key
         // disables that fallback and leaves signing to the custom AWS credential provider.
         apiKey: "",
