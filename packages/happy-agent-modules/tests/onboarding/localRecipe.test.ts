@@ -285,7 +285,7 @@ describe("the local onboarding recipe", () => {
         expect(guide).toContain("Their press or reply is their consent; without it, read nothing.");
         // The consent names what find_recent_projects reads, and what it never does.
         expect(guide).toContain(
-            "which folders their coding assistants worked in recently on this computer, and those projects' Git history, never file contents or conversations",
+            "which folders their coding assistants worked in recently on this {{machine}}, and those projects' Git history, never file contents or conversations",
         );
         // Happy reads the recent work itself; the model never runs a shell or leaves the sandbox.
         expect(guide).toContain(
