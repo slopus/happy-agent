@@ -283,6 +283,10 @@ describe("the local onboarding recipe", () => {
             'call save_profile with exactly that name and email, then set_bot_name with "<First name>\'s Chief of Staff"',
         );
         expect(guide).toContain("Their press or reply is their consent; without it, read nothing.");
+        // The consent names what find_recent_projects reads, and what it never does.
+        expect(guide).toContain(
+            "which folders their coding assistants worked in recently on this computer, and those projects' Git history, never file contents or conversations",
+        );
         // Happy reads the recent work itself; the model never runs a shell or leaves the sandbox.
         expect(guide).toContain(
             "Call find_recent_projects to see their recent work, and nothing else",
