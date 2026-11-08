@@ -306,8 +306,39 @@ describe("the local onboarding recipe", () => {
         expect(guide).toContain(
             "clone_project for a repository, or create its folder and call create_project. Then call start_first_task at once.",
         );
+        // A clone with no work named still gets something concrete to do.
+        expect(guide).toContain(
+            "if they name no work, the work is getting it to build and its tests to run on this computer.",
+        );
+        // Both tools return before setup finishes, so the task is told to wait for it.
+        expect(guide).toContain(
+            "add that its setup may still be running, so it waits until the project is ready and reports it if setup fails.",
+        );
+        // A new folder has no Git history, so its task works in a copy, not on a branch.
+        expect(guide).toContain(
+            "A project without Git history, such as a new folder, gets its own copy of the folder instead of a fresh branch",
+        );
         // Setting the project up is at hand while the model guides, not something to search for.
         expect(recipe.tools).toEqual(expect.arrayContaining(["create_project", "clone_project"]));
+    });
+
+    it("names every tool the recipe loads, and only those, as its onboarding tools", () => {
+        const line = recipeText(recipe.guide)
+            .split("\n")
+            .find((text) => text.startsWith("- Your onboarding tools are "));
+        const named = line
+            ?.replace("- Your onboarding tools are ", "")
+            .split(".")[0]!
+            .split(/, | and /);
+        expect(named?.sort()).toEqual([...recipe.tools!].sort());
+    });
+
+    it("never repeats a secret, and asks for a clone address without its token", () => {
+        const guide = recipeText(recipe.guide);
+        expect(guide).toContain("Never repeat or type a token, key, code or password.");
+        expect(guide).toContain(
+            "For a repository address with a token in it, ask for the address without it",
+        );
     });
 
     it("renames the Chief of Staff after the person, or to the nickname they give", () => {

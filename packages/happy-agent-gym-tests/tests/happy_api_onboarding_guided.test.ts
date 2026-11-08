@@ -76,7 +76,7 @@ describe("The model leading onboarding", () => {
                 /first-project recipe at \/\S+\/docs\/recipe\/first-project\.md/u,
             );
             expect(begin?.instructions).toContain(
-                "Your onboarding tools are save_profile, set_default_model, set_bot_name, start_first_task and finish_onboarding.",
+                "Your onboarding tools are save_profile, set_default_model, set_bot_name, clone_project, create_project, start_first_task and finish_onboarding.",
             );
             const event = JSON.stringify(begin?.messages.at(-1));
             expect(event).toContain('\\"connected\\":[{\\"app\\":\\"ChatGPT\\"');
