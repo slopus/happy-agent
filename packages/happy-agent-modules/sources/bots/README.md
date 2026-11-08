@@ -17,8 +17,10 @@ someone else is refused with the admin bots listed, as `create_bot` does, and an
 explained. Images must always come from the acting bot's own folder. Authorization is rechecked in
 the write transaction. `set_bot_avatar` writes exactly what the avatar route writes, and
 `set_bot_name` goes through the same rename as `PATCH /v0/bots/:botId`: the same name rules, the
-conversation title follows, automatic naming ends, and the username stays. Both publish
-`bot_updated` and advance the version. `list_bots` shows whether each bot has an avatar and accepts
+conversation title follows, automatic naming ends, and the username stays. A bot renaming itself is
+inside its own tool call, where its conversation's metadata cannot be written, so its title follows
+through the `bots.title` durable function once the call returns. Both publish `bot_updated` and
+advance the version. `list_bots` shows whether each bot has an avatar and accepts
 optional `hasAvatar` to filter the roster (`false` finds bots without pictures).
 
 On first startup, the module creates one admin bot named `Chief of Staff` with an ordinary generated

@@ -299,3 +299,13 @@ credentials, used to be described in prose. The Chief of Staff now links the pag
 link, `happy://settings/<page>`, and may show it as a button with the link title `button`. The
 link only navigates, so the Chief of Staff still does every step it can itself and never asks for a
 token or key in the chat. This is prompt guidance; nothing in code emits or requires these links.
+
+## A bot renaming itself retitles its conversation after the call
+
+`set_bot_name` without another bot's ID always failed in a real conversation: Agent Base refuses to
+write an agent's metadata from inside that agent's own loop, and the rename wrote the calling
+bot's conversation title in the tool's transaction. The unit tests used a stand-in agent system and
+never saw it; onboarding's rename to "<First name>'s Chief of Staff" did. The bot record still
+changes in the tool's transaction, and the title follows through the `bots.title` durable function,
+which runs outside the bot's async context once the call returns. Renaming another bot, and the
+rename route, still set the title in the same transaction.

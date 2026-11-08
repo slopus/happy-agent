@@ -86,6 +86,9 @@ import { updateBotSettingsTool } from "./tools/update_bot_settings.js";
 
 const BOT_NAME_ATTEMPTED_KEY = "bot-name-attempted";
 const NAMING_FUNCTION = "bots.name";
+/** Gives a bot's conversation its name once the tool call that renamed the bot has returned. */
+const TITLE_FUNCTION = "bots.title";
+const titleArgumentsSchema = Type.Object({ botId: cuid2Schema });
 const namingArgumentsSchema = Type.Object({
     botId: cuid2Schema,
     providerId: Type.String(),
@@ -190,6 +193,22 @@ export class BotsModule implements AgentModule {
                             ...(short === undefined ? {} : { shortName: short }),
                         }));
                     });
+                    return null;
+                }),
+        });
+        durableFunctions.register({
+            name: TITLE_FUNCTION,
+            argumentsSchema: titleArgumentsSchema,
+            resultSchema: Type.Null(),
+            // Outside the renaming bot's own loop, whose metadata waits for its tool call.
+            executor: (ctx, call) =>
+                this.#backgroundScope.runInAsyncScope(async () => {
+                    const bot = await this.get(ctx, call.arguments.botId);
+                    if (bot === undefined) return null;
+                    const config = await this.#requireAgents().config(ctx, bot.agentId);
+                    if (config?.metadata?.["title"] !== bot.name) {
+                        await this.#setAgentTitle(ctx, bot.agentId, bot.name);
+                    }
                     return null;
                 }),
         });
@@ -693,9 +712,27 @@ export class BotsModule implements AgentModule {
             if (targetId !== acting.id && !acting.isAdmin) {
                 throw new BotConflictError("Only an admin bot can rename another bot.");
             }
-            const current = targetId === acting.id ? acting : await this.#required(txCtx, targetId);
-            return await this.#rename(txCtx, current, name);
+            if (targetId === acting.id) return await this.#renameSelf(txCtx, acting, name);
+            return await this.#rename(txCtx, await this.#required(txCtx, targetId), name);
         });
+    }
+
+    /**
+     * A bot renaming itself is in the middle of its own tool call, which its conversation's
+     * metadata cannot be written from, so the title follows durably once that call returns.
+     */
+    async #renameSelf(ctx: Context, current: BotRecord, name: string): Promise<BotRecord> {
+        if (current.name === name && current.nameConfigured) return current;
+        const renamed = await this.#change(ctx, current, ({ shortName: _short, ...bot }) => ({
+            ...bot,
+            name,
+            nameConfigured: true,
+        }));
+        await this.#durableFunctions.invoke(ctx, {
+            function: TITLE_FUNCTION,
+            arguments: { botId: current.id },
+        });
+        return renamed;
     }
 
     /** Renaming also settles the conversation title and ends automatic naming for good. */
