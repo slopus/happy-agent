@@ -1154,7 +1154,9 @@ are persisted in generated `runtime.toml`. In team mode a `url` entry is a confi
 startup like any invalid entry, and an admin bot cannot add one.
 
 A URL is normalized before use. It must be absolute and use `https`, or `http` with a loopback
-host (`localhost`, `127.0.0.1`, or `[::1]`) for local testing. It must have no user information,
+host (`localhost`, `127.0.0.1`, or `[::1]`) or a name under `localhost`, such as `acme.localhost`,
+for local testing. RFC 6761 reserves those names for loopback, so the daemon never looks one up: it
+connects to `127.0.0.1` and still sends the name as the request's host. It must have no user information,
 query, or fragment. The scheme and host are lowercased, a default port is removed, and the path
 always ends in `/`, so `https://Happy.Example.com/team` becomes `https://happy.example.com/team/`.
 API paths are resolved against it: the server's health is `<url>v0/health`. Two entries never

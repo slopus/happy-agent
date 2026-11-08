@@ -38,7 +38,7 @@ import {
     type RemoteProxyExchange,
     type RemoteProxyReplacement,
 } from "./impl/RemoteProxyConnection.js";
-import { normalizeServerUrl } from "./impl/normalizeServerUrl.js";
+import { normalizeServerUrl, serverConnectHost } from "./impl/normalizeServerUrl.js";
 import { openRemoteWebSocketTunnel } from "./impl/openRemoteWebSocketTunnel.js";
 import { serverConnectionId } from "./impl/serverConnectionId.js";
 import {
@@ -786,7 +786,8 @@ export class ConnectionsModule implements AgentModule {
     ): RemoteProxyConnection {
         const target = new URL(url);
         const secure = target.protocol === "https:";
-        const host = target.hostname.replace(/^\[|\]$/gu, "");
+        const name = target.hostname.replace(/^\[|\]$/gu, "");
+        const host = serverConnectHost(target.hostname);
         const port = Number(target.port === "" ? (secure ? 443 : 80) : target.port);
         return new RemoteProxyConnection(
             () =>
@@ -795,7 +796,7 @@ export class ConnectionsModule implements AgentModule {
                           host,
                           port,
                           ALPNProtocols: ["http/1.1"],
-                          ...(isIP(host) === 0 ? { servername: host } : {}),
+                          ...(isIP(name) === 0 ? { servername: name } : {}),
                       })
                     : connectTcp({ host, port }),
             undefined,

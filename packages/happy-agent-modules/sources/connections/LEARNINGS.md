@@ -149,3 +149,14 @@ refusal.
 learned from a relayed health response after the request that read it had finished. The module's
 root context is built with `withAgentDatabase(detach(ctx).named(...), ctx.db)`, as peer messaging
 does.
+
+## A name under localhost is reached on loopback, never looked up
+
+A local Happy Cloud stack serves each team at its own name, such as `acme.localhost`, and its
+tokens are valid only for that host, so the address must keep the name. The daemon refused it,
+since plain `http` was allowed only for `localhost`, `127.0.0.1`, and `[::1]`. Allowing it by name
+alone would be unsafe: glibc and other resolvers send `*.localhost` to DNS, and a hostile network's
+DNS could answer with a remote address that then receives a bearer token in the clear. Names under
+`localhost` are now accepted over `http`, and every request to one, discovery through `fetch` as
+well as the proxy's carrier, connects to `127.0.0.1` itself while the Host header keeps the name.
+Plain `localhost` still resolves as before, so a server listening only on `::1` keeps working.
