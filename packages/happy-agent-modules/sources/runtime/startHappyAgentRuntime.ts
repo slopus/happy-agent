@@ -80,6 +80,7 @@ import { ProviderUsageModule } from "../providerUsage/index.js";
 import { ProviderScanModule } from "../providerScan/index.js";
 import { ProviderClisModule } from "../providerClis/index.js";
 import { ProviderRoutesModule } from "../providerRoutes/index.js";
+import { OnboardingModule } from "../onboarding/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
 import { SecretsModule } from "../secrets/index.js";
@@ -795,6 +796,21 @@ export async function startHappyAgentRuntime(
             team,
             globalSkills,
         );
+        // Onboarding runs in the Chief of Staff's conversation on this machine; team servers keep
+        // the classic setup and their own onboarding.
+        const onboarding = team.enabled
+            ? undefined
+            : new OnboardingModule(
+                  config,
+                  durableFunctions,
+                  history,
+                  bots,
+                  profile,
+                  providerClis,
+                  providerRoutes,
+                  providerScan,
+                  mobileConnector,
+              );
         const apiModule = new ApiModule(
             abort,
             config,
@@ -841,6 +857,7 @@ export async function startHappyAgentRuntime(
             feed,
             nodeSearch,
             teammates,
+            onboarding,
         );
         api = apiModule;
 
@@ -959,6 +976,7 @@ export async function startHappyAgentRuntime(
             live,
             bots,
             tasks,
+            ...(onboarding === undefined ? [] : [onboarding]),
             artifacts,
             artifactData,
             node,

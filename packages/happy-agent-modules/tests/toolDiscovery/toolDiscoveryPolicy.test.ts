@@ -17,6 +17,8 @@ const eagerDirectories = [
     "compute/tools/kimi",
     "compute/tools/glm",
     "userInput",
+    // Present only while onboarding guides, and called at its steps without a search first.
+    "onboarding/tools",
 ];
 // Voice receives its whole tool arrays without tool search.
 const eagerFiles = ["live/impl/voiceSidebarTools.ts", "live/impl/liveDesktopTools.ts"];

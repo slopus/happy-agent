@@ -1,0 +1,276 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Onboarding recipe",
+    "description": "What one kind of onboarding says and does, as data. Generated from OnboardingRecipe.ts in @slopus/happy-agent-modules; edit that file and regenerate rather than this one.",
+    "additionalProperties": false,
+    "type": "object",
+    "required": ["id", "version", "requirements", "bootstrap", "guide", "tools", "figures"],
+    "properties": {
+        "$schema": {
+            "type": "string"
+        },
+        "id": {
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+            "description": "The recipe's name, reported as the flow's `recipe`.",
+            "type": "string"
+        },
+        "version": {
+            "minimum": 1,
+            "maximum": 1000000,
+            "description": "The onboarding version this recipe completes. A newer version that adds a requirement returns a completed installation to onboarding for that requirement alone.",
+            "type": "integer"
+        },
+        "requirements": {
+            "maxItems": 16,
+            "uniqueItems": true,
+            "description": "What completion proves, by the runtime's names, such as `provider` and `profile`.",
+            "type": "array",
+            "items": {
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$",
+                "type": "string"
+            }
+        },
+        "bootstrap": {
+            "additionalProperties": false,
+            "description": "The scripted part, which the server writes itself before any model is involved. Its messages are never model input.",
+            "type": "object",
+            "required": ["start", "typing", "steps"],
+            "properties": {
+                "start": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+                    "description": "The first step.",
+                    "type": "string"
+                },
+                "typing": {
+                    "description": "`disabled`: the composer is disabled until the hand-off, and a typed message is refused. `handoff`: the composer stays enabled, and a typed message ends the bootstrap at once and is answered by the model with the guide.",
+                    "anyOf": [
+                        {
+                            "const": "disabled",
+                            "type": "string"
+                        },
+                        {
+                            "const": "handoff",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "composerPlaceholder": {
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "The composer's placeholder while the bootstrap runs, such as why it takes no typing.",
+                    "type": "string"
+                },
+                "handoffFailed": {
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+                    "description": "The step to return to when the model's first turn ends without an answer.",
+                    "type": "string"
+                },
+                "steps": {
+                    "minProperties": 1,
+                    "maxProperties": 64,
+                    "additionalProperties": false,
+                    "type": "object",
+                    "patternProperties": {
+                        "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$": {
+                            "additionalProperties": false,
+                            "type": "object",
+                            "properties": {
+                                "say": {
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "description": "The step's message: the first entry whose `when` condition holds, or that has none, so entries are alternatives in order and the last has no `when`. `{{name}}` is replaced by the runtime's variable of that name. Plain variables are HTML-escaped; block variables are Markdown or inline action blocks the runtime writes. A step without `say` says nothing and only runs its effect.",
+                                    "type": "array",
+                                    "items": {
+                                        "additionalProperties": false,
+                                        "type": "object",
+                                        "required": ["text"],
+                                        "properties": {
+                                            "when": {
+                                                "minLength": 1,
+                                                "maxLength": 65,
+                                                "pattern": "^!?[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$",
+                                                "description": "A condition the runtime offers, or `!` and one for its opposite. The entry is said only while it holds.",
+                                                "type": "string"
+                                            },
+                                            "text": {
+                                                "description": "Words to say: one string, or lines joined with line feeds so long text stays readable.",
+                                                "anyOf": [
+                                                    {
+                                                        "minLength": 1,
+                                                        "maxLength": 20000,
+                                                        "type": "string"
+                                                    },
+                                                    {
+                                                        "minItems": 1,
+                                                        "maxItems": 400,
+                                                        "type": "array",
+                                                        "items": {
+                                                            "maxLength": 2000,
+                                                            "type": "string"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    }
+                                },
+                                "effect": {
+                                    "additionalProperties": false,
+                                    "description": "Work the runtime does once the step's message is written. Its outcome picks the next target in `then`; every outcome the runtime's effect can return must be mapped, and no other. An effect may wait for something outside the conversation, such as a sign-in, before it has an outcome.",
+                                    "type": "object",
+                                    "required": ["name", "then"],
+                                    "properties": {
+                                        "name": {
+                                            "minLength": 1,
+                                            "maxLength": 64,
+                                            "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$",
+                                            "type": "string"
+                                        },
+                                        "then": {
+                                            "minProperties": 1,
+                                            "additionalProperties": false,
+                                            "type": "object",
+                                            "patternProperties": {
+                                                "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$": {
+                                                    "description": "Where the bootstrap goes: a step, `handoff` to the model, or `finish`.",
+                                                    "anyOf": [
+                                                        {
+                                                            "minLength": 1,
+                                                            "maxLength": 64,
+                                                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+                                                            "description": "A lowercase slug. `handoff` and `finish` are targets, never step IDs.",
+                                                            "type": "string"
+                                                        },
+                                                        {
+                                                            "const": "handoff",
+                                                            "type": "string"
+                                                        },
+                                                        {
+                                                            "const": "finish",
+                                                            "type": "string"
+                                                        }
+                                                    ]
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "end": {
+                                    "description": "Where the bootstrap goes once the step's message is written, for a step with no effect and no `next`.",
+                                    "anyOf": [
+                                        {
+                                            "const": "handoff",
+                                            "type": "string"
+                                        },
+                                        {
+                                            "const": "finish",
+                                            "type": "string"
+                                        }
+                                    ]
+                                },
+                                "next": {
+                                    "additionalProperties": false,
+                                    "description": "The steps this step's message may lead to: each `onboarding.next` control in it names one of these in `data-step`. A press toward any other step is refused.",
+                                    "type": "object",
+                                    "patternProperties": {
+                                        "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$": {
+                                            "additionalProperties": false,
+                                            "type": "object",
+                                            "properties": {
+                                                "params": {
+                                                    "maxProperties": 4,
+                                                    "additionalProperties": false,
+                                                    "description": "The `data-` parameters a press toward this step may carry, each with one of its `values` when they are listed.",
+                                                    "type": "object",
+                                                    "patternProperties": {
+                                                        "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$": {
+                                                            "additionalProperties": false,
+                                                            "type": "object",
+                                                            "properties": {
+                                                                "values": {
+                                                                    "minItems": 1,
+                                                                    "maxItems": 32,
+                                                                    "type": "array",
+                                                                    "items": {
+                                                                        "minLength": 1,
+                                                                        "maxLength": 128,
+                                                                        "type": "string"
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                "values": {
+                                                    "description": "A press toward this step may carry a checklist's ticked values.",
+                                                    "const": "checklist",
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "composerPlaceholder": {
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "The composer's placeholder while the guided part runs.",
+            "type": "string"
+        },
+        "guide": {
+            "description": "The model's instructions while the guided part runs, with `{{name}}` variables as in `say`. Its hidden context entries are described here too.",
+            "anyOf": [
+                {
+                    "minLength": 1,
+                    "maxLength": 20000,
+                    "type": "string"
+                },
+                {
+                    "minItems": 1,
+                    "maxItems": 400,
+                    "type": "array",
+                    "items": {
+                        "maxLength": 2000,
+                        "type": "string"
+                    }
+                }
+            ]
+        },
+        "tools": {
+            "maxItems": 16,
+            "uniqueItems": true,
+            "description": "The tools the model has only while the guided part runs, by the runtime's names.",
+            "type": "array",
+            "items": {
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+            }
+        },
+        "figures": {
+            "maxItems": 32,
+            "uniqueItems": true,
+            "description": "The figure kinds the recipe's messages and guide may show, by their `data-` name.",
+            "type": "array",
+            "items": {
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+                "description": "A lowercase slug. `handoff` and `finish` are targets, never step IDs.",
+                "type": "string"
+            }
+        }
+    }
+}

@@ -78,3 +78,52 @@ describe("history inline action migration", () => {
         }
     });
 });
+
+describe("inline action choices after the migration", () => {
+    it("keeps the choices a press records on a message once every migration has run", async () => {
+        const history = new HistoryModule();
+        const database = moduleDatabase(history.migrations, "history-inline-action-choices");
+        await database.ready;
+        try {
+            await history.record(database.context, "happyagent", {
+                role: "agent",
+                recordId: "offerrecord",
+                at: 0,
+                blocks: [
+                    { type: "text", text: '<menu><button data-action="reply">Yes</button></menu>' },
+                ],
+            });
+            const [stored] = (
+                await history.read(database.context, "happyagent", { from: "start" })
+            ).messages.map(({ message }) => message);
+            if (stored === undefined) throw new Error("Expected the offer.");
+            await history.replace(database.context, "happyagent", {
+                ...stored,
+                actionChoices: { "0": { kind: "button", index: 0 } },
+            });
+            // A press is the person's plain words; nothing the migration would rewrite.
+            await history.record(database.context, "happyagent", {
+                role: "user",
+                recordId: "pressrecord",
+                at: 1,
+                blocks: [{ type: "text", text: "Yes" }],
+            });
+
+            const page = await history.read(database.context, "happyagent", { from: "start" });
+            expect(page.messages.map(({ message }) => message)).toEqual([
+                { ...stored, actionChoices: { "0": { kind: "button", index: 0 } } },
+                {
+                    role: "user",
+                    recordId: "pressrecord",
+                    at: 1,
+                    blocks: [{ type: "text", text: "Yes" }],
+                },
+            ]);
+            expect(
+                await history.personSpokeAfter(database.context, "happyagent", "offerrecord"),
+            ).toBe(true);
+        } finally {
+            database.close();
+        }
+    });
+});

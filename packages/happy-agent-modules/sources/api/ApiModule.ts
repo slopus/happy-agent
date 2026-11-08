@@ -128,6 +128,8 @@ import {
     networkIdSchema,
     skillPageQuerySchema,
     updateGlobalSkillRequestSchema,
+    resolveChatActionPress,
+    type ActionBlock,
     type ArtifactFileInput as ArtifactRequestFile,
     type ArtifactSourceInput as ArtifactRequestSource,
     type AuthenticationChallenge,
@@ -215,6 +217,7 @@ import {
     type TaskRecord,
 } from "../tasks/index.js";
 import type { TeammatesModule } from "../teammates/index.js";
+import { OnboardingRequestError, type OnboardingModule } from "../onboarding/index.js";
 import {
     CompactionAgentBusyError,
     CompactionAlreadyRunningError,
@@ -437,6 +440,7 @@ import {
     type WorkspaceProxyTcpHop,
 } from "./WorkspaceProxy.js";
 import { requestedAgentMode } from "./requestedAgentMode.js";
+import { firstTokenDelay, streamLikeInference } from "./impl/streamLikeInference.js";
 import { describeDrainBlockers, type DrainBlocker } from "./impl/describeDrainBlockers.js";
 import {
     projectEventDiagnostics,
@@ -692,6 +696,7 @@ export class ApiModule implements AgentModule {
     readonly #feed: FeedModule | undefined;
     readonly #nodeSearch: NodeSearchModule | undefined;
     readonly #teammates: TeammatesModule | undefined;
+    readonly #onboardingFlow: OnboardingModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -800,6 +805,8 @@ export class ApiModule implements AgentModule {
     >();
     readonly #messageSendGates = new Map<string, Promise<void>>();
     readonly #agentEventChains = new Map<string, Promise<void>>();
+    /** How much ordinary work waits in each conversation's queue; any ends paced typing. */
+    readonly #agentWorkWaiting = new Map<string, number>();
     readonly #backgroundMetadataUpdates = new Set<Promise<void>>();
 
     #agents: AgentSystemRef | undefined;
@@ -867,8 +874,10 @@ export class ApiModule implements AgentModule {
         feed?: FeedModule,
         nodeSearch?: NodeSearchModule,
         teammates?: TeammatesModule,
+        onboarding?: OnboardingModule,
     ) {
         this.#teammates = teammates;
+        this.#onboardingFlow = onboarding;
         this.#abort = abort;
         this.#config = config;
         this.#events = events;
@@ -1707,6 +1716,13 @@ export class ApiModule implements AgentModule {
                     this.#journal.append("config.updated", {});
                 });
                 sendJson(response, 200, { policy: body.policy });
+                return;
+            }
+            if (
+                url.pathname === "/v0/onboarding/flow" ||
+                url.pathname === "/v0/onboarding/flow/start"
+            ) {
+                await this.#handleOnboardingFlow(ctx, request, response, url);
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/onboarding") {
@@ -3129,6 +3145,72 @@ export class ApiModule implements AgentModule {
                           this.#convertArtifactEvent(event);
                       }),
                   ]),
+            ...(this.#onboardingFlow === undefined
+                ? []
+                : [
+                      this.#onboardingFlow.onChange((flow, mutationId) => {
+                          this.#mutationIds.exit(() => {
+                              this.#journal.append("onboarding.flow.updated", {
+                                  flow,
+                                  ...(mutationId === undefined ? {} : { mutationId }),
+                              });
+                          });
+                      }),
+                      this.#onboardingFlow.onSpoken((agentId, message, proseLength) => {
+                          void this.#queueAgentWork(
+                              ctx,
+                              agentId,
+                              undefined,
+                              async () =>
+                                  await this.#announcePaced(ctx, agentId, message, proseLength),
+                              true,
+                          ).catch(() => {
+                              ctx.log.warn("The API could not announce a scripted message.", {
+                                  agentId,
+                              });
+                          });
+                      }),
+                      // A press the bootstrap answers is its own finished run, announced with
+                      // the choice it locked, before the scripted answer that follows.
+                      this.#onboardingFlow.onPressRecorded((agentId, press, pressed) => {
+                          void this.#queueAgentWork(ctx, agentId, undefined, async () => {
+                              this.#journal.append("message.updated", {
+                                  agentId,
+                                  runId: pressed.runId ?? null,
+                                  message: messageResource(pressed),
+                              });
+                              const run =
+                                  press.runId === undefined
+                                      ? undefined
+                                      : await this.#history.run(ctx, agentId, press.runId);
+                              if (run === undefined) return;
+                              const resource = await this.#runResource(ctx, run);
+                              this.#journal.append("run.started", {
+                                  agentId,
+                                  run: {
+                                      ...resource,
+                                      status: "running",
+                                      reason: null,
+                                      endedAt: null,
+                                  },
+                                  acceptedMessageIds: [press.recordId],
+                              });
+                              this.#journal.append("message.created", {
+                                  agentId,
+                                  runId: run.id,
+                                  message: messageResource(press),
+                              });
+                              boundedAdd(
+                                  this.#announcedTerminalRuns,
+                                  run.id,
+                                  MAX_ANNOUNCED_TERMINAL_RUNS,
+                              );
+                              this.#journal.append("run.finished", { agentId, run: resource });
+                          }).catch(() => {
+                              ctx.log.warn("The API could not announce a press.", { agentId });
+                          });
+                      }),
+                  ]),
             ...(this.#providerClis === undefined
                 ? []
                 : [
@@ -3201,7 +3283,9 @@ export class ApiModule implements AgentModule {
                             message.role === "user" ||
                             message.senderAgentId !== undefined ||
                             message.provider !== undefined ||
-                            message.model !== undefined
+                            message.model !== undefined ||
+                            // Scripted onboarding messages are announced paced instead.
+                            this.#onboardingFlow?.paces(message.recordId) === true
                         ),
                 );
                 if (eligible.length === 0) return;
@@ -3877,11 +3961,20 @@ export class ApiModule implements AgentModule {
         key: string,
         mutationId: string | undefined,
         work: () => Promise<void>,
+        paced = false,
     ): Promise<void> {
+        // Typing a paced message never holds anything up: other work waiting behind it ends the
+        // typing (`#announcePaced`), so a send or the agent's own events follow at once.
+        if (!paced) this.#agentWorkWaiting.set(key, (this.#agentWorkWaiting.get(key) ?? 0) + 1);
         const previous = this.#agentEventChains.get(key) ?? Promise.resolve();
         const result = previous.then(
             async () =>
                 await this.#backgroundScope.runInAsyncScope(async () => {
+                    if (!paced) {
+                        const waiting = (this.#agentWorkWaiting.get(key) ?? 1) - 1;
+                        if (waiting > 0) this.#agentWorkWaiting.set(key, waiting);
+                        else this.#agentWorkWaiting.delete(key);
+                    }
                     if (mutationId === undefined) {
                         await work();
                     } else {
@@ -5529,17 +5622,130 @@ export class ApiModule implements AgentModule {
     ): Promise<void> {
         await this.#assertUserControlledAgent(ctx, agentId);
         const body = await bodyAs(request, messageSendBodySchema, "agent message");
-        sendJson(response, 202, await this.#sendUserMessage(ctx, agentId, body));
+        const press = body.content?.[0]?.type === "action" ? body.content[0] : undefined;
+        if (press !== undefined && body.text !== undefined) {
+            throw invalidRequest("A press on an inline action has no text.");
+        }
+        if (press?.actionId === "onboarding.next") {
+            sendJson(response, 202, await this.#pressOnboarding(ctx, agentId, body.id, press));
+            return;
+        }
+        const { mode, text } = body;
+        if (press === undefined) {
+            await this.#onboardingFlow?.refuseTyping(ctx, agentId).catch((error: unknown) => {
+                throw onboardingApiError(error);
+            });
+        }
+        if (mode === undefined) throw invalidRequest("A message needs a mode.");
+        if (press === undefined && text === undefined)
+            throw invalidRequest("A message needs text.");
+        sendJson(
+            response,
+            202,
+            await this.#sendUserMessage(ctx, agentId, { ...body, mode, text: text ?? "" }, press),
+        );
+    }
+
+    /**
+     * The control a press names, checked against this agent's own stored message with the shared
+     * resolver: a visible agent message, a valid block with no choice yet and no person's message
+     * after it, and this exact control. Nothing in the request names a label.
+     */
+    async #resolvePress(
+        ctx: Context,
+        agentId: string,
+        press: ActionBlock,
+    ): Promise<{
+        readonly stored: HistoryMessage;
+        readonly found: Extract<ReturnType<typeof resolveChatActionPress>, { kind: "found" }>;
+    }> {
+        const stored = await this.#history.message(ctx, agentId, press.messageId);
+        if (
+            stored === undefined ||
+            (stored.role !== "assistant" && stored.role !== "agent") ||
+            messageHiddenFromUser(stored)
+        ) {
+            throw notFound("No message in this conversation has that ID.");
+        }
+        const found = resolveChatActionPress(
+            {
+                texts: stored.blocks.flatMap((block) =>
+                    block.type === "text" ? [block.text] : [],
+                ),
+                ...(stored.actionChoices === undefined ? {} : { choices: stored.actionChoices }),
+                live: !(await this.#history.personSpokeAfter(ctx, agentId, stored.recordId)),
+            },
+            press,
+        );
+        if (found.kind === "found") return { stored, found };
+        if (found.code === "not_found") throw notFound(found.reason);
+        if (found.code === "conflict") {
+            throw new ApiError(409, "conflict", found.reason, { message: messageResource(stored) });
+        }
+        throw invalidRequest(found.reason);
+    }
+
+    /**
+     * A press on an `onboarding.next` control. Onboarding's scripted bootstrap answers it, so no
+     * model reads it and it takes no mode: the choice, the person's message in a finished run of
+     * its own, and the next step commit together. See "Onboarding in a conversation" in API.md.
+     */
+    async #pressOnboarding(
+        ctx: Context,
+        agentId: string,
+        requestedId: string | undefined,
+        press: ActionBlock,
+    ): Promise<{ readonly message: unknown; readonly cursor: string | null }> {
+        const onboarding = this.#onboardingFlow;
+        if (onboarding === undefined || this.#team.enabled) {
+            throw invalidRequest("Onboarding actions run only in this daemon's onboarding.");
+        }
+        const id = requestedId ?? createId();
+        return await this.#serializeMessageSend(id, async () => {
+            const cursor = this.#journal.cursor();
+            const existing = await ctx.inTx(
+                async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
+            );
+            if (existing !== undefined) return { message: existing, cursor };
+            try {
+                const message = await ctx.inTx(async (txCtx) => {
+                    await this.#assertUserControlledAgent(txCtx, agentId);
+                    const { stored, found } = await this.#resolvePress(txCtx, agentId, press);
+                    if (found.action.id !== "onboarding.next") {
+                        throw invalidRequest("That control runs another action.");
+                    }
+                    return await onboarding.press(txCtx, {
+                        agentId,
+                        id,
+                        pressed: stored,
+                        blockIndex: press.blockIndex,
+                        choice: found.choice,
+                        words: found.words,
+                        step: found.action.step,
+                        params: found.action.params,
+                        values: found.values,
+                    });
+                });
+                return { message: messageResource(message), cursor };
+            } catch (error: unknown) {
+                throw onboardingApiError(error);
+            }
+        });
     }
 
     /**
      * Send a person's message to an agent, as `send` does: a repeated `id` sends nothing new and
-     * answers with the message as it stands.
+     * answers with the message as it stands. A press on a `reply` control is sent the same way,
+     * as the words on the control, and records its choice in the same transaction.
      */
     async #sendUserMessage(
         ctx: Context,
         agentId: string,
-        body: Static<typeof messageSendBodySchema>,
+        body: Static<typeof messageSendBodySchema> & {
+            mode: NonNullable<Static<typeof messageSendBodySchema>["mode"]>;
+            text: string;
+        },
+        press?: ActionBlock,
     ): Promise<{ readonly message: unknown; readonly cursor: string | null }> {
         body.mode = requestedAgentMode(body.mode);
         const id = body.id ?? createId();
@@ -5549,6 +5755,10 @@ export class ApiModule implements AgentModule {
                 async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
             );
             if (existing !== undefined) return { message: existing, cursor };
+            const text =
+                press === undefined
+                    ? body.text
+                    : (await this.#resolvePress(ctx, agentId, press)).found.words;
 
             const selected = this.#config.models.find(
                 (model) =>
@@ -5577,7 +5787,12 @@ export class ApiModule implements AgentModule {
             if (serviceTier === undefined) {
                 throw invalidRequest("The selected service tier is unavailable.");
             }
-            const content = [{ type: "text" as const, text: body.text }, ...(body.content ?? [])];
+            const content = [
+                { type: "text" as const, text },
+                ...(body.content ?? []).flatMap((block) =>
+                    block.type === "action" ? [] : [block],
+                ),
+            ];
             const userId = this.#team.enabled ? teamUser(ctx)?.id : undefined;
             const profile = decodeRequestProfile(body.profile);
             const options: AgentBaseMessageOptions = {
@@ -5631,6 +5846,11 @@ export class ApiModule implements AgentModule {
             try {
                 await ctx.inTx(async (txCtx) => {
                     await this.#assertUserControlledAgent(txCtx, agentId);
+                    if (press === undefined) {
+                        await this.#onboardingFlow?.typed(txCtx, agentId);
+                    } else {
+                        await this.#choose(txCtx, agentId, press);
+                    }
                     await this.#history.queuePending(txCtx, pending);
                     // A person writing in a task joins the teammates they mention and marks the
                     // task unread for everyone else in it, atomically with the message.
@@ -5642,7 +5862,7 @@ export class ApiModule implements AgentModule {
                         await this.#teammates?.mention(txCtx, {
                             taskId: task.id,
                             senderUserId: userId,
-                            text: body.text,
+                            text,
                             at: createdAt,
                         });
                         await this.#tasks?.markNewMessages(txCtx, task.id, {
@@ -5663,7 +5883,7 @@ export class ApiModule implements AgentModule {
                 this.#announcedPendingMessages.delete(id);
                 this.#apiPendingMessageIds.delete(id);
                 this.#finishPendingMessageAnnouncement(id);
-                throw error;
+                throw onboardingApiError(error);
             }
             const accepted = await this.#history.message(ctx, agentId, id);
             const message =
@@ -5683,6 +5903,26 @@ export class ApiModule implements AgentModule {
             this.#finishPendingMessageAnnouncement(id);
             await this.#flushAcceptedMessages(ctx, agentId);
             return { message, cursor };
+        });
+    }
+
+    /**
+     * Lock the block a press chose, in the send's transaction: checked again against the message
+     * as it stands there, and announced with the whole message once it commits.
+     */
+    async #choose(ctx: Context, agentId: string, press: ActionBlock): Promise<void> {
+        const { stored, found } = await this.#resolvePress(ctx, agentId, press);
+        const chosen: HistoryMessage = {
+            ...stored,
+            actionChoices: { ...stored.actionChoices, [String(press.blockIndex)]: found.choice },
+        };
+        await this.#history.replace(ctx, agentId, chosen);
+        afterCommit(ctx, () => {
+            this.#journal.append("message.updated", {
+                agentId,
+                runId: chosen.runId ?? null,
+                message: messageResource(chosen),
+            });
         });
     }
 
@@ -9578,6 +9818,37 @@ export class ApiModule implements AgentModule {
         }
     }
 
+    /** `/v0/onboarding/flow`; see "Onboarding in a conversation" in API.md. */
+    async #handleOnboardingFlow(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<void> {
+        const onboarding = this.#onboardingFlow;
+        if (this.#team.enabled) {
+            throw unsupported("Onboarding in a conversation is unavailable in team mode.");
+        }
+        if (onboarding === undefined) throw notFound("Route not found.");
+        if (url.pathname === "/v0/onboarding/flow") {
+            if (request.method !== "GET") throw notFound("Route not found.");
+            sendJson(response, 200, { flow: await onboarding.flow(ctx) });
+            return;
+        }
+        if (request.method !== "POST") throw notFound("Route not found.");
+        const body = await optionalBodyAs(
+            request,
+            emptyMutationBodySchema,
+            "onboarding start",
+            2 * 1_024,
+        );
+        const flow = await this.#withMutationId(
+            body.mutationId,
+            async () => await onboarding.start(ctx, body.mutationId),
+        );
+        sendJson(response, 200, { flow });
+    }
+
     /** The routes under `/v0/provider-routes`; see "Provider routes" in API.md. */
     async #handleProviderRoutes(
         ctx: Context,
@@ -9639,6 +9910,85 @@ export class ApiModule implements AgentModule {
         const chain = this.#mutationIds.getStore();
         if (chain !== undefined && !chain.inLoop) return chain.mutationId;
         return agentId === undefined ? undefined : this.#runMutations.mutationId(agentId);
+    }
+
+    /**
+     * Announce one scripted onboarding message the way a model's answer streams, though it is
+     * stored whole: its run starts, a short time to first token, its prose in word-sized chunks,
+     * then the whole message, action blocks included, and the run's end. Any other work queued
+     * for the conversation ends the typing at once. See "Onboarding in a conversation" in API.md.
+     */
+    async #announcePaced(
+        ctx: Context,
+        agentId: string,
+        message: HistoryMessage,
+        proseLength: number,
+    ): Promise<void> {
+        const run =
+            message.runId === undefined
+                ? undefined
+                : await this.#history.run(ctx, agentId, message.runId);
+        const runId = message.runId ?? null;
+        const block = message.blocks[0];
+        const text = block?.type === "text" ? block.text.slice(0, proseLength) : "";
+        const hurried = () => this.#closed || this.#agentWorkWaiting.has(agentId);
+        let typing = false;
+        try {
+            if (run !== undefined) {
+                const finished = await this.#runResource(ctx, run);
+                this.#journal.append("run.started", {
+                    agentId,
+                    run: { ...finished, status: "running", reason: null, endedAt: null },
+                    acceptedMessageIds: [],
+                });
+                if (!hurried()) await this.#pause(firstTokenDelay());
+            }
+            if (text.length > 0 && !hurried()) {
+                typing = true;
+                this.#journal.append("message.created", {
+                    agentId,
+                    runId,
+                    message: messageResource({ ...message, blocks: [{ type: "text", text: "" }] }),
+                });
+                let offset = 0;
+                for (const chunk of streamLikeInference(text)) {
+                    if (hurried()) break;
+                    this.#journal.append("message.delta", {
+                        agentId,
+                        runId,
+                        messageId: message.recordId,
+                        blockIndex: 0,
+                        offset,
+                        append: chunk.text,
+                    });
+                    offset += chunk.text.length;
+                    await this.#pause(chunk.afterMs);
+                }
+            }
+        } finally {
+            // The message as it stands now: a press may have chosen in it meanwhile.
+            const current =
+                (await this.#history.message(ctx, agentId, message.recordId)) ?? message;
+            this.#journal.append(typing ? "message.updated" : "message.created", {
+                agentId,
+                runId,
+                message: messageResource(current),
+            });
+            if (run !== undefined) {
+                boundedAdd(this.#announcedTerminalRuns, run.id, MAX_ANNOUNCED_TERMINAL_RUNS);
+                this.#journal.append("run.finished", {
+                    agentId,
+                    run: await this.#runResource(ctx, run),
+                });
+            }
+        }
+    }
+
+    async #pause(ms: number): Promise<void> {
+        if (this.#closed) return;
+        await new Promise<void>((resolve) => {
+            setTimeout(resolve, ms).unref();
+        });
     }
 
     #appendForAgent(agentId: string, type: string, payload: unknown, occurredAt?: number): void {
@@ -10260,10 +10610,21 @@ export class ApiModule implements AgentModule {
             }),
         ]);
         const signedIn = [...new Set(this.#config.models.map((model) => model.providerId))];
-        const installationCompleted = marker !== undefined;
+        // A daemon running onboarding itself also completes it by meeting the requirements.
+        const summary =
+            this.#onboardingFlow === undefined || this.#team.enabled
+                ? undefined
+                : await this.#onboardingFlow.summary(ctx);
+        const installationCompleted = marker !== undefined || summary?.completed === true;
         const userCompleted = !this.#team.enabled || profileDone;
         return {
             completed: installationCompleted && userCompleted,
+            ...(summary === undefined
+                ? {}
+                : {
+                      onboardingVersion: summary.onboardingVersion,
+                      completedVersion: summary.completedVersion,
+                  }),
             steps: {
                 providers: { done: signedIn.length > 0, signedIn },
                 profile: { done: profileDone },
@@ -10451,7 +10812,7 @@ export class ApiModule implements AgentModule {
     }
 
     #onboardingMarker(): string {
-        return join(this.#config.configuration.paths.agentHome, "onboarding-v0");
+        return this.#config.configuration.paths.onboardingMarkerPath;
     }
 
     /** Reads remain available while drain and shutdown control requests bypass admission. */
@@ -10679,6 +11040,10 @@ export class ApiModule implements AgentModule {
             capabilities: {
                 desktopLiveControl: this.#live !== undefined,
                 webSocketTunnels: true,
+                inlineActions: true,
+                ...(this.#onboardingFlow === undefined || this.#team.enabled
+                    ? {}
+                    : { chatOnboarding: true }),
                 ...(this.#providerClis === undefined || this.#team.enabled
                     ? {}
                     : { providerClis: true }),
@@ -11193,6 +11558,21 @@ export class ApiModule implements AgentModule {
             status: 500,
         };
     }
+}
+
+/** An onboarding refusal as the API reports it; anything else passes through unchanged. */
+function onboardingApiError(error: unknown): unknown {
+    if (!(error instanceof OnboardingRequestError)) return error;
+    if (error.code === "not_found") return notFound(error.message);
+    if (error.code === "conflict") {
+        return new ApiError(
+            409,
+            "conflict",
+            error.message,
+            error.pressed === undefined ? {} : { message: messageResource(error.pressed) },
+        );
+    }
+    return invalidRequest(error.message);
 }
 
 function remoteRoute(target: string | undefined): { id: string; path: string } | undefined {

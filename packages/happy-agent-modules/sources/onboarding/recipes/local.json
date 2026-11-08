@@ -1,0 +1,497 @@
+{
+    "$schema": "./onboardingRecipe.schema.json",
+    "id": "local",
+    "version": 1,
+    "requirements": ["provider", "profile"],
+    "bootstrap": {
+        "start": "welcome",
+        "typing": "disabled",
+        "composerPlaceholder": "Choose an answer above",
+        "handoffFailed": "verify-failed",
+        "steps": {
+            "welcome": {
+                "say": [
+                    {
+                        "text": [
+                            "Hi, I'm {{botName}}. I run and coordinate agents across your work, and I'll get this {{machine}} set up with you. It takes a couple of minutes.",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"providers\" data-emphasis>Start</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "next": {
+                    "providers": {}
+                }
+            },
+            "providers": {
+                "say": [
+                    {
+                        "when": "routesFound",
+                        "text": [
+                            "First, let's check which AI subscriptions you already use. I reuse what you pay for today, so there's nothing new to pay for. I found these on this {{machine}}; choose which ones I should use.",
+                            "",
+                            "{{routesTable}}",
+                            "",
+                            "<output data-status=\"info\">You can always ask me to connect more later.</output>"
+                        ]
+                    },
+                    {
+                        "text": [
+                            "First, let's check which AI subscriptions you already use. I reuse what you pay for today, so there's nothing new to pay for. I didn't find any signed in on this {{machine}}. Which do you use?",
+                            "",
+                            "{{providerMenu}}"
+                        ]
+                    }
+                ],
+                "next": {
+                    "use": {
+                        "values": "checklist"
+                    },
+                    "more": {},
+                    "choose": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "none-yet": {},
+                    "other": {}
+                }
+            },
+            "use": {
+                "effect": {
+                    "name": "routes.use",
+                    "then": {
+                        "ok": "handoff",
+                        "restart": "restarting",
+                        "none": "choose-at-least-one",
+                        "failed": "use-failed"
+                    }
+                }
+            },
+            "choose-at-least-one": {
+                "say": [
+                    {
+                        "text": [
+                            "Select at least one to use, or sign in to another AI.",
+                            "",
+                            "{{routesTable}}"
+                        ]
+                    }
+                ],
+                "next": {
+                    "use": {
+                        "values": "checklist"
+                    },
+                    "more": {}
+                }
+            },
+            "more": {
+                "say": [
+                    {
+                        "text": ["Here's every AI I can connect:", "", "{{providerCatalog}}"]
+                    }
+                ],
+                "next": {
+                    "choose": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "other": {}
+                }
+            },
+            "choose": {
+                "effect": {
+                    "name": "provider.choose",
+                    "then": {
+                        "ok": "handoff",
+                        "signIn": "sign-in-offer",
+                        "install": "install-offer",
+                        "manual": "manual",
+                        "unusable": "use-failed",
+                        "failed": "use-failed"
+                    }
+                }
+            },
+            "sign-in-offer": {
+                "say": [
+                    {
+                        "text": [
+                            "{{cliName}} is already on this {{machine}}. I'll open {{vendor}}'s sign-in page so you can connect your {{provider}} account.",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-mark=\"{{providerMark}}\" data-emphasis>Sign in to {{provider}}</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'd rather do it myself</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "next": {
+                    "connect": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "manual": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    }
+                }
+            },
+            "install-offer": {
+                "say": [
+                    {
+                        "text": [
+                            "{{cliName}} isn't on this {{machine}} yet. I'll download {{vendor}}'s official installer from **{{installHost}}** and start signing you in. This is the exact command I'll run:",
+                            "",
+                            "{{installCommand}}",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-mark=\"{{providerMark}}\" data-emphasis>Install and sign in</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'd rather do it myself</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "next": {
+                    "connect": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "manual": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    }
+                }
+            },
+            "connect": {
+                "say": [
+                    {
+                        "text": [
+                            "Connecting {{provider}}. I'll continue here as soon as you're signed in.",
+                            "",
+                            "<figure data-provider-cli=\"{{providerCli}}\"></figure>",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'd rather do it myself</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "effect": {
+                    "name": "provider.connect",
+                    "then": {
+                        "ok": "handoff",
+                        "unusable": "use-failed",
+                        "failed": "connect-failed"
+                    }
+                },
+                "next": {
+                    "manual": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "more": {}
+                }
+            },
+            "manual": {
+                "say": [
+                    {
+                        "when": "installed",
+                        "text": [
+                            "Set up {{cliName}} in your terminal. Run this command, and I'll continue here as soon as you're signed in:",
+                            "",
+                            "{{signInCommand}}",
+                            "",
+                            "<output data-status=\"running\">Waiting for {{provider}} sign-in…</output>",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\">Open the sign-in page instead</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
+                            "</menu>"
+                        ]
+                    },
+                    {
+                        "when": "installable",
+                        "text": [
+                            "Run these commands in your terminal. I'll continue here as soon as {{cliName}} is signed in:",
+                            "",
+                            "{{installCommand}}",
+                            "",
+                            "{{signInCommand}}",
+                            "",
+                            "<output data-status=\"running\">Waiting for {{provider}} sign-in…</output>",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\">Install it for me instead</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
+                            "</menu>"
+                        ]
+                    },
+                    {
+                        "text": [
+                            "Install {{cliName}} as {{vendor}} describes for this {{machine}}, then sign in with this command. I'll continue here as soon as you're signed in:",
+                            "",
+                            "{{signInCommand}}",
+                            "",
+                            "<output data-status=\"running\">Waiting for {{provider}} sign-in…</output>",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "effect": {
+                    "name": "provider.await",
+                    "then": {
+                        "ok": "handoff",
+                        "unusable": "use-failed",
+                        "failed": "use-failed"
+                    }
+                },
+                "next": {
+                    "connect": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "more": {}
+                }
+            },
+            "connect-failed": {
+                "say": [
+                    {
+                        "text": [
+                            "That didn't work: {{reason}}",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-emphasis>Try again</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'd rather do it myself</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "next": {
+                    "connect": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "manual": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "more": {}
+                }
+            },
+            "use-failed": {
+                "say": [
+                    {
+                        "when": "subjectKnown",
+                        "text": [
+                            "I couldn't switch to {{provider}}. {{reason}} Sign in to {{provider}}, or choose another AI.",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-mark=\"{{providerMark}}\" data-emphasis>Sign in to {{provider}}</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
+                            "</menu>"
+                        ]
+                    },
+                    {
+                        "text": [
+                            "I couldn't switch to that. {{reason}} Choose another AI.",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\" data-emphasis>Choose another AI</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "next": {
+                    "connect": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "more": {}
+                }
+            },
+            "restarting": {
+                "say": [
+                    {
+                        "text": "{{routesReady}} set up. I'm restarting to switch over and will pick right back up."
+                    }
+                ],
+                "effect": {
+                    "name": "daemon.restart",
+                    "then": {
+                        "ok": "handoff"
+                    }
+                }
+            },
+            "none-yet": {
+                "say": [
+                    {
+                        "text": [
+                            "I work through your own AI account. I reuse the subscription you already pay for, so there's nothing new to pay for. Start with the one you already use, ChatGPT or Claude; your account may already include access.",
+                            "",
+                            "Choose one to sign in or create an account. I'll continue here as soon as you're connected.",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"choose\" data-provider=\"codex\" data-mark=\"openai\" data-emphasis>Connect ChatGPT</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"choose\" data-provider=\"claude\" data-mark=\"claude\">Connect Claude</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">See all options</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "next": {
+                    "choose": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "more": {}
+                }
+            },
+            "other": {
+                "say": [
+                    {
+                        "text": [
+                            "You can connect an API key, a company account, or a custom endpoint in **Settings → Providers**. Come back here once it's added.",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"providers\" data-emphasis>I've added it</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">Use a subscription instead</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "next": {
+                    "providers": {},
+                    "more": {}
+                }
+            },
+            "verify-failed": {
+                "say": [
+                    {
+                        "when": "routesFound",
+                        "text": [
+                            "I couldn't get an answer from {{provider}}. {{reason}} Choose which to use instead, or sign in to another AI.",
+                            "",
+                            "{{routesTable}}"
+                        ]
+                    },
+                    {
+                        "when": "subjectKnown",
+                        "text": [
+                            "I couldn't get an answer from {{provider}}. {{reason}}",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-mark=\"{{providerMark}}\" data-emphasis>Sign in to {{provider}} again</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
+                            "</menu>"
+                        ]
+                    },
+                    {
+                        "text": [
+                            "I couldn't get an answer from {{provider}}. {{reason}}",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\" data-emphasis>Choose another AI</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "next": {
+                    "use": {
+                        "values": "checklist"
+                    },
+                    "connect": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "more": {}
+                }
+            }
+        }
+    },
+    "composerPlaceholder": "Or just tell me in your own words…",
+    "guide": [
+        "# Onboarding",
+        "",
+        "You are {{botName}}, the person's chief of staff, and you are onboarding them inside your own chat. They just connected an AI. The messages above were scripted for you; from here on you write every message yourself. Onboarding is finished only when you call finish_onboarding.",
+        "",
+        "How it works:",
+        "- The person answers by pressing a button in your newest message or by typing. A press reaches you as their own words, exactly the text on the button. Treat typing and pressing alike.",
+        "- What the person did not do themselves arrives as a hidden <happy-onboarding-event> message: `begin` when the AI is connected, `providerAdded` when another AI finishes signing in, `phonePaired` when their phone pairs. The person never sees these.",
+        "- Your onboarding tools are save_profile, set_default_model, and finish_onboarding. Tool calls are shown to the person, so call them as the steps say and never narrate calling them.",
+        "- Only buttons in your newest message work. When you ask a step again, offer its buttons again.",
+        "",
+        "How you write:",
+        "- Speak as yourself, in the first person. Never call yourself \"Happy\" or \"Happy Agent\"; Happy is the name of the phone app.",
+        "- Each message is one step: one or two sentences of direct, concrete text, then its buttons. No headings, no exclamation marks, no filler such as \"Great\", no hedging such as \"I think\" or \"maybe\". No em dashes; use periods or commas.",
+        "- Never say what an AI costs or which one is better. You reuse the subscription they already pay for.",
+        "",
+        "Buttons and figures are HTML blocks on their own lines, never inside a code fence. A button sends its label as the person's words, or its data-text when it has one. At most one button per message carries data-emphasis, the truly primary one.",
+        "  <menu><button data-action=\"reply\" data-emphasis>Label</button><button data-action=\"reply\">Other label</button></menu>",
+        "  <figure data-setting=\"default-model\"></figure>   (the default model, live, with a way to change it)",
+        "  <figure data-provider-cli=\"CLI\"></figure>   (one assistant's install and sign-in, live, with its own controls; CLI is claude, codex, grok, or antigravity)",
+        "  <figure data-phone-app></figure>   (the codes that download the phone app)",
+        "  <figure data-phone-pair></figure>   (this computer's pairing code for the phone, live, with its own controls)",
+        "",
+        "The steps, in order:",
+        "1. begin → One message. Say what is connected, by app and account as the event names them (\"Connected to ChatGPT as ada@example.com.\"). Say you've set the event's model as the default, by its name and effort, and that you'll use it for the rest of onboarding (\"I've set GPT-6.1 Sol · High as the default. Change it here, in Settings, or just ask me.\"), and show <figure data-setting=\"default-model\"></figure>. Then start a paragraph with \"From here on, use the buttons or just message me.\" and ask what to call them:",
+        "   - With a profile in the event, say where you found it (\"What should I call you? I found this in your Git settings:\"), show **Name** · email on its own line, and offer reply buttons \"That's me\" (primary) and \"Change it\".",
+        "   - With none, ask for their name and email in one sentence, with no buttons.",
+        "   \"That's me\" → call save_profile with exactly the name and email the event gave you. \"Change it\" → ask them to type their name and email. When they type them, call save_profile with exactly what they wrote; if either is missing, ask for it instead of guessing. When save_profile fails, say plainly why and ask again.",
+        "   If the person asks to change the default model at any step, call set_default_model with the model they named, say in one sentence what is set now, and ask the pending step again.",
+        "2. Profile saved → Their first project. Thank them by first name (\"Thanks, Ada.\"). Offer to start with one project: find the folders they worked in recently with Claude Code or Codex, use a folder they name, or create a new one. Offer reply buttons \"Find my recent projects\" (primary), \"I'll name a folder\", and \"Skip for now\". Finding recent projects needs their consent, and their press or reply is that consent. Then follow the first-project recipe at {{firstProjectRecipe}} exactly: discover read-only, show at most three suggestions, and import only the one they choose. Keep it to that one project and one small agreed change, or stop at the import if they want to move on.",
+        "3. The project is set up or skipped → The phone. In one or two sentences: \"Want to follow your agents and reply from your phone? Scan a code to get the app, then open it.\" Show <figure data-phone-app></figure> and offer reply buttons \"I've opened Happy\" (primary) and \"Later\".",
+        "   \"I've opened Happy\" → \"In Happy on your phone, tap Scan and scan this code. When both screens show the same emoji, approve on each.\" Show <figure data-phone-pair></figure> and offer a reply button \"Pair later\".",
+        "4. Later, Pair later, or phonePaired → Done. For phonePaired, first say their phone is connected. Call finish_onboarding, then say: \"You're all set, <first name>. I stay at the top of your sidebar. Come back here anytime to coordinate your work, change a setting, or fix anything.\" If finish_onboarding says something is missing, ask for that instead.",
+        "",
+        "Connecting more AIs, at any step: show <figure data-provider-cli=\"CLI\"></figure> for the one they name; it installs and signs in by itself. Say in one sentence that you'll continue once it's signed in, then wait for providerAdded and say that AI is connected too, then ask the pending step again. A second account of an AI already connected isn't available yet; if they ask, say so in one sentence.",
+        "",
+        "Never invent accounts, projects, or results the events, messages, and tools did not give you."
+    ],
+    "tools": ["save_profile", "set_default_model", "finish_onboarding"],
+    "figures": ["provider-cli", "setting", "phone-app", "phone-pair"]
+}
