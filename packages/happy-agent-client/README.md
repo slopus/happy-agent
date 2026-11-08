@@ -133,6 +133,10 @@ directly; the daemon never sees the code, the PKCE verifier, or a refresh token.
 is on another origin than its authorization URL, and returns the URL to open in the system
 browser, the authorization server's `host` to show the person, and the state and verifier to keep
 in memory. `serverUrl` is the server being signed in to, such as a server connection's URL.
+Sign-in URLs must use https, or plain http to `localhost`, `[::1]`, or `127.x.x.x`. `serverUrl`
+may also use plain http at a name under `localhost`, such as `http://acme.localhost:31360/`,
+because the client only compares it with the token's `aud`; the authorization, token, and refresh
+URLs may not, because `fetch` can send such a name to DNS.
 `completeOAuthSignIn(signIn, callbackUrl)` checks `state`, exchanges the code at that method's
 token URL, and returns the token only when its `aud` names `serverUrl`, so a server that copied
 another deployment's sign-in method never receives that deployment's token.

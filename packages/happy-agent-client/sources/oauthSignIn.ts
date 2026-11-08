@@ -81,7 +81,7 @@ export async function beginOAuthSignIn(
     }
     method = Object.freeze({ ...method });
     const authorizationUrl = oneOriginAuthorizationUrl(method);
-    secureUrl(options.serverUrl);
+    secureUrl(options.serverUrl, { nameUnderLocalhost: true });
     if (method.resource !== undefined) resourceIndicator(method.resource);
     const redirect = new URL(options.redirectUri);
     if (redirect.hash !== "") {
@@ -335,8 +335,13 @@ function differentSite(): HappyAgentOAuthError {
     );
 }
 
-/** Credentials only travel over https, or plain http to this machine. */
-function secureUrl(value: string): URL {
+/**
+ * Credentials only travel over https, or plain http to this machine. A URL this
+ * client fetches must name loopback itself, since `fetch` may send a name under
+ * `localhost` to DNS. The server URL is never fetched here, only compared with
+ * the token's `aud`, so a name under `localhost` (RFC 6761) counts for it.
+ */
+function secureUrl(value: string, options?: { readonly nameUnderLocalhost: boolean }): URL {
     let url: URL;
     try {
         url = new URL(value);
@@ -346,7 +351,10 @@ function secureUrl(value: string): URL {
     const loopback =
         url.hostname === "localhost" ||
         url.hostname === "[::1]" ||
-        /^127(?:\.\d{1,3}){3}$/u.test(url.hostname);
+        /^127(?:\.\d{1,3}){3}$/u.test(url.hostname) ||
+        (options?.nameUnderLocalhost === true &&
+            url.hostname.endsWith(".localhost") &&
+            url.hostname.length > ".localhost".length);
     if (
         (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
         url.username !== "" ||
