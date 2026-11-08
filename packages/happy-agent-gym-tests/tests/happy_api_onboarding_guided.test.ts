@@ -15,6 +15,7 @@ import {
     textOf,
     waitForSaid,
     waitForStep,
+    type OnboardingFlow,
 } from "./support/onboardingGym.js";
 
 /**
@@ -108,7 +109,12 @@ function cue(request: GymInferenceRequest): string {
 
 async function startGuidedGym(
     answers: Record<string, (request: GymInferenceRequest) => GymTurn>,
-    options: { /** Claude Code signed in too, beside Codex. */ readonly claude?: boolean } = {},
+    options: {
+        /** Claude Code signed in too, beside Codex. */
+        readonly claude?: boolean;
+        /** The kind of device the start names. */
+        readonly device?: string;
+    } = {},
 ): Promise<{ gym: AgentGym; agentId: string }> {
     const codex = "Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
     const { gym } = await gyms.start({
@@ -162,7 +168,11 @@ async function startGuidedGym(
             return answer(request);
         },
     });
-    return { gym, agentId: await startOnboarding(gym) };
+    if (options.device === undefined) return { gym, agentId: await startOnboarding(gym) };
+    const { flow } = (await gym.http.ok("POST", "/v0/onboarding/flow/start", {
+        device: options.device,
+    })) as { flow: OnboardingFlow };
+    return { gym, agentId: flow.agentId! };
 }
 
 /** Use selected on the routes table with `values` ticked. */
@@ -359,6 +369,31 @@ describe("The model leading onboarding", () => {
                 (request) => cue(request) === "event:begin",
             );
             expect(begins.map((request) => request.providerId)).toEqual(["claude", "codex"]);
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "tells the model the kind of device onboarding began on, whatever later starts say",
+        async () => {
+            const { gym, agentId } = await startGuidedGym(
+                {
+                    "event:begin": () => SAVE_PROFILE,
+                    saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+                },
+                { device: "phone" },
+            );
+            // Only the start that began onboarding counts; a device it does not know is refused.
+            await gym.http.ok("POST", "/v0/onboarding/flow/start", { device: "desktop" });
+            const unknown = await gym.http.request("POST", "/v0/onboarding/flow/start", {
+                device: "tablet",
+            });
+            expect(unknown.status, unknown.text).toBe(400);
+            await useRoutes(gym, agentId, ["codex"]);
+            await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
+            const begin = gym.inference.requests.find((request) => cue(request) === "event:begin");
+            expect(JSON.stringify(begin?.messages.at(-1))).toContain('\\"device\\":\\"phone\\"');
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

@@ -92,6 +92,16 @@ started with a stable version, and every hook does nothing. The decision is made
 instead, so an installation used with the flag off is never sent through onboarding when the flag
 is turned on later.
 
+## Typed answers stay in the script, and the device is said once
+
+On a team server, typing a name at the first step ended the scripted part (`typing: "handoff"`), so
+the model took over before anything was set up. A step can now take a typed answer: text that fits
+is handled exactly like a press and keeps the script going, and only text that does not fit
+follows the typing rule. Phones need some steps worded differently, so a start may name the device;
+only the start that began onboarding counts, so someone who starts on a phone and continues on a
+computer keeps the wording already sent. Both are part of the shared recipe format, so Happy Cloud
+implements the same rules.
+
 ## A sign-in in the person's own terminal is looked for
 
 Nothing the daemon started reports a sign-in the person runs themselves, and no figure is on

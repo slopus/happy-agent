@@ -416,6 +416,7 @@ import {
     documentBodySchema,
     draftBodySchema,
     emptyMutationBodySchema,
+    onboardingStartBodySchema,
     gitWatchBodySchema,
     invokeSlashCommandRequestSchema,
     messageSendBodySchema,
@@ -3189,11 +3190,14 @@ export class ApiModule implements AgentModule {
                       // the choice it locked, before the scripted answer that follows.
                       this.#onboardingFlow.onPressRecorded((agentId, press, pressed) => {
                           void this.#queueAgentWork(ctx, agentId, undefined, async () => {
-                              this.#journal.append("message.updated", {
-                                  agentId,
-                                  runId: pressed.runId ?? null,
-                                  message: messageResource(pressed),
-                              });
+                              // A typed answer chose no control, so no message changed.
+                              if (pressed !== undefined) {
+                                  this.#journal.append("message.updated", {
+                                      agentId,
+                                      runId: pressed.runId ?? null,
+                                      message: messageResource(pressed),
+                                  });
+                              }
                               const run =
                                   press.runId === undefined
                                       ? undefined
@@ -5646,6 +5650,13 @@ export class ApiModule implements AgentModule {
             return;
         }
         const { mode, text } = body;
+        if (press === undefined && text !== undefined) {
+            const answered = await this.#answerOnboarding(ctx, agentId, body.id, text);
+            if (answered !== undefined) {
+                sendJson(response, 202, answered);
+                return;
+            }
+        }
         if (press === undefined) {
             await this.#onboardingFlow?.refuseTyping(ctx, agentId).catch((error: unknown) => {
                 throw onboardingApiError(error);
@@ -5742,6 +5753,39 @@ export class ApiModule implements AgentModule {
                     });
                 });
                 return { message: messageResource(message), cursor };
+            } catch (error: unknown) {
+                throw onboardingApiError(error);
+            }
+        });
+    }
+
+    /**
+     * A typed message that answers the onboarding step the flow stands on, as a press does: no
+     * model reads it and it takes no mode. Undefined when that step takes no typed answer or the
+     * text does not fit it, so the message is sent as any other.
+     */
+    async #answerOnboarding(
+        ctx: Context,
+        agentId: string,
+        requestedId: string | undefined,
+        text: string,
+    ): Promise<{ readonly message: unknown; readonly cursor: string | null } | undefined> {
+        const onboarding = this.#onboardingFlow;
+        if (onboarding === undefined || this.#team.enabled) return undefined;
+        const id = requestedId ?? createId();
+        return await this.#serializeMessageSend(id, async () => {
+            const cursor = this.#journal.cursor();
+            const existing = await ctx.inTx(
+                async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
+            );
+            if (existing !== undefined) return { message: existing, cursor };
+            try {
+                const message = await ctx.inTx(
+                    async (txCtx) => await onboarding.answer(txCtx, { agentId, id, text }),
+                );
+                return message === undefined
+                    ? undefined
+                    : { message: messageResource(message), cursor };
             } catch (error: unknown) {
                 throw onboardingApiError(error);
             }
@@ -9853,13 +9897,13 @@ export class ApiModule implements AgentModule {
         if (request.method !== "POST") throw notFound("Route not found.");
         const body = await optionalBodyAs(
             request,
-            emptyMutationBodySchema,
+            onboardingStartBodySchema,
             "onboarding start",
             2 * 1_024,
         );
         const flow = await this.#withMutationId(
             body.mutationId,
-            async () => await onboarding.start(ctx, body.mutationId),
+            async () => await onboarding.start(ctx, body.mutationId, body.device),
         );
         sendJson(response, 200, { flow });
     }

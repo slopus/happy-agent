@@ -157,6 +157,47 @@ describe("checking an onboarding recipe against its runtime", () => {
         ).toEqual(['Step "idle" neither says nor does anything.']);
     });
 
+    it("takes a typed answer only toward a next step that declares its parameter", () => {
+        const typed = (input: Record<string, unknown>, next?: Record<string, unknown>) =>
+            recipe((value) => {
+                const hello = value["bootstrap"].steps.hello;
+                hello.input = input;
+                if (next !== undefined) hello.next = next;
+            });
+        expect(
+            checkOnboardingRecipe(
+                typed(
+                    {
+                        step: "connect",
+                        param: "provider",
+                        maxLength: 40,
+                        placeholder: "Or type one",
+                    },
+                    { connect: { params: { provider: {} } } },
+                ),
+                OFFER,
+            ),
+        ).toEqual([]);
+        expect(checkOnboardingRecipe(typed({ step: "nowhere", param: "provider" }), OFFER)).toEqual(
+            [
+                `Step "hello" takes a typed answer toward "nowhere", which is not one of its next steps.`,
+            ],
+        );
+        expect(checkOnboardingRecipe(typed({ step: "connect", param: "name" }), OFFER)).toEqual([
+            `Step "hello" takes a typed answer as "name", which its step "connect" does not declare.`,
+        ]);
+        expect(
+            checkOnboardingRecipe(
+                typed({ step: "connect", param: "provider", maxLength: 129 }),
+                OFFER,
+            ),
+        ).toEqual([
+            expect.stringMatching(
+                /^The recipe does not match its schema at \/bootstrap\/steps\/hello\/input\/maxLength/u,
+            ),
+        ]);
+    });
+
     it("throws with every problem when asked for a recipe that cannot run", () => {
         expect(() =>
             assertOnboardingRecipe(

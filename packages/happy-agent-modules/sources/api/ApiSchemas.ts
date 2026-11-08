@@ -96,6 +96,15 @@ export const emptyMutationBodySchema = Type.Object(
     { additionalProperties: false },
 );
 
+/** `POST /v0/onboarding/flow/start`: optionally, the kind of device the person starts on. */
+export const onboardingStartBodySchema = Type.Object(
+    {
+        mutationId: Type.Optional(mutationIdSchema),
+        device: Type.Optional(Type.Union([Type.Literal("desktop"), Type.Literal("phone")])),
+    },
+    { additionalProperties: false },
+);
+
 export const projectSettingsBodySchema = Type.Object(
     {
         defaultWorkspaceCompute: Type.Union([

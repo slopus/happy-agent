@@ -51,6 +51,7 @@ import {
     sentence,
 } from "./impl/localWords.js";
 import { readGitIdentity } from "./impl/readGitIdentity.js";
+import { typedAnswer } from "./impl/typedAnswer.js";
 import { onboardingMigrations } from "./OnboardingMigrations.js";
 import type { OnboardingRecipe, OnboardingRecipeTarget } from "./OnboardingRecipe.js";
 import { OnboardingRequestError } from "./OnboardingRequestError.js";
@@ -97,6 +98,8 @@ type OnboardingEvent =
           readonly kind: "begin";
           readonly connected: readonly { readonly app: string; readonly account?: string }[];
           readonly model: { readonly name: string; readonly effort: string };
+          /** The kind of device onboarding began on, when the start named one. */
+          readonly device?: OnboardingDevice;
           readonly profile?: {
               readonly name: string;
               readonly email: string;
@@ -105,6 +108,9 @@ type OnboardingEvent =
       }
     | { readonly kind: "providerAdded"; readonly app: string }
     | { readonly kind: "phonePaired"; readonly device?: string };
+
+/** The kind of device a start names: a recipe may word its steps for a phone. */
+export type OnboardingDevice = "desktop" | "phone";
 
 /** One press on an `onboarding.next` control, already resolved against its stored message. */
 export interface OnboardingPress {
@@ -133,11 +139,14 @@ export type OnboardingSpeechListener = (
  * worked out, so the conversation shows typing at once; settled when working them out failed.
  */
 export type OnboardingScriptedRunListener = (agentId: string, runId: string) => void;
-/** A press committed in a finished run of its own, with the pressed message's new choice. */
+/**
+ * A press committed in a finished run of its own, with the pressed message's new choice; a typed
+ * answer has no pressed message.
+ */
 export type OnboardingPressListener = (
     agentId: string,
     press: HistoryMessage,
-    pressed: HistoryMessage,
+    pressed: HistoryMessage | undefined,
 ) => void;
 
 /**
@@ -351,7 +360,11 @@ export class OnboardingModule implements AgentModule {
      * stored before the first start, so a server that only advertises onboarding behaves exactly
      * as one without it; that first start decides whether the installation was already in use.
      */
-    async start(ctx: Context, mutationId?: string): Promise<OnboardingFlow> {
+    async start(
+        ctx: Context,
+        mutationId?: string,
+        device?: OnboardingDevice,
+    ): Promise<OnboardingFlow> {
         const inUse = await this.#inUse(ctx);
         return await ctx.inTx(async (txCtx) => {
             let current = await this.#state(txCtx);
@@ -367,7 +380,7 @@ export class OnboardingModule implements AgentModule {
             }
             const next = await this.#enter(
                 txCtx,
-                current,
+                device === undefined ? current : { ...current, startedOn: device },
                 this.#recipe.bootstrap.start,
                 { params: {}, values: [] },
                 mutationId,
@@ -434,30 +447,66 @@ export class OnboardingModule implements AgentModule {
             },
         };
         await this.#history.replace(ctx, press.agentId, chosen);
+        const message = await this.#recordWords(ctx, press.agentId, press.id, press.words, chosen);
+        await this.#enter(ctx, state, press.step, { params, values: [...press.values] });
+        return message;
+    }
+
+    /**
+     * A typed message for `agentId`, in the send's transaction, when the bootstrap's current step
+     * takes it as its answer: stored like a press, in a finished run of its own that no model
+     * reads, and the step its input names is entered with the trimmed text as its parameter.
+     * Undefined when the step takes no typed answer or this text does not fit, so the message
+     * follows the recipe's typing rule instead.
+     */
+    async answer(
+        ctx: Context,
+        answer: { readonly agentId: string; readonly id: string; readonly text: string },
+    ): Promise<HistoryMessage | undefined> {
+        const state = await this.#bootstrapIn(ctx, answer.agentId);
+        if (state?.step == null) return undefined;
+        const answered = typedAnswer(this.#step(state.step), answer.text);
+        if (answered === undefined) return undefined;
+        const message = await this.#recordWords(ctx, answer.agentId, answer.id, answer.text);
+        await this.#enter(ctx, state, answered.step, { params: answered.params, values: [] });
+        return message;
+    }
+
+    /** The person's words for a press or a typed answer, in a finished run that no model reads. */
+    async #recordWords(
+        ctx: Context,
+        agentId: string,
+        id: string,
+        words: string,
+        pressed?: HistoryMessage,
+    ): Promise<HistoryMessage> {
         const runId = createId();
         const now = Date.now();
-        await this.#history.beginMaintenanceRun(ctx, press.agentId, runId, now);
-        await this.#history.record(ctx, press.agentId, {
+        await this.#history.beginMaintenanceRun(ctx, agentId, runId, now);
+        await this.#history.record(ctx, agentId, {
             role: "user",
-            recordId: press.id,
+            recordId: id,
             runId,
             delivery: "queue",
-            blocks: [{ type: "text", text: press.words }],
+            blocks: [{ type: "text", text: words }],
             at: now,
         });
-        await this.#history.finishMaintenanceRun(ctx, press.agentId, runId, "completed", now);
-        const message = await this.#history.message(ctx, press.agentId, press.id);
-        if (message === undefined) throw new Error("The press was not recorded.");
+        await this.#history.finishMaintenanceRun(ctx, agentId, runId, "completed", now);
+        const message = await this.#history.message(ctx, agentId, id);
+        if (message === undefined) throw new Error("The person's words were not recorded.");
         afterCommit(ctx, () => {
             for (const listener of this.#pressListeners) {
                 try {
-                    listener(press.agentId, structuredClone(message), structuredClone(chosen));
+                    listener(
+                        agentId,
+                        structuredClone(message),
+                        pressed === undefined ? undefined : structuredClone(pressed),
+                    );
                 } catch (error: unknown) {
                     ctx.log.warn("An onboarding press listener failed.", {}, error);
                 }
             }
         });
-        await this.#enter(ctx, state, press.step, { params, values: [...press.values] });
         return message;
     }
 
@@ -1065,6 +1114,7 @@ export class OnboardingModule implements AgentModule {
                 ...(account === undefined ? {} : { account }),
             })),
             model: { name: model.name, effort: effortLabel(model.defaultEffort) },
+            ...(next.startedOn === undefined ? {} : { device: next.startedOn }),
             ...(prefill === undefined ? {} : { profile: prefill }),
         });
         return next;
@@ -1323,6 +1373,8 @@ export class OnboardingModule implements AgentModule {
                     return (await cliOf())?.installer != null;
                 case "subjectKnown":
                     return state.subject !== null;
+                case "onPhone":
+                    return state.startedOn === "phone";
                 default:
                     return false;
             }
@@ -1473,6 +1525,8 @@ export class OnboardingModule implements AgentModule {
         const bot = await this.#bots.chiefOfStaff(ctx);
         const bootstrapping = state.status === "running" && state.step !== null;
         const guiding = state.status === "running" && state.step === null;
+        const input =
+            bootstrapping && state.step !== null ? this.#step(state.step)?.input : undefined;
         return {
             version: state.version,
             recipe: state.recipe,
@@ -1480,14 +1534,14 @@ export class OnboardingModule implements AgentModule {
             step: state.status === "running" ? state.step : null,
             agentId: bot?.agentId ?? null,
             composer:
-                bootstrapping && this.#recipe.bootstrap.typing === "disabled"
+                bootstrapping && input === undefined && this.#recipe.bootstrap.typing === "disabled"
                     ? "disabled"
                     : "enabled",
             composerPlaceholder:
                 (guiding
                     ? this.#recipe.composerPlaceholder
                     : bootstrapping
-                      ? this.#recipe.bootstrap.composerPlaceholder
+                      ? (input?.placeholder ?? this.#recipe.bootstrap.composerPlaceholder)
                       : undefined) ?? null,
             restartRequired: state.restartRequired,
             onboardingVersion: this.#recipe.version,
