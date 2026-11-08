@@ -53,18 +53,19 @@ const ELEMENTS: ReadonlySet<string> = new Set<ChatActionElementName>([
 ]);
 const VOID: ReadonlySet<string> = new Set(["input"]);
 
-const NAMED_REFERENCES: Readonly<Record<string, string>> = {
-    amp: "&",
-    lt: "<",
-    gt: ">",
-    quot: '"',
-    apos: "'",
-    nbsp: "\u00a0",
-    middot: "\u00b7",
-    hellip: "\u2026",
-    mdash: "\u2014",
-    ndash: "\u2013",
-};
+/** A Map, so a name such as `toString` never reaches an inherited property. */
+const NAMED_REFERENCES: ReadonlyMap<string, string> = new Map([
+    ["amp", "&"],
+    ["lt", "<"],
+    ["gt", ">"],
+    ["quot", '"'],
+    ["apos", "'"],
+    ["nbsp", "\u00a0"],
+    ["middot", "\u00b7"],
+    ["hellip", "\u2026"],
+    ["mdash", "\u2014"],
+    ["ndash", "\u2013"],
+]);
 
 /**
  * Characters no block may hold, raw or decoded: C0 controls but tab, line feed, and carriage
@@ -209,7 +210,7 @@ function decodeCharacterReferences(text: string): string | undefined {
             continue;
         }
         if (match?.[3] !== undefined) {
-            const character = NAMED_REFERENCES[match[3]];
+            const character = NAMED_REFERENCES.get(match[3]);
             if (character === undefined) return undefined;
             decoded += character;
             index = REFERENCE.lastIndex;
