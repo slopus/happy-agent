@@ -15422,10 +15422,31 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
 **Onboarding**
 
 - `onboarding.flow.updated` — the caller's onboarding flow changed, as described under
-  "Onboarding in a conversation". This is a complete replacement; clients keep the object with the
-  greater `version`. Absent on older daemons and in daemon team mode.
+  "Onboarding in a conversation". This is a complete replacement; clients reconcile it by the
+  flow's `id` and `version` as that section describes. Absent on older daemons and in daemon team
+  mode.
     - `flow` (the complete onboarding flow object).
     - `mutationId` — echoed when the API request that caused the change supplied one.
+
+**Team members**
+
+Team servers send these to every member, so the `data-members` figure and members settings stay
+live. The standalone daemon never sends them.
+
+- `member.updated` — a member joined, which the server learns at their first request, or their
+  role changed.
+    - `member` — `{ "accountId": "…", "role": "member" }`, the member's account ID and their role ID
+      from `GET /v0/roles`.
+    - `mutationId` — echoed when the API request that changed the role supplied one.
+- `member.removed` — a member left or was removed.
+    - `accountId` — the member's account ID.
+- `invite.created` — an invite was created. The event never carries the invite's code, which only
+  the response to the request that created it shows, once.
+    - `invite` — `{ "id": "…", "role": "member", "expiresAt": "2026-11-14T00:00:00Z" }`: the
+      invite's ID, the role it grants, and when it stops working, as an RFC 3339 UTC time.
+    - `mutationId` — echoed when the API request that created it supplied one.
+- `invite.removed` — an invite was revoked.
+    - `inviteId` — the revoked invite's ID.
 
 **Provider-account usage**
 
