@@ -204,6 +204,13 @@ const PRODUCT = computePermissions("full_access");
 const WORKSPACE_REFERENCE_INSTRUCTIONS =
     "When you mention a workspace in a reply, link it as [its name](happy://workspaces/<workspaceId>); people see its live name as the link text.";
 /**
+ * For an agent placed in a copied folder. Its project is one Git cannot cut a worktree from, and the
+ * sandbox protects `.git`, so a brief that says to commit would otherwise end in `git init` or a
+ * commit outside the sandbox.
+ */
+const COPIED_FOLDER_INSTRUCTIONS =
+    "Your workspace is a copy of a project folder that Git cannot make a worktree of, such as one with no repository or no commits yet, so there is nothing here to commit to. Never run git init in it or commit, even when a brief asks you to commit, and never ask to leave the sandbox for either: leave the files where they are, and say they are in this workspace.";
+/**
  * This module's settings on an agent that works for a task. They are fixed when the agent is
  * created, and every agent created under it copies them.
  */
@@ -347,7 +354,14 @@ export class WorkspacesModule implements AgentModule {
 
     readonly #hooks: AgentModuleHooks = {
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> =>
-            (await this.#offersTools(ctx, scope.agent.id)) ? WORKSPACE_REFERENCE_INSTRUCTIONS : "",
+            [
+                ...((await this.#offersTools(ctx, scope.agent.id))
+                    ? [WORKSPACE_REFERENCE_INSTRUCTIONS]
+                    : []),
+                ...((await this.#inCopiedFolder(ctx, scope.agent.id))
+                    ? [COPIED_FOLDER_INSTRUCTIONS]
+                    : []),
+            ].join("\n\n"),
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             if (!(await this.#offersTools(ctx, scope.agent.id))) return [];
             return [
@@ -367,6 +381,19 @@ export class WorkspacesModule implements AgentModule {
             await deleteWorkspaceAgent(ctx.db, agent.id);
         },
     };
+
+    /** Whether the agent works in a live workspace that is a copied folder rather than a worktree. */
+    async #inCopiedFolder(ctx: Context, agentId: string): Promise<boolean> {
+        if (!this.#enabled) return false;
+        const association = await readWorkspaceAgent(ctx.db, agentId);
+        if (association === undefined) return false;
+        const workspace = await this.get(ctx, association.workspaceId);
+        return (
+            workspace?.kind === "directory" &&
+            workspace.status !== "archiving" &&
+            workspace.status !== "archived"
+        );
+    }
 
     /**
      * Workspaces belong to the conversation a person is having. A subagent is one pair of hands

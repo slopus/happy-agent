@@ -1,10 +1,10 @@
-import { defineAgentTool } from "@slopus/happy-agent-base";
+import { defineAgentTool, type AgentKV } from "@slopus/happy-agent-base";
 import { Type } from "@sinclair/typebox";
 
 import type { OnboardingModule } from "../OnboardingModule.js";
 
 /** The Chief of Staff ends onboarding once its requirements are met. */
-export function finishOnboardingTool(module: OnboardingModule) {
+export function finishOnboardingTool(module: OnboardingModule, runKV: AgentKV) {
     return defineAgentTool({
         name: "finish_onboarding",
         capabilities: ["End onboarding once the person is set up."],
@@ -16,7 +16,7 @@ export function finishOnboardingTool(module: OnboardingModule) {
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
-        execute: async (ctx) => await module.finish(ctx),
+        execute: async (ctx) => await module.finish(ctx, runKV),
         toLLM: (text) => [{ type: "text", text }],
     });
 }

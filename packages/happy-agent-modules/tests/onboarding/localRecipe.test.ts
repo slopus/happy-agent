@@ -340,8 +340,12 @@ describe("the local onboarding recipe", () => {
             "Add that it verifies its work with tests and offline checks inside its sandbox, with no live network calls, installs or writes outside its workspace, and that when a live check would need that access, it says so at the end so the person can choose.",
         );
         expect(guide).toContain("Ask for nothing the person didn't, such as a live run");
+        // A task told nothing about commits briefed its subtask to commit, which escalated.
         expect(guide).toContain(
-            "If the task said a live check needs access it doesn't have, say so in one sentence and let them choose.",
+            "it doesn't commit, push or publish, and in a project without Git history it never runs git init.",
+        );
+        expect(guide).toContain(
+            'If the task said a live check needs access it doesn\'t have, say so in one sentence and let them choose: end the message with "Run it live" and "Not now", neither emphasized',
         );
         // The tool says the same, so a brief written without the guide at hand keeps to it too.
         const tool = startFirstTaskTool(
@@ -351,6 +355,9 @@ describe("the local onboarding recipe", () => {
         );
         expect(tool.description).toContain(
             "The person's first task must never need to leave its sandbox. Have text say that it verifies its work with tests and offline checks, with no live network calls, installs or writes outside its workspace",
+        );
+        expect(tool.description).toContain(
+            "it doesn't commit, push or publish, and in a project without Git history it never runs git init.",
         );
     });
 
@@ -395,7 +402,7 @@ describe("the local onboarding recipe", () => {
             "Then exactly one sentence on where the work is and how to get it into their folder",
         );
         expect(guide).toContain(
-            "Never say what their folder doesn't have yet, and never mention copies, checkouts, commits, pushing or publishing, even when the task's summary does.",
+            "Never say what their folder doesn't have yet, and never mention copies, checkouts, commits, authors, pushing, publishing or the sandbox, even when the task's summary or its messages to you do.",
         );
         expect(guide).not.toContain("Nothing is committed");
         expect(guide).toContain(

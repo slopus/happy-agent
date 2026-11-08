@@ -93,22 +93,29 @@ addresses can carry tokens, so the local guide carries the secrets rule too: nev
 ask for the address without it.
 
 A handover that said "The files are in their own copy of the project, not in ~/weather-today,
-which is still empty" confused a first-time person, and a looser rule ("never explain copies,
-checkouts or commits") still let "your folder is still empty, and nothing has been committed or
-published" through, echoing the task's own summary. The guide now allows exactly one sentence
-after the summary: where the work is and how to get it into their folder (open the task, or tell
-it to merge the change or copy the files over). It never says what their folder lacks and never
-mentions copies, checkouts, commits, pushing or publishing, even when the summary does. No action
-merges or applies a task's work yet; when the person asks the Chief of Staff to bring it over, it
-passes that to the task with `send_agent_message`, which the recipe loads.
+which is still empty" confused a first-time person. Two looser rules still let "your folder is
+still empty", "nothing has been committed or published" and "the commit isn't under your name"
+through. The cause was not only wording: the guide reached the model only while onboarding ran, and
+the guide has it call `finish_onboarding` before the close, so the handover was written with no
+guide at all, from the task's messages. `finish` now marks the run store of the turn that finished
+onboarding, and the instructions hook keeps the guide until that run settles; the onboarding tools
+still go at once. The guide allows exactly one sentence after a rewritten summary: where the work
+is and how to get it into their folder (open the task, or tell it to merge the change or copy the
+files over). It never says what their folder lacks and never mentions copies, checkouts, commits,
+authors, pushing, publishing or the sandbox, even when the task's summary or messages do. When the
+task says a live check needs access, the message ends with "Run it live" and "Not now", neither
+emphasized, in place of the next suggestion, so it asks one thing. No action merges or applies a
+task's work yet; the Chief of Staff passes such a request to the task with `send_agent_message`.
 
 The person's first task must never need to leave its sandbox either. A brief that said "Run it for
-real" made the subtask ask for full access to call a weather service. The guide and the
-`start_first_task` description now have the brief say the task verifies with tests and offline
-checks, with no live network calls, installs or writes outside its workspace, and says at the end
-when a live check would need that access, so the person chooses at the handover. The brief asks
-for nothing the person didn't, and a cloned repository's default work builds and tests with what
-the machine already has.
+real" made the subtask ask for full access to call a weather service, and a brief that said nothing
+about commits let the task tell its subtask to commit, which in a new folder ended in an escalated
+`git init`. The guide and the `start_first_task` description have the brief say the task verifies
+with tests and offline checks, with no live network calls, installs or writes outside its
+workspace, says at the end when a live check would need that access, and leaves its changes in its
+workspace without committing, pushing, publishing, or running `git init`. The brief asks for nothing
+the person didn't, and a cloned repository's default work builds and tests with what the machine
+already has.
 
 ## Recent work is read by the daemon, never through the shell
 
