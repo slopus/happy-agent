@@ -8557,7 +8557,10 @@ daemon serves none of their routes, and its clients draw them as an unknown figu
 
 - `data-invite [data-role="ROLE"]` — a role picker from `GET /v0/roles`, starting at `data-role`
   or `member`. Create calls `POST /v0/invites` with the role and shows that invite's code once,
-  with the server's name, a copy control, and how long it works. Revoke calls
+  with the name a teammate joins with, a copy control, and how long it works. The team server
+  answers `201` with `{ "invite": { "id", "code", "expiresAt", "role", "serverName" } }`; the join
+  name is `serverName`, the server's own name rather than its display name, or `null` when the
+  server cannot say. Revoke calls
   `DELETE /v0/invites/:inviteId`. Without permission it says that owners and admins can invite
   teammates. Fallback: `happy://settings/members`.
 - `data-members` — `GET /v0/members` and, with permission to manage members, `GET /v0/invites`
