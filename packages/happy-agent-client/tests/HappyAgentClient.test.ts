@@ -1,9 +1,12 @@
+import { Value } from "@sinclair/typebox/value";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { HappyAgentApiError } from "../sources/HappyAgentApiError.js";
 import { HappyAgentClient } from "../sources/HappyAgentClient.js";
 import type { DaemonUsageResponse } from "../sources/protocol/usage.js";
 import type { CreateAgentRequest } from "../sources/protocol/agents.js";
+import { onboardingFlowSchema } from "../sources/protocol/onboarding.js";
+import { providerCliSignInRequestSchema } from "../sources/protocol/providerClis.js";
 
 interface RecordedRequest {
     url: string;
@@ -477,6 +480,55 @@ describe("HappyAgentClient", () => {
         await client.sendMessage("agent1", { content: [press], id: "press1" });
 
         expect(requests[0]?.body).toBe(JSON.stringify({ content: [press], id: "press1" }));
+    });
+
+    it("sends the team target a provider CLI figure names with its sign-in", async () => {
+        const { fetch, requests } = stubFetch(() => json({ providerCli: {} }));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await client.signInProviderCli("claude", {
+            target: { providerId: "p1" },
+            mutationId: "m1",
+        });
+        await client.signInProviderCli("codex", { target: { scope: "private" } });
+
+        expect(requests.map((request) => [request.url, request.body])).toEqual([
+            [
+                "http://agent.local/v0/provider-clis/claude/sign-in",
+                JSON.stringify({ target: { providerId: "p1" }, mutationId: "m1" }),
+            ],
+            [
+                "http://agent.local/v0/provider-clis/codex/sign-in",
+                JSON.stringify({ target: { scope: "private" } }),
+            ],
+        ]);
+        expect(
+            [
+                { target: { name: "Design", scope: "team" } },
+                { target: { scope: "everyone" } },
+                { target: { name: "", scope: "private" } },
+                { target: {} },
+            ].map((body) => Value.Check(providerCliSignInRequestSchema, body)),
+        ).toEqual([true, false, false, false]);
+    });
+
+    it("reads a flow with its own ID, and one from a server that sends none", () => {
+        const flow = {
+            version: "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+            recipe: "teamOwner",
+            status: "running",
+            agentId: "a1",
+            composer: "disabled",
+            composerPlaceholder: null,
+            restartRequired: false,
+            onboardingVersion: 1,
+            completedVersion: null,
+        };
+        expect(
+            [{ ...flow, id: "f1" }, { ...flow, id: null }, flow, { ...flow, id: "" }].map((body) =>
+                Value.Check(onboardingFlowSchema, body),
+            ),
+        ).toEqual([true, true, true, false]);
     });
 
     it("creates a user-controlled workspace root without a parent-selection option", async () => {

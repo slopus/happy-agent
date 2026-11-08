@@ -3014,7 +3014,14 @@ The standalone daemon's `local` recipe:
 }
 ```
 
-- `version` — UUIDv7, advanced on every change. Clients keep the object with the greater one.
+- `version` — UUIDv7, advanced on every change. Clients keep the object with the greater one
+  when both have the same `id`.
+- `id` — optional: the stored flow's own ID, new for every flow the server begins for the caller,
+  and `null` while `status` is `"not_started"`. A team server may replace one flow with another,
+  such as a member's own welcome replacing the team setup, and a later flow may start again at a
+  lower `version`. When two objects' `id` differ, `null` included, clients keep the one the server
+  sent last, whatever its `version`. A server that omits `id`, such as the standalone daemon with its
+  single flow, has one flow per `recipe`, and clients compare `recipe` instead.
 - `recipe` — the recipe the server runs for the caller. Clients treat it as an opaque name.
 - `status` — `"not_started"`, `"running"`, or `"finished"`. Clients treat an unknown value as
   `"running"`.
@@ -3267,10 +3274,16 @@ only when the program is then found and reports its version.
 Starts the vendor's own sign-in with the installed program. Request body, every field optional:
 
 ```json
-{ "method": "device", "mutationId": "optional-client-value" }
+{ "method": "device", "target": { "scope": "private" }, "mutationId": "optional-client-value" }
 ```
 
 - `method` — one of the object's `signIn.methods`. Omitted, the daemon uses the first.
+- `target` — on a team server, whose connection the sign-in makes: `{ "providerId": "…" }` for an
+  existing team provider, or `{ "scope": "private" }` for the caller's own. A team server may also
+  take `{ "name": "…", "scope": "team" | "private" }`, a provider of that name, 1–80 characters,
+  made when there is none; `scope` `"team"` needs a `name`. Without `target`, the sign-in is
+  private. A client sends the target a `data-provider-cli` figure's `data-target` names (see
+  "Inline action blocks"). The standalone daemon serves one user and ignores `target`.
 
 Response — `200`: `{ "providerCli": { ... } }` with the new `"running"` sign-in operation. It
 becomes `"waiting"` with its `authorization` as soon as the vendor's program provides the page to
