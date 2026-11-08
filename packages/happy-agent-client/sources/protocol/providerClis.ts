@@ -98,9 +98,25 @@ export type ProviderClisResponse = Static<typeof providerClisResponseSchema>;
 export const providerCliResponseSchema = Type.Object({ providerCli: providerCliSchema });
 export type ProviderCliResponse = Static<typeof providerCliResponseSchema>;
 
+/**
+ * On a team server, whose connection a sign-in makes: an existing team provider, the caller's own
+ * (`{ scope: "private" }`), or a provider of that name, made when there is none. The standalone
+ * daemon ignores it.
+ */
+export const providerCliSignInTargetSchema = Type.Union([
+    Type.Object({ providerId: Type.String({ minLength: 1 }) }),
+    Type.Object({
+        name: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+        scope: Type.Union([Type.Literal("team"), Type.Literal("private")]),
+    }),
+]);
+export type ProviderCliSignInTarget = Static<typeof providerCliSignInTargetSchema>;
+
 /** `POST /v0/provider-clis/:cliId/sign-in` */
 export const providerCliSignInRequestSchema = Type.Object({
     method: Type.Optional(Type.String()),
+    /** Without one, a team server signs in privately. */
+    target: Type.Optional(providerCliSignInTargetSchema),
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type ProviderCliSignInRequest = Static<typeof providerCliSignInRequestSchema>;

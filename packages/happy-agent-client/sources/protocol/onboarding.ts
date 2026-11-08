@@ -7,8 +7,14 @@ import { mutationIdSchema } from "./common.js";
  * conversation" in API.md. Clients draw the conversation and never depend on its steps.
  */
 export const onboardingFlowSchema = Type.Object({
-    /** UUIDv7, advanced on every change; keep the object with the greater one. */
+    /** UUIDv7, advanced on every change; of two objects with the same `id`, keep the greater. */
     version: Type.String({ minLength: 1 }),
+    /**
+     * The stored flow's own ID, new for every flow, and null while `not_started`. When two objects'
+     * `id` differ, null included, keep the one the server sent last, whatever its `version`. A
+     * server that omits it, such as the standalone daemon, has one flow per `recipe`.
+     */
+    id: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
     /** The recipe the server runs for the caller; an opaque name. */
     recipe: Type.String({ minLength: 1 }),
     /** `not_started`, `running`, `finished`, or newer; treat an unknown value as `running`. */
