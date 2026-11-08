@@ -5,12 +5,14 @@ import { join } from "node:path";
 import {
     DEFAULT_AGENT_PERMISSION_MODE,
     withAgentDatabase,
+    type AgentKV,
     type AgentModule,
     type AgentModuleHooks,
     type AgentModuleScope,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import {
+    formatHappyMarkdownLink,
     messageModeSchema,
     splitChatActionBlocks,
     type ActionChoice,
@@ -29,6 +31,7 @@ import { ProfileModule } from "../profile/index.js";
 import { ProviderClisModule, type ProviderCli, type ProviderCliId } from "../providerClis/index.js";
 import { ProviderRoutesModule, type ProviderRoute } from "../providerRoutes/index.js";
 import { ProviderScanModule } from "../providerScan/index.js";
+import { TasksModule } from "../tasks/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { assertOnboardingRecipe } from "./impl/checkOnboardingRecipe.js";
 import { fillRecipeText, recipeVariables } from "./impl/fillRecipeText.js";
@@ -62,6 +65,7 @@ import localRecipe from "./recipes/local.json" with { type: "json" };
 import { finishOnboardingTool } from "./tools/finish_onboarding.js";
 import { saveProfileTool } from "./tools/save_profile.js";
 import { setDefaultModelTool } from "./tools/set_default_model.js";
+import { startFirstTaskTool } from "./tools/start_first_task.js";
 
 /** Onboarding runs on the daemon's machine for its one person; team members keep their own. */
 const OWNER = "standalone";
@@ -169,6 +173,7 @@ export class OnboardingModule implements AgentModule {
     readonly #providerRoutes: ProviderRoutesModule;
     readonly #providerScan: ProviderScanModule;
     readonly #mobileConnector: MobileConnectorModule;
+    readonly #tasks: TasksModule;
     readonly #recipe: OnboardingRecipe;
     readonly #listeners = new Set<OnboardingListener>();
     readonly #speechListeners = new Set<OnboardingSpeechListener>();
@@ -193,6 +198,7 @@ export class OnboardingModule implements AgentModule {
         providerRoutes: ProviderRoutesModule,
         providerScan: ProviderScanModule,
         mobileConnector: MobileConnectorModule,
+        tasks: TasksModule,
     ) {
         this.#config = config;
         this.#durable = durableFunctions;
@@ -203,6 +209,7 @@ export class OnboardingModule implements AgentModule {
         this.#providerRoutes = providerRoutes;
         this.#providerScan = providerScan;
         this.#mobileConnector = mobileConnector;
+        this.#tasks = tasks;
         this.#recipe = assertOnboardingRecipe(localRecipe, LOCAL_OFFER);
         durableFunctions.register({
             name: STEP_FUNCTION,
@@ -260,6 +267,8 @@ export class OnboardingModule implements AgentModule {
                                   return [setDefaultModelTool(this)];
                               case "finish_onboarding":
                                   return [finishOnboardingTool(this)];
+                              case "start_first_task":
+                                  return [startFirstTaskTool(this, scope.agent.id, scope.kv)];
                               default:
                                   return [];
                           }
@@ -589,6 +598,40 @@ export class OnboardingModule implements AgentModule {
             await this.#useModel(ctx, bot.agentId, update.providerId, update.modelId, effort);
         }
         return `Set. The default is now ${model?.name ?? update.modelId} · ${effortLabel(effort)}, and the rest of onboarding runs on it.`;
+    }
+
+    /**
+     * Start the person's first task for the start_first_task tool: a new top-level task, owned by
+     * whoever the Chief of Staff works for, whose opening message starts its work.
+     */
+    async startFirstTask(
+        ctx: Context,
+        task: {
+            readonly id: string;
+            readonly agentId: string;
+            readonly kv: AgentKV;
+            readonly name: string;
+            readonly text: string;
+        },
+    ): Promise<string> {
+        const ownerUserId = await this.#tasks.ownerFor(ctx, task.kv);
+        let started;
+        try {
+            started = await this.#tasks.create(ctx, {
+                id: task.id,
+                creatorAgentId: task.agentId,
+                ...(ownerUserId === undefined ? {} : { ownerUserId }),
+                name: task.name,
+                text: task.text,
+            });
+        } catch (error: unknown) {
+            return `Not started: ${errorText(error)}`;
+        }
+        const link = formatHappyMarkdownLink(
+            { type: "reference", reference: { kind: "agent", id: started.agentId } },
+            started.name,
+        );
+        return `Started ${link} as a top-level task in their sidebar. It opens its own subtask to check out the project. Mention it by that link.`;
     }
 
     /** End onboarding for the finish_onboarding tool, once its requirements are met. */

@@ -810,6 +810,7 @@ export async function startHappyAgentRuntime(
                   providerRoutes,
                   providerScan,
                   mobileConnector,
+                  tasks,
               );
         const apiModule = new ApiModule(
             abort,

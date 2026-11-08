@@ -81,6 +81,16 @@ first `flow/start` therefore decides once. A completion marker, a named profile,
 from a person counts as finished. Migration `002-onboarding-recipes` clears a preview's row so
 that same check runs again. Clients never read a missing capability as completion.
 
+## The first task is a new top-level task
+
+In Kirill's recordings the Chief of Staff started the first task as a sub-agent under itself: the
+guide said "start one agent", and the tools at hand for that were `create_subtask` and
+`create_agent`, while `create_task` was deferred and had to be searched for. A first task must be
+its own conversation in the person's sidebar, which outlives onboarding and checks out the project
+in subtasks of its own. Onboarding now offers `start_first_task`, loaded like its other tools, which
+creates a top-level task through the Tasks module, and the guide and the first-project recipe say to
+use it and never `create_subtask` or `create_agent` for this.
+
 ## Advertising onboarding changes nothing until a client starts it
 
 Kirill keeps chat onboarding behind an experimental client flag in production, so a client with
@@ -136,9 +146,9 @@ onboarding finished.
 
 ## Onboarding's own tools are loaded, never searched for
 
-`save_profile`, `set_default_model`, and `finish_onboarding` reach the model only while it guides,
-and it calls them as soon as the person answers. They are `defer: false` with no search keywords. A
-deferred copy would make the model search for a tool it needs at that moment.
+`save_profile`, `set_default_model`, `start_first_task`, and `finish_onboarding` reach the model
+only while it guides, and it calls them as soon as the person answers. They are `defer: false` with
+no search keywords. A deferred copy would make the model search for a tool it needs at that moment.
 
 ## A step types at once, even while it is still working out what to say
 

@@ -292,6 +292,10 @@ describe("the local onboarding recipe", () => {
         expect(guide).toContain(
             "Onboarding is finished only when you call finish_onboarding. Never call it before you have offered the first task, unless they say to stop setting up.",
         );
+        // The first task is a new top-level task, never the Chief of Staff's subtask.
+        expect(guide).toContain("then call start_first_task with the work in up to four words");
+        expect(guide).toContain("never start it with create_subtask or create_agent");
+        expect(recipe.tools).toContain("start_first_task");
     });
 
     it("fills only the blocks a text uses", () => {

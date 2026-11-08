@@ -104,6 +104,7 @@ function cue(request: GymInferenceRequest): string {
     if (text.includes("Saved their name and email")) return "saved";
     if (text.includes("Onboarding is finished")) return "finished";
     if (text.includes("Not finished.")) return "not finished";
+    if (text.includes("as a top-level task")) return "started";
     return `unknown:${text.slice(0, 200)}`;
 }
 
@@ -117,6 +118,7 @@ async function startGuidedGym(
     } = {},
 ): Promise<{ gym: AgentGym; agentId: string }> {
     const codex = "Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
+    let onboarding: string | undefined;
     const { gym } = await gyms.start({
         machine: {
             [codex]: { content: CODEX, mode: 0o755 },
@@ -163,16 +165,24 @@ async function startGuidedGym(
                     content: [{ text: "<title>Chief</title><slug>chief</slug>", type: "text" }],
                 };
             }
+            // A task the Chief of Staff started runs in a conversation of its own.
+            if (onboarding !== undefined && request.sessionId !== onboarding) {
+                const elsewhere = answers["elsewhere"];
+                if (elsewhere === undefined) throw new Error("Unscripted request elsewhere.");
+                return elsewhere(request);
+            }
             const answer = answers[cue(request)];
             if (answer === undefined) throw new Error(`Unscripted request: ${cue(request)}`);
             return answer(request);
         },
     });
-    if (options.device === undefined) return { gym, agentId: await startOnboarding(gym) };
-    const { flow } = (await gym.http.ok("POST", "/v0/onboarding/flow/start", {
-        device: options.device,
-    })) as { flow: OnboardingFlow };
-    return { gym, agentId: flow.agentId! };
+    const { flow } = (await gym.http.ok(
+        "POST",
+        "/v0/onboarding/flow/start",
+        options.device === undefined ? {} : { device: options.device },
+    )) as { flow: OnboardingFlow };
+    onboarding = flow.agentId!;
+    return { gym, agentId: onboarding };
 }
 
 /** Use selected on the routes table with `values` ticked. */
@@ -376,6 +386,72 @@ describe("The model leading onboarding", () => {
                 (request) => cue(request) === "event:begin",
             );
             expect(begins.map((request) => request.providerId)).toEqual(["claude", "codex"]);
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "starts the first task as a new top-level task, never a subtask of its own",
+        async () => {
+            const TASK =
+                "Update the install steps in the README of site, at /home/ada/site. Its README still describes the old installer.";
+            const { gym, agentId } = await startGuidedGym({
+                "event:begin": () => SAVE_PROFILE,
+                saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+                "said:Update the README in site": () => ({
+                    content: [
+                        {
+                            type: "tool_call",
+                            name: "start_first_task",
+                            arguments: { name: "Update the README", text: TASK },
+                        },
+                    ],
+                }),
+                started: () => ({ content: [{ text: PHONE_STEP, type: "text" }] }),
+                elsewhere: () => ({ content: [{ text: "On it.", type: "text" }] }),
+            });
+            await useRoutes(gym, agentId, ["codex"]);
+            await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
+            // The tool is at hand while the model guides, not something to search for.
+            const begin = gym.inference.requests.find((request) => cue(request) === "event:begin");
+            expect(begin?.tools.map((tool) => tool.name)).toContain("start_first_task");
+            expect(begin?.instructions).toContain(
+                "never start it with create_subtask or create_agent",
+            );
+
+            await gym.send("Update the README in site", {
+                sessionId: agentId,
+                providerId: "codex",
+                modelId: "gym-codex",
+            });
+            await waitForSaid(gym, agentId, "<figure data-phone-app></figure>");
+            const { tasks } = (await gym.http.ok("GET", "/v0/tasks")) as {
+                tasks: {
+                    name: string;
+                    status: string;
+                    creatorAgentId: string | null;
+                    agent: { id: string; parentAgentId: string | null };
+                }[];
+            };
+            expect(tasks).toHaveLength(1);
+            const task = tasks[0]!;
+            expect(task).toMatchObject({
+                name: "Update the README",
+                status: "active",
+                creatorAgentId: agentId,
+            });
+            // Its own conversation at the top level, not under the Chief of Staff.
+            expect(task.agent.parentAgentId).toBeNull();
+            const opening = await gym.waitUntil(async () => {
+                const said = await messagesOf(gym, task.agent.id);
+                return said.find((message) => textOf(message).includes(TASK));
+            }, "the task to receive its opening message");
+            expect(opening).toBeDefined();
+            const result = gym.inference.requests.find((request) => cue(request) === "started");
+            expect(JSON.stringify(result?.messages.at(-1))).toContain(
+                `happy://agents/${task.agent.id}`,
+            );
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,
