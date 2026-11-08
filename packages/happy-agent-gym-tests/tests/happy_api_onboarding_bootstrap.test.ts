@@ -57,6 +57,7 @@ describe("Onboarding's scripted bootstrap", () => {
                 composer: "enabled",
                 composerPlaceholder: null,
                 restartRequired: false,
+                skippable: false,
                 onboardingVersion: 1,
                 completedVersion: null,
             });
@@ -64,12 +65,14 @@ describe("Onboarding's scripted bootstrap", () => {
             const started = (await gym.http.ok("POST", "/v0/onboarding/flow/start", {
                 mutationId: "start-1",
             })) as { flow: OnboardingFlow };
+            // Nothing works before an AI is connected, so the person cannot skip ahead yet.
             expect(started.flow).toMatchObject({
                 status: "running",
                 step: "providers",
                 agentId: before.agentId,
                 composer: "disabled",
                 composerPlaceholder: "Choose an answer above",
+                skippable: false,
             });
             const agentId = started.flow.agentId!;
             const announced = await gym.waitForEvent(

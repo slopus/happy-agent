@@ -1544,6 +1544,8 @@ export class OnboardingModule implements AgentModule {
                       ? (input?.placeholder ?? this.#recipe.bootstrap.composerPlaceholder)
                       : undefined) ?? null,
             restartRequired: state.restartRequired,
+            // Nothing works before an AI is connected and the model has the conversation.
+            skippable: guiding || state.status === "finished",
             onboardingVersion: this.#recipe.version,
             completedVersion: state.completedVersion,
         };

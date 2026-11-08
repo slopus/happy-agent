@@ -31,6 +31,7 @@ export interface OnboardingFlow {
     readonly composer: "enabled" | "disabled";
     readonly composerPlaceholder: string | null;
     readonly restartRequired: boolean;
+    readonly skippable?: boolean;
     readonly onboardingVersion: number;
     readonly completedVersion: number | null;
 }

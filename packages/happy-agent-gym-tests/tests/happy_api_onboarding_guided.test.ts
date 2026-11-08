@@ -243,6 +243,7 @@ describe("The model leading onboarding", () => {
             expect(verified).toMatchObject({
                 composer: "enabled",
                 composerPlaceholder: "Or just tell me in your own words…",
+                skippable: true,
             });
 
             const begin = gym.inference.requests.find((request) => cue(request) === "event:begin");
@@ -307,6 +308,7 @@ describe("The model leading onboarding", () => {
                 status: "finished",
                 step: null,
                 composerPlaceholder: null,
+                skippable: true,
                 completedVersion: 1,
             });
 
@@ -357,7 +359,12 @@ describe("The model leading onboarding", () => {
             // The AI that failed starts unticked; the other one chosen is still ticked.
             expect(textOf(failed)).toContain('value="claude">');
             expect(textOf(failed)).toContain('value="codex" checked');
-            expect(await flowOf(gym)).toMatchObject({ status: "running", composer: "disabled" });
+            // Back in the script with no AI that answers, so there is nothing to skip to.
+            expect(await flowOf(gym)).toMatchObject({
+                status: "running",
+                composer: "disabled",
+                skippable: false,
+            });
 
             await press(gym, agentId, {
                 messageId: failed.id,
