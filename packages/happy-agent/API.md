@@ -2939,8 +2939,8 @@ its own onboarding as before, and finishes it with `POST /v0/onboarding/complete
 a missing capability or a `404` from these routes as onboarding being complete.
 
 What the conversation says, and in which order, is the server's **recipe**: data the server picks
-for the caller, such as the standalone daemon's `local`, or a team server's `teamOwner`,
-`teammate`, and `viewer`. A recipe has two parts.
+for the caller, such as the standalone daemon's `local`, or a team server's `team-owner`,
+`teammate`, and `viewer`. A recipe ID is a lowercase slug. A recipe has two parts.
 
 - **The scripted bootstrap.** Before any model is involved, the server writes the conversation's
   messages itself. They are ordinary agent messages, each in a finished run of its own with no
@@ -3278,12 +3278,16 @@ Starts the vendor's own sign-in with the installed program. Request body, every 
 ```
 
 - `method` — one of the object's `signIn.methods`. Omitted, the daemon uses the first.
-- `target` — on a team server, whose connection the sign-in makes: `{ "providerId": "…" }` for an
-  existing team provider, or `{ "scope": "private" }` for the caller's own. A team server may also
-  take `{ "name": "…", "scope": "team" | "private" }`, a provider of that name, 1–80 characters,
-  made when there is none; `scope` `"team"` needs a `name`. Without `target`, the sign-in is
-  private. A client sends the target a `data-provider-cli` figure's `data-target` names (see
-  "Inline action blocks"). The standalone daemon serves one user and ignores `target`.
+- `target` — on a team server, whose connection the sign-in makes: `{ "providerId": "…" }` for one
+  of this assistant's team providers the caller can see, or `{ "scope": "private" }` for the
+  caller's own. A team server may also take `{ "name": "…", "scope": "team" | "private" }`, a
+  provider of that name made when there is none; the name is trimmed and must then be 1–80
+  characters with no control characters. Without `providerId`, `scope` is required, and `"team"`
+  needs a `name`; a malformed target, or one for another assistant's provider, is refused with
+  `400`. A team connection needs permission to manage providers and a private one permission to
+  own them. Without `target`, the sign-in is private. A client sends the target a
+  `data-provider-cli` figure's `data-target` names (see "Inline action blocks"). The standalone
+  daemon serves one user and ignores `target`.
 
 Response — `200`: `{ "providerCli": { ... } }` with the new `"running"` sign-in operation. It
 becomes `"waiting"` with its `authorization` as soon as the vendor's program provides the page to
