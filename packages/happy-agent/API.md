@@ -3007,13 +3007,22 @@ The standalone daemon's `local` recipe:
    onboarding requires. If the bot's turn settles without an answer, the bootstrap says what
    failed and offers the other AIs the person chose, a sign-in again, or another AI.
 3. The model saves the name and email it was given from the person's Git settings with
-   `save_profile` and says so, or asks for them when there are none. With the person's consent, it
-   reads the Git metadata of their recent projects without changing anything, suggests up to three
-   first tasks from what it found, and starts the one they pick with `start_first_task` as a new
-   top-level task, which appears among the person's tasks and is never a subtask of the bot. It then
-   offers the phone, and ends onboarding with `finish_onboarding` once a first task was offered or
-   the person stopped. It changes the default model with `set_default_model` when the person asks.
-   These four tools exist only while onboarding runs in that conversation.
+   `save_profile` and says so, or asks for them when there are none, and renames the bot
+   "<First name>'s Chief of Staff" with `set_bot_name`, or to the nickname the person gives it.
+   With the person's consent, it reads the Git metadata of their recent projects without changing
+   anything, suggests up to three first tasks from what it found, and starts the one they pick
+   with `start_first_task` as a new top-level task, which appears among the person's tasks and is
+   never a subtask of the bot. It then offers the phone, and ends onboarding with
+   `finish_onboarding` when the first task finishes, or once a first task was offered and the
+   person stopped. It changes the default model with `set_default_model` when the person asks.
+   These four tools exist only while onboarding runs in that conversation, and `set_bot_name`,
+   which the bot otherwise finds through tool search, is loaded there for that time.
+4. Each task `start_first_task` starts joins the flow's `firstTasks`. Until such a task first
+   finishes or fails, even once onboarding has finished, the bot hears hidden context entries
+   about it: when one of its subtasks checks out a project, with the bot's next turn; and, as a
+   turn of their own, when the task or one of its subtasks asks the person a question, once per
+   question, when the task's run ends with no subtask running, with a short summary of its last
+   message, and when its run fails, with the reason.
 
 #### The onboarding flow object
 
@@ -3028,6 +3037,7 @@ The standalone daemon's `local` recipe:
     "composerPlaceholder": "Choose an answer above",
     "restartRequired": false,
     "skippable": false,
+    "firstTasks": [],
     "onboardingVersion": 1,
     "completedVersion": null
 }
@@ -3061,6 +3071,12 @@ The standalone daemon's `local` recipe:
   the conversation; otherwise `true`. Leaving changes nothing on the server: the flow stays as it
   is and the conversation can be picked up later. A server that omits it leaves the choice to the
   client.
+- `firstTasks` — optional: the tasks onboarding started as the person's first work, oldest first,
+  at most 16. Each entry is `{ "id": "…", "agentId": "…", "name": "Hourly view" }`: the task's ID,
+  its agent's ID, and its name when it started. The list only grows, also after onboarding has
+  finished, and a task stays on it once it is done. It is empty until the first one starts. A
+  client may leave a focused onboarding layout once it is not empty, so the person sees the task
+  among their tasks. A server that omits it reports no first tasks.
 - `onboardingVersion`, `completedVersion` — as in `GET /v0/onboarding`.
 
 #### `GET /v0/onboarding/flow`

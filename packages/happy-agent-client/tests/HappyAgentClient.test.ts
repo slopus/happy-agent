@@ -560,6 +560,15 @@ describe("HappyAgentClient", () => {
                 { ...flow, skippable: "no" },
             ].map((body) => Value.Check(onboardingFlowSchema, body)),
         ).toEqual([true, false]);
+        // The first tasks onboarding started, matched by task ID or by the task's agent.
+        expect(
+            [
+                { ...flow, firstTasks: [] },
+                { ...flow, firstTasks: [{ id: "t1", agentId: "a2", name: "Hourly view" }] },
+                { ...flow, firstTasks: [{ id: "t1", name: "Hourly view" }] },
+                { ...flow, firstTasks: [{ id: "t1", agentId: "a2", name: "" }] },
+            ].map((body) => Value.Check(onboardingFlowSchema, body)),
+        ).toEqual([true, true, false, false]);
     });
 
     it("creates a user-controlled workspace root without a parent-selection option", async () => {
