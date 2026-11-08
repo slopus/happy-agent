@@ -297,6 +297,19 @@ describe("the local onboarding recipe", () => {
         expect(recipe.tools).toContain("start_first_task");
     });
 
+    it("still starts a first task on a computer with no recent projects", () => {
+        const guide = recipeText(recipe.guide);
+        expect(guide).toContain("If you found nothing, the first task still starts now.");
+        expect(guide).toContain(
+            '"Clone a repo" when Git is installed, "Start a new project" and "I\'ll name a folder", then "Skip for now"',
+        );
+        expect(guide).toContain(
+            "clone_project for a repository, or create its folder and call create_project. Then call start_first_task at once.",
+        );
+        // Setting the project up is at hand while the model guides, not something to search for.
+        expect(recipe.tools).toEqual(expect.arrayContaining(["create_project", "clone_project"]));
+    });
+
     it("renames the Chief of Staff after the person, or to the nickname they give", () => {
         const guide = recipeText(recipe.guide);
         expect(guide).toContain(

@@ -230,6 +230,8 @@ export async function reply(
     messageId: string,
     controlIndex: number,
     blockIndex = 0,
+    /** The control's `data-text`, which a reply press names as its `text` parameter. */
+    text?: string,
 ) {
     const response = await gym.http.request("POST", `/v0/agents/${agentId}/send`, {
         mode: {
@@ -245,7 +247,7 @@ export async function reply(
                 blockIndex,
                 controlIndex,
                 actionId: "reply",
-                params: {},
+                params: text === undefined ? {} : { text },
             },
         ],
     });

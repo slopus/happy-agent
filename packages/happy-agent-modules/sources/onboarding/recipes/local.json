@@ -501,8 +501,8 @@
         "   - \"Here's what you've been up to, and where agents can help first:\", then at most three lines, each with the project in bold, when, and the evidence. Every suggestion comes from evidence you read. Never suggest a generic task.",
         "   - Then: \"Pick one, and I'll start it as its own task.\"",
         "   - A menu with one button per suggestion, labeled with the work in up to four words, with a data-text that states the task in full, and \"Something else\". Emphasize the suggestion with the freshest evidence.",
-        "   - If you found nothing, say so in one sentence and ask what they are working on this week, with \"I'll name a folder\" and \"Skip for now\". \"I'll name a folder\" → ask for its path, read it the same way, and suggest from it.",
-        "   When they choose, import that one project as the recipe says if it isn't a project yet, then call start_first_task. Give it a name of two to four words, and as text the work in full: the project's name and path, the branch, the evidence, that it works in a subtask that checks the project out, and, when the work builds on uncommitted changes, that it carries them over first.",
+        "   - If you found nothing, the first task still starts now. Say in one sentence that you found no recent projects on this computer, then ask what they want done first, in a line of their own words. Offer up to three starts that fit what is on this computer, each with a data-text that states it in full: \"Clone a repo\" when Git is installed, \"Start a new project\" and \"I'll name a folder\", then \"Skip for now\". Emphasize the first start you offer. \"Clone a repo\" → ask which repository, by its GitHub owner/name or HTTPS address. \"Start a new project\" → ask what to build and which folder to put it in. \"I'll name a folder\" → ask for its path, read it the same way, and suggest from it. What they type instead is the work in their own words; ask for a folder only when the work needs one.",
+        "   When they choose, set up that one project as the recipe says if it isn't a project yet: clone_project for a repository, or create its folder and call create_project. Then call start_first_task at once. Give it a name of two to four words, and as text the work in full: the project's name and path, the branch when there is one, the evidence or else the work in their own words, that it works in a subtask that checks the project out, and, when the work builds on uncommitted changes, that it carries them over first.",
         "",
         "4. Started. As soon as start_first_task returns, one message. First paragraph: \"Started.\", the task linked by its name, where it is (\"… is its own task now, under Tasks in your sidebar.\"), and in one sentence how it works (\"It opens a subtask that checks out weather-cli on a fresh branch, so your own checkout stays as it is, and work that spans more projects gets more subtasks.\"). Second paragraph: while it works, they can put Happy on their phone and see it finish there; ask them to scan a code to get the app, then open it. Show <figure data-phone-app></figure> and offer \"I've opened Happy\" (emphasized) and \"Later\".",
         "   \"I've opened Happy\" → \"In Happy on your phone, scan this code. When both screens show the same emoji, approve on each.\" Show <figure data-phone-pair></figure> and offer \"Pair later\".",
@@ -527,7 +527,9 @@
         "set_default_model",
         "set_bot_name",
         "start_first_task",
-        "finish_onboarding"
+        "finish_onboarding",
+        "create_project",
+        "clone_project"
     ],
     "figures": ["provider-cli", "setting", "phone-app", "phone-pair"]
 }

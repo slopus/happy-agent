@@ -291,6 +291,124 @@ describe("The model leading onboarding", () => {
     );
 
     it(
+        "still starts a first task on a computer with no recent projects, and hands over when it finishes",
+        async () => {
+            const NOTHING_FOUND = [
+                "I didn't find recent projects on this computer, so let's start your first one here. What do you want done first? Tell me in a line, or pick a start.",
+                "",
+                "<menu>",
+                '  <button data-action="reply" data-emphasis data-text="Clone a repository I\'ll name">Clone a repo</button>',
+                '  <button data-action="reply" data-text="Start a new project in a folder I pick">Start a new project</button>',
+                '  <button data-action="reply">I\'ll name a folder</button>',
+                '  <button data-action="reply">Skip for now</button>',
+                "</menu>",
+            ].join("\n");
+            const WORK =
+                "Start a new Python project at ~/weather: a command-line weather app that prints today's forecast for a city. Create the folder and register it as a project, then build the first working version in a subtask.";
+            const { gym, agentId } = await startGuidedGym(gyms, {
+                "event:begin": () => SAVE_PROFILE,
+                saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+                // Discovery found nothing, so the model offers starts instead of suggestions.
+                "said:Look at my recent work": () => ({
+                    content: [{ text: NOTHING_FOUND, type: "text" }],
+                }),
+                "said:Start a new project in a folder I pick": () => ({
+                    content: [
+                        {
+                            text: "What should it be, and which folder should it go in?",
+                            type: "text",
+                        },
+                    ],
+                }),
+                "said:A command-line weather app in Python, in ~/weather": () => ({
+                    content: [
+                        {
+                            type: "tool_call",
+                            name: "start_first_task",
+                            arguments: { name: "Weather app", text: WORK },
+                        },
+                    ],
+                }),
+                started: () => ({
+                    content: [
+                        {
+                            text: "Started. Weather app is its own task now, under Tasks in your sidebar.",
+                            type: "text",
+                        },
+                    ],
+                }),
+                elsewhere: () => ({
+                    content: [
+                        {
+                            text: "The weather app prints today's forecast for a city. Its tests pass. Nothing is committed.",
+                            type: "text",
+                        },
+                    ],
+                }),
+                "event:taskUpdated:finished": () => ({
+                    content: [{ type: "tool_call", name: "finish_onboarding", arguments: {} }],
+                }),
+                finished: () => ({ content: [{ text: DONE, type: "text" }] }),
+            });
+            await useRoutes(gym, agentId, ["codex"]);
+            const asked = await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
+            await reply(gym, agentId, asked.id, 0);
+            const nothing = await waitForSaid(gym, agentId, "I didn't find recent projects");
+            const looked = gym.inference.requests.find(
+                (request) => cue(request) === "said:Look at my recent work",
+            );
+            expect(looked?.instructions).toContain(
+                "If you found nothing, the first task still starts now.",
+            );
+            // Setting up a repository or a new folder is at hand, not something to search for.
+            for (const name of ["clone_project", "create_project"]) {
+                const tool = looked?.tools.find((candidate) => candidate.name === name);
+                expect(tool, name).toBeDefined();
+                expect(tool?.defer, name).not.toBe(true);
+            }
+
+            const pressed = await reply(
+                gym,
+                agentId,
+                nothing.id,
+                1,
+                0,
+                "Start a new project in a folder I pick",
+            );
+            expect(pressed.message.content).toEqual([
+                { type: "text", text: "Start a new project in a folder I pick" },
+            ]);
+            await waitForSaid(gym, agentId, "which folder should it go in?");
+            await gym.send("A command-line weather app in Python, in ~/weather", {
+                sessionId: agentId,
+                providerId: "codex",
+                modelId: "gym-codex",
+            });
+
+            // The person's own words became a real first task, and its finish is the handover.
+            const first = await gym.waitUntil(
+                async () => (await flowOf(gym)).firstTasks?.[0],
+                "the first task",
+            );
+            expect(first.name).toBe("Weather app");
+            const { agent } = (await gym.http.ok("GET", `/v0/agents/${first.agentId}`)) as {
+                agent: { parentAgentId: string | null };
+            };
+            expect(agent.parentAgentId).toBeNull();
+            await waitForSaid(gym, agentId, DONE);
+            const handover = gym.inference.requests.find(
+                (request) => cue(request) === "event:taskUpdated:finished",
+            );
+            expect(JSON.stringify(handover?.messages.at(-1))).toContain(
+                "The weather app prints today's forecast for a city. Its tests pass.",
+            );
+            expect(await flowOf(gym)).toMatchObject({ status: "finished", completedVersion: 1 });
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
         "changes the default model when the person asks, and the conversation runs on it",
         async () => {
             const { gym, agentId } = await startGuidedGym(gyms, {
