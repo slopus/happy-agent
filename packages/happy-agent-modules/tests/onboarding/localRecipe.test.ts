@@ -164,29 +164,58 @@ describe("the local onboarding recipe", () => {
         }
     });
 
-    it("speaks as its live name in the first person, never as Happy, and without em dashes", () => {
+    it("speaks in the first person, never as Happy, and without em dashes or exclamation marks", () => {
         for (const { step, text } of said()) {
             expect(text, step).not.toMatch(/\bHappy\b/u);
+            expect(text, step).not.toMatch(/I'm Chief of Staff/u);
             // A table's empty cell may show a dash; the words around it never do.
             expect(stripChatActionBlocks(text), step).not.toContain("—");
             expect(text, step).not.toContain("!");
         }
-        expect(fillRecipeText(steps["welcome"]!.say![0]!.text, VARIABLES, BLOCKS)).toContain(
-            "Hi, I'm Chief of &quot;Staff&quot; &amp; &lt;co&gt;. Hand me the work you want done",
-        );
+        for (const entry of steps["providers"]!.say!) {
+            expect(fillRecipeText(entry.text, VARIABLES, BLOCKS)).toMatch(
+                /^Hi, I'm your Chief of Staff\. Hand me the work you want done/u,
+            );
+        }
         // The guide names Happy only as the phone app.
         const guide = recipeText(recipe.guide);
         expect(guide).not.toContain("—");
+        expect(guide).not.toContain("!");
         expect(
             guide
                 .replace(
-                    `Never call yourself "Happy" or "Happy Agent"; Happy is the name of the phone app.`,
+                    `Never call yourself "Happy" or "Happy Agent"; Happy is the phone app.`,
                     "",
                 )
                 .replaceAll("I've opened Happy", "")
-                .replace("In Happy on your phone", "")
-                .replace("with the Happy app", ""),
+                .replaceAll("In Happy on your phone", "")
+                .replace("put Happy on their phone", "")
+                // Happy Cloud is the account service, named as the source of a profile.
+                .replace("their Happy Cloud account", ""),
         ).not.toMatch(/\bHappy\b/u);
+    });
+
+    it("uses no filler, hype, hedging, or sign-offs", () => {
+        const banned =
+            /\b(?:Great|Awesome|Perfect|powerful|seamless|supercharge|I think|maybe|Enjoy|Have a good one)\b/iu;
+        for (const { step, text } of said()) expect(text, step).not.toMatch(banned);
+        // The guide names them only to forbid them.
+        const guide = recipeText(recipe.guide)
+            .split("\n")
+            .filter((line) => !line.startsWith("- Confident, warm, specific, short."));
+        for (const line of guide) expect(line).not.toMatch(banned);
+    });
+
+    it("labels each button in a few words of the person's own, never a bare Done", () => {
+        for (const { step, text } of said()) {
+            for (const label of buttons(text)) {
+                const words = label.replace(/^\*/u, "").split(/\s+/u);
+                // Four words is the aim; the final script keeps a few of five, such as "Sign in to
+                // another AI".
+                expect(words.length, `${step}: ${label}`).toBeLessThanOrEqual(5);
+                expect(label.replace(/^\*/u, ""), step).not.toBe("Done");
+            }
+        }
     });
 
     it("offers a way on after every setback", () => {
@@ -201,10 +230,10 @@ describe("the local onboarding recipe", () => {
         }
         expect(
             buttons(fillRecipeText(steps["connect-failed"]!.say![0]!.text, VARIABLES, BLOCKS)),
-        ).toEqual(["*Try again", "I'd rather do it myself", "Choose another AI"]);
+        ).toEqual(["*Try again", "I'll do it myself", "Choose another AI"]);
         expect(
             buttons(fillRecipeText(steps["use-failed"]!.say![0]!.text, VARIABLES, BLOCKS)),
-        ).toEqual(["*Sign in to Claude", "Choose another AI"]);
+        ).toEqual(["*Sign in again", "Choose another AI"]);
     });
 
     it("says no price and names no AI better than another", () => {
@@ -212,7 +241,7 @@ describe("the local onboarding recipe", () => {
             expect(text, step).not.toMatch(/\$|extra cost|cheaper|better|best\b/iu);
         }
         expect(fillRecipeText(steps["none-yet"]!.say![0]!.text, VARIABLES, BLOCKS)).toContain(
-            "If your work already pays for ChatGPT or Claude, use that account",
+            "If your work already pays for ChatGPT or Claude, sign in with that account.",
         );
     });
 
@@ -232,15 +261,37 @@ describe("the local onboarding recipe", () => {
         }
     });
 
-    it("emphasizes at most one control in each block", () => {
+    it("emphasizes at most one control in each block, and none where the person picks an AI", () => {
         for (const { step, text } of said()) {
             for (const block of chatActionBlocksOf(text)) {
                 const emphasized =
                     controls(block!).filter((button) => button.emphasized).length +
                     (block!.kind === "checklist" && block!.submit.emphasized ? 1 : 0);
                 expect(emphasized, step).toBeLessThanOrEqual(1);
+                // No AI is recommended over another.
+                const picksAnAi = controls(block!).some(
+                    (button) => button.action?.params["step"] === "choose",
+                );
+                if (picksAnAi) expect(emphasized, step).toBe(0);
             }
         }
+    });
+
+    it("says the profile and suggests a first task from read-only evidence before the phone", () => {
+        const guide = recipeText(recipe.guide);
+        expect(guide).toContain(
+            "first call save_profile with exactly that name and email, then say it in one sentence",
+        );
+        expect(guide).toContain("Their press or reply is their consent; without it, read nothing.");
+        expect(guide).toContain("read only Git metadata");
+        expect(guide).toContain("Never suggest a generic task.");
+        expect(guide).toContain("at most three lines");
+        expect(guide.indexOf("3. The first task, suggested.")).toBeLessThan(
+            guide.indexOf("4. The phone, while the task runs."),
+        );
+        expect(guide).toContain(
+            "Onboarding is finished only when you call finish_onboarding. Never call it before you have offered the first task, unless they say to stop setting up.",
+        );
     });
 
     it("fills only the blocks a text uses", () => {

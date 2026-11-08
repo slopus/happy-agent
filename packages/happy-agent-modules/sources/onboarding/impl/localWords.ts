@@ -192,7 +192,7 @@ export function providerMenu(options: { readonly withNone: boolean }): string {
         ...(options.withNone
             ? ['  <button data-action="onboarding.next" data-step="none-yet">None yet</button>']
             : []),
-        '  <button data-action="onboarding.next" data-step="other">API key or something else</button>',
+        '  <button data-action="onboarding.next" data-step="other">API key or other</button>',
         "</menu>",
     ].join("\n");
 }

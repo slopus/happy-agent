@@ -47,27 +47,44 @@ case "$*" in
 esac
 `;
 
-const PROFILE_STEP = [
-    "What should I call you? I found this in your Git settings:",
+/** The model's first message: what is connected, the profile it saved, and the first task asked. */
+const FIRST_TASK_ASKED = [
+    "Connected to ChatGPT as ada@example.com. Your agents think with it from now on, on Gym Codex · Medium unless you pick another model.",
     "",
-    "**Ada Lovelace** · ada@example.com",
+    "I've put **Ada Lovelace** · ada@example.com on your profile, from your Git settings, so your agents know who they work for. Change it anytime.",
     "",
-    "<menu>",
-    '  <button data-action="reply" data-emphasis>That\'s me</button>',
-    '  <button data-action="reply">Change it</button>',
-    "</menu>",
-].join("\n");
-
-const PROJECT_STEP = [
-    "Thanks, Ada. Let's start with one project.",
+    "Now let's give them real work. With your permission, I'll look at the projects you worked on recently on this computer and their Git history, without changing anything, and suggest where agents can help first.",
     "",
     "<menu>",
-    '  <button data-action="reply" data-emphasis>Find my recent projects</button>',
+    '  <button data-action="reply" data-emphasis>Look at my recent work</button>',
+    '  <button data-action="reply">I\'ll name a folder</button>',
     '  <button data-action="reply">Skip for now</button>',
     "</menu>",
 ].join("\n");
 
-const DONE = "You're all set, Ada. I stay at the top of your sidebar.";
+const PHONE_STEP = [
+    "Your agents keep working while you step away. Put Happy on your phone, and you can see them finish and answer their questions from anywhere. Scan a code to get the app, then open it.",
+    "",
+    "<figure data-phone-app></figure>",
+    "",
+    "<menu>",
+    '  <button data-action="reply" data-emphasis>I\'ve opened Happy</button>',
+    '  <button data-action="reply">Later</button>',
+    "</menu>",
+].join("\n");
+
+const DONE =
+    "You're all set, Ada. I stay at the top of your sidebar. Tell me what you want done next, and I'll put agents on it. Ask me for the phone code anytime.";
+
+const SAVE_PROFILE = {
+    content: [
+        {
+            type: "tool_call" as const,
+            name: "save_profile",
+            arguments: { name: "Ada Lovelace", email: "ada@example.com" },
+        },
+    ],
+};
 
 function jwt(claims: object): string {
     const part = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -148,18 +165,23 @@ async function startGuidedGym(
     return { gym, agentId: await startOnboarding(gym) };
 }
 
-/** Press Start, then Use selected on the routes table with `values` ticked. */
+/** Use selected on the routes table with `values` ticked. */
 async function useRoutes(gym: AgentGym, agentId: string, values: string[]): Promise<void> {
-    const opening = (await waitForStep(gym, agentId, "welcome"))!;
-    await press(gym, agentId, { messageId: opening.id, params: { step: "providers" } });
     const routes = (await waitForStep(gym, agentId, "providers"))!;
     expect(textOf(routes)).toContain(
-        "I found these on this computer; choose which ones I should use.",
+        "I found these on this computer. Choose the ones I should use.",
     );
     await press(gym, agentId, { messageId: routes.id, params: { step: "use" }, values });
 }
 
-async function reply(gym: AgentGym, agentId: string, messageId: string, controlIndex: number) {
+/** Press a `reply` control: `controlIndex` in the menu at `blockIndex`, after any figure. */
+async function reply(
+    gym: AgentGym,
+    agentId: string,
+    messageId: string,
+    controlIndex: number,
+    blockIndex = 0,
+) {
     const response = await gym.http.request("POST", `/v0/agents/${agentId}/send`, {
         mode: {
             ...gym.selection,
@@ -171,7 +193,7 @@ async function reply(gym: AgentGym, agentId: string, messageId: string, controlI
             {
                 type: "action",
                 messageId,
-                blockIndex: 0,
+                blockIndex,
                 controlIndex,
                 actionId: "reply",
                 params: {},
@@ -187,18 +209,11 @@ describe("The model leading onboarding", () => {
         "verifies the chosen AI with its first answer, saves the profile, and finishes",
         async () => {
             const { gym, agentId } = await startGuidedGym({
-                "event:begin": () => ({ content: [{ text: PROFILE_STEP, type: "text" }] }),
-                "said:That's me": () => ({
-                    content: [
-                        {
-                            type: "tool_call",
-                            name: "save_profile",
-                            arguments: { name: "Ada Lovelace", email: "ada@example.com" },
-                        },
-                    ],
-                }),
-                saved: () => ({ content: [{ text: PROJECT_STEP, type: "text" }] }),
-                "said:Skip for now": () => ({
+                // The profile from Git is said, not asked: saved first, then the first message.
+                "event:begin": () => SAVE_PROFILE,
+                saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+                "said:Skip for now": () => ({ content: [{ text: PHONE_STEP, type: "text" }] }),
+                "said:Later": () => ({
                     content: [{ type: "tool_call", name: "finish_onboarding", arguments: {} }],
                 }),
                 finished: () => ({ content: [{ text: DONE, type: "text" }] }),
@@ -206,7 +221,7 @@ describe("The model leading onboarding", () => {
             });
             await useRoutes(gym, agentId, ["codex"]);
 
-            const profileStep = await waitForSaid(
+            const firstTaskStep = await waitForSaid(
                 gym,
                 agentId,
                 "**Ada Lovelace** · ada@example.com",
@@ -218,7 +233,6 @@ describe("The model leading onboarding", () => {
             expect(verified).toMatchObject({
                 composer: "enabled",
                 composerPlaceholder: "Or just tell me in your own words…",
-                completedVersion: null,
             });
 
             const begin = gym.inference.requests.find((request) => cue(request) === "event:begin");
@@ -230,6 +244,9 @@ describe("The model leading onboarding", () => {
             );
             expect(begin?.instructions).toMatch(
                 /first-project recipe at \/\S+\/docs\/recipe\/first-project\.md/u,
+            );
+            expect(begin?.instructions).toContain(
+                "Never call it before you have offered the first task, unless they say to stop setting up.",
             );
             const event = JSON.stringify(begin?.messages.at(-1));
             expect(event).toContain('\\"connected\\":[{\\"app\\":\\"ChatGPT\\"');
@@ -254,9 +271,7 @@ describe("The model leading onboarding", () => {
             };
             expect(config.defaults).toMatchObject({ providerId: "codex", modelId: "gym-codex" });
 
-            const pressed = await reply(gym, agentId, profileStep.id, 0);
-            expect(pressed.message.content).toEqual([{ type: "text", text: "That's me" }]);
-            const projectStep = await waitForSaid(gym, agentId, "Thanks, Ada.");
+            // Saving the profile with the first answer met every requirement.
             const complete = await gym.waitUntil(async () => {
                 const flow = await flowOf(gym);
                 return flow.completedVersion === 1 ? flow : undefined;
@@ -271,7 +286,12 @@ describe("The model leading onboarding", () => {
             };
             expect(profile).toMatchObject({ name: "Ada Lovelace", email: "ada@example.com" });
 
-            await reply(gym, agentId, projectStep.id, 1);
+            const pressed = await reply(gym, agentId, firstTaskStep.id, 2);
+            expect(pressed.message.content).toEqual([{ type: "text", text: "Skip for now" }]);
+            const phoneStep = await waitForSaid(gym, agentId, "<figure data-phone-app></figure>");
+            expect(await flowOf(gym)).toMatchObject({ status: "running" });
+            // The phone app figure is the first block, so the menu is the second.
+            await reply(gym, agentId, phoneStep.id, 1, 1);
             await waitForSaid(gym, agentId, DONE);
             expect(await flowOf(gym)).toMatchObject({
                 status: "finished",
@@ -306,13 +326,12 @@ describe("The model leading onboarding", () => {
                         attempts += 1;
                         if (attempts === 1)
                             return { error: { message: "The account is out of credit." } };
-                        return { content: [{ text: PROFILE_STEP, type: "text" }] };
+                        return SAVE_PROFILE;
                     },
+                    saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
                 },
                 { claude: true },
             );
-            const opening = (await waitForStep(gym, agentId, "welcome"))!;
-            await press(gym, agentId, { messageId: opening.id, params: { step: "providers" } });
             const routes = (await waitForStep(gym, agentId, "providers"))!;
             expect(textOf(routes)).toContain('value="claude" checked');
             expect(textOf(routes)).toContain('value="codex" checked');
@@ -349,10 +368,9 @@ describe("The model leading onboarding", () => {
         "keeps what the person unticked when Use selected had nothing selected",
         async () => {
             const { gym, agentId } = await startGuidedGym({
-                "event:begin": () => ({ content: [{ text: PROFILE_STEP, type: "text" }] }),
+                "event:begin": () => SAVE_PROFILE,
+                saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
             });
-            const opening = (await waitForStep(gym, agentId, "welcome"))!;
-            await press(gym, agentId, { messageId: opening.id, params: { step: "providers" } });
             const routes = (await waitForStep(gym, agentId, "providers"))!;
             await press(gym, agentId, {
                 messageId: routes.id,
@@ -361,7 +379,7 @@ describe("The model leading onboarding", () => {
             });
             const retry = (await waitForStep(gym, agentId, "choose-at-least-one"))!;
             expect(textOf(retry)).toContain(
-                "Your agents need at least one AI to think with. Tick one, or sign in to another AI.",
+                "Your agents need at least one AI to think with. Choose one, or sign in to another.",
             );
             expect(textOf(retry)).toContain('value="codex"');
             expect(textOf(retry)).not.toContain("checked");

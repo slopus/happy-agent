@@ -3234,19 +3234,21 @@ returns an existing user to onboarding.
 
 The standalone daemon's `local` recipe:
 
-1. The bootstrap welcomes the person, shows the AI subscriptions and other routes this computer
-   already has, or asks which one they use, and connects it. Installing and signing in to a
+1. The bootstrap introduces the Chief of Staff, shows the AI subscriptions and other routes this
+   computer already has, or asks which one they use, and connects it. Installing and signing in to a
    provider CLI happen in the `data-provider-cli` figure, through the provider CLI routes. When an
    install started from onboarding succeeds, the daemon starts that assistant's sign-in itself.
 2. When an AI is connected, its first model becomes the bot's model and the default for new
    conversations, and the guided part begins. The model's first answer is the real request
    onboarding requires. If the bot's turn settles without an answer, the bootstrap says what
    failed and offers the other AIs the person chose, a sign-in again, or another AI.
-3. The model asks the person's name and email, offering what it found in their Git settings, and
-   saves them with `save_profile`. It then offers to find a first project with the person's
-   consent, offers the phone, and ends onboarding with `finish_onboarding`. It changes the default
-   model with `set_default_model` when the person asks. These three tools exist only while
-   onboarding runs in that conversation.
+3. The model saves the name and email it was given from the person's Git settings with
+   `save_profile` and says so, or asks for them when there are none. With the person's consent,
+   it reads the Git metadata of their recent projects without changing anything, suggests up to
+   three first tasks from what it found, and starts the one they pick. It then offers the phone,
+   and ends onboarding with `finish_onboarding` once a first task was offered or the person
+   stopped. It changes the default model with `set_default_model` when the person asks. These
+   three tools exist only while onboarding runs in that conversation.
 
 #### The onboarding flow object
 

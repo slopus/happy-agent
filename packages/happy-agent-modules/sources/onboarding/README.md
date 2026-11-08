@@ -70,7 +70,11 @@ the person chose ticked.
 While the model guides, the guide is in its instructions and the recipe's tools are offered:
 `save_profile`, `set_default_model`, and `finish_onboarding`. What the person did not do
 themselves reaches it as hidden events: `providerAdded` when another AI finishes signing in, and
-`phonePaired`. `finish_onboarding` ends the flow once the requirements are met.
+`phonePaired`. The `local` guide has the model save the profile it was given and say so, ask
+before it reads anything, suggest up to three first tasks from the Git metadata of recent projects,
+offer the phone while the chosen task runs, and finish only after a first task was offered or the
+person stopped. The order is the guide's, not code's. `finish_onboarding` ends the flow once the
+requirements are met.
 
 ## Completion
 
