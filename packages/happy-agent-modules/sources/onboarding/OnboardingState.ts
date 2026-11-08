@@ -84,6 +84,8 @@ export const onboardingStateSchema = Type.Object(
         preexisting: Type.Boolean(),
         /** Whether a phone paired during the guided part, so it is told once. */
         phonePaired: Type.Boolean(),
+        /** The kind of device the start that began onboarding named, when it named one. */
+        startedOn: Type.Optional(Type.Union([Type.Literal("desktop"), Type.Literal("phone")])),
     },
     { additionalProperties: false },
 );

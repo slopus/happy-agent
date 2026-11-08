@@ -103,6 +103,43 @@ const stepSchema = Type.Object(
                     "Where the bootstrap goes once the step's message is written, for a step with no effect and no `next`.",
             }),
         ),
+        input: Type.Optional(
+            Type.Object(
+                {
+                    step: stepIdSchema(
+                        "The step a typed answer leads to: one of this step's `next` steps.",
+                    ),
+                    param: Type.String({
+                        minLength: 1,
+                        maxLength: 64,
+                        pattern: "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
+                        description:
+                            "The parameter of that `next` step the answer fills; the step must declare it.",
+                    }),
+                    maxLength: Type.Optional(
+                        Type.Integer({
+                            minimum: 1,
+                            maximum: 128,
+                            description:
+                                "The longest answer, in characters (Unicode code points); 128 when omitted.",
+                        }),
+                    ),
+                    placeholder: Type.Optional(
+                        Type.String({
+                            minLength: 1,
+                            maxLength: 200,
+                            description:
+                                "The composer's placeholder while the flow stands on this step, instead of the bootstrap's.",
+                        }),
+                    ),
+                },
+                {
+                    additionalProperties: false,
+                    description:
+                        "A typed answer the step takes, such as a name. While the flow stands on the step the composer is enabled, whatever `bootstrap.typing` says. A typed message whose text, trimmed, is one line of 1 to `maxLength` characters, and one of the parameter's `values` when they are listed, is the step's answer: it is stored and announced like a press, no model reads it, and the flow enters `step` with the trimmed text as `param`. Any other typed message follows `bootstrap.typing`.",
+                },
+            ),
+        ),
         next: Type.Optional(
             Type.Record(
                 onboardingStepIdSchema,

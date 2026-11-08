@@ -83,6 +83,24 @@ export function checkOnboardingRecipe(
                 }
             }
         }
+        if (step.input !== undefined) {
+            const rule =
+                step.next !== undefined && Object.hasOwn(step.next, step.input.step)
+                    ? step.next[step.input.step]
+                    : undefined;
+            if (rule === undefined) {
+                problems.push(
+                    `Step "${id}" takes a typed answer toward "${step.input.step}", which is not one of its next steps.`,
+                );
+            } else if (rule.params === undefined || !Object.hasOwn(rule.params, step.input.param)) {
+                problems.push(
+                    `Step "${id}" takes a typed answer as "${step.input.param}", which its step "${step.input.step}" does not declare.`,
+                );
+            }
+            if (step.say === undefined) {
+                problems.push(`Step "${id}" takes a typed answer but asks nothing.`);
+            }
+        }
         if (step.end !== undefined && (step.effect !== undefined || step.next !== undefined)) {
             problems.push(
                 `Step "${id}" ends the bootstrap, so it can have no effect or next steps.`,

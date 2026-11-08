@@ -1,5 +1,6 @@
 export {
     OnboardingModule,
+    type OnboardingDevice,
     type OnboardingListener,
     type OnboardingPress,
     type OnboardingPressListener,

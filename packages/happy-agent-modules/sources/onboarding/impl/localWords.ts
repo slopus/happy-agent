@@ -16,7 +16,7 @@ export const LOCAL_OFFER: OnboardingRuntimeOffer = {
         "provider.await": ["ok", "unusable", "failed"],
         "daemon.restart": ["ok"],
     },
-    conditions: new Set(["routesFound", "installed", "installable", "subjectKnown"]),
+    conditions: new Set(["routesFound", "installed", "installable", "subjectKnown", "onPhone"]),
     variables: new Set([
         "botName",
         "machine",

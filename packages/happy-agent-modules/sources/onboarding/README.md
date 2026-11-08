@@ -54,6 +54,16 @@ pressed message, stores the press as the person's words in a finished run of its
 the step it names. A press needs no mode, because no model answers it. While the recipe disables
 typing, a typed message to the conversation is refused with `409`.
 
+A step may take a typed answer (`input`), such as a team server's name step. While the flow stands
+on it the composer is enabled, and `ApiModule` asks `answer` before it treats a message as typing.
+A message that fits (`impl/typedAnswer.ts`: one line, short enough, one of the listed values when
+there are any) is stored and announced like a press, and enters the step the input names with the
+trimmed text as its parameter. Anything else follows the recipe's typing rule. The `local` recipe
+has no such step.
+
+A start may name the kind of device the person is on. The first start's is kept as `startedOn`,
+holds the `onPhone` condition, and reaches the model in `begin`.
+
 The daemon paces each scripted message: it is stored whole, and the API announces it the way a
 model's answer streams (`#announcePaced` in `ApiModule`). Other work queued for the conversation
 ends the typing at once.
