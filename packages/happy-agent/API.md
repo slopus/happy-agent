@@ -11991,6 +11991,12 @@ Fields:
   offering archival. Older compatible daemons omit it.
 - `agent` — the task's one agent, embedded in full. It merges by its own `version` through
   `agent.updated` events.
+- `speaksAs` — optional: `{ "systemKey": "chief_of_staff" }` when the task's agent speaks as a
+  system bot, or `null`. Clients then show the active bot with that `systemKey`, under its live
+  name and avatar, as the author of the task's agent messages and in the task's header, such as a
+  team server's Welcome task speaking as the Chief of Staff. A client that finds no such bot shows
+  the task as usual. Servers that omit it, such as the standalone daemon, have no task that speaks
+  as a bot.
 - `version` — the UUIDv7 concurrency version; see the basics.
 - `createdAt`, `updatedAt`, `archivedAt` — lifecycle timestamps; `archivedAt` is `null` while
   active.
