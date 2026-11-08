@@ -316,12 +316,54 @@ describe("binding a sign-in to its authorization server and its server", () => {
     });
 
     it("refuses an insecure server URL", async () => {
+        for (const serverUrl of [
+            "http://happy.acme.example/",
+            "http://localhost.acme.example/",
+            "http://acme.localhost.example/",
+            "http://.localhost/",
+            "http://user:pass@acme.localhost/",
+        ]) {
+            await expect(
+                beginOAuthSignIn(METHOD, { redirectUri: REDIRECT, serverUrl }),
+            ).rejects.toMatchObject({ code: "insecure_url" });
+        }
+    });
+
+    it("accepts a server at a name under localhost over plain http", async () => {
+        const serverUrl = "http://acme.localhost:31360/";
+        const signIn = await beginOAuthSignIn(METHOD, { redirectUri: REDIRECT, serverUrl });
+        const callback = `${REDIRECT}?code=c&state=${signIn.state}`;
+        const credential = await completeOAuthSignIn(signIn, callback, {
+            fetch: async () =>
+                json({ access_token: jwt("http://acme.localhost:31360"), token_type: "Bearer" }),
+        });
+        expect(credential.serverUrl).toBe(serverUrl);
         await expect(
-            beginOAuthSignIn(METHOD, {
-                redirectUri: REDIRECT,
-                serverUrl: "http://happy.acme.example/",
+            completeOAuthSignIn(signIn, callback, {
+                fetch: async () =>
+                    json({
+                        access_token: jwt("http://other.localhost:31360"),
+                        token_type: "Bearer",
+                    }),
             }),
-        ).rejects.toMatchObject({ code: "insecure_url" });
+        ).rejects.toMatchObject({ code: "audience_mismatch" });
+    });
+
+    it("refuses sign-in URLs at a name under localhost, which fetch may resolve through DNS", async () => {
+        await expect(
+            beginOAuthSignIn(
+                {
+                    ...METHOD,
+                    authorizationUrl: "http://sso.localhost:31361/authorize",
+                    tokenUrl: "http://sso.localhost:31361/token",
+                    refreshUrl: "http://sso.localhost:31361/token",
+                },
+                { redirectUri: REDIRECT, serverUrl: "http://acme.localhost:31360/" },
+            ),
+        ).rejects.toMatchObject({
+            code: "insecure_url",
+            message: "Sign-in URLs must use https, or http only on this machine.",
+        });
     });
 
     it("returns an access token only when its aud names the server", async () => {
