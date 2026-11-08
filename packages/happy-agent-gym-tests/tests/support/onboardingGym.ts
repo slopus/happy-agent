@@ -32,6 +32,11 @@ export interface OnboardingFlow {
     readonly composerPlaceholder: string | null;
     readonly restartRequired: boolean;
     readonly skippable?: boolean;
+    readonly firstTasks?: readonly {
+        readonly id: string;
+        readonly agentId: string;
+        readonly name: string;
+    }[];
     readonly onboardingVersion: number;
     readonly completedVersion: number | null;
 }

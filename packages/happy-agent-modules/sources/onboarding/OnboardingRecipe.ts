@@ -253,7 +253,7 @@ export const onboardingRecipeSchema = Type.Object(
             maxItems: 16,
             uniqueItems: true,
             description:
-                "The tools the model has only while the guided part runs, by the runtime's names.",
+                "The tools at hand while the guided part runs, by the runtime's names: its onboarding tools, which exist only then, and tools it offers through tool search elsewhere, which are loaded then.",
         }),
         figures: Type.Array(onboardingStepIdSchema, {
             maxItems: 32,

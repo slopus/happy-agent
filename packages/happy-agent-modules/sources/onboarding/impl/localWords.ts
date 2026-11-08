@@ -37,7 +37,13 @@ export const LOCAL_OFFER: OnboardingRuntimeOffer = {
         "signInCommand",
         "firstProjectRecipe",
     ]),
-    tools: new Set(["save_profile", "set_default_model", "start_first_task", "finish_onboarding"]),
+    tools: new Set([
+        "save_profile",
+        "set_default_model",
+        "set_bot_name",
+        "start_first_task",
+        "finish_onboarding",
+    ]),
     requirements: new Set(["provider", "profile"]),
 };
 

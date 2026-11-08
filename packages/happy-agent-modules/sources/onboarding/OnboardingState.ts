@@ -19,6 +19,30 @@ export const onboardingConnectionSchema = Type.Object(
 );
 export type OnboardingConnection = Static<typeof onboardingConnectionSchema>;
 
+const referenceSchema = Type.String({ minLength: 1, maxLength: 256 });
+
+/**
+ * A task onboarding started as the person's first work, and what the model has heard of it. The
+ * reference lists keep their newest entries; each is only there so nothing is told twice.
+ */
+export const onboardingFirstTaskSchema = Type.Object(
+    {
+        id: idSchema,
+        agentId: idSchema,
+        name: Type.String({ minLength: 1, maxLength: 80 }),
+        /** The model heard its first finish or failure; nothing more is told about it. */
+        settled: Type.Boolean(),
+        /** The workspaces its subtasks checked out. */
+        checkouts: Type.Array(referenceSchema, { maxItems: 64 }),
+        /** The projects of those checkouts, each told once. */
+        projects: Type.Array(referenceSchema, { maxItems: 64 }),
+        /** The questions it asked the person that the model heard about, each once. */
+        questions: Type.Array(referenceSchema, { maxItems: 64 }),
+    },
+    { additionalProperties: false },
+);
+export type OnboardingFirstTask = Static<typeof onboardingFirstTaskSchema>;
+
 /**
  * What the daemon stores for one owner: everything that cannot be derived cheaply. The profile
  * requirement is read from Profile; the rest is here.
@@ -86,6 +110,10 @@ export const onboardingStateSchema = Type.Object(
         phonePaired: Type.Boolean(),
         /** The kind of device the start that began onboarding named, when it named one. */
         startedOn: Type.Optional(Type.Union([Type.Literal("desktop"), Type.Literal("phone")])),
+        /** The tasks start_first_task started, oldest first. */
+        firstTasks: Type.Optional(Type.Array(onboardingFirstTaskSchema, { maxItems: 16 })),
+        /** Hidden events that ride along with the Chief of Staff's next turn, oldest first. */
+        notes: Type.Optional(Type.Array(Type.String({ maxLength: 4_000 }), { maxItems: 16 })),
     },
     { additionalProperties: false },
 );

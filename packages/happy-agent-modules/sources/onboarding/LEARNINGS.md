@@ -69,9 +69,9 @@ A first project offered as a list of folders left the person to work out what to
 the person's consent, the model reads only Git metadata of their recent projects (uncommitted
 changes, recent commits and branches, TODOs added lately) and suggests up to three concrete tasks,
 each with the evidence behind it, never a generic one. Picking one starts it, and the phone step
-follows with that running task as the reason to get the app. Onboarding does not finish before a
-first task was offered, unless the person says to stop. These are rules in the guide and the
-first-project recipe, not code: the model decides when it has offered the task.
+follows with that running task as the reason to get the app. Onboarding finishes at the handover
+when that task finishes, or when the person says they are done. These are rules in the guide and
+the first-project recipe, not code: the model decides.
 
 ## An older or already-used installation never counts as owed
 
@@ -144,11 +144,41 @@ depend on the recipe's steps. The flow carries `skippable` instead: `false` duri
 (including after a failed hand-off sends it back), `true` once the model has the conversation or
 onboarding finished.
 
-## Onboarding's own tools are loaded, never searched for
+## The tools onboarding needs are loaded, never searched for
 
 `save_profile`, `set_default_model`, `start_first_task`, and `finish_onboarding` reach the model
 only while it guides, and it calls them as soon as the person answers. They are `defer: false` with
 no search keywords. A deferred copy would make the model search for a tool it needs at that moment.
+The rename after the person's name needs `set_bot_name`, which Bots offers deferred everywhere; a
+recipe's `tools` may name it, and the module's `overrideTools` loads it while the model guides
+instead of offering a second copy, because two tools with one name are refused.
+
+## The Chief of Staff is named after the person
+
+Kirill wants the bot to read as theirs: "Ada's Chief of Staff" as soon as the first name is known,
+and a nickname replaces it when one is given. The guide calls `set_bot_name` right after
+`save_profile`, or after the typed answer when there was no profile, and says so in a few words.
+The rename is the model's call through the guide; no code renames the bot.
+
+## A bot's or conversation's own metadata changes after its tool call
+
+Agent Base refuses to write an agent's metadata from inside that agent's own loop, so
+`set_bot_name` renaming the calling bot, and `set_default_model` showing the new model in the
+Chief of Staff's composer, both failed. Each now records its change durably and the conversation's
+metadata follows through a durable function once the tool call returns, run outside the agent's
+async context. The bot record changes in the tool's transaction; only the title follows.
+
+## The Chief of Staff hears how the first task goes, and claims nothing else
+
+The guide hands over when the first task finishes and must never claim progress it was not told.
+The daemon follows each task `start_first_task` started and tells the model with a hidden
+`taskUpdated` event: `waiting` once per question, then `finished` or `failed` once, after which
+nothing more is told about that task, also when onboarding already finished. A checkout is worth
+mentioning but not worth a message of its own, so `checkedOut` never wakes the bot: it joins the
+next turn, after the person's words or ahead of the next waking event. A task whose own turn ends
+while a subtask works, or before that subtask has even begun because its checkout is still being
+made, is not finished. There are no timers and no progress pings. The flow lists the tasks as
+`firstTasks`, so the desktop can leave the focused layout as soon as the first one starts.
 
 ## A step types at once, even while it is still working out what to say
 

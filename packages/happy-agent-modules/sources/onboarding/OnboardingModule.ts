@@ -1,4 +1,5 @@
 import { createId } from "@paralleldrive/cuid2";
+import { AsyncResource } from "node:async_hooks";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import {
     withAgentDatabase,
     type AgentKV,
     type AgentModule,
+    type AgentModuleAction,
     type AgentModuleHooks,
     type AgentModuleScope,
     type AgentSystemRef,
@@ -28,11 +30,14 @@ import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { HistoryModule, type HistoryMessage } from "../history/index.js";
 import { MobileConnectorModule, STANDALONE_MOBILE_OWNER } from "../mobileConnector/index.js";
 import { ProfileModule } from "../profile/index.js";
+import { ProjectsModule } from "../projects/index.js";
 import { ProviderClisModule, type ProviderCli, type ProviderCliId } from "../providerClis/index.js";
 import { ProviderRoutesModule, type ProviderRoute } from "../providerRoutes/index.js";
 import { ProviderScanModule } from "../providerScan/index.js";
 import { TasksModule } from "../tasks/index.js";
+import { UserInputModule, type UserInputRequest } from "../userInput/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
+import { WorkspacesModule, type Workspace } from "../workspaces/index.js";
 import { assertOnboardingRecipe } from "./impl/checkOnboardingRecipe.js";
 import { fillRecipeText, recipeVariables } from "./impl/fillRecipeText.js";
 import {
@@ -58,7 +63,11 @@ import { typedAnswer } from "./impl/typedAnswer.js";
 import { onboardingMigrations } from "./OnboardingMigrations.js";
 import type { OnboardingRecipe, OnboardingRecipeTarget } from "./OnboardingRecipe.js";
 import { OnboardingRequestError } from "./OnboardingRequestError.js";
-import type { OnboardingConnection, OnboardingState } from "./OnboardingState.js";
+import type {
+    OnboardingConnection,
+    OnboardingFirstTask,
+    OnboardingState,
+} from "./OnboardingState.js";
 import { queryOnboardingState } from "./persistence/queryOnboardingState.js";
 import { upsertOnboardingState } from "./persistence/upsertOnboardingState.js";
 import localRecipe from "./recipes/local.json" with { type: "json" };
@@ -74,6 +83,16 @@ const STEP_FUNCTION = "onboarding.step";
 const MAX_PACED = 256;
 /** How often a sign-in the person does in their own terminal is looked for while one is awaited. */
 const MANUAL_SIGN_IN_POLL_MS = 3_000;
+/** How many first tasks the flow keeps; start_first_task starts more without following them. */
+const MAX_FIRST_TASKS = 16;
+/** How many workspaces, projects, and questions are remembered per first task. */
+const MAX_TASK_REFERENCES = 64;
+/** How many hidden events can wait for the Chief of Staff's next turn; the oldest go first. */
+const MAX_NOTES = 16;
+/** How far below a first task one of its agents can sit. */
+const MAX_TASK_DEPTH = 8;
+/** How many of a first task's agents are looked at for one still running. */
+const MAX_TASK_AGENTS = 64;
 
 /** One bootstrap step's message and effect, run after the transaction that entered it. */
 const stepArgumentsSchema = Type.Object(
@@ -83,6 +102,21 @@ const stepArgumentsSchema = Type.Object(
         runId: Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()]),
         params: Type.Record(Type.String(), Type.String({ maxLength: 128 })),
         values: Type.Array(Type.String({ maxLength: 256 }), { maxItems: 64 }),
+    },
+    { additionalProperties: false },
+);
+
+/**
+ * The conversation shows, and runs on, a model chosen from inside its own tool call, which its
+ * metadata cannot be written from, so this follows once that call returns.
+ */
+const USE_MODEL_FUNCTION = "onboarding.useModel";
+const useModelArgumentsSchema = Type.Object(
+    {
+        agentId: Type.String({ minLength: 1, maxLength: 64 }),
+        providerId: Type.String({ minLength: 1, maxLength: 200 }),
+        modelId: Type.String({ minLength: 1, maxLength: 500 }),
+        effort: Type.String({ minLength: 1, maxLength: 32 }),
     },
     { additionalProperties: false },
 );
@@ -111,7 +145,20 @@ type OnboardingEvent =
           };
       }
     | { readonly kind: "providerAdded"; readonly app: string }
-    | { readonly kind: "phonePaired"; readonly device?: string };
+    | { readonly kind: "phonePaired"; readonly device?: string }
+    | ({ readonly kind: "taskUpdated"; readonly name: string; readonly link: string } & TaskUpdate);
+
+/** What happened to a first task: the `state` of a `taskUpdated` event and what it carries. */
+type TaskUpdate =
+    | {
+          readonly state: "checkedOut";
+          readonly project: string;
+          readonly branch: string;
+          readonly subtaskCount: number;
+      }
+    | { readonly state: "waiting"; readonly question: string }
+    | { readonly state: "finished"; readonly summary: string }
+    | { readonly state: "failed"; readonly reason: string };
 
 /** The kind of device a start names: a recipe may word its steps for a phone. */
 export type OnboardingDevice = "desktop" | "phone";
@@ -174,6 +221,9 @@ export class OnboardingModule implements AgentModule {
     readonly #providerScan: ProviderScanModule;
     readonly #mobileConnector: MobileConnectorModule;
     readonly #tasks: TasksModule;
+    readonly #projects: ProjectsModule;
+    readonly #workspaces: WorkspacesModule;
+    readonly #userInput: UserInputModule;
     readonly #recipe: OnboardingRecipe;
     readonly #listeners = new Set<OnboardingListener>();
     readonly #speechListeners = new Set<OnboardingSpeechListener>();
@@ -181,6 +231,8 @@ export class OnboardingModule implements AgentModule {
     readonly #pressListeners = new Set<OnboardingPressListener>();
     /** Scripted messages the API announces at reading speed rather than at once. */
     readonly #paced = new Set<string>();
+    /** Outside any agent's loop, for work that writes the conversation's own metadata. */
+    readonly #background = new AsyncResource("happy-agent-onboarding");
     #versions = createUuidV7Factory();
     #unstarted: OnboardingState | undefined;
     #manualSignInPoll: ReturnType<typeof setInterval> | undefined;
@@ -199,6 +251,9 @@ export class OnboardingModule implements AgentModule {
         providerScan: ProviderScanModule,
         mobileConnector: MobileConnectorModule,
         tasks: TasksModule,
+        projects: ProjectsModule,
+        workspaces: WorkspacesModule,
+        userInput: UserInputModule,
     ) {
         this.#config = config;
         this.#durable = durableFunctions;
@@ -210,6 +265,9 @@ export class OnboardingModule implements AgentModule {
         this.#providerScan = providerScan;
         this.#mobileConnector = mobileConnector;
         this.#tasks = tasks;
+        this.#projects = projects;
+        this.#workspaces = workspaces;
+        this.#userInput = userInput;
         this.#recipe = assertOnboardingRecipe(localRecipe, LOCAL_OFFER);
         durableFunctions.register({
             name: STEP_FUNCTION,
@@ -219,6 +277,17 @@ export class OnboardingModule implements AgentModule {
                 await this.#runStep(ctx, call.arguments);
                 return null;
             },
+        });
+        durableFunctions.register({
+            name: USE_MODEL_FUNCTION,
+            argumentsSchema: useModelArgumentsSchema,
+            resultSchema: Type.Null(),
+            executor: (ctx, call) =>
+                this.#background.runInAsyncScope(async () => {
+                    const { agentId, providerId, modelId, effort } = call.arguments;
+                    await this.#useModel(ctx, agentId, providerId, modelId, effort);
+                    return null;
+                }),
         });
     }
 
@@ -250,6 +319,30 @@ export class OnboardingModule implements AgentModule {
                 moduleCtx.log.warn("Onboarding could not follow a provider CLI.", {}, error);
             });
         });
+        this.#workspaces.onEvent(async (_eventCtx, event) => {
+            if (event.type !== "workspace_updated" || event.change !== "mark_ready") return;
+            const subtask = event.workspace.subtaskAgentId;
+            if (subtask === undefined) return;
+            const moduleCtx = this.#context();
+            await this.#checkedOut(moduleCtx, subtask, event.workspace).catch((error: unknown) => {
+                moduleCtx.log.warn(
+                    "Onboarding could not follow a first task's checkout.",
+                    {},
+                    error,
+                );
+            });
+        });
+        this.#userInput.onEvent(async (_eventCtx, event) => {
+            if (event.type !== "user_input_requested") return;
+            const moduleCtx = this.#context();
+            await this.#asked(moduleCtx, event.request).catch((error: unknown) => {
+                moduleCtx.log.warn(
+                    "Onboarding could not follow a first task's question.",
+                    {},
+                    error,
+                );
+            });
+        });
         return {
             afterStart: async (startCtx: Context) => {
                 await this.#resumeAfterRestart(startCtx);
@@ -274,6 +367,18 @@ export class OnboardingModule implements AgentModule {
                           }
                       })
                     : [],
+            // Tools the recipe names that the runtime offers deferred elsewhere, such as
+            // set_bot_name, are loaded while the model guides.
+            overrideTools: async (hookCtx, scope, input) =>
+                (await this.#guiding(hookCtx, scope))
+                    ? input.tools.map((tool) =>
+                          tool.defer === true && this.#recipe.tools.includes(tool.name)
+                              ? { ...tool, defer: false }
+                              : tool,
+                      )
+                    : input.tools,
+            // Hidden events that never wake the Chief of Staff join its next turn instead.
+            beforeTurn: async (hookCtx, scope) => await this.#takeNotes(hookCtx, scope.agent.id),
             // The model's first answer after the hand-off is the real request onboarding requires.
             afterInferenceTransact: async (hookCtx, scope, inference) => {
                 if (
@@ -298,9 +403,17 @@ export class OnboardingModule implements AgentModule {
                 });
                 await this.#reconcileCompletion(hookCtx);
             },
-            // A turn that ended while still verifying never answered: the bootstrap says why.
+            // A turn that ended while still verifying never answered: the bootstrap says why. A
+            // first task's run that ended is told as finished or failed.
             afterAgentSettled: async (hookCtx, scope, settlement) => {
                 const state = await queryOnboardingState(hookCtx, OWNER);
+                if (
+                    state?.firstTasks?.some(
+                        (task) => task.agentId === scope.agent.id && !task.settled,
+                    ) === true
+                ) {
+                    await this.#taskSettled(this.#context(), scope.agent.id, settlement.error);
+                }
                 if (state?.verifying !== true) return;
                 if ((await this.#bots.chiefOfStaff(hookCtx))?.agentId !== scope.agent.id) return;
                 await this.#handoffFailed(
@@ -589,14 +702,23 @@ export class OnboardingModule implements AgentModule {
                 candidate.providerId === update.providerId && candidate.id === update.modelId,
         );
         const effort = update.effort ?? model?.defaultEffort ?? "medium";
-        await this.#update(ctx, (state) => ({
-            ...state,
-            model: { providerId: update.providerId, modelId: update.modelId },
-        }));
-        const bot = await this.#bots.chiefOfStaff(ctx);
-        if (bot !== undefined) {
-            await this.#useModel(ctx, bot.agentId, update.providerId, update.modelId, effort);
-        }
+        await ctx.inTx(async (txCtx) => {
+            await this.#update(txCtx, (state) => ({
+                ...state,
+                model: { providerId: update.providerId, modelId: update.modelId },
+            }));
+            const bot = await this.#bots.chiefOfStaff(txCtx);
+            if (bot === undefined) return;
+            await this.#durable.invoke(txCtx, {
+                function: USE_MODEL_FUNCTION,
+                arguments: {
+                    agentId: bot.agentId,
+                    providerId: update.providerId,
+                    modelId: update.modelId,
+                    effort,
+                },
+            });
+        });
         return `Set. The default is now ${model?.name ?? update.modelId} · ${effortLabel(effort)}, and the rest of onboarding runs on it.`;
     }
 
@@ -617,12 +739,34 @@ export class OnboardingModule implements AgentModule {
         const ownerUserId = await this.#tasks.ownerFor(ctx, task.kv);
         let started;
         try {
-            started = await this.#tasks.create(ctx, {
-                id: task.id,
-                creatorAgentId: task.agentId,
-                ...(ownerUserId === undefined ? {} : { ownerUserId }),
-                name: task.name,
-                text: task.text,
+            started = await ctx.inTx(async (txCtx) => {
+                const created = await this.#tasks.create(txCtx, {
+                    id: task.id,
+                    creatorAgentId: task.agentId,
+                    ...(ownerUserId === undefined ? {} : { ownerUserId }),
+                    name: task.name,
+                    text: task.text,
+                });
+                await this.#update(txCtx, (state) => {
+                    const tasks = state.firstTasks ?? [];
+                    if (
+                        tasks.length >= MAX_FIRST_TASKS ||
+                        tasks.some((first) => first.id === created.id)
+                    ) {
+                        return state;
+                    }
+                    const first: OnboardingFirstTask = {
+                        id: created.id,
+                        agentId: created.agentId,
+                        name: created.name.slice(0, 80),
+                        settled: false,
+                        checkouts: [],
+                        projects: [],
+                        questions: [],
+                    };
+                    return { ...state, firstTasks: [...tasks, first] };
+                });
+                return created;
             });
         } catch (error: unknown) {
             return `Not started: ${errorText(error)}`;
@@ -1099,6 +1243,157 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
+     * A workspace-bound subtask of a first task has its checkout: the first one, and each one for
+     * another project, rides along with the Chief of Staff's next turn.
+     */
+    async #checkedOut(ctx: Context, subtaskAgentId: string, workspace: Workspace): Promise<void> {
+        const taskAgentId = await this.#followedTask(ctx, subtaskAgentId);
+        if (taskAgentId === undefined) return;
+        const project = await this.#projects.get(ctx, workspace.projectRef).catch(() => undefined);
+        await ctx.inTx(async (txCtx) => {
+            const state = await this.#state(txCtx);
+            const task = state.firstTasks?.find((first) => first.agentId === taskAgentId);
+            if (task === undefined || task.settled || task.checkouts.includes(workspace.id)) {
+                return;
+            }
+            const fresh = !task.projects.includes(workspace.projectRef);
+            const updated: OnboardingFirstTask = {
+                ...task,
+                checkouts: [...task.checkouts, workspace.id].slice(-MAX_TASK_REFERENCES),
+                projects: fresh
+                    ? [...task.projects, workspace.projectRef].slice(-MAX_TASK_REFERENCES)
+                    : task.projects,
+            };
+            const notes = fresh
+                ? [
+                      ...(state.notes ?? []),
+                      eventText(
+                          taskUpdated(updated, {
+                              state: "checkedOut",
+                              project: project?.name ?? workspace.name,
+                              branch: workspace.branch,
+                              subtaskCount: updated.checkouts.length,
+                          }),
+                      ),
+                  ].slice(-MAX_NOTES)
+                : state.notes;
+            await this.#write(txCtx, {
+                ...withFirstTask(state, updated),
+                ...(notes === undefined ? {} : { notes }),
+            });
+        });
+    }
+
+    /** A first task, or one of its subtasks, asked the person something: the model hears it once. */
+    async #asked(ctx: Context, request: UserInputRequest): Promise<void> {
+        const taskAgentId = await this.#followedTask(ctx, request.askingAgentId);
+        if (taskAgentId === undefined) return;
+        await ctx.inTx(async (txCtx) => {
+            const state = await this.#state(txCtx);
+            const task = state.firstTasks?.find((first) => first.agentId === taskAgentId);
+            if (task === undefined || task.settled || task.questions.includes(request.id)) return;
+            const updated: OnboardingFirstTask = {
+                ...task,
+                questions: [...task.questions, request.id].slice(-MAX_TASK_REFERENCES),
+            };
+            const next = await this.#write(txCtx, withFirstTask(state, updated));
+            await this.#tell(
+                txCtx,
+                next,
+                taskUpdated(updated, { state: "waiting", question: oneLine(request.question) }),
+            );
+        });
+    }
+
+    /**
+     * A first task's run ended: failed when it ended in an error, finished when none of its
+     * subtasks is still running, with its last message in brief. Either is told once, and then
+     * nothing more about that task.
+     */
+    async #taskSettled(ctx: Context, agentId: string, error: string | undefined): Promise<void> {
+        if (error === undefined && (await this.#subtaskRunning(ctx, agentId))) return;
+        const update: TaskUpdate =
+            error === undefined
+                ? { state: "finished", summary: await this.#lastWords(ctx, agentId) }
+                : { state: "failed", reason: oneLine(error) };
+        await ctx.inTx(async (txCtx) => {
+            const state = await this.#state(txCtx);
+            const task = state.firstTasks?.find((first) => first.agentId === agentId);
+            if (task === undefined || task.settled) return;
+            const updated: OnboardingFirstTask = { ...task, settled: true };
+            const next = await this.#write(txCtx, withFirstTask(state, updated));
+            await this.#tell(txCtx, next, taskUpdated(updated, update));
+        });
+    }
+
+    /** The first task an agent is, or works under, while it is still followed. */
+    async #followedTask(ctx: Context, agentId: string): Promise<string | undefined> {
+        const agents = this.#agents;
+        const state = await queryOnboardingState(ctx, OWNER);
+        const followed = new Set(
+            state?.firstTasks?.flatMap((task) => (task.settled ? [] : [task.agentId])) ?? [],
+        );
+        if (agents === undefined || followed.size === 0) return undefined;
+        let current: string | null = agentId;
+        for (let depth = 0; current !== null && depth <= MAX_TASK_DEPTH; depth++) {
+            if (followed.has(current)) return current;
+            current = await agents.parentOf(ctx, current);
+        }
+        return undefined;
+    }
+
+    /**
+     * Whether an agent below this one still works: its run is open, or it has not begun, such as
+     * a subtask whose checkout is still being made.
+     */
+    async #subtaskRunning(ctx: Context, agentId: string): Promise<boolean> {
+        const agents = this.#agents;
+        if (agents === undefined) return false;
+        const queue = [...(await agents.childOf(ctx, agentId))];
+        for (let seen = 0; queue.length > 0 && seen < MAX_TASK_AGENTS; seen++) {
+            const child = queue.shift()!;
+            const begun = await this.#history.read(ctx, child, { from: "start", limit: 1 });
+            if (begun.messages.length === 0) return true;
+            if ((await this.#history.runningRun(ctx, child)) !== undefined) return true;
+            queue.push(...(await agents.childOf(ctx, child)));
+        }
+        return false;
+    }
+
+    /** A task's last message, in one or two sentences. */
+    async #lastWords(ctx: Context, agentId: string): Promise<string> {
+        const page = await this.#history
+            .read(ctx, agentId, { from: "end", limit: 1, roles: ["assistant"] })
+            .catch(() => undefined);
+        const text = (page?.messages.at(-1)?.message.blocks ?? [])
+            .flatMap((block) => (block.type === "text" ? [block.text] : []))
+            .join(" ");
+        return briefly(text) ?? "It ended without a final message.";
+    }
+
+    /**
+     * The hidden events waiting for the Chief of Staff's next turn, taken from the stored state
+     * and appended to its history before the model answers.
+     */
+    async #takeNotes(
+        ctx: Context,
+        agentId: string,
+    ): Promise<readonly AgentModuleAction[] | undefined> {
+        if (((await queryOnboardingState(ctx, OWNER))?.notes?.length ?? 0) === 0) return undefined;
+        if ((await this.#bots.chiefOfStaff(ctx))?.agentId !== agentId) return undefined;
+        const notes = await ctx.inTx(async (txCtx) => {
+            const state = await this.#state(txCtx);
+            if ((state.notes?.length ?? 0) === 0) return [];
+            await this.#write(txCtx, { ...state, notes: [] });
+            return state.notes ?? [];
+        });
+        return notes.map((text) => ({
+            type: "inject",
+            message: { role: "system", content: [{ type: "text", text }] },
+        }));
+    }
+
+    /**
      * The model takes over: it runs on the first chosen AI's first model, which becomes the
      * default too, the guide joins its instructions, and it hears `begin` as hidden context. Its
      * first answer is the verification. No model to run on returns to the bootstrap.
@@ -1244,14 +1539,19 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * Tell the model one thing that happened, as a hidden system message on the model the flow
-     * chose. It starts the conversation's turn when it is idle.
+     * Tell the model one thing that happened, as a hidden system message, in the caller's
+     * transaction. It starts the conversation's turn when it is idle, and the events waiting for
+     * that turn come first, in the order they happened. While onboarding runs, the turn runs on the
+     * model the flow chose; once it has finished, on whatever the conversation runs on now.
      */
     async #tell(ctx: Context, state: OnboardingState, event: OnboardingEvent): Promise<void> {
         const bot = await this.#bots.chiefOfStaff(ctx);
         const agents = this.#agents;
         const chosen = state.model;
         if (bot === undefined || agents === undefined || chosen === null) return;
+        const current = await this.#state(ctx);
+        const notes = current.notes ?? [];
+        if (notes.length > 0) await this.#write(ctx, { ...current, notes: [] });
         const model = this.#config.models.find(
             (candidate) =>
                 candidate.providerId === chosen.providerId && candidate.id === chosen.modelId,
@@ -1264,20 +1564,19 @@ export class OnboardingModule implements AgentModule {
             bot.agentId,
             {
                 role: "system",
-                content: [
-                    {
-                        type: "text",
-                        text: `<happy-onboarding-event>\n${JSON.stringify(event)}\n</happy-onboarding-event>`,
-                    },
-                ],
+                content: [{ type: "text", text: [...notes, eventText(event)].join("\n") }],
             },
             {
                 id: createId(),
                 metadata: { hideFromUser: true, onboarding: { event: event.kind } },
-                provider: chosen.providerId,
-                model: chosen.modelId,
-                ...(model === undefined ? {} : { effort: model.defaultEffort }),
-                permissionMode: mode?.permissionMode ?? DEFAULT_AGENT_PERMISSION_MODE,
+                ...(state.status === "running"
+                    ? {
+                          provider: chosen.providerId,
+                          model: chosen.modelId,
+                          ...(model === undefined ? {} : { effort: model.defaultEffort }),
+                          permissionMode: mode?.permissionMode ?? DEFAULT_AGENT_PERMISSION_MODE,
+                      }
+                    : {}),
             },
         );
     }
@@ -1589,6 +1888,11 @@ export class OnboardingModule implements AgentModule {
             restartRequired: state.restartRequired,
             // Nothing works before an AI is connected and the model has the conversation.
             skippable: guiding || state.status === "finished",
+            firstTasks: (state.firstTasks ?? []).map(({ id, agentId, name }) => ({
+                id,
+                agentId,
+                name,
+            })),
             onboardingVersion: this.#recipe.version,
             completedVersion: state.completedVersion,
         };
@@ -1627,6 +1931,45 @@ export class OnboardingModule implements AgentModule {
         if (this.#ctx === undefined) throw new Error("The onboarding module has not started.");
         return this.#ctx;
     }
+}
+
+/** A hidden event as the model reads it. */
+function eventText(event: OnboardingEvent): string {
+    return `<happy-onboarding-event>\n${JSON.stringify(event)}\n</happy-onboarding-event>`;
+}
+
+/** A `taskUpdated` event about one first task, linked by its name. */
+function taskUpdated(task: OnboardingFirstTask, update: TaskUpdate): OnboardingEvent {
+    return {
+        kind: "taskUpdated",
+        name: task.name,
+        link: formatHappyMarkdownLink(
+            { type: "reference", reference: { kind: "agent", id: task.agentId } },
+            task.name,
+        ),
+        ...update,
+    };
+}
+
+function withFirstTask(state: OnboardingState, task: OnboardingFirstTask): OnboardingState {
+    return {
+        ...state,
+        firstTasks: (state.firstTasks ?? []).map((first) => (first.id === task.id ? task : first)),
+    };
+}
+
+/** Text on one line, at most 300 characters. */
+function oneLine(text: string): string {
+    const line = text.replace(/\s+/g, " ").trim();
+    return line.length <= 300 ? line : `${line.slice(0, 299).trimEnd()}…`;
+}
+
+/** The first one or two sentences of a message, on one line, or nothing when it has no words. */
+function briefly(text: string): string | undefined {
+    const line = text.replace(/\s+/g, " ").trim();
+    if (line.length === 0) return undefined;
+    const sentences = line.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [line];
+    return oneLine(sentences.slice(0, 2).join("").trim());
 }
 
 function failed(reason: string): EffectResult {

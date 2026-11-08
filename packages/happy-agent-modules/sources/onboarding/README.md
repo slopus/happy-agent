@@ -77,16 +77,33 @@ answer is the verification: `afterInferenceTransact` records the provider as ver
 settles without an answer returns to the recipe's `handoffFailed` step, which keeps the other AIs
 the person chose ticked.
 
-While the model guides, the guide is in its instructions and the recipe's tools are offered:
-`save_profile`, `set_default_model`, `start_first_task`, and `finish_onboarding`.
-`start_first_task` creates the first task through Tasks as a new top-level task owned by the person,
-never a subtask of the Chief of Staff. What the person did not do
-themselves reaches it as hidden events: `providerAdded` when another AI finishes signing in, and
-`phonePaired`. The `local` guide has the model save the profile it was given and say so, ask
-before it reads anything, suggest up to three first tasks from the Git metadata of recent projects,
-offer the phone while the chosen task runs, and finish only after a first task was offered or the
-person stopped. The order is the guide's, not code's. `finish_onboarding` ends the flow once the
-requirements are met.
+While the model guides, the guide is in its instructions and the recipe's tools are at hand:
+`save_profile`, `set_default_model`, `start_first_task`, and `finish_onboarding`, which exist only
+then, and `set_bot_name`, which Bots offers deferred everywhere and `overrideTools` loads for that
+time, so the model renames the bot "<First name>'s Chief of Staff" or to a nickname without
+searching. `start_first_task` creates the first task through Tasks as a new top-level task owned by
+the person, never a subtask of the Chief of Staff. A switch of model from inside the Chief of
+Staff's own tool call reaches its composer through the `onboarding.useModel` durable function,
+because an agent's metadata cannot be written from inside its own loop.
+
+What the person did not do themselves reaches the model as hidden events: `providerAdded` when
+another AI finishes signing in, `phonePaired`, and `taskUpdated` for each task `start_first_task`
+started. Those tasks are kept as the flow's `firstTasks`, and each is followed until its run first
+finishes or fails, also after onboarding finished:
+
+- `checkedOut`, when a workspace-bound subtask below it is ready (`mark_ready`), once per project.
+  It never wakes the Chief of Staff: it waits in the state's `notes` and joins its next turn, through
+  `beforeTurn` when the person writes, or ahead of the next waking event.
+- `waiting`, when the task or one of its agents asks the person something (`user_input_requested`),
+  once per question.
+- `finished`, when the task's own run settles with no agent below it still running or not yet
+  begun, with the first two sentences of its last message; `failed`, when its run settles with an
+  error. Either is the last update about that task.
+
+The `local` guide has the model save the profile it was given and say so, ask before it reads
+anything, suggest up to three first tasks from the Git metadata of recent projects, offer the phone
+while the chosen task runs, and hand over when the task finishes. The order is the guide's, not
+code's. `finish_onboarding` ends the flow once the requirements are met.
 
 ## Completion
 
