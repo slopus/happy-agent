@@ -56,6 +56,14 @@ export const taskSchema = Type.Object({
     shortName: Type.Optional(taskNameSchema),
     /** The person the task belongs to; `null` in standalone mode or when nobody was identified. */
     ownerUserId: Nullable(userIdSchema),
+    /**
+     * The system bot the task's agent speaks as, such as a team server's Welcome task speaking as
+     * the Chief of Staff: show that bot, by its live name and avatar, as the author of the task's
+     * agent messages. Omitted by servers with no such task, such as the standalone daemon.
+     */
+    speaksAs: Type.Optional(
+        Nullable(Type.Object({ systemKey: Type.String({ minLength: 1, maxLength: 64 }) })),
+    ),
     status: Type.Union([Type.Literal("active"), Type.Literal("archived")]),
     updatedAt: timestampSchema,
     version: resourceVersionSchema,

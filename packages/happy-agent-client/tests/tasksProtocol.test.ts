@@ -94,6 +94,18 @@ describe("tasks protocol", () => {
         expect(Value.Check(taskSchema, { ...task, canArchive: "yes" })).toBe(false);
     });
 
+    it("reads the system bot a task speaks as, which servers without one omit", () => {
+        expect(
+            [
+                { ...task, speaksAs: { systemKey: "chief_of_staff" } },
+                { ...task, speaksAs: null },
+                task,
+                { ...task, speaksAs: { systemKey: "" } },
+                { ...task, speaksAs: "chief_of_staff" },
+            ].map((value) => Value.Check(taskSchema, value)),
+        ).toEqual([true, true, true, false, false]);
+    });
+
     it("keeps tasks and memberships optional and additive in desktop bootstrap", () => {
         const required = desktopBootstrapResponseSchema.required ?? [];
         expect(required).not.toContain("tasks");
