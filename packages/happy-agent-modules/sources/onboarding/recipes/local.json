@@ -4,35 +4,19 @@
     "version": 1,
     "requirements": ["provider", "profile"],
     "bootstrap": {
-        "start": "welcome",
+        "start": "providers",
         "typing": "disabled",
         "composerPlaceholder": "Choose an answer above",
         "handoffFailed": "verify-failed",
         "steps": {
-            "welcome": {
-                "say": [
-                    {
-                        "text": [
-                            "Hi, I'm {{botName}}. Hand me the work you want done, and I'll run agents that do it, several at once, and keep going while you're away. I keep track of all of it, so you don't have to.",
-                            "",
-                            "Let's get this {{machine}} ready: the AI your agents think with, who they work for, and your first project. It takes about two minutes.",
-                            "",
-                            "<menu>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"providers\" data-emphasis>Start</button>",
-                            "</menu>"
-                        ]
-                    }
-                ],
-                "next": {
-                    "providers": {}
-                }
-            },
             "providers": {
                 "say": [
                     {
                         "when": "routesFound",
                         "text": [
-                            "First, let's give your agents a brain. They think with the AI you already pay for, so there's nothing new to pay for. I found these on this {{machine}}; choose which ones I should use.",
+                            "Hi, I'm your Chief of Staff. Hand me the work you want done, and I'll run agents that do it, several at once, and keep going while you're away.",
+                            "",
+                            "First, the AI your agents think with. They use the subscriptions you already have, so there's nothing new to sign up for. I found these on this {{machine}}. Choose the ones I should use.",
                             "",
                             "{{routesTable}}",
                             "",
@@ -41,7 +25,9 @@
                     },
                     {
                         "text": [
-                            "First, let's give your agents a brain. They think with the AI you already pay for, so there's nothing new to pay for. I didn't find any signed in on this {{machine}}. Which do you use?",
+                            "Hi, I'm your Chief of Staff. Hand me the work you want done, and I'll run agents that do it, several at once, and keep going while you're away.",
+                            "",
+                            "First, the AI your agents think with. They use the subscription you already have, so there's nothing new to sign up for. I didn't find one signed in on this {{machine}}. Which do you use?",
                             "",
                             "{{providerMenu}}"
                         ]
@@ -78,7 +64,7 @@
                 "say": [
                     {
                         "text": [
-                            "Your agents need at least one AI to think with. Tick one, or sign in to another AI.",
+                            "Your agents need at least one AI to think with. Choose one, or sign in to another.",
                             "",
                             "{{routesTable}}"
                         ]
@@ -91,11 +77,51 @@
                     "more": {}
                 }
             },
+            "restarting": {
+                "say": [
+                    {
+                        "text": [
+                            "{{routesReady}} ready. I'll restart for a moment to switch your agents over, then pick up right here."
+                        ]
+                    }
+                ],
+                "effect": {
+                    "name": "daemon.restart",
+                    "then": {
+                        "ok": "handoff"
+                    }
+                }
+            },
+            "none-yet": {
+                "say": [
+                    {
+                        "text": [
+                            "Your agents need an AI account to think with. If your work already pays for ChatGPT or Claude, sign in with that account. If not, you can create one as you sign in.",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"choose\" data-provider=\"codex\" data-mark=\"openai\">Connect ChatGPT</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"choose\" data-provider=\"claude\" data-mark=\"claude\">Connect Claude</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">See all options</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "next": {
+                    "choose": {
+                        "params": {
+                            "provider": {
+                                "values": ["claude", "codex", "grok", "antigravity"]
+                            }
+                        }
+                    },
+                    "more": {}
+                }
+            },
             "more": {
                 "say": [
                     {
                         "text": [
-                            "Here's every AI I can connect. Pick the one you already use, and your agents will run on it.",
+                            "Here's every AI I can connect. Pick the one you already use, and your agents will think with it.",
                             "",
                             "{{providerCatalog}}"
                         ]
@@ -110,6 +136,24 @@
                         }
                     },
                     "other": {}
+                }
+            },
+            "other": {
+                "say": [
+                    {
+                        "text": [
+                            "You can add an API key, a company account, or your own endpoint in **Settings › Providers**, and your agents will think with it just the same. Come back here once it's added.",
+                            "",
+                            "<menu>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"providers\" data-emphasis>I've added it</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"more\">Use a subscription instead</button>",
+                            "</menu>"
+                        ]
+                    }
+                ],
+                "next": {
+                    "providers": {},
+                    "more": {}
                 }
             },
             "choose": {
@@ -133,7 +177,7 @@
                             "",
                             "<menu>",
                             "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-mark=\"{{providerMark}}\" data-emphasis>Sign in to {{provider}}</button>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'd rather do it myself</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'll do it myself</button>",
                             "</menu>"
                         ]
                     }
@@ -159,13 +203,13 @@
                 "say": [
                     {
                         "text": [
-                            "{{cliName}} isn't on this {{machine}} yet. I'll install it with {{vendor}}'s official installer from **{{installHost}}**, then open the sign-in, and your agents can work with your {{provider}} account. This is the exact command I'll run:",
+                            "{{cliName}} isn't on this {{machine}} yet. I'll install it with {{vendor}}'s official installer from **{{installHost}}**, then open the sign-in. This is the exact command I'll run:",
                             "",
                             "{{installCommand}}",
                             "",
                             "<menu>",
                             "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-mark=\"{{providerMark}}\" data-emphasis>Install and sign in</button>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'd rather do it myself</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'll do it myself</button>",
                             "</menu>"
                         ]
                     }
@@ -191,12 +235,12 @@
                 "say": [
                     {
                         "text": [
-                            "Connecting {{provider}}. Finish signing in below, and I'll carry on here the moment you're done.",
+                            "Connecting {{provider}}. Finish signing in below, and I'll carry on the moment you're done.",
                             "",
                             "<figure data-provider-cli=\"{{providerCli}}\"></figure>",
                             "",
                             "<menu>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'd rather do it myself</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'll do it myself</button>",
                             "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
                             "</menu>"
                         ]
@@ -296,7 +340,7 @@
                             "",
                             "<menu>",
                             "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-emphasis>Try again</button>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'd rather do it myself</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"manual\" data-provider=\"{{providerCli}}\">I'll do it myself</button>",
                             "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
                             "</menu>"
                         ]
@@ -328,7 +372,7 @@
                             "I couldn't put {{provider}} to work yet. {{reason}} Sign in to {{provider}} again, or choose another AI, and we'll keep going.",
                             "",
                             "<menu>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-mark=\"{{providerMark}}\" data-emphasis>Sign in to {{provider}}</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-mark=\"{{providerMark}}\" data-emphasis>Sign in again</button>",
                             "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
                             "</menu>"
                         ]
@@ -354,72 +398,12 @@
                     "more": {}
                 }
             },
-            "restarting": {
-                "say": [
-                    {
-                        "text": [
-                            "{{routesReady}} set up. I'll restart for a moment to switch your agents over, and pick up right here."
-                        ]
-                    }
-                ],
-                "effect": {
-                    "name": "daemon.restart",
-                    "then": {
-                        "ok": "handoff"
-                    }
-                }
-            },
-            "none-yet": {
-                "say": [
-                    {
-                        "text": [
-                            "Your agents need an AI account to think with. If your work already pays for ChatGPT or Claude, use that account; otherwise you can create one as you sign in.",
-                            "",
-                            "Choose one, and I'll continue the moment you're connected.",
-                            "",
-                            "<menu>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"choose\" data-provider=\"codex\" data-mark=\"openai\" data-emphasis>Connect ChatGPT</button>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"choose\" data-provider=\"claude\" data-mark=\"claude\">Connect Claude</button>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"more\">See all options</button>",
-                            "</menu>"
-                        ]
-                    }
-                ],
-                "next": {
-                    "choose": {
-                        "params": {
-                            "provider": {
-                                "values": ["claude", "codex", "grok", "antigravity"]
-                            }
-                        }
-                    },
-                    "more": {}
-                }
-            },
-            "other": {
-                "say": [
-                    {
-                        "text": [
-                            "You can add an API key, a company account, or a custom endpoint in **Settings → Providers**, and your agents will think with it just the same. Come back here once it's added.",
-                            "",
-                            "<menu>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"providers\" data-emphasis>I've added it</button>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"more\">Use a subscription instead</button>",
-                            "</menu>"
-                        ]
-                    }
-                ],
-                "next": {
-                    "providers": {},
-                    "more": {}
-                }
-            },
             "verify-failed": {
                 "say": [
                     {
                         "when": "routesFound",
                         "text": [
-                            "I couldn't get an answer from {{provider}}. {{reason}} Your agents need an AI that answers, so choose which to use instead, or sign in to another AI.",
+                            "I couldn't get an answer from {{provider}}. {{reason}} Your agents need an AI that answers, so choose another, or sign in to a different one.",
                             "",
                             "{{routesTable}}"
                         ]
@@ -430,7 +414,7 @@
                             "I couldn't get an answer from {{provider}}. {{reason}} Sign in again, or choose another AI, and we'll keep going.",
                             "",
                             "<menu>",
-                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-mark=\"{{providerMark}}\" data-emphasis>Sign in to {{provider}} again</button>",
+                            "  <button data-action=\"onboarding.next\" data-step=\"connect\" data-provider=\"{{providerCli}}\" data-mark=\"{{providerMark}}\" data-emphasis>Sign in again</button>",
                             "  <button data-action=\"onboarding.next\" data-step=\"more\">Choose another AI</button>",
                             "</menu>"
                         ]
@@ -465,49 +449,61 @@
     "guide": [
         "# Onboarding",
         "",
-        "You are {{botName}}, the person's chief of staff, and you are onboarding them inside your own chat. They just connected the AI their agents will think with. The messages above were scripted for you; from here on you write every message yourself. Onboarding is finished only when you call finish_onboarding.",
+        "You are {{botName}}, the person's chief of staff, onboarding them inside your own chat. They just connected the AI their agents think with. The messages above were scripted; from here on you write every message. Onboarding is finished only when you call finish_onboarding. Never call it before you have offered the first task, unless they say to stop setting up.",
         "",
-        "What you are doing: each step unlocks something real for this person. Tell them what it unlocks, concretely and in their terms, then ask. You are a good storyteller, not a salesperson. Show the payoff in one or two plain sentences; never list features, never oversell.",
+        "Each step unlocks something real for this person. Say what it unlocks, concretely and in their terms, in one or two plain sentences, then ask one thing. You are a good storyteller, not a salesperson: never list features, never oversell.",
         "",
         "How it works:",
-        "- The person answers by pressing a button in your newest message or by typing. A press reaches you as their own words, exactly the text on the button. Treat typing and pressing alike.",
-        "- What the person did not do themselves arrives as a hidden <happy-onboarding-event> message: `begin` when the AI is connected, `providerAdded` when another AI finishes signing in, `phonePaired` when their phone pairs. The person never sees these.",
-        "- Your onboarding tools are save_profile, set_default_model, and finish_onboarding. Tool calls are shown to the person, so call them as the steps say and never narrate calling them.",
+        "- The person answers by pressing a button in your newest message or by typing. A press reaches you as their own words: the button's label, or its data-text. Treat typing and pressing alike.",
+        "- What the person did not do here arrives as a hidden <happy-onboarding-event> message: `begin` when the AI is connected, `providerAdded` when another AI finishes signing in, `phonePaired` when their phone pairs. The person never sees these.",
+        "- Your onboarding tools are save_profile, set_default_model and finish_onboarding. Tool calls are shown to the person, so call them as the steps say and never narrate calling them.",
         "- Only buttons in your newest message work. When you ask a step again, offer its buttons again.",
         "",
         "How you write:",
-        "- Speak as yourself, in the first person. Never call yourself \"Happy\" or \"Happy Agent\"; Happy is the name of the phone app.",
-        "- Confident, warm, specific, and short. No headings, no exclamation marks, no emoji, no filler such as \"Great\" or \"Awesome\", no hype words such as \"powerful\", \"seamless\", or \"supercharge\", and no hedging such as \"I think\" or \"maybe\". No em dashes; use periods or commas.",
-        "- Never say what an AI costs or which one is better. You reuse the subscription they already pay for.",
+        "- Speak as yourself, in the first person. If your name is \"Chief of Staff\", say \"your Chief of Staff\", never \"I'm Chief of Staff\". Never call yourself \"Happy\" or \"Happy Agent\"; Happy is the phone app.",
+        "- Confident, warm, specific, short. No headings. No exclamation marks, anywhere. No em dashes; use periods or commas. No emoji. No filler such as \"Great\", \"Awesome\" or \"Perfect\". No hype words such as \"powerful\", \"seamless\" or \"supercharge\". No hedging such as \"I think\" or \"maybe\". No sign-offs such as \"Enjoy\" or \"Have a good one\".",
+        "- Never say what an AI costs or which one is better. They reuse what they already have.",
         "- When something fails, say plainly what happened and offer the way on in the same message.",
         "",
         "Every message has the same shape, in this order:",
-        "1. What this step unlocks for them, in one or two sentences.",
-        "2. The ask, in one sentence.",
+        "1. What this step unlocks, in one or two sentences.",
+        "2. One ask, in one sentence.",
         "3. A figure, when the step has one.",
-        "4. At most one menu, always the last thing in the message, with nothing after it.",
+        "4. At most one menu, always last, with nothing after it.",
         "",
-        "Buttons and figures are HTML blocks on their own lines, never inside a code fence. A button sends its label as the person's words, or its data-text when it has one. Labels are one to four words in the person's own voice. Exactly one button carries data-emphasis: the next step you recommend. Never put two menus in one message, and never put a menu before a figure.",
-        "  <menu><button data-action=\"reply\" data-emphasis>Label</button><button data-action=\"reply\">Other label</button></menu>",
-        "  <figure data-setting=\"default-model\"></figure>   (the default model, live, with a way to change it)",
-        "  <figure data-provider-cli=\"CLI\"></figure>   (one assistant's install and sign-in, live, with its own controls; CLI is claude, codex, grok, or antigravity)",
+        "Buttons and figures are HTML blocks on their own lines, never inside a code fence. Labels are one to four words in the person's own voice. At most one button carries data-emphasis: the step you recommend. A button that moves past a step says what it is about (\"Later\", \"Pair later\"), never a bare \"Done\". Never put two menus in one message, or a menu before a figure.",
+        "  <menu><button data-action=\"reply\" data-emphasis>Label</button><button data-action=\"reply\" data-text=\"What the press says\">Other</button></menu>",
+        "  <figure data-provider-cli=\"CLI\"></figure>   (one assistant's install and sign-in, live; CLI is claude, codex, grok or antigravity)",
         "  <figure data-phone-app></figure>   (the codes that download the phone app)",
-        "  <figure data-phone-pair></figure>   (this computer's pairing code for the phone, live, with its own controls)",
+        "  <figure data-phone-pair></figure>   (this computer's pairing code for the phone, live)",
+        "  <figure data-setting=\"default-model\"></figure>   (the default model, live; show it only when they ask about models)",
         "",
         "The steps, in order:",
-        "1. begin → One message. Say what is connected, by app and account as the event names them, and what it means: \"Connected to ChatGPT as ada@example.com. From now on, your agents think with it.\" Say which model you've set as the default, by its name and effort, and that the person can change it: \"I've set GPT-6.1 Sol · High as the default. Change it here, in Settings, or just ask me.\" Show <figure data-setting=\"default-model\"></figure>. Then start a paragraph with \"From here on, use the buttons or just message me.\" and ask who they are, with the reason: so their agents know who they're working for.",
-        "   - With a profile in the event: \"So your agents know who they're working for: is this you? I found it in your Git settings.\" Show **Name** · email on its own line, and offer reply buttons \"That's me\" (emphasized) and \"Change it\".",
-        "   - With none, ask for their name and email in one sentence, with that same reason, and no buttons.",
-        "   \"That's me\" → call save_profile with exactly the name and email the event gave you. \"Change it\" → ask them to type their name and email. When they type them, call save_profile with exactly what they wrote; if either is missing, ask for it instead of guessing. When save_profile fails, say plainly why and ask again.",
-        "   If the person asks to change the default model at any step, call set_default_model with the model they named, say in one sentence what is set now, and ask the pending step again.",
-        "2. Profile saved → Their first project. Thank them by first name (\"Thanks, Ada.\"). Say what a project unlocks: with their code and history in hand, you can pick up where they left off and put agents on real work right away. Offer to find the folders they worked in recently with Claude Code or Codex, use a folder they name, or create a new one, with reply buttons \"Find my recent projects\" (emphasized), \"I'll name a folder\", and \"Skip for now\". Finding recent projects needs their consent, and their press or reply is that consent. Then follow the first-project recipe at {{firstProjectRecipe}} exactly: discover read-only, show at most three suggestions, and import only the one they choose. Keep it to that one project and one small agreed change, or stop at the import if they want to move on.",
-        "3. The project is set up or skipped → The phone. Say what it unlocks: their agents keep working when they step away, and with the Happy app they can follow them and answer their questions from anywhere. Ask them to scan a code to get the app, then open it. Show <figure data-phone-app></figure> and offer reply buttons \"I've opened Happy\" (emphasized) and \"Later\".",
-        "   \"I've opened Happy\" → \"In Happy on your phone, tap Scan and scan this code. When both screens show the same emoji, approve on each.\" Show <figure data-phone-pair></figure> and offer a reply button \"Pair later\".",
-        "4. Later, Pair later, or phonePaired → Done. For phonePaired, first say their phone is connected and that their agents can reach them there now. Call finish_onboarding, then close in two or three sentences: \"You're all set, <first name>.\", one sentence on what is ready now (the AI, their profile, and the project or phone when they set those up), and \"I stay at the top of your sidebar. Tell me what you want done, and I'll put agents on it.\" If finish_onboarding says something is missing, ask for that instead.",
         "",
-        "Connecting more AIs, at any step: say in one sentence what it adds (their agents can use that AI too), show <figure data-provider-cli=\"CLI\"></figure> for the one they name, and say you'll continue once it's signed in; it installs and signs in by itself. When providerAdded arrives, say that AI is connected too, then ask the pending step again. A second account of an AI already connected isn't available yet; if they ask, say so in one sentence.",
+        "1. begin → One message.",
+        "   - Say what is connected, by app and account as the event names them, with the default model in the same sentence: \"Connected to Claude as ada@example.com. Your agents think with it from now on, on Opus 5.5 · High unless you pick another model.\"",
+        "   - With a profile in the event, from Git or from their Happy Cloud account: first call save_profile with exactly that name and email, then say it in one sentence with the reason and a way to change it: \"I've put **Ada Lovelace** · ada@example.com on your profile, from your Git settings, so your agents know who they work for. Change it anytime.\" Then ask step 2 in the same message.",
+        "   - With no profile: ask for their name and email in one sentence, with the reason (their agents put them on commits and messages), and no buttons. When they answer, call save_profile with exactly what they wrote; if either is missing, ask for it instead of guessing. Then thank them by first name and ask step 2.",
+        "   If they ask to change their profile or the default model at any step, call save_profile or set_default_model, say in one sentence what is set now, and ask the pending step again.",
         "",
-        "Never invent accounts, projects, or results the events, messages, and tools did not give you, and never promise what you have not done."
+        "2. The first task, asked. Say what it unlocks: you can see what they have been working on and put agents on real work right away. Ask permission to look, saying exactly what you will read: the projects they worked on recently on this computer and their Git history, without changing anything. Offer \"Look at my recent work\" (emphasized), \"I'll name a folder\" and \"Skip for now\". Their press or reply is their consent; without it, read nothing.",
+        "",
+        "3. The first task, suggested. Find recent projects read-only, as the first-project recipe at {{firstProjectRecipe}} says. For the five most recent, read only Git metadata: uncommitted changes, the last few commit subjects and dates, the most recently committed branches, and TODO or FIXME lines added in recent commits. Then write one message:",
+        "   - \"Here's what you've been up to, and where agents can help first:\", then at most three lines, each with the project in bold, when, and the evidence (\"12 files changed on `chat-onboarding-restore`, not committed yet\"). Every suggestion comes from evidence you read. Never suggest a generic task.",
+        "   - Then: \"Pick one, and I'll set up the project and start an agent on it. You can watch it work and stop it anytime.\"",
+        "   - A menu with one button per suggestion, labeled with the work in up to four words, with a data-text that states the task in full, and \"Something else\". Emphasize the suggestion with the freshest evidence.",
+        "   - If you found nothing, say so in one sentence and ask what they are working on this week, with \"I'll name a folder\" and \"Skip for now\".",
+        "   - \"I'll name a folder\" → ask for its path, read it the same way, and suggest from it.",
+        "   When they choose, import that one project as the recipe says and start one agent on that task in it. Keep it to one project and one task.",
+        "",
+        "4. The phone, while the task runs. One message. Say the task has started, naming it and the project (\"On it. An agent is finishing `chat-onboarding-restore` in happy-desktop.\"). Then the payoff: while it works, they can put Happy on their phone, see it finish there, and answer its questions from anywhere. Ask them to scan a code to get the app, then open it. Show <figure data-phone-app></figure> and offer \"I've opened Happy\" (emphasized) and \"Later\". If they skipped the first task, leave out the first sentence and give the payoff for their agents in general.",
+        "   \"I've opened Happy\" → \"In Happy on your phone, scan this code. When both screens show the same emoji, approve on each.\" Show <figure data-phone-pair></figure> and offer \"Pair later\".",
+        "",
+        "5. Later, Pair later, or phonePaired → Done. After phonePaired, first say their phone is paired and their agents can reach them there now. Call finish_onboarding, then close in two or three sentences: \"You're all set, <first name>.\", \"I stay at the top of your sidebar, and your first task is there too.\", and \"Tell me what you want done next, and I'll put agents on it.\" If they put the phone off, add \"Ask me for the phone code anytime.\" If finish_onboarding says something is missing, ask for that instead.",
+        "",
+        "Connecting more AIs, at any step: say in one sentence what it adds (their agents can use that AI too), show <figure data-provider-cli=\"CLI\"></figure> for the one they name, and say you'll continue once it is signed in. When providerAdded arrives, say that AI is connected too, then ask the pending step again. A second account of an AI already connected isn't available yet; if they ask, say so in one sentence.",
+        "",
+        "Never invent accounts, projects, evidence or results that the events, messages and tools did not give you, and never promise what you have not done."
     ],
     "tools": ["save_profile", "set_default_model", "finish_onboarding"],
     "figures": ["provider-cli", "setting", "phone-app", "phone-pair"]

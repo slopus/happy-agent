@@ -34,24 +34,44 @@ There is no scripted "Connected" line: the model's first message opens with it.
 ## Every step says what it unlocks before it asks
 
 Kirill found the copy flat: steps asked for things without saying why. He wants the bot to be a
-good storyteller that sells each step without being obnoxious. Each message now opens with one or
-two plain sentences on what the step unlocks for the person (the AI is what their agents think
-with, the profile tells agents who they work for, a project lets the bot pick up where they left
-off, the phone lets them follow and answer agents from anywhere), then asks. A message holds at
-most one set of controls, after any figure and last, with one emphasized next step; the guide asks
-the model for the same shape. This wording is a draft: a design pass is writing the final script.
+good storyteller that sells each step without being obnoxious. A design pass then wrote the final
+script for every setup, and `recipes/local.json` holds its local part word for word. Each message
+opens with one or two plain sentences on what the step unlocks, then asks one thing; it holds at
+most one set of controls, after any figure and last. The guide restates every rule, because a model
+drops any rule its guide does not repeat.
 
-## The bot speaks as itself, under its live name
+There is no separate welcome step with a Start button: the first step introduces the Chief of Staff
+and asks for the AI in the same message, so the person makes a real choice on the first screen.
+
+## The bot speaks as itself, and recommends no AI
 
 A copy review found the words drifting between "I" and a third-person name, hedging, and cheerful
-filler. The bot speaks in the first person, under whatever name the Chief of Staff has now. It
-never calls itself Happy; Happy names only the phone app. Messages are direct, with no exclamation
-marks, filler, hedging, or em dashes. They make no pricing or quality claims about an AI: the
-person's existing subscription is reused, so there is nothing new to pay for.
+filler. The bot speaks in the first person: with the default name it is "your Chief of Staff",
+never "I'm Chief of Staff". It never calls itself Happy; Happy names only the phone app. Messages
+have no exclamation marks, em dashes, emoji, filler, hype, hedging, or sign-offs, and make no
+pricing or quality claims about an AI: the person's existing subscription is reused, so there is
+nothing new to pay for. A menu that picks an AI emphasizes none of them, so no vendor is
+recommended over another; elsewhere at most one control, the recommended next step, is emphasized.
 
-Every setback offers a way on. After "I'd rather do it myself", doing it for them is offered again
-only when it is possible, and never emphasized. `tests/onboarding/localRecipe.test.ts` holds these
-rules.
+Every setback says what happened and offers a way on in the same message. After "I'll do it
+myself", doing it for them is offered again only when it is possible, and never emphasized.
+`tests/onboarding/localRecipe.test.ts` holds these rules.
+
+## The profile is said, not asked
+
+Asking "is this you?" about the name and email already in Git settings was a stop that decided
+nothing. The model saves the profile it is given with `save_profile` first, then says what it put
+there, where it came from, and that it can be changed. It asks only when there is none.
+
+## The first task is suggested from evidence, after consent
+
+A first project offered as a list of folders left the person to work out what to do with it. With
+the person's consent, the model reads only Git metadata of their recent projects (uncommitted
+changes, recent commits and branches, TODOs added lately) and suggests up to three concrete tasks,
+each with the evidence behind it, never a generic one. Picking one starts it, and the phone step
+follows with that running task as the reason to get the app. Onboarding does not finish before a
+first task was offered, unless the person says to stop. These are rules in the guide and the
+first-project recipe, not code: the model decides when it has offered the task.
 
 ## An older or already-used installation never counts as owed
 
@@ -94,10 +114,10 @@ deferred copy would make the model search for a tool it needs at that moment.
 ## A step types at once, even while it is still working out what to say
 
 The providers step must detect routes before it can write its table, and on a Mac the sign-in
-checks behind that can take seconds; the conversation sat silent after Start. A scripted message's
-run now starts, and is announced, before its words are rendered. The API then counts the time spent
-rendering toward the usual 300–500 ms before the first words, so a fast step looks the same as
-before.
+checks behind that can take seconds; the conversation sat silent until they finished. A scripted
+message's run now starts, and is announced, before its words are rendered. The API then counts the
+time spent rendering toward the usual 300–500 ms before the first words, so a fast step looks the
+same as before.
 
 ## The routes table ticks what will actually be used
 

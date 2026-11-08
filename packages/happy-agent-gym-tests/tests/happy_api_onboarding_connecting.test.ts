@@ -31,13 +31,11 @@ afterEach(async () => {
     await gyms.dispose();
 });
 
-/** Start onboarding, press Start, then choose Claude from the menu of AIs. */
+/** Start onboarding, then choose Claude from the menu of AIs. */
 async function chooseClaude(gym: AgentGym): Promise<{ agentId: string; offer: OnboardingMessage }> {
     const agentId = await startOnboarding(gym);
-    const opening = (await waitForStep(gym, agentId, "welcome"))!;
-    await press(gym, agentId, { messageId: opening.id, params: { step: "providers" } });
     const asked = (await waitForStep(gym, agentId, "providers"))!;
-    expect(textOf(asked)).toContain("I didn't find any signed in");
+    expect(textOf(asked)).toContain("I didn't find one signed in");
     const chose = await press(gym, agentId, {
         messageId: asked.id,
         controlIndex: 0,
@@ -74,7 +72,7 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
             const { agentId, offer } = await chooseClaude(gym);
             expect((await flowOf(gym)).step).toBe("install-offer");
             expect(textOf(offer)).toContain(
-                "Claude Code isn't on this computer yet. I'll install it with Anthropic's official installer from **claude.ai**, then open the sign-in, and your agents can work with your Claude account. This is the exact command I'll run:",
+                "Claude Code isn't on this computer yet. I'll install it with Anthropic's official installer from **claude.ai**, then open the sign-in. This is the exact command I'll run:",
             );
             expect(textOf(offer)).toContain(
                 "```sh\ncurl -fsSL https://claude.ai/install.sh | bash\n```",
@@ -87,7 +85,7 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
             const connecting = (await waitForStep(gym, agentId, "connect"))!;
             const written = textOf(connecting);
             expect(written).toContain(
-                "Connecting Claude. Finish signing in below, and I'll carry on here the moment you're done.",
+                "Connecting Claude. Finish signing in below, and I'll carry on the moment you're done.",
             );
             expect(written).toContain('<figure data-provider-cli="claude"></figure>');
 
@@ -109,7 +107,7 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
                 "I couldn't put Claude to work yet. My settings on this computer have no connection for it. Sign in to Claude again, or choose another AI, and we'll keep going.",
             );
             expect(textOf(failed)).toContain(
-                '<button data-action="onboarding.next" data-step="connect" data-provider="claude" data-mark="claude" data-emphasis>Sign in to Claude</button>',
+                '<button data-action="onboarding.next" data-step="connect" data-provider="claude" data-mark="claude" data-emphasis>Sign in again</button>',
             );
             const all = await messagesOf(gym, agentId);
             // Nothing above is redrawn: the connecting message is exactly as it was written.
@@ -178,7 +176,7 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
                 [
                     "<menu>",
                     '  <button data-action="onboarding.next" data-step="connect" data-provider="claude" data-emphasis>Try again</button>',
-                    '  <button data-action="onboarding.next" data-step="manual" data-provider="claude">I\'d rather do it myself</button>',
+                    '  <button data-action="onboarding.next" data-step="manual" data-provider="claude">I\'ll do it myself</button>',
                     '  <button data-action="onboarding.next" data-step="more">Choose another AI</button>',
                     "</menu>",
                 ].join("\n"),
