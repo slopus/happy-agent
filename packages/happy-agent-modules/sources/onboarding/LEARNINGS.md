@@ -31,6 +31,16 @@ Every new step appears at the bottom, and earlier messages are never rewritten. 
 sign-in progress is a live `data-provider-cli` figure the app draws, not a message edited in place.
 There is no scripted "Connected" line: the model's first message opens with it.
 
+## Every step says what it unlocks before it asks
+
+Kirill found the copy flat: steps asked for things without saying why. He wants the bot to be a
+good storyteller that sells each step without being obnoxious. Each message now opens with one or
+two plain sentences on what the step unlocks for the person (the AI is what their agents think
+with, the profile tells agents who they work for, a project lets the bot pick up where they left
+off, the phone lets them follow and answer agents from anywhere), then asks. A message holds at
+most one set of controls, after any figure and last, with one emphasized next step; the guide asks
+the model for the same shape. This wording is a draft: a design pass is writing the final script.
+
 ## The bot speaks as itself, under its live name
 
 A copy review found the words drifting between "I" and a third-person name, hedging, and cheerful
@@ -61,7 +71,7 @@ checks that assistant every few seconds and stops as soon as the flow moves on.
 
 A Claude that signed in but has no provider here first came back as `failed`. That showed "That
 didn't work" right after a sign-in that worked. Effects now return `unusable`, which the recipe
-sends to "I couldn't switch to Claude", naming the cause.
+sends to "I couldn't put Claude to work yet", naming the cause.
 
 ## A failed first answer offers the other AIs chosen
 

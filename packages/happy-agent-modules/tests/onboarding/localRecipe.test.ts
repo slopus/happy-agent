@@ -172,7 +172,7 @@ describe("the local onboarding recipe", () => {
             expect(text, step).not.toContain("!");
         }
         expect(fillRecipeText(steps["welcome"]!.say![0]!.text, VARIABLES, BLOCKS)).toContain(
-            "Hi, I'm Chief of &quot;Staff&quot; &amp; &lt;co&gt;. I run and coordinate agents across your work",
+            "Hi, I'm Chief of &quot;Staff&quot; &amp; &lt;co&gt;. Hand me the work you want done",
         );
         // The guide names Happy only as the phone app.
         const guide = recipeText(recipe.guide);
@@ -184,7 +184,8 @@ describe("the local onboarding recipe", () => {
                     "",
                 )
                 .replaceAll("I've opened Happy", "")
-                .replace("In Happy on your phone", ""),
+                .replace("In Happy on your phone", "")
+                .replace("with the Happy app", ""),
         ).not.toMatch(/\bHappy\b/u);
     });
 
@@ -211,8 +212,24 @@ describe("the local onboarding recipe", () => {
             expect(text, step).not.toMatch(/\$|extra cost|cheaper|better|best\b/iu);
         }
         expect(fillRecipeText(steps["none-yet"]!.say![0]!.text, VARIABLES, BLOCKS)).toContain(
-            "I reuse the subscription you already pay for, so there's nothing new to pay for.",
+            "If your work already pays for ChatGPT or Claude, use that account",
         );
+    });
+
+    it("asks with at most one set of controls, after any figure, and ends with it", () => {
+        for (const { step, text } of said()) {
+            const blocks = chatActionBlocksOf(text);
+            const asks = blocks.flatMap((block, index) =>
+                block!.kind === "menu" || block!.kind === "checklist" || block!.kind === "code"
+                    ? [index]
+                    : [],
+            );
+            expect(asks.length, step).toBeLessThanOrEqual(1);
+            const ask = asks[0];
+            if (ask === undefined) continue;
+            // Only a status line may follow the controls, such as a hint under the routes table.
+            for (const block of blocks.slice(ask + 1)) expect(block!.kind, step).toBe("status");
+        }
     });
 
     it("emphasizes at most one control in each block", () => {

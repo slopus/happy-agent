@@ -74,7 +74,7 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
             const { agentId, offer } = await chooseClaude(gym);
             expect((await flowOf(gym)).step).toBe("install-offer");
             expect(textOf(offer)).toContain(
-                "Claude Code isn't on this computer yet. I'll download Anthropic's official installer from **claude.ai** and start signing you in. This is the exact command I'll run:",
+                "Claude Code isn't on this computer yet. I'll install it with Anthropic's official installer from **claude.ai**, then open the sign-in, and your agents can work with your Claude account. This is the exact command I'll run:",
             );
             expect(textOf(offer)).toContain(
                 "```sh\ncurl -fsSL https://claude.ai/install.sh | bash\n```",
@@ -87,7 +87,7 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
             const connecting = (await waitForStep(gym, agentId, "connect"))!;
             const written = textOf(connecting);
             expect(written).toContain(
-                "Connecting Claude. I'll continue here as soon as you're signed in.",
+                "Connecting Claude. Finish signing in below, and I'll carry on here the moment you're done.",
             );
             expect(written).toContain('<figure data-provider-cli="claude"></figure>');
 
@@ -106,7 +106,7 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
 
             const failed = (await waitForStep(gym, agentId, "use-failed", [connecting.id]))!;
             expect(textOf(failed)).toContain(
-                "I couldn't switch to Claude. My settings on this computer have no connection for it. Sign in to Claude, or choose another AI.",
+                "I couldn't put Claude to work yet. My settings on this computer have no connection for it. Sign in to Claude again, or choose another AI, and we'll keep going.",
             );
             expect(textOf(failed)).toContain(
                 '<button data-action="onboarding.next" data-step="connect" data-provider="claude" data-mark="claude" data-emphasis>Sign in to Claude</button>',
@@ -128,7 +128,7 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
             const { agentId, offer } = await chooseClaude(gym);
             expect((await flowOf(gym)).step).toBe("sign-in-offer");
             expect(textOf(offer)).toContain(
-                "Claude Code is already on this computer. I'll open Anthropic's sign-in page so you can connect your Claude account.",
+                "Claude Code is already on this computer, so this is quick. I'll open Anthropic's sign-in page, and once you approve, your agents can work with your Claude account.",
             );
 
             await press(gym, agentId, {
@@ -138,7 +138,7 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
             });
             const manual = (await waitForStep(gym, agentId, "manual"))!;
             expect(textOf(manual)).toContain(
-                "Set up Claude Code in your terminal. Run this command, and I'll continue here as soon as you're signed in:",
+                "Sure. Run this in your terminal and sign in. I'll notice the moment you're done and carry on here.",
             );
             expect(textOf(manual)).toContain(
                 '<output data-status="running">Waiting for Claude sign-in…</output>',
@@ -151,7 +151,7 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
             // The person signs in in their own terminal; no client asks the daemon to look.
             await writeFile(join(home, ".stub-claude-signed-in"), "");
             const failed = (await waitForStep(gym, agentId, "use-failed", [manual.id]))!;
-            expect(textOf(failed)).toContain("I couldn't switch to Claude.");
+            expect(textOf(failed)).toContain("I couldn't put Claude to work yet.");
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,
@@ -171,9 +171,9 @@ describe("Connecting an AI in onboarding's bootstrap", () => {
                 params: { step: "connect", provider: "claude" },
             });
             // The connect step's message comes first, then the install fails without a press.
-            const failed = await waitForSaid(gym, agentId, "That didn't work:");
+            const failed = await waitForSaid(gym, agentId, "I couldn't finish connecting Claude.");
             expect((await flowOf(gym)).step).toBe("connect-failed");
-            expect(textOf(failed)).toMatch(/^That didn't work: \S/u);
+            expect(textOf(failed)).toMatch(/^I couldn't finish connecting Claude\. \S/u);
             expect(textOf(failed)).toContain(
                 [
                     "<menu>",
