@@ -18,7 +18,8 @@ import {
     providerMenu,
     routesTable,
 } from "../../sources/onboarding/impl/localWords.js";
-import type { OnboardingRecipe } from "../../sources/onboarding/index.js";
+import type { OnboardingModule, OnboardingRecipe } from "../../sources/onboarding/index.js";
+import { startFirstTaskTool } from "../../sources/onboarding/tools/start_first_task.js";
 import localRecipeJson from "../../sources/onboarding/recipes/local.json" with { type: "json" };
 import type { ProviderRoute } from "../../sources/providerRoutes/index.js";
 
@@ -319,7 +320,7 @@ describe("the local onboarding recipe", () => {
         );
         // A clone with no work named still gets something concrete to do.
         expect(guide).toContain(
-            "if they name no work, the work is getting it to build and its tests to run on this computer.",
+            "if they name no work, the work is getting it to build and its tests to run with what this {{machine}} already has.",
         );
         // Both tools return before setup finishes, so the task is told to wait for it.
         expect(guide).toContain(
@@ -331,6 +332,26 @@ describe("the local onboarding recipe", () => {
         );
         // Setting the project up is at hand while the model guides, not something to search for.
         expect(recipe.tools).toEqual(expect.arrayContaining(["create_project", "clone_project"]));
+    });
+
+    it("briefs the first task so it never needs to leave its sandbox", () => {
+        const guide = recipeText(recipe.guide);
+        expect(guide).toContain(
+            "Add that it verifies its work with tests and offline checks inside its sandbox, with no live network calls, installs or writes outside its workspace, and that when a live check would need that access, it says so at the end so the person can choose.",
+        );
+        expect(guide).toContain("Ask for nothing the person didn't, such as a live run");
+        expect(guide).toContain(
+            "If the task said a live check needs access it doesn't have, say so in one sentence and let them choose.",
+        );
+        // The tool says the same, so a brief written without the guide at hand keeps to it too.
+        const tool = startFirstTaskTool(
+            {} as OnboardingModule,
+            "agent",
+            {} as Parameters<typeof startFirstTaskTool>[2],
+        );
+        expect(tool.description).toContain(
+            "The person's first task must never need to leave its sandbox. Have text say that it verifies its work with tests and offline checks, with no live network calls, installs or writes outside its workspace",
+        );
     });
 
     it("names every tool the recipe loads, and only those, as its onboarding tools", () => {
@@ -371,9 +392,11 @@ describe("the local onboarding recipe", () => {
         expect(guide).toContain("Never claim progress no taskUpdated event reported.");
         // The handover says plainly where the work is and how it reaches the person's folder.
         expect(guide).toContain(
-            "Then say in one plain sentence where the work is and how it gets into their folder",
+            "Then exactly one sentence on where the work is and how to get it into their folder",
         );
-        expect(guide).toContain("Never explain copies, checkouts or commits.");
+        expect(guide).toContain(
+            "Never say what their folder doesn't have yet, and never mention copies, checkouts, commits, pushing or publishing, even when the task's summary does.",
+        );
         expect(guide).not.toContain("Nothing is committed");
         expect(guide).toContain(
             "7. Handover, when the task's taskUpdated says `finished`. Answer at once:",
