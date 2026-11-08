@@ -168,6 +168,7 @@ export class OnboardingModule implements AgentModule {
     /** Scripted messages the API announces at reading speed rather than at once. */
     readonly #paced = new Set<string>();
     #versions = createUuidV7Factory();
+    #unstarted: OnboardingState | undefined;
     #manualSignInPoll: ReturnType<typeof setInterval> | undefined;
     #manualSignInChecking = false;
     #ctx: Context | undefined;
@@ -235,7 +236,6 @@ export class OnboardingModule implements AgentModule {
         });
         return {
             afterStart: async (startCtx: Context) => {
-                await this.#settleInstallation(startCtx);
                 await this.#resumeAfterRestart(startCtx);
                 await this.#watchManualSignIn(startCtx);
             },
@@ -347,11 +347,21 @@ export class OnboardingModule implements AgentModule {
 
     /**
      * Begin onboarding when it has not begun: the recipe's first step is entered and its message
-     * written. Once onboarding has begun, finished, or completed, nothing changes.
+     * written. Once onboarding has begun, finished, or completed, nothing changes. Nothing is
+     * stored before the first start, so a server that only advertises onboarding behaves exactly
+     * as one without it; that first start decides whether the installation was already in use.
      */
     async start(ctx: Context, mutationId?: string): Promise<OnboardingFlow> {
+        const inUse = await this.#inUse(ctx);
         return await ctx.inTx(async (txCtx) => {
-            const current = await this.#state(txCtx);
+            let current = await this.#state(txCtx);
+            if ((await queryOnboardingState(txCtx, OWNER)) === undefined && inUse) {
+                current = await this.#write(
+                    txCtx,
+                    { ...current, status: "finished", preexisting: true },
+                    mutationId,
+                );
+            }
             if (current.status !== "not_started" || current.completedVersion !== null) {
                 return await this.#project(txCtx, current);
             }
@@ -1103,24 +1113,19 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * The first start that has onboarding records whether this installation was already in use:
-     * then onboarding never runs here, and an upgrade never sends an existing person through it.
+     * Whether this installation was in use before onboarding first started: its completion marker
+     * exists, its profile has a name, or a person has sent a message. Then onboarding never runs
+     * here, so neither an upgrade nor a client that turns chat onboarding on later sends an
+     * existing person through it.
      */
-    async #settleInstallation(ctx: Context): Promise<void> {
-        if ((await queryOnboardingState(ctx, OWNER)) !== undefined) return;
+    async #inUse(ctx: Context): Promise<boolean> {
+        if ((await queryOnboardingState(ctx, OWNER)) !== undefined) return false;
         const marked = await access(this.#config.configuration.paths.onboardingMarkerPath).then(
             () => true,
             () => false,
         );
         const named = Boolean((await this.#profile.get(ctx).catch(() => undefined))?.name);
-        const preexisting = marked || named || (await this.#history.anyPersonMessage(ctx));
-        await ctx.inTx(async (txCtx) => {
-            if ((await queryOnboardingState(txCtx, OWNER)) !== undefined) return;
-            await this.#write(txCtx, {
-                ...this.#initial(),
-                ...(preexisting ? { status: "finished" as const, preexisting: true } : {}),
-            });
-        });
+        return marked || named || (await this.#history.anyPersonMessage(ctx));
     }
 
     /** Whether this is the onboarding conversation while its model guides. */
@@ -1423,8 +1428,9 @@ export class OnboardingModule implements AgentModule {
         return Object.hasOwn(steps, id) ? steps[id] : undefined;
     }
 
+    /** The stored state, or one not started that keeps its version until something is stored. */
     async #state(ctx: Context): Promise<OnboardingState> {
-        return (await queryOnboardingState(ctx, OWNER)) ?? this.#initial();
+        return (await queryOnboardingState(ctx, OWNER)) ?? (this.#unstarted ??= this.#initial());
     }
 
     /** Read, change, and write the state in one transaction. */

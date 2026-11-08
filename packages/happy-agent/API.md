@@ -3226,11 +3226,17 @@ installation to onboarding for that requirement alone. On a server with the capa
 `GET /v0/onboarding` also includes `onboardingVersion`, the version the server runs, and
 `completedVersion`, the newest version whose requirements were all met, or `null`. `completed` is
 then also `true` when `completedVersion` is at least `onboardingVersion`. Both read only stored
-records, with no provider, network, or model work. An installation that was already in use the
-first time a daemon with the capability started counts as having finished onboarding: its
-completion marker existed, its profile had a name, or a person had sent a message in it. Its flow
-is `"finished"`, `completedVersion` stays `null`, and `completed` is `true`, so an upgrade never
-returns an existing user to onboarding.
+records, with no provider, network, or model work.
+
+Advertising the capability changes nothing by itself. Until a client calls
+`POST /v0/onboarding/flow/start`, the server stores nothing for onboarding and writes nothing in the
+conversation, the flow reads `"not_started"`, and `completed` is what it would be without the
+capability, so a client that predates chat onboarding, or keeps it turned off, sees no difference.
+The first start decides whether the installation was already in use: its completion marker
+exists, its profile has a name, or a person has sent a message in it. Such an installation counts
+as having finished onboarding: that start writes no message, the flow is `"finished"`,
+`completedVersion` stays `null`, and `completed` is `true` from then on, so neither an upgrade nor
+a client that turns chat onboarding on later returns an existing user to onboarding.
 
 The standalone daemon's `local` recipe:
 

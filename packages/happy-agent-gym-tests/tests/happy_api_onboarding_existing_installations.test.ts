@@ -8,8 +8,8 @@ import { OnboardingGyms, flowOf, messagesOf } from "./support/onboardingGym.js";
 
 /**
  * An upgrade never sends a person who already uses this installation through onboarding: the
- * first start of a daemon with onboarding counts an installation in use as finished, and a preview
- * that stored onboarding in an older shape starts over from that same check.
+ * first start of onboarding counts an installation in use as finished, and a preview that stored
+ * onboarding in an older shape starts over from that same check.
  */
 
 const gyms = new OnboardingGyms();
@@ -25,18 +25,37 @@ const BEFORE_ONBOARDING = [
     "DELETE FROM happy_agent_migrations WHERE module_key = 'onboarding'",
 ];
 
-async function expectFinishedWithoutOnboarding(gym: AgentGym): Promise<void> {
-    const flow = await flowOf(gym);
-    expect(flow).toMatchObject({ status: "finished", step: null, completedVersion: null });
+/**
+ * Until a client starts onboarding, the server answers as a release without it did, with
+ * `completed` from the completion marker alone. The first start finds the installation in use and
+ * finishes without writing a word, and it stays finished across later starts.
+ */
+async function expectFinishedOnStart(gym: AgentGym, markerCompleted: boolean): Promise<void> {
+    expect(await flowOf(gym)).toMatchObject({
+        status: "not_started",
+        step: null,
+        completedVersion: null,
+    });
+    expect(await gym.http.ok("GET", "/v0/onboarding")).toMatchObject({
+        completed: markerCompleted,
+        completedVersion: null,
+    });
+    const started = (await gym.http.ok("POST", "/v0/onboarding/flow/start", {})) as {
+        flow: { version: string; status: string; agentId: string };
+    };
+    expect(started.flow).toMatchObject({ status: "finished", step: null, completedVersion: null });
     expect(await gym.http.ok("GET", "/v0/onboarding")).toMatchObject({
         completed: true,
         completedVersion: null,
     });
-    const started = (await gym.http.ok("POST", "/v0/onboarding/flow/start", {})) as {
-        flow: { version: string; status: string };
+    expect(await messagesOf(gym, started.flow.agentId)).toEqual([]);
+    await gym.restart();
+    expect(await flowOf(gym)).toMatchObject({ status: "finished", version: started.flow.version });
+    const again = (await gym.http.ok("POST", "/v0/onboarding/flow/start", {})) as {
+        flow: { version: string };
     };
-    expect(started.flow).toMatchObject({ status: "finished", version: flow.version });
-    expect(await messagesOf(gym, flow.agentId!)).toEqual([]);
+    expect(again.flow.version).toBe(started.flow.version);
+    expect(await messagesOf(gym, started.flow.agentId)).toEqual([]);
 }
 
 describe("Onboarding on an installation already in use", () => {
@@ -50,10 +69,7 @@ describe("Onboarding on an installation already in use", () => {
             await gym.restart({
                 whileStopped: async () => await runGymSql(gym.happyHome, BEFORE_ONBOARDING),
             });
-            await expectFinishedWithoutOnboarding(gym);
-            // It stays that way across later starts.
-            await gym.restart();
-            await expectFinishedWithoutOnboarding(gym);
+            await expectFinishedOnStart(gym, false);
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,
@@ -69,7 +85,7 @@ describe("Onboarding on an installation already in use", () => {
                     await writeFile(join(marked.happyHome, "agent", "onboarding-v0"), "complete\n");
                 },
             });
-            await expectFinishedWithoutOnboarding(marked);
+            await expectFinishedOnStart(marked, true);
 
             const named = (await gyms.start()).gym;
             const { profile } = await named.client.getProfile();
@@ -80,7 +96,7 @@ describe("Onboarding on an installation already in use", () => {
             await named.restart({
                 whileStopped: async () => await runGymSql(named.happyHome, BEFORE_ONBOARDING),
             });
-            await expectFinishedWithoutOnboarding(named);
+            await expectFinishedOnStart(named, false);
             expect([...marked.errors, ...named.errors]).toEqual([]);
         },
         TEST_TIMEOUT_MS,

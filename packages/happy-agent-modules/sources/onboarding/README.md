@@ -80,6 +80,7 @@ requirements are met.
 
 `completedVersion` is written by whatever change meets the recipe's last requirement (an AI that
 answered, and a profile with a name and an email). The fast path (`summary`) reads the stored row
-alone. The first start of a daemon with this module records whether the installation was already in
-use: the completion marker exists, the profile has a name, or a person has sent a message. An
+alone. Nothing is stored before the first `flow/start`, so advertising onboarding changes nothing
+for a client that never starts it. That first start records whether the installation was already
+in use: the completion marker exists, the profile has a name, or a person has sent a message. An
 installation in use counts as finished and never runs onboarding.

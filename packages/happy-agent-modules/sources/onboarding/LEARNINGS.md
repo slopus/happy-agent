@@ -77,9 +77,20 @@ first-project recipe, not code: the model decides when it has offered the task.
 
 An installation that was in use before onboarding existed must never be sent through it after an
 upgrade. A preview that stored onboarding in an older shape must not break startup either. The
-first start with this module therefore decides once. A completion marker, a named profile, or any
-message from a person counts as finished. Migration `002-onboarding-recipes` clears a preview's
-row so that same check runs again. Clients never read a missing capability as completion.
+first `flow/start` therefore decides once. A completion marker, a named profile, or any message
+from a person counts as finished. Migration `002-onboarding-recipes` clears a preview's row so
+that same check runs again. Clients never read a missing capability as completion.
+
+## Advertising onboarding changes nothing until a client starts it
+
+Kirill keeps chat onboarding behind an experimental client flag in production, so a client with
+the flag off, or one that predates it, must see exactly the classic behavior. The decision above
+used to be stored when the daemon first started, which made `completed` true for an installation
+with a named profile but no completion marker even for clients that never asked for chat
+onboarding. Nothing is stored now until the first `flow/start`: before it, the flow reads as not
+started with a stable version, and every hook does nothing. The decision is made at that start
+instead, so an installation used with the flag off is never sent through onboarding when the flag
+is turned on later.
 
 ## A sign-in in the person's own terminal is looked for
 
