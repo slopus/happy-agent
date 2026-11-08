@@ -283,7 +283,14 @@ describe("the local onboarding recipe", () => {
             'call save_profile with exactly that name and email, then set_bot_name with "<First name>\'s Chief of Staff"',
         );
         expect(guide).toContain("Their press or reply is their consent; without it, read nothing.");
-        expect(guide).toContain("read only Git metadata");
+        // Happy reads the recent work itself; the model never runs a shell or leaves the sandbox.
+        expect(guide).toContain(
+            "Call find_recent_projects to see their recent work, and nothing else",
+        );
+        expect(guide).toContain(
+            "Never read assistant history, run the shell or ask to leave the sandbox for this.",
+        );
+        expect(recipe.tools).toContain("find_recent_projects");
         expect(guide).toContain("Never suggest a generic task.");
         expect(guide).toContain("at most three lines");
         expect(guide.indexOf("3. The first task, suggested.")).toBeLessThan(
@@ -304,7 +311,7 @@ describe("the local onboarding recipe", () => {
             '"Clone a repo" when Git is installed, "Start a new project" and "I\'ll name a folder", then "Skip for now"',
         );
         expect(guide).toContain(
-            "clone_project for a repository, or create its folder and call create_project. Then call start_first_task at once.",
+            "create_project with the path of a folder on this computer, clone_project for a repository, or for a new project create its folder, then call create_project. Then call start_first_task at once.",
         );
         // A clone with no work named still gets something concrete to do.
         expect(guide).toContain(
@@ -316,7 +323,7 @@ describe("the local onboarding recipe", () => {
         );
         // A new folder has no Git history, so its task works in a copy, not on a branch.
         expect(guide).toContain(
-            "A project without Git history, such as a new folder, gets its own copy of the folder instead of a fresh branch",
+            "A project without Git history, such as a new folder, gets a workspace of its own, a copy of the folder, instead of a fresh branch",
         );
         // Setting the project up is at hand while the model guides, not something to search for.
         expect(recipe.tools).toEqual(expect.arrayContaining(["create_project", "clone_project"]));
@@ -358,6 +365,12 @@ describe("the local onboarding recipe", () => {
             expect(guide).toContain(`\`${state}\``);
         }
         expect(guide).toContain("Never claim progress no taskUpdated event reported.");
+        // The handover says plainly where the work is and how it reaches the person's folder.
+        expect(guide).toContain(
+            "Then say in one plain sentence where the work is and how it gets into their folder",
+        );
+        expect(guide).toContain("Never explain copies, checkouts or commits.");
+        expect(guide).not.toContain("Nothing is committed");
         expect(guide).toContain(
             "7. Handover, when the task's taskUpdated says `finished`. Answer at once:",
         );

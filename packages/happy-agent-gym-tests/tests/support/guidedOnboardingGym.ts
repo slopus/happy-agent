@@ -133,6 +133,13 @@ export function cue(request: GymInferenceRequest): string {
     if (text.includes("as a top-level task")) return "started";
     if (text.includes("The bot is now named")) return "renamed";
     if (text.includes("The default is now")) return "model set";
+    if (
+        /No recent projects found|Recent projects on this computer|The folder they named|There is no folder at/u.test(
+            text,
+        )
+    ) {
+        return "looked";
+    }
     return `unknown:${text.slice(0, 200)}`;
 }
 
@@ -145,10 +152,10 @@ export async function startGuidedGym(
         /** The kind of device the start names. */
         readonly device?: string;
     } = {},
-): Promise<{ gym: AgentGym; agentId: string }> {
+): Promise<{ gym: AgentGym; agentId: string; home: string }> {
     const codex = "Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
     let onboarding: string | undefined;
-    const { gym } = await gyms.start({
+    const { gym, home } = await gyms.start({
         machine: {
             [codex]: { content: CODEX, mode: 0o755 },
             "home/.codex/auth.json": JSON.stringify({
@@ -211,7 +218,7 @@ export async function startGuidedGym(
         options.device === undefined ? {} : { device: options.device },
     )) as { flow: OnboardingFlow };
     onboarding = flow.agentId!;
-    return { gym, agentId: onboarding };
+    return { gym, agentId: onboarding, home };
 }
 
 /** Use selected on the routes table with `values` ticked. */

@@ -3258,14 +3258,19 @@ The standalone daemon's `local` recipe:
 3. The model saves the name and email it was given from the person's Git settings with
    `save_profile` and says so, or asks for them when there are none, and renames the bot
    "<First name>'s Chief of Staff" with `set_bot_name`, or to the nickname the person gives it.
-   With the person's consent, it reads the Git metadata of their recent projects without changing
-   anything, suggests up to three first tasks from what it found, and starts the one they pick
-   with `start_first_task` as a new top-level task, which appears among the person's tasks and is
-   never a subtask of the bot. It then offers the phone, and ends onboarding with
-   `finish_onboarding` when the first task finishes, or once a first task was offered and the
-   person stopped. It changes the default model with `set_default_model` when the person asks.
-   These four tools exist only while onboarding runs in that conversation, and `set_bot_name`,
-   which the bot otherwise finds through tool search, is loaded there for that time.
+   With the person's consent, it calls `find_recent_projects`, which the daemon runs itself,
+   read-only and within a few seconds, never through the bot's shell or an automatic review. It
+   reads the folders Claude Code and Codex last worked in, at most five, or one folder the person
+   names, with their Git metadata, and returns names, paths, dates, branches and commit subjects,
+   never file contents. The bot suggests up to three first tasks from what it found, or asks what
+   they want done when it found nothing, and starts the one they pick with `start_first_task` as a
+   new top-level task, which appears among the person's tasks and is never a subtask of the bot.
+   It then offers the phone, and ends onboarding with `finish_onboarding` when the first task
+   finishes, or once a first task was offered and the person stopped. It changes the default model
+   with `set_default_model` when the person asks. These five tools exist only while onboarding
+   runs in that conversation, and `set_bot_name`, `create_project`, `clone_project` and
+   `send_agent_message`, which the bot otherwise finds through tool search, are loaded there for
+   that time.
 4. Each task `start_first_task` starts joins the flow's `firstTasks`. Until such a task first
    finishes or fails, even once onboarding has finished, the bot hears hidden context entries
    about it: when one of its subtasks checks out a project, with the bot's next turn; and, as a

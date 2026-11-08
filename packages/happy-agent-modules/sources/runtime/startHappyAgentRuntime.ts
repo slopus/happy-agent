@@ -814,6 +814,7 @@ export async function startHappyAgentRuntime(
                   projects,
                   workspaces,
                   userInput,
+                  git,
               );
         const apiModule = new ApiModule(
             abort,
