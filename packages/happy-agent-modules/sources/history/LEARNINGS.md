@@ -303,6 +303,11 @@ conversation unreadable for anyone who had tried it in a preview. Migration
 `004-history-inline-actions-as-text` rewrites each press as a text block holding the words on the
 control and drops the choices, reading only the rows whose JSON mentions either.
 
+Inline actions came back in the shape that migration leaves: a press is the person's plain words,
+never an `action` block, so nothing written now needs rewriting. `actionChoices` returned as an
+optional field on agent messages, keyed by decimal block index. Migration 004 stays as it is and
+runs only once, so it never strips choices recorded after it.
+
 ## Search finds what people and agents wrote, never what they could not see
 
 Steve asked for one search over everything in the node, messages included. History owns the word

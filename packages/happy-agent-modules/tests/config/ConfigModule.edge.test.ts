@@ -183,6 +183,7 @@ describe("ConfigModule edge coverage", () => {
                 ),
                 localConfigPath: resolve(process.cwd(), "happy.toml"),
                 logPath: join(root, ".happy", "agent", "observation", "agent.log"),
+                onboardingMarkerPath: join(root, ".happy", "agent", "onboarding-v0"),
                 mcpConfigPath: join(
                     root,
                     process.platform === "darwin" ? "Happy/Config" : "happy/config",

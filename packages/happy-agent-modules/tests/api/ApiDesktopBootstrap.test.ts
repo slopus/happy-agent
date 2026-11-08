@@ -525,7 +525,11 @@ async function createFixture(tracing = false) {
                 };
             },
             configuration: {
-                paths: { tokenPath: join(directory, "token"), agentHome: directory },
+                paths: {
+                    tokenPath: join(directory, "token"),
+                    agentHome: directory,
+                    onboardingMarkerPath: join(directory, "onboarding-v0"),
+                },
                 values: {
                     api: { token },
                     features: { workspaces: true },

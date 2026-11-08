@@ -725,6 +725,47 @@ export class HistoryModule implements AgentModule {
     }
 
     /**
+     * Whether a person's own message was recorded after `messageId` in this conversation: a
+     * visible user-role message, accepted already. Pending messages, and messages generated on the
+     * person's behalf, do not count. An inline action block stays pressable only until this holds.
+     */
+    async personSpokeAfter(ctx: Context, agentId: string, messageId: string): Promise<boolean> {
+        if (
+            !Value.Check(historyAgentIdSchema, agentId) ||
+            !Value.Check(historyRecordIdSchema, messageId)
+        ) {
+            throw new Error("The history module received an invalid message lookup.");
+        }
+        return await this.#direct(ctx, async (txCtx) => {
+            const rows = await agentDatabaseRows<{ found: number }>(
+                txCtx.db,
+                sql`SELECT 1 AS found
+                    FROM ${sql.raw(HISTORY_TABLE)} AS later
+                    WHERE later.agent_id = ${agentId}
+                      AND later.role = 'user'
+                      AND COALESCE(json_extract(later.message_json, '$.hideFromUser'), 0) != 1
+                      AND later.position > (
+                          SELECT position FROM ${sql.raw(HISTORY_TABLE)}
+                          WHERE agent_id = ${agentId} AND record_id = ${messageId}
+                      )
+                    LIMIT 1`,
+            );
+            return rows.length > 0;
+        });
+    }
+
+    /** Whether a person ever sent a message on this installation, in any conversation. */
+    async anyPersonMessage(ctx: Context): Promise<boolean> {
+        return await this.#direct(ctx, async (txCtx) => {
+            const rows = await agentDatabaseRows<{ found: number }>(
+                txCtx.db,
+                sql`SELECT 1 AS found FROM ${sql.raw(HISTORY_TABLE)} WHERE role = 'user' LIMIT 1`,
+            );
+            return rows.length > 0;
+        });
+    }
+
+    /**
      * The mutation the agent's current run answers: the one recorded on the message that started
      * it. A message the agent sends carries it, so the run that message starts answers the same
      * mutation however long it waits in an inbox.

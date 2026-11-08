@@ -1473,6 +1473,7 @@ const pathSchemaSet = Type.Object(
         instructionsPath: pathSchema,
         localConfigPath: pathSchema,
         logPath: pathSchema,
+        onboardingMarkerPath: pathSchema,
         mcpConfigPath: pathSchema,
         observationHome: pathSchema,
         pidPath: pathSchema,
@@ -4580,6 +4581,8 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         instructionsPath: join(configHome, "AGENTS.md"),
         localConfigPath: join(process.cwd(), "happy.toml"),
         logPath: join(observationHome, "agent.log"),
+        // Written once a person finished setting this installation up, by any onboarding.
+        onboardingMarkerPath: join(agentHome, "onboarding-v0"),
         mcpConfigPath: join(configHome, "mcp.toml"),
         observationHome,
         pidPath: join(agentHome, "daemon.pid"),

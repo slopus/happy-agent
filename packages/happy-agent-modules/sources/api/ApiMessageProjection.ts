@@ -102,6 +102,9 @@ export function messageResource(
         ...(role === "user" && message.quote !== undefined
             ? { quote: publicQuote(message.quote) }
             : {}),
+        ...(role === "agent" && message.actionChoices !== undefined
+            ? { actionChoices: structuredClone(message.actionChoices) }
+            : {}),
         ...(role === "user"
             ? {
                   status: "accepted",
