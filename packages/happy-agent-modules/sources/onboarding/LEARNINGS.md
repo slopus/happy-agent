@@ -126,6 +126,14 @@ During the bootstrap a disabled composer still read "Message…" and looked open
 the bootstrap its own placeholder ("Choose an answer above"). The guided part keeps "Or just tell
 me in your own words…".
 
+## The flow says when the person can skip
+
+Locally nothing works before an AI is connected, so the desktop must not offer "Skip setup" during
+the script, while team flows can offer it at once. Reading `step` for that would make clients
+depend on the recipe's steps. The flow carries `skippable` instead: `false` during the bootstrap
+(including after a failed hand-off sends it back), `true` once the model has the conversation or
+onboarding finished.
+
 ## Onboarding's own tools are loaded, never searched for
 
 `save_profile`, `set_default_model`, and `finish_onboarding` reach the model only while it guides,
