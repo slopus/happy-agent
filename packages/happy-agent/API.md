@@ -2948,7 +2948,9 @@ for the caller, such as the standalone daemon's `local`, or a team server's `tea
   `onboarding.next` controls. A press is the person's message, and the server answers it with the
   next step's message; no model reads either. Only the message of the step the flow stands on is
   live. While the bootstrap runs, the composer is disabled unless the recipe lets typing hand the
-  conversation to the model at once.
+  conversation to the model at once. While `composer` is `"disabled"`, a typed message sent to that
+  conversation is refused with `409 conflict` and changes nothing. Where typing hands off, the
+  typed message ends the bootstrap and the model answers it with the guide.
 - **The guided part.** Once the recipe hands off, the conversation's own model writes every
   message, following the recipe's guide, which is part of its instructions while onboarding runs.
   It answers presses and typed messages alike, and does the work with ordinary tools whose calls
@@ -2973,7 +2975,11 @@ installation to onboarding for that requirement alone. On a server with the capa
 `GET /v0/onboarding` also includes `onboardingVersion`, the version the server runs, and
 `completedVersion`, the newest version whose requirements were all met, or `null`. `completed` is
 then also `true` when `completedVersion` is at least `onboardingVersion`. Both read only stored
-records, with no provider, network, or model work.
+records, with no provider, network, or model work. An installation that was already in use the
+first time a daemon with the capability started counts as having finished onboarding: its
+completion marker existed, its profile had a name, or a person had sent a message in it. Its flow
+is `"finished"`, `completedVersion` stays `null`, and `completed` is `true`, so an upgrade never
+returns an existing user to onboarding.
 
 The standalone daemon's `local` recipe:
 
@@ -2984,7 +2990,7 @@ The standalone daemon's `local` recipe:
 2. When an AI is connected, its first model becomes the bot's model and the default for new
    conversations, and the guided part begins. The model's first answer is the real request
    onboarding requires. If the bot's turn settles without an answer, the bootstrap says what
-   failed and offers to sign in again or choose another AI.
+   failed and offers the other AIs the person chose, a sign-in again, or another AI.
 3. The model asks the person's name and email, offering what it found in their Git settings, and
    saves them with `save_profile`. It then offers to find a first project with the person's
    consent, offers the phone, and ends onboarding with `finish_onboarding`. It changes the default
@@ -3001,7 +3007,7 @@ The standalone daemon's `local` recipe:
     "step": "providers",
     "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
     "composer": "disabled",
-    "composerPlaceholder": null,
+    "composerPlaceholder": "Choose an answer above",
     "restartRequired": false,
     "onboardingVersion": 1,
     "completedVersion": null
@@ -3018,7 +3024,8 @@ The standalone daemon's `local` recipe:
 - `composer` — `"disabled"` while the bootstrap does not accept typing, otherwise `"enabled"`.
   Clients disable the composer in that conversation while it is `"disabled"`.
 - `composerPlaceholder` — the composer's placeholder in that conversation while onboarding runs,
-  such as "Or just tell me in your own words…", or `null`.
+  such as "Choose an answer above" while the composer is disabled or "Or just tell me in your own
+  words…" once the model guides, or `null`.
 - `restartRequired` — `true` when a provider chosen during onboarding takes effect only after the
   daemon restarts. Clients restart it through the ordinary drain and restart, and the bootstrap
   carries on after the restart.
@@ -8574,7 +8581,9 @@ person's own message, sent through this route with exactly one `action` block in
 - `values` — optional, at most 64 strings: a checklist's ticked values, each 1–256 characters, or
   a code field's one text, 1–2,048 printable characters. Omitted or empty for any other control.
 - `id`, `mode`, `delivery`, `profile`, and `clientMetadata` are as for any send. `content` holds
-  nothing else.
+  nothing else. `mode` is required for a `reply` press, which a model answers, and optional for
+  `onboarding.next`, which no model answers and which ignores it, so a client can press during the
+  bootstrap before any model exists.
 
 The daemon resolves the press against its own stored copy of the message with
 `resolveChatActionPress`: the message is a visible agent message of this conversation; the block
