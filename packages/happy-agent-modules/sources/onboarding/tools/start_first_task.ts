@@ -17,6 +17,7 @@ export function startFirstTaskTool(module: OnboardingModule, agentId: string, kv
         description: [
             "Start the first task the person chose as a new top-level task: its own conversation in their sidebar, beside you. It is never your subtask or agent, so do not use create_subtask or create_agent for it. Call it once, after they picked a suggestion or named the work, and after its project is in Happy.",
             'name is the work in two to four words, such as "Finish login branch". text is the task in full, delivered as its first message: what to do, the project by name and path, and the evidence you found. The task opens its own subtask to check out the project and starts at once.',
+            "The person's first task must never need to leave its sandbox. Have text say that it verifies its work with tests and offline checks, with no live network calls, installs or writes outside its workspace, and that when a live check would need that access, it says so at the end so the person can choose. Ask for nothing the person didn't, such as a live run.",
             "Answers with the task's link; mention the task by that link.",
         ].join("\n\n"),
         parameters: Type.Object(

@@ -93,12 +93,22 @@ addresses can carry tokens, so the local guide carries the secrets rule too: nev
 ask for the address without it.
 
 A handover that said "The files are in their own copy of the project, not in ~/weather-today,
-which is still empty" confused a first-time person. The guide now says in one plain sentence where
-the work is and how it reaches their folder: open the task to look it over, or tell it to merge the
-change, or to copy the files over. It never explains copies, checkouts or commits. No action
-merges or applies a task's work yet, so the handover offers no button for it; when the person asks
-the Chief of Staff instead, it passes that to the task with `send_agent_message`, which the recipe
-loads.
+which is still empty" confused a first-time person, and a looser rule ("never explain copies,
+checkouts or commits") still let "your folder is still empty, and nothing has been committed or
+published" through, echoing the task's own summary. The guide now allows exactly one sentence
+after the summary: where the work is and how to get it into their folder (open the task, or tell
+it to merge the change or copy the files over). It never says what their folder lacks and never
+mentions copies, checkouts, commits, pushing or publishing, even when the summary does. No action
+merges or applies a task's work yet; when the person asks the Chief of Staff to bring it over, it
+passes that to the task with `send_agent_message`, which the recipe loads.
+
+The person's first task must never need to leave its sandbox either. A brief that said "Run it for
+real" made the subtask ask for full access to call a weather service. The guide and the
+`start_first_task` description now have the brief say the task verifies with tests and offline
+checks, with no live network calls, installs or writes outside its workspace, and says at the end
+when a live check would need that access, so the person chooses at the handover. The brief asks
+for nothing the person didn't, and a cloned repository's default work builds and tests with what
+the machine already has.
 
 ## Recent work is read by the daemon, never through the shell
 
