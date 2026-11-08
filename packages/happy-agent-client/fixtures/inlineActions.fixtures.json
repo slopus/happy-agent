@@ -239,6 +239,142 @@
             "stripped": "```\r\n<menu><button data-action=\"reply\">No</button></menu>\r\n```\r\nAfter.\r\n"
         },
         {
+            "name": "a tilde fence with CRLF line endings keeps its menu inert",
+            "markdown": "~~~html\r\n<menu><button data-action=\"reply\">Run this</button></menu>\r\n~~~\r\n",
+            "segments": [
+                {
+                    "type": "markdown",
+                    "text": "~~~html\r\n<menu><button data-action=\"reply\">Run this</button></menu>\r\n~~~\r\n"
+                }
+            ],
+            "blocks": [],
+            "stripped": "~~~html\r\n<menu><button data-action=\"reply\">Run this</button></menu>\r\n~~~\r\n"
+        },
+        {
+            "name": "a backtick fence keeps its menu inert after a blank line",
+            "markdown": "```html\n\n<menu><button data-action=\"reply\">No</button></menu>\n```\n",
+            "segments": [
+                {
+                    "type": "markdown",
+                    "text": "```html\n\n<menu><button data-action=\"reply\">No</button></menu>\n```\n"
+                }
+            ],
+            "blocks": [],
+            "stripped": "```html\n\n<menu><button data-action=\"reply\">No</button></menu>\n```\n"
+        },
+        {
+            "name": "a CRLF backtick fence keeps its menu inert after a blank line",
+            "markdown": "```html\r\n\r\n<menu><button data-action=\"reply\">Run this</button></menu>\r\n```\r\n",
+            "segments": [
+                {
+                    "type": "markdown",
+                    "text": "```html\r\n\r\n<menu><button data-action=\"reply\">Run this</button></menu>\r\n```\r\n"
+                }
+            ],
+            "blocks": [],
+            "stripped": "```html\r\n\r\n<menu><button data-action=\"reply\">Run this</button></menu>\r\n```\r\n"
+        },
+        {
+            "name": "a fence opened with CRLF closes with LF, and a menu after it is live",
+            "markdown": "~~~\r\n<menu><button data-action=\"reply\">No</button></menu>\n~~~\n\n<menu><button data-action=\"reply\">Live</button></menu>\r\n",
+            "segments": [
+                {
+                    "type": "markdown",
+                    "text": "~~~\r\n<menu><button data-action=\"reply\">No</button></menu>\n~~~\n\n"
+                },
+                {
+                    "type": "action",
+                    "html": "<menu><button data-action=\"reply\">Live</button></menu>\r\n",
+                    "complete": true
+                }
+            ],
+            "blocks": [
+                {
+                    "kind": "menu",
+                    "buttons": [
+                        {
+                            "label": "Live",
+                            "emphasized": false,
+                            "action": {
+                                "id": "reply",
+                                "route": "server",
+                                "params": {}
+                            }
+                        }
+                    ]
+                }
+            ],
+            "stripped": "~~~\r\n<menu><button data-action=\"reply\">No</button></menu>\n~~~"
+        },
+        {
+            "name": "a fence opened with LF closes with CRLF, and a menu after it is live",
+            "markdown": "```\n\n<menu><button data-action=\"reply\">No</button></menu>\r\n```\r\n\r\n<menu><button data-action=\"reply\">Live</button></menu>\n",
+            "segments": [
+                {
+                    "type": "markdown",
+                    "text": "```\n\n<menu><button data-action=\"reply\">No</button></menu>\r\n```\r\n\r\n"
+                },
+                {
+                    "type": "action",
+                    "html": "<menu><button data-action=\"reply\">Live</button></menu>\n",
+                    "complete": true
+                }
+            ],
+            "blocks": [
+                {
+                    "kind": "menu",
+                    "buttons": [
+                        {
+                            "label": "Live",
+                            "emphasized": false,
+                            "action": {
+                                "id": "reply",
+                                "route": "server",
+                                "params": {}
+                            }
+                        }
+                    ]
+                }
+            ],
+            "stripped": "```\n\n<menu><button data-action=\"reply\">No</button></menu>\r\n```"
+        },
+        {
+            "name": "an unclosed CRLF fence keeps everything after it inert",
+            "markdown": "```\r\n\r\n<menu><button data-action=\"reply\">No</button></menu>\r\n\r\nMore.\r\n\r\n<menu><button data-action=\"reply\">Nor this</button></menu>\r\n",
+            "segments": [
+                {
+                    "type": "markdown",
+                    "text": "```\r\n\r\n<menu><button data-action=\"reply\">No</button></menu>\r\n\r\nMore.\r\n\r\n<menu><button data-action=\"reply\">Nor this</button></menu>\r\n"
+                }
+            ],
+            "blocks": [],
+            "stripped": "```\r\n\r\n<menu><button data-action=\"reply\">No</button></menu>\r\n\r\nMore.\r\n\r\n<menu><button data-action=\"reply\">Nor this</button></menu>\r\n"
+        },
+        {
+            "name": "a lone carriage return ends a fence's info string, so a backtick after it is inside the fence",
+            "markdown": "```\rx`y\n<menu><button data-action=\"reply\">No</button></menu>\n```\n",
+            "segments": [
+                {
+                    "type": "markdown",
+                    "text": "```\rx`y\n<menu><button data-action=\"reply\">No</button></menu>\n```\n"
+                }
+            ],
+            "blocks": [],
+            "stripped": "```\rx`y\n<menu><button data-action=\"reply\">No</button></menu>\n```\n"
+        },
+        {
+            "name": "an info string may hold a line separator",
+            "markdown": "~~~js x\n<menu><button data-action=\"reply\">No</button></menu>\n~~~\n",
+            "segments": [
+                {
+                    "type": "markdown",
+                    "text": "~~~js x\n<menu><button data-action=\"reply\">No</button></menu>\n~~~\n"
+                }
+            ],
+            "blocks": [],
+            "stripped": "~~~js x\n<menu><button data-action=\"reply\">No</button></menu>\n~~~\n"
+        },
+        {
             "name": "a code span that crosses a line keeps a menu inside it inert",
             "markdown": "See `the\n<menu><button data-action=\"reply\">No</button></menu>` span.\n",
             "segments": [

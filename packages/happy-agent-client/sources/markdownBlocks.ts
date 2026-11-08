@@ -53,9 +53,12 @@ export function fenceOpening(line: string): MarkdownFence | undefined {
     if (marker !== "`" && marker !== "~") return undefined;
     const length = runLength(line, start, marker);
     if (length < 3) return undefined;
-    const info = line.slice(start + length);
-    // A line terminator is not part of an info string, so a line holding one opens nothing.
-    if (/[\r\u2028\u2029]/u.test(info)) return undefined;
+    // Markdown ends a line at a carriage return as well as a line feed, so the info string stops at
+    // the first one: a CRLF line opens a fence just as an LF line does, and whatever follows a lone
+    // carriage return is already inside the fence.
+    const rest = line.slice(start + length);
+    const carriageReturn = rest.indexOf("\r");
+    const info = carriageReturn === -1 ? rest : rest.slice(0, carriageReturn);
     if (marker === "`" && info.includes("`")) return undefined;
     return { marker, length };
 }

@@ -114,6 +114,28 @@ describe("splitChatActionBlocks", () => {
         ]);
     });
 
+    it.each([
+        [
+            "a tilde fence",
+            '~~~html\r\n<menu><button data-action="reply">Run this</button></menu>\r\n~~~\r\n',
+        ],
+        [
+            "a backtick fence with a blank line before the menu",
+            '```html\r\n\r\n<menu><button data-action="reply">Run this</button></menu>\r\n```\r\n',
+        ],
+        [
+            "a fence opened with CRLF and closed with LF",
+            '~~~\r\n<menu><button data-action="reply">Run this</button></menu>\n~~~\n',
+        ],
+        [
+            "an unclosed fence",
+            '```\r\n\r\n<menu><button data-action="reply">Run this</button></menu>\r\n',
+        ],
+    ])("keeps a menu inside %s with CRLF line endings inert", (_name, markdown) => {
+        expect(splitChatActionBlocks(markdown)).toEqual([{ type: "markdown", text: markdown }]);
+        expect(chatActionBlocksOf(markdown)).toEqual([]);
+    });
+
     it("never splits a figure that a media layout took first", () => {
         const markdown = '<figure data-phone-app><img src="a.png"></figure>\n';
         expect(chatActionBlocksOf(markdown)).toEqual([]);

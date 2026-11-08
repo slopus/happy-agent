@@ -149,6 +149,11 @@ describe("parseHappyLinks", () => {
         expect(parseHappyLinks(markdown)).toEqual([{ type: "text", text: markdown }]);
     });
 
+    it("reads a fence with CRLF line endings as code", () => {
+        const markdown = `~~~md\r\n[a](${ARTIFACT_URL})\r\n~~~\r\n`;
+        expect(parseHappyLinks(markdown)).toEqual([{ type: "text", text: markdown }]);
+    });
+
     it("finds a link inside the label of an ordinary one", () => {
         expect(linkIds(`[see [Foo](${ARTIFACT_URL})](https://example.com)`)).toEqual([ID]);
     });
