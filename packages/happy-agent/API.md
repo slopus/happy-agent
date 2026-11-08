@@ -3200,8 +3200,15 @@ for the caller, such as the standalone daemon's `local`, or a team server's `tea
   next step's message; no model reads either. Only the message of the step the flow stands on is
   live. While the bootstrap runs, the composer is disabled unless the recipe lets typing hand the
   conversation to the model at once. While `composer` is `"disabled"`, a typed message sent to that
-  conversation is refused with `409 conflict` and changes nothing. Where typing hands off, the
-  typed message ends the bootstrap and the model answers it with the guide.
+  conversation is refused with `409 conflict` and changes nothing. Where typing hands off, the typed
+  message ends the bootstrap and the model answers it with the guide. A step may also take a typed
+  answer, such as a name, when the recipe says so. While the flow stands on such a step, `composer`
+  is `"enabled"`. A typed message that fits the step is its answer, handled exactly like a press: it
+  needs no mode, and one sent is ignored; it is stored as the person's message in a finished run of
+  its own that no model reads; it is announced like a press, with `message.created` for the person's
+  words and then the next step's messages; and the server answers it with the next step's message. A
+  typed message that does not fit the step follows the recipe's typing rule above, as on any other
+  step.
 - **The guided part.** Once the recipe hands off, the conversation's own model writes every
   message, following the recipe's guide, which is part of its instructions while onboarding runs.
   It answers presses and typed messages alike, and does the work with ordinary tools whose calls
@@ -3305,8 +3312,15 @@ Response — `200`: `{ "flow": { "...": "the onboarding flow object" } }`.
 
 Begins onboarding when it has not begun: the recipe's first message is written and `status` becomes
 `"running"`. Once onboarding has begun, finished, or completed, it changes nothing. Request body,
-optional: `{ "mutationId": "optional-client-value" }`. Response — `200`:
-`{ "flow": { "...": "the onboarding flow object" } }`.
+optional: `{ "mutationId": "optional-client-value", "device": "desktop" }`.
+
+- `device` — optional: `"desktop"` or `"phone"`, the kind of device the person is starting on. The
+  server keeps the device of the start that began onboarding; a later start, or a press from
+  another device, changes nothing. A recipe may word its scripted steps for a phone, and the hidden
+  context entry that begins the guided part tells the model the device when it is known. Omitted,
+  the device is unknown and the recipe's general wording is used.
+
+Response — `200`: `{ "flow": { "...": "the onboarding flow object" } }`.
 
 Every change to the flow emits `onboarding.flow.updated` with the complete flow object and the
 `mutationId` of the request that caused it, when there was one. A team server sends it only to the

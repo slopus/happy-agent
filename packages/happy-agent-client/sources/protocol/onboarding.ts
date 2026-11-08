@@ -39,6 +39,11 @@ export type OnboardingFlowResponse = Static<typeof onboardingFlowResponseSchema>
 /** `POST /v0/onboarding/flow/start` */
 export const onboardingFlowStartRequestSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
+    /**
+     * The kind of device the person is starting on. Only the start that begins onboarding counts:
+     * a recipe may word its steps for a phone, and the model is told the device.
+     */
+    device: Type.Optional(Type.Union([Type.Literal("desktop"), Type.Literal("phone")])),
 });
 export type OnboardingFlowStartRequest = Static<typeof onboardingFlowStartRequestSchema>;
 
