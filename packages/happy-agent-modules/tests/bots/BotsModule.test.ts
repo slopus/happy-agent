@@ -735,7 +735,12 @@ describe("BotsModule", () => {
                 username: ordinary.username,
                 version: ordinary.version + 1,
             });
-            expect(fixture.agents.configs.get(ordinary.agentId)?.metadata?.title).toBe("Scout Two");
+            // Its conversation takes the name once the tool call has returned.
+            await vi.waitFor(() =>
+                expect(fixture.agents.configs.get(ordinary.agentId)?.metadata?.title).toBe(
+                    "Scout Two",
+                ),
+            );
             expect(await fixture.bots.get(ctx, peer.id)).toEqual(peer);
             expect(await fixture.bots.get(ctx, admin.id)).toEqual(admin);
 
