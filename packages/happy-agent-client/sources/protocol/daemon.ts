@@ -176,6 +176,16 @@ export const healthResponseSchema = Type.Object({
             artifactCovers: Type.Optional(Type.Boolean()),
             /** True when the daemon serves `POST /v0/search`, under Search. */
             search: Type.Optional(Type.Boolean()),
+            /**
+             * True when the daemon accepts presses on inline actions and adds `actionChoices` to
+             * agent messages, under Inline actions.
+             */
+            inlineActions: Type.Optional(Type.Boolean()),
+            /**
+             * True when the daemon runs onboarding as a conversation and serves
+             * `/v0/onboarding/flow`, under "Onboarding in a conversation".
+             */
+            chatOnboarding: Type.Optional(Type.Boolean()),
         }),
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */
@@ -669,6 +679,10 @@ export type InspectorStoppedResponse = Static<typeof inspectorStoppedResponseSch
 export const onboardingStateSchema = Type.Object({
     /** Set explicitly when the person finished or dismissed onboarding. */
     completed: Type.Boolean(),
+    /** With `capabilities.chatOnboarding`: the onboarding version the server runs. */
+    onboardingVersion: Type.Optional(Type.Integer({ minimum: 1 })),
+    /** With `capabilities.chatOnboarding`: the newest version whose requirements were all met. */
+    completedVersion: Type.Optional(Type.Union([Type.Integer({ minimum: 1 }), Type.Null()])),
     steps: Type.Object({
         /** The profile has a name. */
         profile: Type.Object({ done: Type.Boolean() }),

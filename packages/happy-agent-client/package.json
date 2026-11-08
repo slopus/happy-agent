@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-agent-client",
-    "version": "0.0.160",
+    "version": "0.0.161-preview.1",
     "description": "Typed client for the Happy agent HTTP API.",
     "license": "MIT",
     "repository": {
@@ -20,7 +20,9 @@
             "import": "./dist/index.js",
             "default": "./dist/index.js"
         },
-        "./searchFusion.fixtures.json": "./fixtures/searchFusion.fixtures.json"
+        "./searchFusion.fixtures.json": "./fixtures/searchFusion.fixtures.json",
+        "./inlineActions.fixtures.json": "./fixtures/inlineActions.fixtures.json",
+        "./inlineActions.registry.json": "./fixtures/inlineActions.registry.json"
     },
     "publishConfig": {
         "access": "public"

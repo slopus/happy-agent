@@ -801,6 +801,43 @@ export const toolCallRequestBlockSchema = Type.Object(
 /** An explicit request in a user message for Agent Base to execute one tool before inference. */
 export type ToolCallRequestBlock = Static<typeof toolCallRequestBlockSchema>;
 
+/**
+ * A press of an inline action control, the one block of a press sent with
+ * `capabilities.inlineActions`; see "Pressing an inline action" in API.md. `params` are the
+ * control's parameters as written; `values` a checklist's ticked values or a code field's text.
+ * The daemon stores the press as the person's text, so reads never carry this block.
+ */
+export const actionBlockSchema = Type.Object(
+    {
+        type: Type.Literal("action"),
+        messageId: cuid2Schema,
+        blockIndex: Type.Integer({ minimum: 0, maximum: 1_000_000 }),
+        /** The control pressed, by its place in the block: a menu's buttons in order, a submit first. */
+        controlIndex: Type.Integer({ minimum: 0, maximum: 1_000 }),
+        actionId: Type.String({ minLength: 1, maxLength: 128 }),
+        params: Type.Record(Type.String({ maxLength: 64 }), Type.String({ maxLength: 2_000 }), {
+            maxProperties: 16,
+        }),
+        values: Type.Optional(Type.Array(Type.String({ maxLength: 2_048 }), { maxItems: 64 })),
+    },
+    { additionalProperties: false },
+);
+export type ActionBlock = Static<typeof actionBlockSchema>;
+
+/** One block's choice; the kind set may grow, and an unknown kind still locks the block. */
+export const actionChoiceSchema = Type.Union([
+    Type.Object(
+        { kind: Type.Literal("button"), index: Type.Integer({ minimum: 0 }) },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        { kind: Type.Literal("checklist"), values: Type.Array(Type.String()) },
+        { additionalProperties: false },
+    ),
+    Type.Object({ kind: Type.Literal("submitted") }, { additionalProperties: false }),
+]);
+export type ActionChoice = Static<typeof actionChoiceSchema>;
+
 /** What is in a message, in order. */
 export type MessageBlock =
     | TextBlock
@@ -979,6 +1016,11 @@ export interface AgentMessage {
     createdAt: Timestamp;
     content: MessageBlock[];
     metadata: MessageMetadata;
+    /**
+     * The person's press on each of its inline action blocks, by `blockIndex` as a decimal
+     * string, with `capabilities.inlineActions`. A block with a choice is locked.
+     */
+    actionChoices?: Record<string, ActionChoice>;
 }
 
 /** Content the daemon injected into the model's context, when worth showing. */
@@ -1050,6 +1092,24 @@ export interface SendMessageRequest {
     /** Defaults to `"queue"`. On an idle agent the two are identical. */
     delivery?: MessageDelivery;
     /** Opaque context profile. Omitted and `null` both select the default profile. */
+    profile?: string | null;
+    /** The model selection and permission mode this message runs with. */
+    mode: MessageMode;
+}
+
+/**
+ * `POST /v0/agents/:agentId/send` as a press on an inline action, with
+ * `capabilities.inlineActions`: exactly one `action` block and no `text`.
+ */
+export interface SendActionMessageRequest {
+    /** Optional client-chosen identity. Reusing it returns the existing message. */
+    id?: Cuid2;
+    content: [ActionBlock];
+    /** Opaque JSON to persist and return with this user message. */
+    clientMetadata?: ClientMetadata;
+    /** Defaults to `"queue"`. */
+    delivery?: MessageDelivery;
+    /** Opaque context profile. */
     profile?: string | null;
     /** The model selection and permission mode this message runs with. */
     mode: MessageMode;
