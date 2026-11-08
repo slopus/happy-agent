@@ -27,6 +27,11 @@ export const onboardingFlowSchema = Type.Object({
     composerPlaceholder: Type.Union([Type.String(), Type.Null()]),
     /** A provider chosen during onboarding needs the daemon restarted. */
     restartRequired: Type.Boolean(),
+    /**
+     * Whether the person can leave onboarding now, such as through "Skip setup", and still use the
+     * app. Omitted by servers that predate it: the client decides.
+     */
+    skippable: Type.Optional(Type.Boolean()),
     onboardingVersion: Type.Integer({ minimum: 1 }),
     completedVersion: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
 });

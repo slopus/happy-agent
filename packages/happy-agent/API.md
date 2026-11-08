@@ -3275,6 +3275,7 @@ The standalone daemon's `local` recipe:
     "composer": "disabled",
     "composerPlaceholder": "Choose an answer above",
     "restartRequired": false,
+    "skippable": false,
     "onboardingVersion": 1,
     "completedVersion": null
 }
@@ -3302,6 +3303,12 @@ The standalone daemon's `local` recipe:
 - `restartRequired` — `true` when a provider chosen during onboarding takes effect only after the
   daemon restarts. Clients restart it through the ordinary drain and restart, and the bootstrap
   carries on after the restart.
+- `skippable` — optional: whether the person can leave onboarding now and still use the app, such
+  as through a client's "Skip setup". `false` while the server needs onboarding to go further before
+  anything works, such as the standalone daemon's bootstrap before an AI is connected and handed
+  the conversation; otherwise `true`. Leaving changes nothing on the server: the flow stays as it
+  is and the conversation can be picked up later. A server that omits it leaves the choice to the
+  client.
 - `onboardingVersion`, `completedVersion` — as in `GET /v0/onboarding`.
 
 #### `GET /v0/onboarding/flow`
