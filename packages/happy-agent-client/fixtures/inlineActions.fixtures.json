@@ -1239,6 +1239,50 @@
             "stripped": ""
         },
         {
+            "name": "a named reference that is an inherited object property",
+            "markdown": "<menu><button data-action=\"reply\">A &toString; B</button></menu>\n",
+            "segments": [
+                {
+                    "type": "action",
+                    "html": "<menu><button data-action=\"reply\">A &toString; B</button></menu>\n",
+                    "complete": true
+                }
+            ],
+            "blocks": [null],
+            "stripped": ""
+        },
+        {
+            "name": "named references for every Object.prototype member are unknown",
+            "markdown": "<menu><button data-action=\"reply\" data-text=\"&constructor;\">&valueOf;</button></menu>\n\n<menu><button data-action=\"reply\">&hasOwnProperty;</button></menu>\n\n<menu><button data-action=\"reply\">&proto;</button></menu>\n",
+            "segments": [
+                {
+                    "type": "action",
+                    "html": "<menu><button data-action=\"reply\" data-text=\"&constructor;\">&valueOf;</button></menu>\n",
+                    "complete": true
+                },
+                {
+                    "type": "markdown",
+                    "text": "\n"
+                },
+                {
+                    "type": "action",
+                    "html": "<menu><button data-action=\"reply\">&hasOwnProperty;</button></menu>\n",
+                    "complete": true
+                },
+                {
+                    "type": "markdown",
+                    "text": "\n"
+                },
+                {
+                    "type": "action",
+                    "html": "<menu><button data-action=\"reply\">&proto;</button></menu>\n",
+                    "complete": true
+                }
+            ],
+            "blocks": [null, null, null],
+            "stripped": ""
+        },
+        {
             "name": "a numeric reference to NUL",
             "markdown": "<menu><button data-action=\"reply\">A&#0;</button></menu>\n",
             "segments": [
