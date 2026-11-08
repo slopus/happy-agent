@@ -798,6 +798,8 @@ export class ApiModule implements AgentModule {
     /** Created agents awaiting their announcement, each with the mutation its creator answered. */
     readonly #pendingAgentCreations = new Map<string, string | undefined>();
     readonly #announcedTerminalRuns = new Set<string>();
+    /** Scripted onboarding runs announced as started before their message, with when. */
+    readonly #startedScriptedRuns = new Map<string, number>();
     readonly #acceptedMessageBatches = new Map<string, AcceptedMessageBatch>();
     readonly #pendingMessageAnnouncements = new Map<
         string,
@@ -3153,6 +3155,19 @@ export class ApiModule implements AgentModule {
                               this.#journal.append("onboarding.flow.updated", {
                                   flow,
                                   ...(mutationId === undefined ? {} : { mutationId }),
+                              });
+                          });
+                      }),
+                      this.#onboardingFlow.onScriptedRun((agentId, runId) => {
+                          void this.#queueAgentWork(
+                              ctx,
+                              agentId,
+                              undefined,
+                              async () => await this.#announceScriptedRun(ctx, agentId, runId),
+                              true,
+                          ).catch(() => {
+                              ctx.log.warn("The API could not announce a scripted run.", {
+                                  agentId,
                               });
                           });
                       }),
@@ -9934,14 +9949,20 @@ export class ApiModule implements AgentModule {
         const hurried = () => this.#closed || this.#agentWorkWaiting.has(agentId);
         let typing = false;
         try {
-            if (run !== undefined) {
+            const startedAt = runId === null ? undefined : this.#startedScriptedRuns.get(runId);
+            if (runId !== null) this.#startedScriptedRuns.delete(runId);
+            if (run !== undefined && startedAt === undefined) {
                 const finished = await this.#runResource(ctx, run);
                 this.#journal.append("run.started", {
                     agentId,
                     run: { ...finished, status: "running", reason: null, endedAt: null },
                     acceptedMessageIds: [],
                 });
-                if (!hurried()) await this.#pause(firstTokenDelay());
+            }
+            if (run !== undefined) {
+                // A run announced before its words were worked out has been thinking already.
+                const delay = firstTokenDelay() - (Date.now() - (startedAt ?? Date.now()));
+                if (delay > 0 && !hurried()) await this.#pause(delay);
             }
             if (text.length > 0 && !hurried()) {
                 typing = true;
@@ -9982,6 +10003,28 @@ export class ApiModule implements AgentModule {
                 });
             }
         }
+    }
+
+    /**
+     * A scripted onboarding run as it stands: started before its message's words are worked out,
+     * so the conversation shows typing at once; or settled without a message when that failed.
+     */
+    async #announceScriptedRun(ctx: Context, agentId: string, runId: string): Promise<void> {
+        const run = await this.#history.run(ctx, agentId, runId);
+        if (run === undefined) return;
+        if (run.status === "running") {
+            boundedSet(this.#startedScriptedRuns, runId, Date.now(), MAX_ANNOUNCED_TERMINAL_RUNS);
+            this.#journal.append("run.started", {
+                agentId,
+                run: await this.#runResource(ctx, run),
+                acceptedMessageIds: [],
+            });
+            return;
+        }
+        this.#startedScriptedRuns.delete(runId);
+        if (this.#announcedTerminalRuns.has(runId)) return;
+        boundedAdd(this.#announcedTerminalRuns, runId, MAX_ANNOUNCED_TERMINAL_RUNS);
+        this.#journal.append("run.finished", { agentId, run: await this.#runResource(ctx, run) });
     }
 
     async #pause(ms: number): Promise<void> {

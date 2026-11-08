@@ -1,3 +1,6 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -260,6 +263,79 @@ describe("Onboarding's scripted bootstrap", () => {
             expect(after[2]?.actionChoices).toEqual({ "0": { kind: "button", index: 4 } });
             expect(await flowOf(gym)).toMatchObject({ step: "more", composer: "disabled" });
             expect(gym.inference.requests).toEqual([]);
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "shows the next step typing at once while it still works out what to say",
+        async () => {
+            // Claude Code answers its sign-in check only once the test lets it, as a slow check
+            // on a Mac would: the providers step cannot say what it found until then.
+            const { gym, home } = await gyms.start({
+                stubs: {
+                    claude: [
+                        "#!/bin/sh",
+                        'case "$*" in',
+                        '  "--version") echo "2.1.312 (Claude Code)" ;;',
+                        '  "auth status --json")',
+                        '    while [ ! -f "$HOME/answer-sign-in-check" ]; do sleep 0.05; done',
+                        `    echo '{"loggedIn":true,"authMethod":"claude.ai","email":"ada@example.com","subscriptionType":"max"}' ;;`,
+                        "  *) exit 2 ;;",
+                        "esac",
+                        "",
+                    ].join("\n"),
+                },
+            });
+            const agentId = await startOnboarding(gym);
+            const opening = (await waitForStep(gym, agentId, "welcome"))!;
+            const start = (await gym.http.request(
+                "POST",
+                `/v0/agents/${agentId}/send`,
+                pressBody({ messageId: opening.id, params: { step: "providers" } }),
+            )) as { status: number; body: { message: { runId: string } } };
+            expect(start.status).toBe(202);
+
+            const runOf = (event: { payload: unknown }) =>
+                (event.payload as { run?: { id: string; status: string } }).run;
+            const thinking = await gym.waitForEvent(
+                (event) =>
+                    event.type === "run.started" &&
+                    (event.payload as { agentId?: string }).agentId === agentId &&
+                    runOf(event)?.id !== opening.runId &&
+                    runOf(event)?.id !== start.body.message.runId &&
+                    runOf(event)?.status === "running",
+                "the providers step's run to start",
+            );
+            const runId = runOf(thinking)!.id;
+            // Typing, with nothing written yet: the step is still checking Claude Code.
+            expect(await flowOf(gym)).toMatchObject({ step: "providers" });
+            expect(
+                (await messagesOf(gym, agentId)).some((message) => message.runId === runId),
+            ).toBe(false);
+
+            await writeFile(join(home, "answer-sign-in-check"), "");
+            const routes = (await waitForStep(gym, agentId, "providers"))!;
+            expect(routes.runId).toBe(runId);
+            expect(textOf(routes)).toContain("let's check which AI subscriptions you already use");
+            await gym.waitForEvent(
+                (event) => event.type === "run.finished" && runOf(event)?.id === runId,
+                "the providers step to finish typing",
+            );
+            const kinds = (await gym.events())
+                .filter(
+                    (event) =>
+                        runOf(event)?.id === runId ||
+                        (event.payload as { messageId?: string }).messageId === routes.id ||
+                        (event.payload as { message?: { id?: string } }).message?.id === routes.id,
+                )
+                .map((event) => event.type);
+            expect(kinds.filter((kind) => kind === "run.started")).toHaveLength(1);
+            expect(kinds[0]).toBe("run.started");
+            expect(kinds[1]).toBe("message.created");
+            expect(kinds).toContain("message.delta");
+            expect(kinds.slice(-2)).toEqual(["message.updated", "run.finished"]);
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

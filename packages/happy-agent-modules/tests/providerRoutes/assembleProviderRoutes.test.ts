@@ -7,6 +7,7 @@ import type {
     DetectedRoute,
 } from "../../sources/providerRoutes/impl/DetectedRoute.js";
 import { detectDirectRoutes } from "../../sources/providerRoutes/impl/detectDirectRoutes.js";
+import { envKeyRoutes } from "../../sources/providerRoutes/impl/envKeyRoutes.js";
 
 function detected(overrides: Partial<DetectedRoute> & Pick<DetectedRoute, "id">): DetectedRoute {
     return {
@@ -107,6 +108,71 @@ describe("assembling provider routes", () => {
             ["cliproxyapi", true],
             ["aws_profile:a", true],
             ["aws_profile:b", false],
+        ]);
+    });
+
+    it("starts the token a provider uses checked, and the sign-in it replaces unchecked", () => {
+        const signIn = detected({
+            id: "claude",
+            name: "Claude Code",
+            vendors: ["Anthropic"],
+            providerId: "claude",
+        });
+        const env = envKeyRoutes(
+            {
+                platform: process.platform,
+                env: { CLAUDE_CODE_OAUTH_TOKEN: "t", ANTHROPIC_API_KEY: "k" },
+                programDirectories: [],
+            },
+            () => true,
+            () => true,
+        );
+        const routes = assembleProviderRoutes(
+            [signIn, ...env],
+            providers({ claude: { enabled: true, type: "claude" } }),
+        );
+        expect(
+            routes.map((route) => [route.id, route.recommended, route.providerId, route.warning]),
+        ).toEqual([
+            [
+                "claude",
+                false,
+                "claude",
+                "CLAUDE_CODE_OAUTH_TOKEN is set, so that token is used instead of this sign-in.",
+            ],
+            [
+                "env:ANTHROPIC_API_KEY",
+                false,
+                null,
+                "CLAUDE_CODE_OAUTH_TOKEN is set, so that token is used instead of this key.",
+            ],
+            [
+                "env:CLAUDE_CODE_OAUTH_TOKEN",
+                true,
+                "claude",
+                "CLAUDE_CODE_OAUTH_TOKEN is set, so this token is used instead of your Claude Code sign-in.",
+            ],
+        ]);
+
+        // Signed out, the sign-in is replaced by nothing: the token is simply how Claude is reached.
+        const signedOut = assembleProviderRoutes(
+            [
+                { ...signIn, status: "needs_sign_in" },
+                ...envKeyRoutes(
+                    {
+                        platform: process.platform,
+                        env: { CLAUDE_CODE_OAUTH_TOKEN: "t" },
+                        programDirectories: [],
+                    },
+                    () => true,
+                    () => false,
+                ),
+            ],
+            providers({ claude: { enabled: true, type: "claude" } }),
+        );
+        expect(signedOut.map((route) => [route.id, route.recommended, route.warning])).toEqual([
+            ["claude", false, null],
+            ["env:CLAUDE_CODE_OAUTH_TOKEN", true, null],
         ]);
     });
 

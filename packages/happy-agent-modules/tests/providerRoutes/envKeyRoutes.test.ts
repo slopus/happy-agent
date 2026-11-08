@@ -30,6 +30,14 @@ describe("API keys in the daemon's environment", () => {
                 warning:
                     "ANTHROPIC_API_KEY is set, so Anthropic is billed per token through this key instead of your Claude Code sign-in.",
                 providerId: "claude",
+                // The sign-in's own route says the same from its side, and starts unchecked.
+                replaces: [
+                    {
+                        routeId: "claude",
+                        warning:
+                            "ANTHROPIC_API_KEY is set, so Anthropic is billed per token through that key instead of this sign-in.",
+                    },
+                ],
             },
             // A ChatGPT sign-in outranks the key, so nothing changes quietly.
             expect.objectContaining({

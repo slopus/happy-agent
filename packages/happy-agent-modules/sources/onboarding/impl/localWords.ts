@@ -122,9 +122,11 @@ export function routeCli(route: ProviderRoute): ProviderCliId | undefined {
         : undefined;
 }
 
-/** A route as the person knows the AI it reaches. */
+/** A route as the person knows the AI it reaches: a key for the built-in Claude is still Claude. */
 export function routeApp(route: ProviderRoute): string {
-    const cli = routeCli(route);
+    const cli =
+        routeCli(route) ??
+        (route.providerId === null ? undefined : chatProviderId(route.providerId));
     if (cli !== undefined) return APP_OF[cli];
     return route.vendors.length === 1 ? route.vendors[0]! : route.name;
 }
@@ -229,6 +231,8 @@ const KIND_LABELS: Readonly<Record<ProviderRoute["kind"], string>> = {
 };
 
 function routeKind(route: ProviderRoute): string {
+    // A key billed to a subscription is a sign-in token, such as CLAUDE_CODE_OAUTH_TOKEN.
+    if (route.kind === "api_key" && route.billing === "subscription") return "Token";
     const kind = KIND_LABELS[route.kind];
     return route.billing === "pay_per_token" ? `${kind} · pay per token` : kind;
 }

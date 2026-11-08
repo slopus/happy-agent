@@ -3,6 +3,7 @@ export {
     type OnboardingListener,
     type OnboardingPress,
     type OnboardingPressListener,
+    type OnboardingScriptedRunListener,
     type OnboardingSpeechListener,
 } from "./OnboardingModule.js";
 export {

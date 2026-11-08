@@ -247,3 +247,47 @@ describe("an effort as the app shows it", () => {
         ]);
     });
 });
+
+describe("the routes table", () => {
+    it("ticks the token Claude uses, and says the same on the sign-in it replaces", () => {
+        const table = routesTable([
+            route({
+                recommended: false,
+                warning:
+                    "CLAUDE_CODE_OAUTH_TOKEN is set, so that token is used instead of this sign-in.",
+            }),
+            route({
+                id: "env:CLAUDE_CODE_OAUTH_TOKEN",
+                kind: "api_key",
+                name: "Claude Code token",
+                account: null,
+                recommended: true,
+                warning:
+                    "CLAUDE_CODE_OAUTH_TOKEN is set, so this token is used instead of your Claude Code sign-in.",
+            }),
+        ]);
+        const [block] = chatActionBlocksOf(table);
+        if (block?.kind !== "checklist") throw new Error("The routes table is not a checklist.");
+        expect(
+            block.options.map((option) => [
+                option.value,
+                option.checked,
+                option.detail,
+                option.cells,
+            ]),
+        ).toEqual([
+            [
+                "claude",
+                false,
+                "CLAUDE_CODE_OAUTH_TOKEN is set, so that token is used instead of this sign-in.",
+                ["Direct", "ada@example.com · Max"],
+            ],
+            [
+                "env:CLAUDE_CODE_OAUTH_TOKEN",
+                true,
+                "CLAUDE_CODE_OAUTH_TOKEN is set, so this token is used instead of your Claude Code sign-in.",
+                ["Token", "—"],
+            ],
+        ]);
+    });
+});

@@ -3390,10 +3390,13 @@ provider scan.
 - `recommended` — the suggested initial selection: `true` for a `ready` `direct` or `desktop_app`
   route. Any other `ready` route is `true` when at least one of its vendors is served by no ready
   `direct` or `desktop_app` route and by no ready route before it in this order, so each vendor is
-  reached one way by default. Every `local_models` route is `false`.
-- `warning` — a display sentence when the route quietly changes what another route does, or
-  `null`. For example, an `ANTHROPIC_API_KEY` in the daemon's environment takes precedence over
-  the Claude Code sign-in, so Claude bills per token instead of using the plan.
+  reached one way by default. Every `local_models` route is `false`. A route that another `ready`
+  route takes the place of, such as a Claude Code sign-in while `CLAUDE_CODE_OAUTH_TOKEN` is set, is
+  `false` and serves no vendor here, so the route the provider actually uses is the one selected.
+- `warning` — a display sentence when the route quietly changes what another route does, or is
+  changed by one, or `null`. For example, an `ANTHROPIC_API_KEY` in the daemon's environment takes
+  precedence over the Claude Code sign-in, so Claude bills per token instead of using the plan; the
+  key's route and the sign-in's route each say so.
 - `providerId` — the configured provider this route already is, or `null`. A provider that `use`
   added and that takes effect after a restart is reported here too.
 - `use` — `null` when the route is already configured and enabled, or cannot be set up
@@ -3422,8 +3425,10 @@ The environment is read only for whether these variables are set: `CLAUDE_CODE_O
 `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, and
 `MOONSHOT_API_KEY` for OpenAI-compatible vendors. A built-in key's route has that provider as
 `providerId` only when the provider actually reads it. `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`,
-and `XAI_API_KEY` take precedence over the vendor's CLI sign-in, so their route carries a `warning`
-when that sign-in is ready. A vendor without a curated model catalog in Happy Agent is shown with
+and `XAI_API_KEY` take precedence over the vendor's CLI sign-in, so while that sign-in is ready
+their route and the sign-in's route both carry a `warning`, and the key's route, not the sign-in's,
+is `recommended`. `CLAUDE_CODE_OAUTH_TOKEN` likewise takes the place of an `ANTHROPIC_API_KEY` set
+beside it. A vendor without a curated model catalog in Happy Agent is shown with
 `models: null` and `use: null`.
 
 AWS profiles come from the AWS config file, `AWS_CONFIG_FILE` or `~/.aws/config`: only each

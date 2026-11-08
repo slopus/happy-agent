@@ -139,6 +139,31 @@ export function envKeyRoutes(
             const shadowedByToken =
                 key.variable === "ANTHROPIC_API_KEY" && present("CLAUDE_CODE_OAUTH_TOKEN");
             const used = ambient(key.providerId) && !shadowedByToken;
+            const replacesSignIn = used && key.outranksSignIn && signedIn(key.providerId);
+            const replaces = [
+                ...(replacesSignIn
+                    ? [
+                          {
+                              routeId: key.providerId,
+                              warning:
+                                  key.billing === "pay_per_token"
+                                      ? `${key.variable} is set, so ${key.vendor} is billed per token through that key instead of this sign-in.`
+                                      : `${key.variable} is set, so that token is used instead of this sign-in.`,
+                          },
+                      ]
+                    : []),
+                ...(used &&
+                key.variable === "CLAUDE_CODE_OAUTH_TOKEN" &&
+                present("ANTHROPIC_API_KEY")
+                    ? [
+                          {
+                              routeId: "env:ANTHROPIC_API_KEY",
+                              warning:
+                                  "CLAUDE_CODE_OAUTH_TOKEN is set, so that token is used instead of this key.",
+                          },
+                      ]
+                    : []),
+            ];
             return {
                 id: `env:${key.variable}`,
                 kind: "api_key",
@@ -149,13 +174,13 @@ export function envKeyRoutes(
                 endpoint: null,
                 status: "ready",
                 models: null,
-                warning:
-                    used && key.outranksSignIn && signedIn(key.providerId)
-                        ? key.billing === "pay_per_token"
-                            ? `${key.variable} is set, so ${key.vendor} is billed per token through this key instead of your ${key.signInName}.`
-                            : `${key.variable} is set, so this token is used instead of your ${key.signInName}.`
-                        : null,
+                warning: replacesSignIn
+                    ? key.billing === "pay_per_token"
+                        ? `${key.variable} is set, so ${key.vendor} is billed per token through this key instead of your ${key.signInName}.`
+                        : `${key.variable} is set, so this token is used instead of your ${key.signInName}.`
+                    : null,
                 ...(used ? { providerId: key.providerId } : {}),
+                ...(replaces.length > 0 ? { replaces } : {}),
             };
         },
     );

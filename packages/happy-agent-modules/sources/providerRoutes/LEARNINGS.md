@@ -21,6 +21,17 @@ starts checked only when it brings a vendor nothing checked before it already se
 re-serves Claude beside the Claude Code sign-in but also serves OpenAI starts checked, because
 otherwise OpenAI would be lost. Local model servers always start unchecked.
 
+## The checked route is the one the provider uses
+
+A key in the environment can quietly take the place of a sign-in: Claude reads
+`CLAUDE_CODE_OAUTH_TOKEN`, then `ANTHROPIC_API_KEY`, before its Claude Code sign-in, and Grok reads
+`XAI_API_KEY` first. The table once checked the Claude Code sign-in and left the token unchecked
+while the token's own row said it was used instead, which the user saw as the table contradicting
+itself. A replaced route now starts unchecked, serves no vendor in the default selection, and says
+from its side what replaces it, so the route the provider actually uses starts checked and both rows
+tell the same story. Both rows still enable the same provider; a sign-in cannot be preferred over
+the key without removing the key from the daemon's environment.
+
 ## A generated provider must load on the next start
 
 Providers are read at startup, and a runtime.toml the daemon cannot load stops it from starting.

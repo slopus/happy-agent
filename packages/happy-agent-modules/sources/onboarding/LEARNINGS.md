@@ -80,3 +80,18 @@ me in your own words…".
 `save_profile`, `set_default_model`, and `finish_onboarding` reach the model only while it guides,
 and it calls them as soon as the person answers. They are `defer: false` with no search keywords. A
 deferred copy would make the model search for a tool it needs at that moment.
+
+## A step types at once, even while it is still working out what to say
+
+The providers step must detect routes before it can write its table, and on a Mac the sign-in
+checks behind that can take seconds; the conversation sat silent after Start. A scripted message's
+run now starts, and is announced, before its words are rendered. The API then counts the time spent
+rendering toward the usual 300–500 ms before the first words, so a fast step looks the same as
+before.
+
+## The routes table ticks what will actually be used
+
+With `CLAUDE_CODE_OAUTH_TOKEN` set, the table ticked the Claude Code sign-in while the token's own
+row said it was used instead. The provider routes now leave a replaced route unticked with its own
+explanation, the token row reads "Token" rather than "API key", a key for a built-in AI is named as
+that AI, and two ticked routes to one provider make a single connection.
