@@ -107,8 +107,13 @@ export async function openRemoteWebSocketTunnel(options: {
             socket.once("close", () => {
                 clearInterval(keepalive);
                 tunnel.webSocketClosed();
-                client.destroy();
                 settle();
+            });
+            // A remote that finished cleanly may still have bytes on their way to a slower
+            // client; the pipe ends the client once they are written. Anything else ends it now.
+            tunnel.once("close", () => {
+                if (tunnel.readableEnded) closeAfterFlush(client);
+                else client.destroy();
             });
             client.on("error", () => tunnel.destroy());
             tunnel.on("error", () => client.destroy());
@@ -118,6 +123,17 @@ export async function openRemoteWebSocketTunnel(options: {
             tunnel.pipe(client);
         });
     });
+}
+
+/** Close a stream once everything already written to it has been delivered. */
+function closeAfterFlush(stream: Duplex): void {
+    if (stream.destroyed) return;
+    if (stream.writableFinished) {
+        stream.destroy();
+        return;
+    }
+    stream.once("finish", () => stream.destroy());
+    stream.end();
 }
 
 /** The remote refused the upgrade: screen it, then answer the client with HTTP bytes. */

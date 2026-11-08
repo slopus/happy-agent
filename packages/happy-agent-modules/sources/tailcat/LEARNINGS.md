@@ -77,6 +77,12 @@ which is why the module tests running on Node missed it. The pipe now ends stdou
 every byte and then its FIN. A gym test reads a 1 MiB file through the mobile connector the way
 the iOS app does, ten times, and checks the bytes.
 
+The pipe also exited the moment its stdin ended, so a peer that sent its request and half-closed
+received only the first 64–192 KiB of the reply. A peer's half-close is now passed on as a
+half-close, and the pipe still exits once the daemon's side ends and stdout has flushed. A peer
+that half-closed toward a daemon side that never ends would keep its pipe alive, so such a pipe
+exits after the daemon has sent nothing for a minute.
+
 Each new connection pays for one short-lived process. On real Tailcat between two processes on one
 Mac, a fresh connection and request took about 1 ms through the relay, about 15 ms through the
 release binary's pipe, and about 45 ms under Node from source; each open connection's pipe holds

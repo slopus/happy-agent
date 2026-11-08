@@ -424,7 +424,11 @@ export class RemoteProxyConnection {
                             : undefined;
                     socket.once("close", () => {
                         keepalive?.dispose();
-                        output.destroy();
+                        // A remote that finished cleanly may still have bytes on their way to a
+                        // slower client; the pipe ends the client once they are written. Only a
+                        // remote that went away mid-stream ends the client at once.
+                        if (socket.readableEnded) closeAfterFlush(output);
+                        else output.destroy();
                         finish();
                     });
                     socket.pipe(output);
@@ -466,6 +470,17 @@ export class RemoteProxyConnection {
             }
         });
     }
+}
+
+/** Close a stream once everything already written to it has been delivered. */
+function closeAfterFlush(stream: Duplex): void {
+    if (stream.destroyed) return;
+    if (stream.writableFinished) {
+        stream.destroy();
+        return;
+    }
+    stream.once("finish", () => stream.destroy());
+    stream.end();
 }
 
 /** Redirects other than `304`, `401`, and `403` are screened. */

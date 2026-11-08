@@ -77,10 +77,14 @@ export class WebSocketTunnel extends Duplex {
         }
     }
 
-    /** The WebSocket closed, for whatever reason. Everything opened on the tunnel ends with it. */
+    /**
+     * The WebSocket closed, for whatever reason. Everything opened on the tunnel ends with it, but
+     * a client that half-closed first has sent all it will, so what it sent is still read out.
+     */
     webSocketClosed(): void {
         this.#closed = true;
-        this.destroy();
+        if (this.#readEnded && !this.readableEnded) this.once("end", () => this.destroy());
+        else this.destroy();
     }
 
     /** The daemon is going away. */

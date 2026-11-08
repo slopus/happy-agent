@@ -29,6 +29,16 @@ its first request: that socket belonged to its HTTP server, which never answered
 upgrade and `CONNECT` now opens a fresh carrier through a separate non-pooled agent with the same
 transport, while ordinary requests keep sharing the pool.
 
+## A tunnel's last bytes reach the client before it closes
+
+Live pages over a remote connection hung on large files: Chromium received all but the last
+60–290 KB of a 500 MB download and waited forever. The remote had sent everything, but when the
+carrier socket closed, the `CONNECT` relay destroyed the client stream at once, discarding what the
+daemon's front door still had queued for a slower reader. The WebSocket twin did the same when its
+WebSocket closed. Now a remote that ended cleanly ends the client only once everything written
+to it has been delivered; a remote that goes away mid-stream still ends the client at once.
+`RemoteTunnelDelivery.test.ts` holds the client's acknowledgements until the remote has closed.
+
 ## Display order is required, durable public state
 
 Sorting connections by ID prevented user reordering and inserted new connections into the middle

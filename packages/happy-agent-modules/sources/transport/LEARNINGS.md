@@ -24,3 +24,10 @@ sink turns the message's `error` or premature `close` into its own failure, so a
 leaves while the source is idle, a source that fails during backpressure, and a write that fails
 after it was accepted all end the transfer, destroy the other side, and reject. A first version
 rebuilt that lifecycle by hand and missed each of those cases; do not hand-roll it again.
+
+## A tunnel WebSocket that closes after a half-close is still read out
+
+`WebSocketTunnel.webSocketClosed()` destroyed the stream at once, dropping bytes the client had
+sent before its empty half-close message but nobody had read yet. When the client half-closed
+first, everything it sent is now read out before the stream is destroyed; any other close still
+ends it at once.

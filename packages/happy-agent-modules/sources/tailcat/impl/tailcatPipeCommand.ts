@@ -1,12 +1,16 @@
 import type { TailcatTransportTarget } from "../Tailcat.js";
 
 const TARGET_VARIABLE = "HAPPY_AGENT_TAILCAT_TARGET";
+/** How long a pipe whose peer half-closed waits on a daemon that has stopped sending. */
+const HALF_CLOSED_QUIET_MS = 60_000;
 
 /**
  * One connection's pipe, run by Tailcat's exec service with the connection as its stdin and
- * stdout. It joins them to the API transport and exits once either side has closed and its last
- * bytes reached the other. A closing peer ends the whole connection, as a TCP proxy would, so a
- * pipe left behind by a stopped Tailcat exits too. Node and Bun both run it with `-e`.
+ * stdout. It joins them to the API transport and exits once the daemon's side has ended and its
+ * last bytes reached the peer. A peer's half-close is passed on as one, so the reply still
+ * arrives whole; a peer that left only half-closed exits once the daemon has been quiet for
+ * {@link HALF_CLOSED_QUIET_MS}, so a pipe left behind by a stopped Tailcat exits too. Node and
+ * Bun both run it with `-e`.
  */
 const PIPE_SCRIPT = [
     "const net = require('node:net');",
@@ -20,7 +24,10 @@ const PIPE_SCRIPT = [
     "    process.stdin.pipe(upstream);",
     "    upstream.pipe(process.stdout);",
     "});",
-    "upstream.once('finish', exit);",
+    // Exiting as soon as the peer half-closed dropped every reply byte still on its way.
+    "let quiet;",
+    `const wait = () => { clearTimeout(quiet); quiet = setTimeout(exit, ${String(HALF_CLOSED_QUIET_MS)}); };`,
+    "upstream.once('finish', () => { wait(); upstream.on('data', wait); });",
     // A pipe never ends stdout, so the daemon's close ends it here and exits once it has flushed.
     // Bun calls back an empty write before earlier output is flushed, and exiting then drops it.
     "upstream.once('end', () => process.stdout.end(exit));",

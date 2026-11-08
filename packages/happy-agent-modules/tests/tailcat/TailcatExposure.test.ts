@@ -173,6 +173,27 @@ describe("Tailcat connection pipe", () => {
         }
     });
 
+    it("delivers a whole response to a peer that half-closed after its request", async () => {
+        const root = await temporaryRoot();
+        const socketPath = join(root, "server.sock");
+        const body = "x".repeat(4 * 1024 * 1024);
+        const server = createServer((_request, response) => {
+            response.writeHead(200, { "content-length": String(body.length) });
+            response.end(body);
+        });
+        await listenOn(server, socketPath);
+        try {
+            const pipe = pipeConnection(tailcatPipeCommand({ socketPath }));
+            pipe.write("GET /large HTTP/1.1\r\nhost: tailcat\r\nconnection: close\r\n\r\n");
+            // The peer has nothing more to send, so it half-closes at once, as TCP allows.
+            pipe.end();
+            await expect(pipe.exited).resolves.toBe(0);
+            expect(pipe.output().endsWith(body)).toBe(true);
+        } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
+
     it("reaches a TCP daemon listening on every address, and exits when the peer leaves", async () => {
         const server = createServer((_request, response) => response.end("through tcp"));
         await listenOn(server, { host: "0.0.0.0", port: 0 });
