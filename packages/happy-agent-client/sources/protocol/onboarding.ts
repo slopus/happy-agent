@@ -32,6 +32,19 @@ export const onboardingFlowSchema = Type.Object({
      * app. Omitted by servers that predate it: the client decides.
      */
     skippable: Type.Optional(Type.Boolean()),
+    /**
+     * The tasks onboarding started as the person's first work, oldest first: the task's ID, its
+     * agent's ID, and its name when it started. Only ever grows; empty or omitted means none yet.
+     */
+    firstTasks: Type.Optional(
+        Type.Array(
+            Type.Object({
+                id: Type.String({ minLength: 1 }),
+                agentId: Type.String({ minLength: 1 }),
+                name: Type.String({ minLength: 1 }),
+            }),
+        ),
+    ),
     onboardingVersion: Type.Integer({ minimum: 1 }),
     completedVersion: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
 });
