@@ -553,6 +553,13 @@ describe("HappyAgentClient", () => {
                 Value.Check(onboardingFlowSchema, body),
             ),
         ).toEqual([true, true, true, false]);
+        // Whether the person can leave now; a server that predates it omits it.
+        expect(
+            [
+                { ...flow, skippable: false },
+                { ...flow, skippable: "no" },
+            ].map((body) => Value.Check(onboardingFlowSchema, body)),
+        ).toEqual([true, false]);
     });
 
     it("creates a user-controlled workspace root without a parent-selection option", async () => {
