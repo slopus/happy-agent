@@ -3284,8 +3284,10 @@ Starts the vendor's own sign-in with the installed program. Request body, every 
   provider of that name made when there is none; the name is trimmed and must then be 1–80
   characters with no control characters. Without `providerId`, `scope` is required, and `"team"`
   needs a `name`; a malformed target, or one for another assistant's provider, is refused with
-  `400`. A team connection needs permission to manage providers and a private one permission to
-  own them. Without `target`, the sign-in is private. A client sends the target a
+  `400`. A team connection needs the `providers.manage` permission and a private one
+  `providers.own`; without it the sign-in is refused with `403` and code `forbidden`. A provider the
+  caller cannot see, such as another member's private one, is `404`. Without `target`, the sign-in
+  is private. A client sends the target a
   `data-provider-cli` figure's `data-target` names (see "Inline action blocks"). The standalone
   daemon serves one user and ignores `target`.
 
