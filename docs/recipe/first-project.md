@@ -31,7 +31,8 @@ node /absolute/path/to/.happy/docs/recipe/discover-recent-projects.ts
 The same command works on macOS, Linux and Windows; quote a path containing spaces. There is no
 Python, package installation, or dependency download. Do not install a runtime solely for
 discovery. If a suitable Node version is unavailable, ask for the project folder or offer to
-create a new project; manual setup is an equally valid route.
+create a new project; manual setup is an equally valid route. An older `node` fails with an
+unknown `.ts` file extension: treat that as unavailable rather than searching for another runtime.
 
 The helper searches only the current user's Claude and Codex session directories, honoring
 nonempty `CLAUDE_CONFIG_DIR` and `CODEX_HOME`. Explicit `--claude-home` and `--codex-home` arguments
@@ -48,15 +49,18 @@ process home (which may be redirected by `HOME` or `USERPROFILE`); `home.account
 account home, or null if it could not be determined. A mismatch makes discovery partial when a
 source uses the default home. The helper reports that mismatch without searching the other home.
 
-Use ordinary sandboxed execution when those directories are readable. If the active sandbox is
-known to hide this metadata, request reviewed execution of this exact bounded, read-only helper
-from the start. If a sandboxed run reports inaccessible sources or a redirected default home,
-request that reviewed execution before concluding discovery. Missing or empty directories inside
-a sandbox that conceals host history do not prove that the host has no recent projects. Do not
-claim a complete empty scan unless the resolved metadata locations were actually visible.
+Happy's shell sandbox hides the home folder, and the Claude and Codex metadata in it, so a
+sandboxed run reports those sources as `unavailable` and proves nothing. In Auto, request reviewed
+execution of this exact bounded, read-only helper from the start, as its only run; in Full access,
+run it plainly. If another sandbox is known to leave this metadata readable, ordinary sandboxed
+execution is enough, and an `unavailable` source from it calls for that reviewed execution before
+concluding discovery. A redirected default home is reported, not fixed: reviewed execution
+searches the same home, so say the scan was partial rather than running it again. Sources a run
+could see and reports as `missing` hold no history: conclude discovery at once. Do not claim a
+complete empty scan unless the resolved metadata locations were actually visible.
 
 In Auto, use the shell tool's escalation field and explain that the user already requested recent
-project discovery and the sandbox could not inspect the local project-location metadata. For
+project discovery and the sandbox hides the local project-location metadata. For
 Codex `exec_command`, set `sandbox_permissions: "require_escalated"` and a concise `justification`;
 for Claude `Bash`, use `dangerouslyDisableSandbox: true` and explain the scope in `description`.
 The automatic review decides; an approved invocation needs no additional question to the user.
@@ -108,7 +112,9 @@ installed, a new project in a folder they pick (create the folder, then `create_
 folder they name, read the same way. Their answer is the task. The user's choice of a suggestion
 agrees that task: import its project as below, then start it as one new top-level task for the
 user, with `start_first_task` during onboarding or `create_task` otherwise, without asking again.
-Give it the task in full, with the project's name and path and the evidence. Never start it as
+Give it the task in full, with the project's name and path and the evidence. For a project you
+just cloned or created, add that its setup may still be running, so the task waits until the
+project is ready and reports a failed setup. Never start it as
 your own subtask or agent: a top-level task appears in the user's sidebar beside you, outlives this
 conversation, and opens its own subtask to check out the project.
 

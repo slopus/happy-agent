@@ -80,7 +80,26 @@ an empty discovery still leads to a first task: the model asks what they want do
 their own words and offers concrete starts that fit the machine ("Clone a repo" when Git is
 installed, "Start a new project", "I'll name a folder"), sets the project up with `clone_project`
 or a new folder and `create_project`, and starts it with `start_first_task`. Both project tools
-are in the recipe's `tools`, loaded while the model guides.
+are in the recipe's `tools`, loaded while the model guides, and the guide's list of onboarding
+tools names exactly the recipe's `tools`.
+
+Both project tools return before setup finishes, and the `list_projects` check their descriptions
+suggest is not loaded during onboarding, so the task's opening message says setup may still be
+running: the task waits for the project and reports a failed setup, which reaches the person as
+the stopped beat. A new folder has no Git history, so its task works in a copy of the folder, not
+on a fresh branch, and the guide says that instead of "a fresh branch" and "nothing is committed".
+A clone with no work named gets a concrete one: getting it to build and its tests to run. Clone
+addresses can carry tokens, so the local guide carries the secrets rule too: never repeat one, and
+ask for the address without it.
+
+Happy's shell sandbox hides the whole home folder, `~/.claude` and `~/.codex` included, so a
+sandboxed run of the discovery helper always reports those sources as unavailable. On an empty
+home the recipe's old wording sent the model through a sandboxed run, a reviewed rerun, a hunt for
+a newer Node when the login shell's `node` was too old, and a retry for a redirected home that
+reviewed execution cannot fix: over a minute before the first-task menu. The first-project recipe
+now has it request the one reviewed run from the start in Auto, treat `missing` sources from a run
+that could see them as no history, report a redirected home as partial without rerunning, and
+treat a `node` too old for the helper as no discovery rather than searching for another runtime.
 
 ## An older or already-used installation never counts as owed
 
