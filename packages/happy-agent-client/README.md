@@ -724,3 +724,33 @@ as API.md specifies under "Media layouts in text". This package holds the one sp
 - `stripMediaLayoutBlocks(markdown)` is the fallback for surfaces that cannot show blocks.
 
 Never load a `src` yourself; show only the matched item's snapshot.
+
+## Inline actions
+
+Agent text may hold inline action blocks: a closed subset of HTML drawn as buttons, checklists,
+tables, code fields, steps, status lines, trees, and live figures, as API.md specifies under
+"Inline actions". Treat every block as untrusted model output. This package holds the one
+grammar every client and server uses; keep no copy of it.
+
+- `splitChatActionBlocks(markdown)` splits the Markdown that `splitMediaLayoutBlocks` leaves into
+  `markdown` and `action` segments. Hold an incomplete last block while the text streams.
+- `parseChatActionBlock(html)` reads one block into a `ChatActionBlock`, or `undefined` when it
+  breaks any rule; draw `undefined` as the inert text it was written as. The tokenizer is strict:
+  an unknown element or attribute, `style`, `on*`, an unquoted or repeated attribute, a comment,
+  a stray `<`, an unknown character reference, a control or bidirectional formatting character,
+  mismatched nesting, or an exceeded bound refuses the whole block.
+- `messageChatActionBlocks(texts)` numbers a message's blocks by `blockIndex` across its text
+  blocks, counting every complete block, valid or not; `chatActionBlocksOf(markdown)` does one
+  text. Only the first `MAX_CHAT_ACTION_BLOCKS` are read.
+- A control is pressable when its `action` is present, its block has no `actionChoices` entry, and
+  `chatActionBlockLive(history, messageId)` holds. Send it with `sendMessage(agentId, { content:
+[{ type: "action", messageId, blockIndex, controlIndex, actionId, params, values }], mode })`.
+  The daemon stores the press as the person's plain text and records the choice on the message.
+- `CHAT_ACTIONS` is the closed action registry. `resolveChatActionPress` is the server's check of
+  a press against its stored message.
+- `stripChatActionBlocks(markdown)` is the fallback for surfaces that cannot press blocks.
+
+Draw every label, detail, and cell as plain text: never as Markdown, never linkified, never as
+HTML. A figure carries only an identifier; draw it from the server's own state.
+`inlineActions.fixtures.json` and `inlineActions.registry.json`, shipped with the package, are the
+conformance vectors and the registry as data, for servers written in other languages.

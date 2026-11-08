@@ -1,0 +1,43 @@
+import { type Static, Type } from "@sinclair/typebox";
+
+import { mutationIdSchema } from "./common.js";
+
+/**
+ * Onboarding run as a conversation, with `capabilities.chatOnboarding`; see "Onboarding in a
+ * conversation" in API.md. Clients draw the conversation and never depend on its steps.
+ */
+export const onboardingFlowSchema = Type.Object({
+    /** UUIDv7, advanced on every change; keep the object with the greater one. */
+    version: Type.String({ minLength: 1 }),
+    /** The recipe the server runs for the caller; an opaque name. */
+    recipe: Type.String({ minLength: 1 }),
+    /** `not_started`, `running`, `finished`, or newer; treat an unknown value as `running`. */
+    status: Type.String({ minLength: 1 }),
+    /** The bootstrap step, or null once the model leads. For tests and diagnostics only. */
+    step: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    /** The conversation where the caller's onboarding runs. */
+    agentId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+    composer: Type.Union([Type.Literal("enabled"), Type.Literal("disabled")]),
+    composerPlaceholder: Type.Union([Type.String(), Type.Null()]),
+    /** A provider chosen during onboarding needs the daemon restarted. */
+    restartRequired: Type.Boolean(),
+    onboardingVersion: Type.Integer({ minimum: 1 }),
+    completedVersion: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+});
+export type OnboardingFlow = Static<typeof onboardingFlowSchema>;
+
+/** `GET /v0/onboarding/flow` and `POST /v0/onboarding/flow/start` */
+export const onboardingFlowResponseSchema = Type.Object({ flow: onboardingFlowSchema });
+export type OnboardingFlowResponse = Static<typeof onboardingFlowResponseSchema>;
+
+/** `POST /v0/onboarding/flow/start` */
+export const onboardingFlowStartRequestSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type OnboardingFlowStartRequest = Static<typeof onboardingFlowStartRequestSchema>;
+
+/** `onboarding.flow.updated`: the caller's complete flow. */
+export interface OnboardingFlowUpdatedPayload {
+    flow: OnboardingFlow;
+    mutationId?: string;
+}

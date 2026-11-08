@@ -1,0 +1,33 @@
+{
+    "actions": {
+        "reply": {
+            "route": "server",
+            "params": {
+                "text": {
+                    "required": false,
+                    "maxLength": 2000
+                }
+            },
+            "extraParams": 0,
+            "extraMaxLength": 0,
+            "takesValues": true,
+            "takesCode": false,
+            "pressable": "conversation"
+        },
+        "onboarding.next": {
+            "route": "server",
+            "params": {
+                "step": {
+                    "required": true,
+                    "maxLength": 64,
+                    "slug": true
+                }
+            },
+            "extraParams": 4,
+            "extraMaxLength": 128,
+            "takesValues": true,
+            "takesCode": true,
+            "pressable": "onboarding"
+        }
+    }
+}

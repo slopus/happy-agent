@@ -201,6 +201,13 @@ import type {
     ProviderRoutesResponse,
 } from "./protocol/providerRoutes.js";
 import type {
+    ProviderCliResponse,
+    ProviderCliSignInCodeRequest,
+    ProviderCliSignInRequest,
+    ProviderClisResponse,
+} from "./protocol/providerClis.js";
+import type { OnboardingFlowResponse, OnboardingFlowStartRequest } from "./protocol/onboarding.js";
+import type {
     EventPageQuery,
     EventPageResponse,
     EventStreamFrame,
@@ -229,6 +236,7 @@ import type {
     MessageHistoryQuery,
     MessageHistoryResponse,
     SendMessageRequest,
+    SendActionMessageRequest,
     SendMessageResponse,
 } from "./protocol/messages.js";
 import type { BackgroundProcessResponse } from "./protocol/processes.js";
@@ -590,6 +598,83 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: `v0/providers/${encodeURIComponent(providerId)}/verify`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/provider-clis` — every supported assistant's program, refreshed. */
+    async listProviderClis(options: RequestOptions = {}): Promise<ProviderClisResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/provider-clis",
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/provider-clis/:cliId` — one assistant's program, refreshed. */
+    async getProviderCli(
+        cliId: string,
+        options: RequestOptions = {},
+    ): Promise<ProviderCliResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/provider-clis/${encodeURIComponent(cliId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/provider-clis/:cliId/install` — runs the vendor's official installer. */
+    async installProviderCli(
+        cliId: string,
+        request: { mutationId?: string } = {},
+        options: RequestOptions = {},
+    ): Promise<ProviderCliResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/provider-clis/${encodeURIComponent(cliId)}/install`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/provider-clis/:cliId/sign-in` — starts the vendor's own sign-in. */
+    async signInProviderCli(
+        cliId: string,
+        request: ProviderCliSignInRequest = {},
+        options: RequestOptions = {},
+    ): Promise<ProviderCliResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/provider-clis/${encodeURIComponent(cliId)}/sign-in`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/provider-clis/:cliId/sign-in/code` — hands the waiting sign-in its code. */
+    async sendProviderCliSignInCode(
+        cliId: string,
+        request: ProviderCliSignInCodeRequest,
+        options: RequestOptions = {},
+    ): Promise<ProviderCliResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/provider-clis/${encodeURIComponent(cliId)}/sign-in/code`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/provider-clis/:cliId/cancel` — stops the running install or sign-in. */
+    async cancelProviderCli(
+        cliId: string,
+        request: { mutationId?: string } = {},
+        options: RequestOptions = {},
+    ): Promise<ProviderCliResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/provider-clis/${encodeURIComponent(cliId)}/cancel`,
             json: request,
             signal: options.signal,
         });
@@ -1540,6 +1625,28 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: "v0/onboarding/complete",
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/onboarding/flow` — the caller's onboarding as a conversation. */
+    async getOnboardingFlow(options: RequestOptions = {}): Promise<OnboardingFlowResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/onboarding/flow",
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/onboarding/flow/start` — begins it once; later calls change nothing. */
+    async startOnboardingFlow(
+        request: OnboardingFlowStartRequest = {},
+        options: RequestOptions = {},
+    ): Promise<OnboardingFlowResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/onboarding/flow/start",
+            json: request,
             signal: options.signal,
         });
     }
@@ -3819,7 +3926,7 @@ export class HappyAgentClient {
      */
     async sendMessage(
         agentId: Cuid2,
-        request: SendMessageRequest,
+        request: SendMessageRequest | SendActionMessageRequest,
         options: RequestOptions = {},
     ): Promise<SendMessageResponse> {
         return await this.#json({
