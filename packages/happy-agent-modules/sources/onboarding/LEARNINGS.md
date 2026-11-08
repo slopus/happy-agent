@@ -73,6 +73,15 @@ follows with that running task as the reason to get the app. Onboarding finishes
 when that task finishes, or when the person says they are done. These are rules in the guide and
 the first-project recipe, not code: the model decides.
 
+On a fresh computer discovery finds nothing, and the round 3 guide then only asked what they were
+working on, with "I'll name a folder" and "Skip for now"; in a recording onboarding went straight
+past the first task and finished after the phone step. Real work starting early is the point, so
+an empty discovery still leads to a first task: the model asks what they want done in a line of
+their own words and offers concrete starts that fit the machine ("Clone a repo" when Git is
+installed, "Start a new project", "I'll name a folder"), sets the project up with `clone_project`
+or a new folder and `create_project`, and starts it with `start_first_task`. Both project tools
+are in the recipe's `tools`, loaded while the model guides.
+
 ## An older or already-used installation never counts as owed
 
 An installation that was in use before onboarding existed must never be sent through it after an

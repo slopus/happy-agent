@@ -43,6 +43,8 @@ export const LOCAL_OFFER: OnboardingRuntimeOffer = {
         "set_bot_name",
         "start_first_task",
         "finish_onboarding",
+        "create_project",
+        "clone_project",
     ]),
     requirements: new Set(["provider", "profile"]),
 };
