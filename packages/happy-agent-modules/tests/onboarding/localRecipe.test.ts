@@ -280,22 +280,46 @@ describe("the local onboarding recipe", () => {
     it("says the profile and suggests a first task from read-only evidence before the phone", () => {
         const guide = recipeText(recipe.guide);
         expect(guide).toContain(
-            "first call save_profile with exactly that name and email, then say it in one sentence",
+            'call save_profile with exactly that name and email, then set_bot_name with "<First name>\'s Chief of Staff"',
         );
         expect(guide).toContain("Their press or reply is their consent; without it, read nothing.");
         expect(guide).toContain("read only Git metadata");
         expect(guide).toContain("Never suggest a generic task.");
         expect(guide).toContain("at most three lines");
         expect(guide.indexOf("3. The first task, suggested.")).toBeLessThan(
-            guide.indexOf("4. The phone, while the task runs."),
+            guide.indexOf("4. Started."),
+        );
+        expect(guide).toContain("Onboarding is finished only when you call finish_onboarding.");
+        // The first task is a new top-level task, never the Chief of Staff's subtask.
+        expect(guide).toContain(
+            "Start it with start_first_task, never with create_subtask or create_agent",
+        );
+        expect(recipe.tools).toContain("start_first_task");
+    });
+
+    it("renames the Chief of Staff after the person, or to the nickname they give", () => {
+        const guide = recipeText(recipe.guide);
+        expect(guide).toContain(
+            "As soon as you know the person's first name, call set_bot_name with \"<First name>'s Chief of Staff\"",
         );
         expect(guide).toContain(
-            "Onboarding is finished only when you call finish_onboarding. Never call it before you have offered the first task, unless they say to stop setting up.",
+            'When they give you a nickname, call set_bot_name with it at once, start your next message with "<Nickname> it is."',
         );
-        // The first task is a new top-level task, never the Chief of Staff's subtask.
-        expect(guide).toContain("then call start_first_task with the work in up to four words");
-        expect(guide).toContain("never start it with create_subtask or create_agent");
-        expect(recipe.tools).toContain("start_first_task");
+        expect(recipe.tools).toContain("set_bot_name");
+    });
+
+    it("hands over when the first task's update says it finished, and claims nothing else", () => {
+        const guide = recipeText(recipe.guide);
+        for (const state of ["checkedOut", "waiting", "finished", "failed"]) {
+            expect(guide).toContain(`\`${state}\``);
+        }
+        expect(guide).toContain("Never claim progress no taskUpdated event reported.");
+        expect(guide).toContain(
+            "7. Handover, when the task's taskUpdated says `finished`. Answer at once:",
+        );
+        expect(guide.indexOf("Call finish_onboarding, then close")).toBeGreaterThan(
+            guide.indexOf("7. Handover"),
+        );
     });
 
     it("fills only the blocks a text uses", () => {

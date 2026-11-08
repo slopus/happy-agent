@@ -1,28 +1,27 @@
-import {
-    GYM_MODELS,
-    type AgentGym,
-    type GymInferenceRequest,
-    type GymTurn,
-} from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+    DONE,
+    FIRST_TASK_ASKED,
+    PHONE_STEP,
+    RENAME,
+    SAVE_PROFILE,
+    cue,
+    reply,
+    startGuidedGym,
+    useRoutes,
+} from "./support/guidedOnboardingGym.js";
 import {
     OnboardingGyms,
     flowOf,
     messagesOf,
     press,
-    startOnboarding,
     textOf,
     waitForSaid,
     waitForStep,
-    type OnboardingFlow,
 } from "./support/onboardingGym.js";
 
-/**
- * The conversation's own model leading onboarding once an AI is connected. Codex is a stand-in
- * inside a stand-in ChatGPT app, signed in by a fake auth file; its account is a scripted provider
- * registered as Codex, so every answer is the gym's and nothing leaves this machine.
- */
+/** The conversation's own model leading onboarding once an AI is connected. */
 
 const gyms = new OnboardingGyms();
 const TEST_TIMEOUT_MS = 60_000;
@@ -31,207 +30,16 @@ afterEach(async () => {
     await gyms.dispose();
 });
 
-const CODEX = `#!/bin/sh
-case "$*" in
-  "--version") echo "codex-cli 0.164.0" ;;
-  "login status") echo "Logged in using ChatGPT" ;;
-  *) exit 2 ;;
-esac
-`;
-
-/** A stand-in Claude Code, signed in as Ada on Max. */
-const CLAUDE = `#!/bin/sh
-case "$*" in
-  "--version") echo "2.1.312 (Claude Code)" ;;
-  "auth status --json") echo '{"loggedIn":true,"authMethod":"claude.ai","email":"ada@example.com","subscriptionType":"max"}' ;;
-  *) exit 2 ;;
-esac
-`;
-
-/** The model's first message: what is connected, the profile it saved, and the first task asked. */
-const FIRST_TASK_ASKED = [
-    "Connected to ChatGPT as ada@example.com. Your agents think with it from now on, on Gym Codex · Medium unless you pick another model.",
-    "",
-    "I've put **Ada Lovelace** · ada@example.com on your profile, from your Git settings, so your agents know who they work for. Change it anytime.",
-    "",
-    "Now let's give them real work. With your permission, I'll look at the projects you worked on recently on this computer and their Git history, without changing anything, and suggest where agents can help first.",
-    "",
-    "<menu>",
-    '  <button data-action="reply" data-emphasis>Look at my recent work</button>',
-    '  <button data-action="reply">I\'ll name a folder</button>',
-    '  <button data-action="reply">Skip for now</button>',
-    "</menu>",
-].join("\n");
-
-const PHONE_STEP = [
-    "Your agents keep working while you step away. Put Happy on your phone, and you can see them finish and answer their questions from anywhere. Scan a code to get the app, then open it.",
-    "",
-    "<figure data-phone-app></figure>",
-    "",
-    "<menu>",
-    '  <button data-action="reply" data-emphasis>I\'ve opened Happy</button>',
-    '  <button data-action="reply">Later</button>',
-    "</menu>",
-].join("\n");
-
-const DONE =
-    "You're all set, Ada. I stay at the top of your sidebar. Tell me what you want done next, and I'll put agents on it. Ask me for the phone code anytime.";
-
-const SAVE_PROFILE = {
-    content: [
-        {
-            type: "tool_call" as const,
-            name: "save_profile",
-            arguments: { name: "Ada Lovelace", email: "ada@example.com" },
-        },
-    ],
-};
-
-function jwt(claims: object): string {
-    const part = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
-    return `${part({ alg: "none" })}.${part(claims)}.signature`;
-}
-
-/** What a request answers: the hidden event's kind, the person's words, or a tool's result. */
-function cue(request: GymInferenceRequest): string {
-    const last = request.messages.at(-1);
-    const text = JSON.stringify(last ?? {});
-    const event = /happy-onboarding-event>\\n\{\\"kind\\":\\"(\w+)\\"/u.exec(text);
-    if (event !== null) return `event:${event[1]!}`;
-    if (last?.role === "user") {
-        return `said:${last.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("")}`;
-    }
-    if (text.includes("Saved their name and email")) return "saved";
-    if (text.includes("Onboarding is finished")) return "finished";
-    if (text.includes("Not finished.")) return "not finished";
-    if (text.includes("as a top-level task")) return "started";
-    return `unknown:${text.slice(0, 200)}`;
-}
-
-async function startGuidedGym(
-    answers: Record<string, (request: GymInferenceRequest) => GymTurn>,
-    options: {
-        /** Claude Code signed in too, beside Codex. */
-        readonly claude?: boolean;
-        /** The kind of device the start names. */
-        readonly device?: string;
-    } = {},
-): Promise<{ gym: AgentGym; agentId: string }> {
-    const codex = "Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
-    let onboarding: string | undefined;
-    const { gym } = await gyms.start({
-        machine: {
-            [codex]: { content: CODEX, mode: 0o755 },
-            "home/.codex/auth.json": JSON.stringify({
-                tokens: {
-                    id_token: jwt({
-                        email: "ada@example.com",
-                        "https://api.openai.com/auth": { chatgpt_plan_type: "plus" },
-                    }),
-                },
-            }),
-            "home/.gitconfig": "[user]\n\tname = Ada Lovelace\n\temail = ada@example.com\n",
-            ...(options.claude === true
-                ? { "home/.local/bin/claude": { content: CLAUDE, mode: 0o755 } }
-                : {}),
-        },
-        providerIds: options.claude === true ? ["gym", "codex", "claude"] : ["gym", "codex"],
-        providerTypes:
-            options.claude === true ? { codex: "codex", claude: "claude" } : { codex: "codex" },
-        models: [
-            ...GYM_MODELS,
-            {
-                defaultEffort: "medium",
-                effortLevels: ["low", "medium", "high"],
-                id: "gym-codex",
-                name: "Gym Codex",
-                providerId: "codex",
-            },
-            ...(options.claude === true
-                ? [
-                      {
-                          defaultEffort: "high" as const,
-                          effortLevels: ["low" as const, "medium" as const, "high" as const],
-                          id: "gym-claude",
-                          name: "Gym Claude",
-                          providerId: "claude",
-                      },
-                  ]
-                : []),
-        ],
-        inference: (request) => {
-            if (request.sessionId.startsWith("naming:")) {
-                return {
-                    content: [{ text: "<title>Chief</title><slug>chief</slug>", type: "text" }],
-                };
-            }
-            // A task the Chief of Staff started runs in a conversation of its own.
-            if (onboarding !== undefined && request.sessionId !== onboarding) {
-                const elsewhere = answers["elsewhere"];
-                if (elsewhere === undefined) throw new Error("Unscripted request elsewhere.");
-                return elsewhere(request);
-            }
-            const answer = answers[cue(request)];
-            if (answer === undefined) throw new Error(`Unscripted request: ${cue(request)}`);
-            return answer(request);
-        },
-    });
-    const { flow } = (await gym.http.ok(
-        "POST",
-        "/v0/onboarding/flow/start",
-        options.device === undefined ? {} : { device: options.device },
-    )) as { flow: OnboardingFlow };
-    onboarding = flow.agentId!;
-    return { gym, agentId: onboarding };
-}
-
-/** Use selected on the routes table with `values` ticked. */
-async function useRoutes(gym: AgentGym, agentId: string, values: string[]): Promise<void> {
-    const routes = (await waitForStep(gym, agentId, "providers"))!;
-    expect(textOf(routes)).toContain(
-        "I found these on this computer. Choose the ones I should use.",
-    );
-    await press(gym, agentId, { messageId: routes.id, params: { step: "use" }, values });
-}
-
-/** Press a `reply` control: `controlIndex` in the menu at `blockIndex`, after any figure. */
-async function reply(
-    gym: AgentGym,
-    agentId: string,
-    messageId: string,
-    controlIndex: number,
-    blockIndex = 0,
-) {
-    const response = await gym.http.request("POST", `/v0/agents/${agentId}/send`, {
-        mode: {
-            ...gym.selection,
-            providerId: "codex",
-            modelId: "gym-codex",
-            permissionMode: "auto",
-        },
-        content: [
-            {
-                type: "action",
-                messageId,
-                blockIndex,
-                controlIndex,
-                actionId: "reply",
-                params: {},
-            },
-        ],
-    });
-    expect(response.status, response.text).toBe(202);
-    return response.body as { message: { id: string; content: { type: string; text?: string }[] } };
-}
-
 describe("The model leading onboarding", () => {
     it(
-        "verifies the chosen AI with its first answer, saves the profile, and finishes",
+        "verifies the chosen AI with its first answer, saves the profile, renames itself, and finishes",
         async () => {
-            const { gym, agentId } = await startGuidedGym({
-                // The profile from Git is said, not asked: saved first, then the first message.
+            const { gym, agentId } = await startGuidedGym(gyms, {
+                // The profile from Git is said, not asked: saved and the bot renamed after the
+                // person first, then the first message.
                 "event:begin": () => SAVE_PROFILE,
-                saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+                saved: () => RENAME,
+                renamed: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
                 "said:Skip for now": () => ({ content: [{ text: PHONE_STEP, type: "text" }] }),
                 "said:Later": () => ({
                     content: [{ type: "tool_call", name: "finish_onboarding", arguments: {} }],
@@ -254,6 +62,7 @@ describe("The model leading onboarding", () => {
                 composer: "enabled",
                 composerPlaceholder: "Or just tell me in your own words…",
                 skippable: true,
+                firstTasks: [],
             });
 
             const begin = gym.inference.requests.find((request) => cue(request) === "event:begin");
@@ -267,7 +76,7 @@ describe("The model leading onboarding", () => {
                 /first-project recipe at \/\S+\/docs\/recipe\/first-project\.md/u,
             );
             expect(begin?.instructions).toContain(
-                "Never call it before you have offered the first task, unless they say to stop setting up.",
+                "Your onboarding tools are save_profile, set_default_model, set_bot_name, start_first_task and finish_onboarding.",
             );
             const event = JSON.stringify(begin?.messages.at(-1));
             expect(event).toContain('\\"connected\\":[{\\"app\\":\\"ChatGPT\\"');
@@ -278,8 +87,22 @@ describe("The model leading onboarding", () => {
                 '\\"profile\\":{\\"name\\":\\"Ada Lovelace\\",\\"email\\":\\"ada@example.com\\",\\"source\\":\\"git\\"}',
             );
             expect(begin?.tools.map((tool) => tool.name)).toEqual(
-                expect.arrayContaining(["save_profile", "set_default_model", "finish_onboarding"]),
+                expect.arrayContaining([
+                    "save_profile",
+                    "set_default_model",
+                    "set_bot_name",
+                    "start_first_task",
+                    "finish_onboarding",
+                ]),
             );
+            // Renaming itself is at hand while the model guides, not something to search for.
+            const rename = (request: typeof begin) =>
+                request?.tools.find((tool) => tool.name === "set_bot_name");
+            expect(rename(begin)?.defer).not.toBe(true);
+            const { bots } = (await gym.http.ok("GET", "/v0/bots")) as {
+                bots: { name: string; agent: { id: string } }[];
+            };
+            expect(bots.find((bot) => bot.agent.id === agentId)?.name).toBe("Ada's Chief of Staff");
             // The scripted bootstrap was never model input.
             expect(JSON.stringify(begin?.messages)).not.toContain("I found these on this computer");
             // The hidden event is no one's message.
@@ -332,6 +155,7 @@ describe("The model leading onboarding", () => {
             expect(cue(after!)).toBe("said:Thanks");
             expect(after?.instructions).not.toContain("# Onboarding");
             expect(after?.tools.map((tool) => tool.name)).not.toContain("save_profile");
+            expect(rename(after)?.defer).toBe(true);
             expect(gym.inference.unscripted).toEqual([]);
             expect(gym.errors).toEqual([]);
         },
@@ -343,6 +167,7 @@ describe("The model leading onboarding", () => {
         async () => {
             let attempts = 0;
             const { gym, agentId } = await startGuidedGym(
+                gyms,
                 {
                     "event:begin": () => {
                         attempts += 1;
@@ -396,7 +221,7 @@ describe("The model leading onboarding", () => {
         async () => {
             const TASK =
                 "Update the install steps in the README of site, at /home/ada/site. Its README still describes the old installer.";
-            const { gym, agentId } = await startGuidedGym({
+            const { gym, agentId } = await startGuidedGym(gyms, {
                 "event:begin": () => SAVE_PROFILE,
                 saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
                 "said:Update the README in site": () => ({
@@ -410,6 +235,9 @@ describe("The model leading onboarding", () => {
                 }),
                 started: () => ({ content: [{ text: PHONE_STEP, type: "text" }] }),
                 elsewhere: () => ({ content: [{ text: "On it.", type: "text" }] }),
+                "event:taskUpdated:finished": () => ({
+                    content: [{ text: "Update the README is done.", type: "text" }],
+                }),
             });
             await useRoutes(gym, agentId, ["codex"]);
             await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
@@ -417,7 +245,7 @@ describe("The model leading onboarding", () => {
             const begin = gym.inference.requests.find((request) => cue(request) === "event:begin");
             expect(begin?.tools.map((tool) => tool.name)).toContain("start_first_task");
             expect(begin?.instructions).toContain(
-                "never start it with create_subtask or create_agent",
+                "Start it with start_first_task, never with create_subtask or create_agent",
             );
 
             await gym.send("Update the README in site", {
@@ -428,6 +256,7 @@ describe("The model leading onboarding", () => {
             await waitForSaid(gym, agentId, "<figure data-phone-app></figure>");
             const { tasks } = (await gym.http.ok("GET", "/v0/tasks")) as {
                 tasks: {
+                    id: string;
                     name: string;
                     status: string;
                     creatorAgentId: string | null;
@@ -443,6 +272,10 @@ describe("The model leading onboarding", () => {
             });
             // Its own conversation at the top level, not under the Chief of Staff.
             expect(task.agent.parentAgentId).toBeNull();
+            // The flow lists it, so a focused layout can let go and show it among the tasks.
+            expect((await flowOf(gym)).firstTasks).toEqual([
+                { id: task.id, agentId: task.agent.id, name: "Update the README" },
+            ]);
             const opening = await gym.waitUntil(async () => {
                 const said = await messagesOf(gym, task.agent.id);
                 return said.find((message) => textOf(message).includes(TASK));
@@ -458,9 +291,65 @@ describe("The model leading onboarding", () => {
     );
 
     it(
+        "changes the default model when the person asks, and the conversation runs on it",
+        async () => {
+            const { gym, agentId } = await startGuidedGym(gyms, {
+                "event:begin": () => SAVE_PROFILE,
+                saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+                "said:Think harder": () => ({
+                    content: [
+                        {
+                            type: "tool_call",
+                            name: "set_default_model",
+                            arguments: {
+                                providerId: "codex",
+                                modelId: "gym-codex",
+                                effort: "high",
+                            },
+                        },
+                    ],
+                }),
+                "model set": () => ({
+                    content: [{ text: "Your agents think on high effort now.", type: "text" }],
+                }),
+            });
+            await useRoutes(gym, agentId, ["codex"]);
+            await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
+            await gym.send("Think harder", {
+                sessionId: agentId,
+                providerId: "codex",
+                modelId: "gym-codex",
+            });
+            await waitForSaid(gym, agentId, "Your agents think on high effort now.");
+            const set = gym.inference.requests.find((request) => cue(request) === "model set");
+            expect(JSON.stringify(set?.messages.at(-1))).toContain(
+                "Set. The default is now Gym Codex · High, and the rest of onboarding runs on it.",
+            );
+            const { config } = (await gym.http.ok("GET", "/v0/config")) as {
+                config: { defaults: Record<string, unknown> };
+            };
+            expect(config.defaults).toMatchObject({
+                providerId: "codex",
+                modelId: "gym-codex",
+                effort: "high",
+            });
+            // The conversation shows the new effort too, once the tool call has returned.
+            await gym.waitUntil(async () => {
+                const { mode } = (await gym.http.ok("GET", `/v0/agents/${agentId}/mode`)) as {
+                    mode: { effort?: string } | null;
+                };
+                return mode?.effort === "high" ? mode : undefined;
+            }, "the conversation to show high effort");
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
         "tells the model the kind of device onboarding began on, whatever later starts say",
         async () => {
             const { gym, agentId } = await startGuidedGym(
+                gyms,
                 {
                     "event:begin": () => SAVE_PROFILE,
                     saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
@@ -485,7 +374,7 @@ describe("The model leading onboarding", () => {
     it(
         "keeps what the person unticked when Use selected had nothing selected",
         async () => {
-            const { gym, agentId } = await startGuidedGym({
+            const { gym, agentId } = await startGuidedGym(gyms, {
                 "event:begin": () => SAVE_PROFILE,
                 saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
             });
