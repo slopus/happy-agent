@@ -7,7 +7,9 @@ const VENDOR_ROUTES: readonly ProviderRoute["kind"][] = ["direct", "desktop_app"
  * Order the detected routes, mark which reach the same vendor, suggest the initial selection, and
  * say what choosing each would set up. Every ready sign-in of a vendor's own starts selected; any
  * other route starts selected only when it brings a vendor nothing before it already does, so the
- * same vendor is not reached through two routes by default.
+ * same vendor is not reached through two routes by default. A route another ready route quietly
+ * replaces, such as a sign-in a key in the environment takes the place of, starts unselected,
+ * says why, and serves no vendor, so the route the provider actually uses starts selected.
  */
 export function assembleProviderRoutes(
     detected: readonly DetectedRoute[],
@@ -19,6 +21,13 @@ export function assembleProviderRoutes(
             left.name.localeCompare(right.name) ||
             left.id.localeCompare(right.id),
     );
+    const replaced = new Map<string, string>();
+    for (const route of sorted) {
+        if (route.status !== "ready") continue;
+        for (const { routeId, warning } of route.replaces ?? []) {
+            if (!replaced.has(routeId)) replaced.set(routeId, warning);
+        }
+    }
     return sorted.map((route) => {
         const others = sorted.filter(
             (other) =>
@@ -32,15 +41,19 @@ export function assembleProviderRoutes(
                 (other) =>
                     other.vendors.includes(vendor) &&
                     other.status === "ready" &&
+                    !replaced.has(other.id) &&
                     (VENDOR_ROUTES.includes(other.kind) ||
                         (other.kind !== "local_models" && sorted.indexOf(other) < index)),
             );
+        const replacedWarning = replaced.get(route.id);
         const recommended =
+            replacedWarning === undefined &&
             route.status === "ready" &&
             route.kind !== "local_models" &&
             (VENDOR_ROUTES.includes(route.kind) || route.vendors.some((vendor) => !served(vendor)));
         return {
             ...publicFields(route),
+            warning: route.warning ?? replacedWarning ?? null,
             overlaps: others.map((other) => other.id),
             recommended,
             ...configuration(route, providers),

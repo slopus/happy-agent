@@ -8,6 +8,12 @@ export type DetectedRoute = Omit<
     /** The configured provider this route already is, such as the built-in `claude`. */
     readonly providerId?: string;
     /**
+     * The routes this one quietly takes the place of, such as the Claude Code sign-in a
+     * `CLAUDE_CODE_OAUTH_TOKEN` replaces: the same provider uses this route instead, so each of
+     * them starts unchecked and says why with `warning`.
+     */
+    readonly replaces?: readonly { readonly routeId: string; readonly warning: string }[];
+    /**
      * The provider choosing this route adds. Its table may hold a key copied from another
      * program's configuration, so it is written to runtime.toml and never projected.
      */

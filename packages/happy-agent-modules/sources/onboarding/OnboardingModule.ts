@@ -128,6 +128,11 @@ export type OnboardingSpeechListener = (
     message: HistoryMessage,
     proseLength: number,
 ) => void;
+/**
+ * A scripted message's run started or settled without its message: started before its words are
+ * worked out, so the conversation shows typing at once; settled when working them out failed.
+ */
+export type OnboardingScriptedRunListener = (agentId: string, runId: string) => void;
 /** A press committed in a finished run of its own, with the pressed message's new choice. */
 export type OnboardingPressListener = (
     agentId: string,
@@ -158,6 +163,7 @@ export class OnboardingModule implements AgentModule {
     readonly #recipe: OnboardingRecipe;
     readonly #listeners = new Set<OnboardingListener>();
     readonly #speechListeners = new Set<OnboardingSpeechListener>();
+    readonly #scriptedRunListeners = new Set<OnboardingScriptedRunListener>();
     readonly #pressListeners = new Set<OnboardingPressListener>();
     /** Scripted messages the API announces at reading speed rather than at once. */
     readonly #paced = new Set<string>();
@@ -297,6 +303,15 @@ export class OnboardingModule implements AgentModule {
     onSpoken(listener: OnboardingSpeechListener): () => void {
         this.#speechListeners.add(listener);
         return () => this.#speechListeners.delete(listener);
+    }
+
+    /**
+     * Hear a scripted message's run start before its words are worked out, which may take a
+     * detection of seconds, or settle when they could not be; `onSpoken` follows a started run.
+     */
+    onScriptedRun(listener: OnboardingScriptedRunListener): () => void {
+        this.#scriptedRunListeners.add(listener);
+        return () => this.#scriptedRunListeners.delete(listener);
     }
 
     /** Hear every press the bootstrap answers, after it committed, to announce it. */
@@ -745,7 +760,14 @@ export class OnboardingModule implements AgentModule {
                     continue;
                 }
             }
-            if (providerId === null) continue;
+            // Two routes to one provider, such as a sign-in and the token that replaces it, are
+            // one connection.
+            if (
+                providerId === null ||
+                connections.some((connection) => connection.providerId === providerId)
+            ) {
+                continue;
+            }
             const account = routeAccount(route);
             connections.push({
                 app: routeApp(route),
@@ -1225,7 +1247,23 @@ export class OnboardingModule implements AgentModule {
         }
         // A rerun after a restart finds the message already there, and renders nothing again.
         if ((await this.#history.message(ctx, bot.agentId, messageId)) !== undefined) return;
-        const text = await this.#render(ctx, stepId);
+        const run = await this.#beginSaying(ctx, bot.agentId, runId);
+        let text: string;
+        try {
+            text = await this.#render(ctx, stepId);
+        } catch (error: unknown) {
+            await ctx.inTx(async (txCtx) => {
+                await this.#history.finishMaintenanceRun(
+                    txCtx,
+                    bot.agentId,
+                    run,
+                    "failed",
+                    Date.now(),
+                );
+                afterCommit(txCtx, () => this.#announceScriptedRun(txCtx, bot.agentId, run));
+            });
+            throw error;
+        }
         await ctx.inTx(async (txCtx) => {
             if ((await this.#history.message(txCtx, bot.agentId, messageId)) !== undefined) return;
             const now = Date.now();
@@ -1234,15 +1272,14 @@ export class OnboardingModule implements AgentModule {
             if (this.#paced.size > MAX_PACED) {
                 this.#paced.delete(this.#paced.values().next().value!);
             }
-            await this.#history.beginMaintenanceRun(txCtx, bot.agentId, runId, now);
             await this.#history.record(txCtx, bot.agentId, {
                 role: "assistant",
                 recordId: messageId,
-                runId,
+                runId: run,
                 blocks: [{ type: "text", text }],
                 at: now,
             });
-            await this.#history.finishMaintenanceRun(txCtx, bot.agentId, runId, "completed", now);
+            await this.#history.finishMaintenanceRun(txCtx, bot.agentId, run, "completed", now);
             const message = await this.#history.message(txCtx, bot.agentId, messageId);
             if (message === undefined) return;
             const prose = proseLength(text);
@@ -1344,6 +1381,34 @@ export class OnboardingModule implements AgentModule {
             }
         }
         return fillRecipeText(entry.text, variables, blocks);
+    }
+
+    /**
+     * Start a scripted message's run before its words are worked out, so the conversation shows
+     * typing at once even when they need a detection that takes seconds. A rerun after a restart
+     * keeps a run still running, and replaces one an interrupted attempt left settled.
+     */
+    async #beginSaying(ctx: Context, agentId: string, runId: string): Promise<string> {
+        return await ctx.inTx(async (txCtx) => {
+            const existing = await this.#history.run(txCtx, agentId, runId);
+            const run =
+                existing === undefined || existing.status === "running" ? runId : createId();
+            if (existing === undefined || run !== runId) {
+                await this.#history.beginMaintenanceRun(txCtx, agentId, run, Date.now());
+            }
+            afterCommit(txCtx, () => this.#announceScriptedRun(txCtx, agentId, run));
+            return run;
+        });
+    }
+
+    #announceScriptedRun(ctx: Context, agentId: string, runId: string): void {
+        for (const listener of this.#scriptedRunListeners) {
+            try {
+                listener(agentId, runId);
+            } catch (error: unknown) {
+                ctx.log.warn("An onboarding run listener failed.", {}, error);
+            }
+        }
     }
 
     async #routes(ctx: Context): Promise<ProviderRoute[]> {
