@@ -72,6 +72,26 @@ describe("server connections by URL", () => {
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
+    it("reaches a team at a name under localhost on loopback, keeping the name its tokens are for", async () => {
+        const gym = await createAgentGym();
+        gyms.add(gym);
+        const server = await teamServer();
+        // Nothing resolves acme.localhost here: the daemon must reach 127.0.0.1 itself.
+        const url = server.url.replace("//localhost:", "//acme.localhost:");
+        const added = await gym.raw.post("/v0/connections/servers", { url, name: "Acme" });
+        expect(added).toMatchObject({
+            status: 200,
+            body: { connections: [{ id: "acme-localhost", url: `${url}/` }] },
+        });
+        const health = await rawRequest(gym, "/v0/connections/acme-localhost/api/v0/health", {
+            "happy-remote-authorization": "Bearer access-1",
+        });
+        expect(health.status).toBe(200);
+        expect(JSON.parse(health.body)).toMatchObject({ instanceId: INSTANCE });
+        expect(server.requests.map((headers) => headers.host)).toEqual([new URL(url).host]);
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
     it("rejects HTTP mutations without authority or valid OAuth discovery and preserves managed entries", async () => {
         const gym = await createAgentGym({
             config:

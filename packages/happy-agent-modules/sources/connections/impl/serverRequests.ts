@@ -1,3 +1,6 @@
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { request as httpsRequest } from "node:https";
+
 import {
     authenticationResponseSchema,
     healthResponseSchema,
@@ -6,6 +9,7 @@ import {
 import { Value } from "@sinclair/typebox/value";
 
 import { RemoteConnectionError } from "../RemoteConnectionError.js";
+import { isNameUnderLocalhost } from "./normalizeServerUrl.js";
 
 const REQUEST_DEADLINE_MS = 30_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
@@ -66,17 +70,18 @@ export function remoteSignInRequired(): RemoteConnectionError {
 }
 
 async function get(url: string, path: string, token?: string): Promise<Response> {
+    const target = new URL(path, url);
+    const headers = {
+        accept: "application/json",
+        ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+    };
+    const signal = AbortSignal.timeout(REQUEST_DEADLINE_MS);
     try {
-        return await fetch(new URL(path, url), {
-            headers: {
-                accept: "application/json",
-                ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
-            },
-            redirect: "manual",
-            signal: AbortSignal.timeout(REQUEST_DEADLINE_MS),
-        });
-    } catch (error: unknown) {
-        throw error instanceof DOMException && error.name === "TimeoutError"
+        return isNameUnderLocalhost(target.hostname)
+            ? await getOnLoopback(target, headers, signal)
+            : await fetch(target, { headers, redirect: "manual", signal });
+    } catch {
+        throw signal.aborted
             ? new RemoteConnectionError(504, "remote_timeout", "The server did not answer in time.")
             : new RemoteConnectionError(
                   503,
@@ -84,6 +89,50 @@ async function get(url: string, path: string, token?: string): Promise<Response>
                   "The server could not be reached.",
               );
     }
+}
+
+/**
+ * A GET to a name under `localhost`, sent to 127.0.0.1 with the name still in its Host header,
+ * because `fetch` would ask DNS for the name. Like the `fetch` above, it follows no redirects, and
+ * it keeps at most one byte past what `readJson` reads.
+ */
+async function getOnLoopback(
+    target: URL,
+    headers: Record<string, string>,
+    signal: AbortSignal,
+): Promise<Response> {
+    const secure = target.protocol === "https:";
+    const response = await new Promise<IncomingMessage>((resolve, reject) => {
+        const request = (secure ? httpsRequest : httpRequest)(
+            {
+                host: "127.0.0.1",
+                port: target.port === "" ? (secure ? 443 : 80) : Number(target.port),
+                path: `${target.pathname}${target.search}`,
+                method: "GET",
+                headers: { ...headers, host: target.host },
+                ...(secure ? { servername: target.hostname } : {}),
+                signal,
+            },
+            resolve,
+        );
+        request.on("error", reject);
+        request.end();
+    });
+    const chunks: Buffer[] = [];
+    let length = 0;
+    for await (const chunk of response) {
+        const bytes = Buffer.from(chunk as Uint8Array);
+        if (length + bytes.length > MAX_RESPONSE_BYTES) {
+            chunks.push(bytes.subarray(0, MAX_RESPONSE_BYTES + 1 - length));
+            response.destroy();
+            break;
+        }
+        chunks.push(bytes);
+        length += bytes.length;
+    }
+    const status = response.statusCode ?? 502;
+    const empty = status === 204 || status === 205 || status === 304;
+    return new Response(empty ? null : Buffer.concat(chunks), { status });
 }
 
 async function readJson(response: Response): Promise<unknown> {
