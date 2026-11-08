@@ -5,7 +5,10 @@ import { HappyAgentApiError } from "../sources/HappyAgentApiError.js";
 import { HappyAgentClient } from "../sources/HappyAgentClient.js";
 import type { DaemonUsageResponse } from "../sources/protocol/usage.js";
 import type { CreateAgentRequest } from "../sources/protocol/agents.js";
-import { onboardingFlowSchema } from "../sources/protocol/onboarding.js";
+import {
+    onboardingFlowSchema,
+    onboardingFlowStartRequestSchema,
+} from "../sources/protocol/onboarding.js";
 import { providerCliSignInRequestSchema } from "../sources/protocol/providerClis.js";
 
 interface RecordedRequest {
@@ -510,6 +513,27 @@ describe("HappyAgentClient", () => {
                 { target: {} },
             ].map((body) => Value.Check(providerCliSignInRequestSchema, body)),
         ).toEqual([true, false, false, false]);
+    });
+
+    it("says which kind of device starts onboarding", async () => {
+        const { fetch, requests } = stubFetch(() => json({ flow: {} }));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await client.startOnboardingFlow({ device: "phone", mutationId: "m1" });
+        await client.startOnboardingFlow();
+
+        expect(requests.map((request) => [request.url, request.body])).toEqual([
+            [
+                "http://agent.local/v0/onboarding/flow/start",
+                JSON.stringify({ device: "phone", mutationId: "m1" }),
+            ],
+            ["http://agent.local/v0/onboarding/flow/start", JSON.stringify({})],
+        ]);
+        expect(
+            [{ device: "desktop" }, { device: "phone" }, {}, { device: "tablet" }].map((body) =>
+                Value.Check(onboardingFlowStartRequestSchema, body),
+            ),
+        ).toEqual([true, true, true, false]);
     });
 
     it("reads a flow with its own ID, and one from a server that sends none", () => {
