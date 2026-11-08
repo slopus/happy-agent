@@ -167,3 +167,13 @@ only on an archived workspace, after archival has stopped its agents, and remove
 when keep-on-archive settings kept it, then deletes the worktree's branch. Those settings describe
 archival, which is reversible in spirit; deletion is not. A branch Git refuses to delete because
 another worktree has it checked out stays, and the purge retries rather than forcing it.
+
+## An agent in a copied folder never commits
+
+A project Git cannot cut a worktree from, such as a new folder with no repository or no commits
+yet, gets a copied folder. A task briefed its subtask there to commit its work; the sandbox protects
+`.git`, so the subtask asked to leave the sandbox and ran `git init` and a commit under a placeholder
+author. An agent whose workspace is a live copied folder now hears, in its instructions, that there
+is nothing to commit to: never `git init`, never commit, even when a brief says so, and never ask
+to leave the sandbox for either; it leaves the files and says they are in the workspace. Agents in
+Git worktrees hear nothing of it, so ordinary commit workflows are unchanged.

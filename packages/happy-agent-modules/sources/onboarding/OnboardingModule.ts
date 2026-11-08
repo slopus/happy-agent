@@ -86,6 +86,8 @@ const OWNER = "standalone";
 /** How long find_recent_projects reads assistant history, and then each folder's Git metadata. */
 const HISTORY_TIMEOUT_MS = 1_000;
 const EVIDENCE_TIMEOUT_MS = 2_000;
+/** Set in the run store of the turn that finished onboarding, which still follows the guide. */
+const CLOSING_KEY = "closing";
 const STEP_FUNCTION = "onboarding.step";
 /** How many scripted message IDs are remembered as paced; far more than are ever in flight. */
 const MAX_PACED = 256;
@@ -359,8 +361,12 @@ export class OnboardingModule implements AgentModule {
                 await this.#resumeAfterRestart(startCtx);
                 await this.#watchManualSignIn(startCtx);
             },
+            // The turn that finishes onboarding still writes the handover the guide describes.
             instructions: async (hookCtx, scope) =>
-                (await this.#guiding(hookCtx, scope)) ? await this.#guide(hookCtx) : "",
+                (await this.#guiding(hookCtx, scope)) ||
+                (await scope.runKV.read(hookCtx, CLOSING_KEY)) === true
+                    ? await this.#guide(hookCtx)
+                    : "",
             tools: async (hookCtx, scope) =>
                 (await this.#guiding(hookCtx, scope))
                     ? this.#recipe.tools.flatMap((name) => {
@@ -372,7 +378,7 @@ export class OnboardingModule implements AgentModule {
                               case "find_recent_projects":
                                   return [findRecentProjectsTool(this)];
                               case "finish_onboarding":
-                                  return [finishOnboardingTool(this)];
+                                  return [finishOnboardingTool(this, scope.runKV)];
                               case "start_first_task":
                                   return [startFirstTaskTool(this, scope.agent.id, scope.kv)];
                               default:
@@ -792,7 +798,11 @@ export class OnboardingModule implements AgentModule {
     }
 
     /** End onboarding for the finish_onboarding tool, once its requirements are met. */
-    async finish(ctx: Context): Promise<string> {
+    /**
+     * End onboarding for finish_onboarding. The run that ends it keeps the guide until it
+     * settles, through `runKV`, since the handover and the close come after the call.
+     */
+    async finish(ctx: Context, runKV: AgentKV): Promise<string> {
         return await ctx.inTx(async (txCtx) => {
             const state = await this.#state(txCtx);
             if (state.status === "finished") return "Onboarding was already finished.";
@@ -807,6 +817,7 @@ export class OnboardingModule implements AgentModule {
                 stepMessageId: null,
                 waiting: false,
             });
+            await runKV.write(txCtx, CLOSING_KEY, true);
             return "Onboarding is finished. This is an ordinary chat from here.";
         });
     }

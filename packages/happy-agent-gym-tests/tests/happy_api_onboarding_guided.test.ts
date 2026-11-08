@@ -146,6 +146,11 @@ describe("The model leading onboarding", () => {
                 completedVersion: 1,
             });
 
+            // The turn that finished onboarding still writes its close by the guide.
+            const closing = gym.inference.requests.find((request) => cue(request) === "finished");
+            expect(closing?.instructions).toContain("# Onboarding");
+            expect(closing?.tools.map((tool) => tool.name)).not.toContain("save_profile");
+
             // An ordinary chat from here: no guide, no onboarding tools.
             await gym.send("Thanks", {
                 sessionId: agentId,
