@@ -103,7 +103,10 @@ bounded backoff and is offered again. Watcher and scan failures are logged throu
 calls back to report them.
 
 Worktree deletion and adoption rely on both top-level and shared common-directory identity, and
-refuse symbolic-link destinations. A clone runs in a private staging directory and is renamed into
+refuse symbolic-link destinations. `removeWorktree` with `preserveChanges` first commits uncommitted
+and untracked work (and a detached HEAD no ref contains) to the named `refs/happy/archived/` ref
+through a temporary index, creating the ref only if it is absent, and does not delete the folder
+when that fails. A clone runs in a private staging directory and is renamed into
 place only after its identity is proved, so a failed or interrupted clone never exposes a partial
 project.
 

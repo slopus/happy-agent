@@ -32,6 +32,7 @@ import {
     loadWorkspaceFolderSettings,
     type WorkspaceFolderSettings,
 } from "./impl/loadWorkspaceFolderSettings.js";
+import { archivedWorkspaceRef } from "./impl/archivedWorkspaceRef.js";
 import { deleteWorkspaceBranch } from "./impl/deleteWorkspaceBranch.js";
 import { removeWorkspaceDirectory } from "./impl/removeWorkspaceDirectory.js";
 import { runWorkspaceSetupCommands } from "./impl/runWorkspaceSetupCommands.js";
@@ -871,6 +872,7 @@ export class WorkspacesModule implements AgentModule {
                     paths: this.#runners.paths(workspace.runnerId),
                     keepCopiesOnArchive: false,
                     keepWorktreesOnArchive: false,
+                    preserveChanges: false,
                     project,
                     stopped: () => false,
                     workspace,
@@ -881,6 +883,7 @@ export class WorkspacesModule implements AgentModule {
                     (await machine.fs.exists(PRODUCT, project.repositoryRef))
                 ) {
                     await deleteWorkspaceBranch({
+                        archivedRef: archivedWorkspaceRef(workspace.id),
                         branch: workspace.branch,
                         git: this.#git,
                         projectPath: project.repositoryRef,
@@ -1517,6 +1520,7 @@ export class WorkspacesModule implements AgentModule {
                 paths: this.#runners.paths(locked.runnerId),
                 keepCopiesOnArchive: false,
                 keepWorktreesOnArchive: false,
+                preserveChanges: false,
                 project,
                 stopped: () => this.#closed,
                 workspace: locked,
@@ -1666,18 +1670,34 @@ export class WorkspacesModule implements AgentModule {
         await backoff(
             ctx,
             async (retryCtx) => {
-                await this.#projects.runInProjectGitLock(retryCtx, project.id, async () => {
-                    await removeWorkspaceDirectory({
-                        git: this.#git,
-                        machine,
-                        paths: this.#runners.paths(workspace.runnerId),
-                        keepCopiesOnArchive: settings.keepCopiesOnArchive,
-                        keepWorktreesOnArchive: settings.keepWorktreesOnArchive,
-                        project,
-                        stopped: () => retryCtx.lifetime?.aborted === true,
-                        workspace,
-                    });
-                });
+                const preserved = await this.#projects.runInProjectGitLock(
+                    retryCtx,
+                    project.id,
+                    async () =>
+                        await removeWorkspaceDirectory({
+                            git: this.#git,
+                            machine,
+                            paths: this.#runners.paths(workspace.runnerId),
+                            keepCopiesOnArchive: settings.keepCopiesOnArchive,
+                            keepWorktreesOnArchive: settings.keepWorktreesOnArchive,
+                            preserveChanges: true,
+                            project,
+                            stopped: () => retryCtx.lifetime?.aborted === true,
+                            workspace,
+                        }),
+                );
+                if (preserved !== undefined) {
+                    retryCtx.log.info(
+                        {
+                            changedPaths: preserved.changedPaths,
+                            commit: preserved.commit,
+                            ref: preserved.ref,
+                            repository: project.repositoryRef,
+                            workspaceId,
+                        },
+                        "Saved the archived workspace's uncommitted work to a Git ref before removing its worktree.",
+                    );
+                }
             },
             {
                 onError: (retryCtx, error) => {

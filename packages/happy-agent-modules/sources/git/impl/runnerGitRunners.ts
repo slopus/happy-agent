@@ -49,7 +49,7 @@ export function runnerGitCommandRunner(target: RunnerGitTarget): GitCommandRunne
                 const result = await target.run({
                     command: "git",
                     args: ["-C", cwd, ...args],
-                    environment: { GIT_TERMINAL_PROMPT: "0" },
+                    environment: { ...options.environment, GIT_TERMINAL_PROMPT: "0" },
                     maximumBytes: options.maxOutputBytes ?? GIT_OUTPUT_LIMIT,
                     timeoutMs:
                         options.timeoutMs ??

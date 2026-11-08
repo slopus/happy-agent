@@ -31,6 +31,7 @@ import { listGitWorkingTreeFiles, type GitWorkingTreeFiles } from "./listGitWork
 import { normalizeFuturePath } from "./normalizeFuturePath.js";
 import { normalizeProjectCwd } from "./normalizeProjectCwd.js";
 import { parseHostingRepository, type HostingRepository } from "./parseHostingRepository.js";
+import { type GitWorktreePreservation } from "./preserveGitWorktreeChanges.js";
 import { probeGitRepository, type GitRepositoryProbe } from "./probeGitRepository.js";
 import { readGitCommonDir } from "./readGitCommonDir.js";
 import { readGitFileAtRevision, type GitRevisionFile } from "./readGitFileAtRevision.js";
@@ -522,29 +523,37 @@ export class GitModule implements AgentModule {
      * Retires a worktree, optionally deleting its folder.
      *
      * Deletion is refused unless the path is a real directory that is the top level of its own
-     * worktree and shares the repository the caller named.
+     * worktree and shares the repository the caller named. With `preserveChanges`, uncommitted
+     * and untracked work (and a detached HEAD no ref contains) is first committed to that ref in
+     * the shared repository, so the ref outlives the folder; removal does not proceed when that
+     * save fails. The answer says what was saved, if anything.
      */
     async removeWorktree(
         options: GitPlacement & {
             readonly expectedCommonDir: string;
+            readonly preserveChanges?: { readonly message: string; readonly ref: string };
             readonly projectPath: string;
             readonly removeDirectory: boolean;
             readonly workspacePath: string;
         },
-    ): Promise<void> {
+    ): Promise<GitWorktreePreservation | undefined> {
         const machine = this.#machine(options.runnerId);
-        await removeGitWorktree({
+        const preserved = await removeGitWorktree({
             expectedCommonDir: options.expectedCommonDir,
             git: machine.foreground,
             ...(this.#native(options.runnerId)
                 ? {}
                 : { inspect: async (path: string) => await machine.inspect(path) }),
+            ...(options.preserveChanges === undefined
+                ? {}
+                : { preserveChanges: options.preserveChanges }),
             projectPath: options.projectPath,
             removeDirectory: options.removeDirectory,
             workspacePath: options.workspacePath,
         });
         this.invalidate(options.workspacePath);
         this.invalidate(options.projectPath);
+        return preserved;
     }
 
     /** Renames the branch a worktree is on, refusing when it is not the branch the caller named. */

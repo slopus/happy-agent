@@ -42,6 +42,7 @@ export {
 
 export { gitRepositoryProbeSchema, type GitRepositoryProbe } from "./probeGitRepository.js";
 export { type GitWorktreeIdentity } from "./readGitWorktreeIdentity.js";
+export { type GitWorktreePreservation } from "./preserveGitWorktreeChanges.js";
 export { type GitComparisonBase } from "./resolveGitComparisonBase.js";
 export { workspaceBaseSchema, type WorkspaceBase } from "./resolveWorkspaceBase.js";
 export { GitRevisionFileTooLargeError, type GitRevisionFile } from "./readGitFileAtRevision.js";

@@ -135,11 +135,20 @@ committed. Shutdown leaves a pending call for Durable Functions to recover, so `
 window rather than a startup-sweep resting state. Completion also re-runs sync convergence, which
 disarms the project watch when its last ready workspace disappears.
 
+Removing a worktree on archive never discards work. The branch stays, and before the folder goes,
+anything the branch does not hold — uncommitted and untracked files (not ignored ones), or a
+detached HEAD no ref contains — is committed on top of HEAD to `refs/happy/archived/<workspace ID>`
+in the project's repository, through a temporary index so the branch, index, and stashes are
+untouched. The ref is only ever created, never replaced, so a retry after a half-finished removal
+keeps the first save. If saving fails, the folder stays and the archive call retries. What was saved
+is logged, and `archive_workspace` and `archive_subtask` name the ref and how to recover it.
+
 `purge(ctx, workspaceId)` deletes an archived workspace for good, for an admin's permanent
 deletion. It refuses one still `archiving`, because that archival is still stopping its agents, and
 one with child workspaces, which go first. Under the project's Git lock it removes the folder or
-worktree whatever the keep-on-archive settings say and deletes the branch the worktree was cut as;
-Git still refuses a branch another worktree has checked out. Then one transaction deletes the row
+worktree whatever the keep-on-archive settings say, without saving anything, and deletes the branch
+the worktree was cut as and its `refs/happy/archived/` ref; Git still refuses a branch another
+worktree has checked out. Then one transaction deletes the row
 and its agent placements and emits `workspace_deleted`. The agents themselves are the caller's to
 erase. An agent erased with `AgentSystemRef.erase` leaves its placement through the module's
 `agentErasedTransact` hook, in the erasing transaction.

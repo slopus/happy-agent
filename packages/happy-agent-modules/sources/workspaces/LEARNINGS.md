@@ -160,6 +160,25 @@ that already hold a key past half the bound, in their order, and advances each r
 workspace's version so clients take the new key; other parents are left alone. Agent series keys are
 mirrored into agent metadata the catalog cannot version, so they are not renumbered.
 
+## Archiving a worktree saves what its branch does not hold
+
+Archiving removed a worktree with `git worktree remove --force --force`, and nothing looked at
+what was in it. A coordinator replacing three dead subtasks archived them and lost two worktrees of
+uncommitted work, about a hundred paths, with no warning anywhere (slopus/happy-agent#124).
+Archiving a subtask looks like stopping a dead agent, so the caller is rarely the one who knows
+what the worktree holds.
+
+Before archival deletes a worktree folder, its uncommitted and untracked files (not ignored ones)
+are now committed on top of HEAD, through a temporary index, to `refs/happy/archived/<workspace
+ID>` in the project's repository; a detached HEAD no ref contains is saved the same way. The branch
+was already kept. Saving to a ref was chosen over refusing or keeping the folder: archival is a
+decision that never fails or rolls back, and a kept folder of an archived workspace is reachable
+from nowhere, while a ref costs only objects, survives the folder, and recovers with one
+`git switch -c`. The ref is created only when absent, so a retry after a removal that failed
+halfway keeps the first, complete save. A failed save leaves the folder in place and the archive
+call retries. The tools and the log name the ref; purge deletes it with the branch, and clearing
+a half-made checkout saves nothing.
+
 ## Permanent deletion follows archival, not the keep settings
 
 Admins asked for deletion that really removes folders, conversations, and branches. `purge` runs

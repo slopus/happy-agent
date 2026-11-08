@@ -2,9 +2,10 @@ import type { PlatformPath } from "node:path";
 
 import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 
-import type { GitModule } from "../../git/index.js";
+import type { GitModule, GitWorktreePreservation } from "../../git/index.js";
 import type { Project } from "../../projects/index.js";
 import type { Workspace } from "../Workspace.js";
+import { archivedWorkspaceRef } from "./archivedWorkspaceRef.js";
 
 const VALID_STORAGE_KEY = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u;
 const PRODUCT = computePermissions("full_access");
@@ -18,6 +19,10 @@ const PRODUCT = computePermissions("full_access");
  * outright; and a worktree is only removed through Git, from the project that still proves it
  * owns the shared repository. When the project itself is gone, the folder is removed only once
  * the shared Git directory is gone too — otherwise something else still owns this checkout.
+ *
+ * Archival passes `preserveChanges`: before a worktree folder is deleted, whatever its branch does
+ * not already hold is committed to `archivedWorkspaceRef` in the project's repository, and the
+ * answer says what was saved. Purging and clearing a half-made checkout delete outright.
  */
 export async function removeWorkspaceDirectory(options: {
     git: GitModule;
@@ -27,10 +32,11 @@ export async function removeWorkspaceDirectory(options: {
     paths: PlatformPath;
     keepCopiesOnArchive: boolean;
     keepWorktreesOnArchive: boolean;
+    preserveChanges: boolean;
     project: Project;
     stopped: () => boolean;
     workspace: Workspace;
-}): Promise<void> {
+}): Promise<GitWorktreePreservation | undefined> {
     const { machine, project, workspace } = options;
     const { basename, dirname } = options.paths;
     if (
@@ -51,7 +57,7 @@ export async function removeWorkspaceDirectory(options: {
             ? options.keepWorktreesOnArchive
             : options.keepCopiesOnArchive
     ) {
-        return;
+        return undefined;
     }
 
     let workspaceExists = true;
@@ -70,25 +76,32 @@ export async function removeWorkspaceDirectory(options: {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         workspaceExists = false;
     }
-    if (options.stopped()) return;
+    if (options.stopped()) return undefined;
 
     const commonDir = workspace.gitCommonDir;
     if (workspace.kind !== "git_worktree" || commonDir === undefined) {
         // A copied folder, or a checkout that never got far enough for Git to know about it.
         if (workspaceExists)
             await machine.fs.rm(PRODUCT, workspace.path, { force: true, recursive: true });
-        return;
+        return undefined;
     }
 
     if (await machine.fs.exists(PRODUCT, project.repositoryRef)) {
-        await options.git.removeWorktree({
+        return await options.git.removeWorktree({
             ...(workspace.runnerId === undefined ? {} : { runnerId: workspace.runnerId }),
             expectedCommonDir: commonDir,
+            ...(options.preserveChanges
+                ? {
+                      preserveChanges: {
+                          message: preservationMessage(workspace),
+                          ref: archivedWorkspaceRef(workspace.id),
+                      },
+                  }
+                : {}),
             projectPath: project.repositoryRef,
             removeDirectory: workspaceExists,
             workspacePath: workspace.path,
         });
-        return;
     }
 
     if (await machine.fs.exists(PRODUCT, commonDir)) {
@@ -98,4 +111,14 @@ export async function removeWorkspaceDirectory(options: {
     }
     if (workspaceExists)
         await machine.fs.rm(PRODUCT, workspace.path, { force: true, recursive: true });
+    return undefined;
+}
+
+function preservationMessage(workspace: Workspace): string {
+    return [
+        `Uncommitted work from archived workspace ${JSON.stringify(workspace.name)}`,
+        "",
+        `Happy saved what workspace ${workspace.id} still held on branch ${workspace.branch}`,
+        `before removing its worktree at ${workspace.path}.`,
+    ].join("\n");
 }
