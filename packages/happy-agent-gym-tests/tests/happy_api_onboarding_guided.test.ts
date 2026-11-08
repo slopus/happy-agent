@@ -72,11 +72,12 @@ describe("The model leading onboarding", () => {
             expect(begin?.instructions).toContain(
                 "You are Chief of Staff, the person's chief of staff",
             );
-            expect(begin?.instructions).toMatch(
-                /first-project recipe at \/\S+\/docs\/recipe\/first-project\.md/u,
+            // The model looks at recent work with a tool Happy runs itself, not with the shell.
+            expect(begin?.instructions).toContain(
+                "Call find_recent_projects to see their recent work, and nothing else",
             );
             expect(begin?.instructions).toContain(
-                "Your onboarding tools are save_profile, set_default_model, set_bot_name, clone_project, create_project, start_first_task and finish_onboarding.",
+                "Your onboarding tools are save_profile, set_default_model, set_bot_name, find_recent_projects, clone_project, create_project, start_first_task, send_agent_message and finish_onboarding.",
             );
             const event = JSON.stringify(begin?.messages.at(-1));
             expect(event).toContain('\\"connected\\":[{\\"app\\":\\"ChatGPT\\"');

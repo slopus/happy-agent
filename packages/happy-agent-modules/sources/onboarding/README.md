@@ -78,10 +78,14 @@ settles without an answer returns to the recipe's `handoffFailed` step, which ke
 the person chose ticked.
 
 While the model guides, the guide is in its instructions and the recipe's tools are at hand:
-`save_profile`, `set_default_model`, `start_first_task`, and `finish_onboarding`, which exist only
-then, and `set_bot_name`, `create_project`, and `clone_project`, which their modules offer deferred
-everywhere and `overrideTools` loads for that time, so the model renames the bot "<First name>'s
-Chief of Staff" or to a nickname, and sets up the first task's project, without searching. `start_first_task` creates the first task through Tasks as a new top-level task owned by
+`save_profile`, `set_default_model`, `find_recent_projects`, `start_first_task`, and
+`finish_onboarding`, which exist only then, and `set_bot_name`, `create_project`, `clone_project`,
+and `send_agent_message`, which their modules offer deferred everywhere and `overrideTools` loads
+for that time, so the model renames the bot "<First name>'s Chief of Staff" or to a nickname, sets
+up the first task's project, and passes the person's word to the task, without searching.
+`find_recent_projects` reads the recent work in the daemon: the folders in Claude Code's and
+Codex's session history and their Git metadata through the read-only Git scanner, bounded to a
+few seconds, never through the model's shell. `start_first_task` creates the first task through Tasks as a new top-level task owned by
 the person, never a subtask of the Chief of Staff. A switch of model from inside the Chief of
 Staff's own tool call reaches its composer through the `onboarding.useModel` durable function,
 because an agent's metadata cannot be written from inside its own loop.
@@ -101,7 +105,8 @@ finishes or fails, also after onboarding finished:
   error. Either is the last update about that task.
 
 The `local` guide has the model save the profile it was given and say so, ask before it reads
-anything, suggest up to three first tasks from the Git metadata of recent projects, or, when it
+anything, suggest up to three first tasks from the Git metadata of recent projects, which
+`find_recent_projects` reads in the daemon without the model's shell, or, when it
 finds none, offer concrete starts (a repository to clone, a new project, a folder they name) so a
 first task still starts, offer the phone while the chosen task runs, and hand over when the task
 finishes. The order is the guide's, not

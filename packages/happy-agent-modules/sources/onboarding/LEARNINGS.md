@@ -87,19 +87,36 @@ Both project tools return before setup finishes, and the `list_projects` check t
 suggest is not loaded during onboarding, so the task's opening message says setup may still be
 running: the task waits for the project and reports a failed setup, which reaches the person as
 the stopped beat. A new folder has no Git history, so its task works in a copy of the folder, not
-on a fresh branch, and the guide says that instead of "a fresh branch" and "nothing is committed".
+on a fresh branch, and the Started beat says so.
 A clone with no work named gets a concrete one: getting it to build and its tests to run. Clone
 addresses can carry tokens, so the local guide carries the secrets rule too: never repeat one, and
 ask for the address without it.
 
-Happy's shell sandbox hides the whole home folder, `~/.claude` and `~/.codex` included, so a
-sandboxed run of the discovery helper always reports those sources as unavailable. On an empty
-home the recipe's old wording sent the model through a sandboxed run, a reviewed rerun, a hunt for
-a newer Node when the login shell's `node` was too old, and a retry for a redirected home that
-reviewed execution cannot fix: over a minute before the first-task menu. The first-project recipe
-now has it request the one reviewed run from the start in Auto, treat `missing` sources from a run
-that could see them as no history, report a redirected home as partial without rerunning, and
-treat a `node` too old for the helper as no discovery rather than searching for another runtime.
+A handover that said "The files are in their own copy of the project, not in ~/weather-today,
+which is still empty" confused a first-time person. The guide now says in one plain sentence where
+the work is and how it reaches their folder: open the task to look it over, or tell it to merge the
+change, or to copy the files over. It never explains copies, checkouts or commits. No action
+merges or applies a task's work yet, so the handover offers no button for it; when the person asks
+the Chief of Staff instead, it passes that to the task with `send_agent_message`, which the recipe
+loads.
+
+## Recent work is read by the daemon, never through the shell
+
+The discovery helper the first-project recipe runs cannot see `~/.claude` or `~/.codex` from
+Happy's shell sandbox, which hides them, so onboarding had the model run it, ask for a reviewed run
+outside the sandbox, hunt for a newer Node when the login shell's was too old, and run Git per
+project: 25 to 71 seconds of shell work and reviews before the first-task menu, on a home folder
+with no history at all. A person's first minutes must not include a sandbox escape.
+
+`find_recent_projects`, one of the onboarding tools, does it in the daemon instead. It reads only
+the first lines of the newest Claude Code and Codex session logs for the `cwd` they record, keeps
+at most five existing folders (never the home folder, a filesystem root, or Happy's own folders),
+and reads each one's Git metadata through `GitModule.readOnly`, the hardened read-only scanner.
+History gets one second and Git two more; what is left unread is said. It returns names, paths,
+dates, branches and commit subjects, never file contents or conversation text, takes only an
+optional folder the person named, and needs no review. With no history it answers in tens of
+milliseconds. The guide tells the model to call it and never to read history, run the shell, or
+ask to leave the sandbox for this, and no longer sends it to read the recipe file at all.
 
 ## An older or already-used installation never counts as owed
 
@@ -174,12 +191,14 @@ onboarding finished.
 
 ## The tools onboarding needs are loaded, never searched for
 
-`save_profile`, `set_default_model`, `start_first_task`, and `finish_onboarding` reach the model
+`save_profile`, `set_default_model`, `find_recent_projects`, `start_first_task`, and
+`finish_onboarding` reach the model
 only while it guides, and it calls them as soon as the person answers. They are `defer: false` with
 no search keywords. A deferred copy would make the model search for a tool it needs at that moment.
 The rename after the person's name needs `set_bot_name`, which Bots offers deferred everywhere; a
 recipe's `tools` may name it, and the module's `overrideTools` loads it while the model guides
-instead of offering a second copy, because two tools with one name are refused.
+instead of offering a second copy, because two tools with one name are refused. `create_project`,
+`clone_project` and `send_agent_message` are loaded the same way.
 
 ## The Chief of Staff is named after the person
 

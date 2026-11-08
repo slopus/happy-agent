@@ -21,8 +21,14 @@ it relative to the bot's working directory.
 
 ## Discover a short list, read-only
 
-Run the TypeScript companion with existing Node.js 22.19 or newer (native type stripping), using
-its resolved absolute path:
+During onboarding, call `find_recent_projects` instead of everything in this section and the
+Git commands below. Happy runs it itself, read-only and within a few seconds, so it needs no
+shell, no Node.js, and no reviewed run outside the sandbox. It returns up to five recent folders
+from Claude Code and Codex history with their Git metadata, or one folder the person names, or
+says at once that it found none. Never run the companion during onboarding.
+
+Outside onboarding, run the TypeScript companion with existing Node.js 22.19 or newer (native
+type stripping), using its resolved absolute path:
 
 ```sh
 node /absolute/path/to/.happy/docs/recipe/discover-recent-projects.ts
@@ -87,9 +93,10 @@ the user's selection.
 ## Suggest first tasks from recent work
 
 When the user asked you to look at their recent work, as onboarding's “Look at my recent work”
-does, suggest tasks rather than bare folders. For up to five discovered folders, or the one folder
-they named, read Git metadata and nothing else, with commands that take no locks and change
-nothing, quoting each path:
+does, suggest tasks rather than bare folders. During onboarding, `find_recent_projects` has
+already read this metadata. Otherwise, for up to five discovered folders, or the one folder they
+named, read Git metadata and nothing else, with commands that take no locks and change nothing,
+quoting each path:
 
 ```sh
 git -C "/path/to/project" --no-optional-locks status --porcelain --branch

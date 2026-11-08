@@ -1,8 +1,8 @@
 import { createId } from "@paralleldrive/cuid2";
 import { AsyncResource } from "node:async_hooks";
-import { access } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import {
     DEFAULT_AGENT_PERMISSION_MODE,
     withAgentDatabase,
@@ -27,6 +27,7 @@ import { afterCommit, detach, withLifetime, type Context } from "@steve.kite/std
 import { BotsModule } from "../bots/index.js";
 import { ConfigModule, DefaultModelError } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import { GitModule } from "../git/index.js";
 import { HistoryModule, type HistoryMessage } from "../history/index.js";
 import { MobileConnectorModule, STANDALONE_MOBILE_OWNER } from "../mobileConnector/index.js";
 import { ProfileModule } from "../profile/index.js";
@@ -39,7 +40,9 @@ import { UserInputModule, type UserInputRequest } from "../userInput/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { WorkspacesModule, type Workspace } from "../workspaces/index.js";
 import { assertOnboardingRecipe } from "./impl/checkOnboardingRecipe.js";
+import { describeNamedFolder, describeRecentProjects } from "./impl/describeRecentProjects.js";
 import { fillRecipeText, recipeVariables } from "./impl/fillRecipeText.js";
+import { findRecentFolders } from "./impl/findRecentFolders.js";
 import {
     APP_OF,
     LOCAL_OFFER,
@@ -59,6 +62,7 @@ import {
     sentence,
 } from "./impl/localWords.js";
 import { readGitIdentity } from "./impl/readGitIdentity.js";
+import { readProjectEvidence, type ReadGit } from "./impl/readProjectEvidence.js";
 import { typedAnswer } from "./impl/typedAnswer.js";
 import { onboardingMigrations } from "./OnboardingMigrations.js";
 import type { OnboardingRecipe, OnboardingRecipeTarget } from "./OnboardingRecipe.js";
@@ -71,6 +75,7 @@ import type {
 import { queryOnboardingState } from "./persistence/queryOnboardingState.js";
 import { upsertOnboardingState } from "./persistence/upsertOnboardingState.js";
 import localRecipe from "./recipes/local.json" with { type: "json" };
+import { findRecentProjectsTool } from "./tools/find_recent_projects.js";
 import { finishOnboardingTool } from "./tools/finish_onboarding.js";
 import { saveProfileTool } from "./tools/save_profile.js";
 import { setDefaultModelTool } from "./tools/set_default_model.js";
@@ -78,6 +83,9 @@ import { startFirstTaskTool } from "./tools/start_first_task.js";
 
 /** Onboarding runs on the daemon's machine for its one person; team members keep their own. */
 const OWNER = "standalone";
+/** How long find_recent_projects reads assistant history, and then each folder's Git metadata. */
+const HISTORY_TIMEOUT_MS = 1_000;
+const EVIDENCE_TIMEOUT_MS = 2_000;
 const STEP_FUNCTION = "onboarding.step";
 /** How many scripted message IDs are remembered as paced; far more than are ever in flight. */
 const MAX_PACED = 256;
@@ -224,6 +232,7 @@ export class OnboardingModule implements AgentModule {
     readonly #projects: ProjectsModule;
     readonly #workspaces: WorkspacesModule;
     readonly #userInput: UserInputModule;
+    readonly #git: GitModule;
     readonly #recipe: OnboardingRecipe;
     readonly #listeners = new Set<OnboardingListener>();
     readonly #speechListeners = new Set<OnboardingSpeechListener>();
@@ -254,6 +263,7 @@ export class OnboardingModule implements AgentModule {
         projects: ProjectsModule,
         workspaces: WorkspacesModule,
         userInput: UserInputModule,
+        git: GitModule,
     ) {
         this.#config = config;
         this.#durable = durableFunctions;
@@ -268,6 +278,7 @@ export class OnboardingModule implements AgentModule {
         this.#projects = projects;
         this.#workspaces = workspaces;
         this.#userInput = userInput;
+        this.#git = git;
         this.#recipe = assertOnboardingRecipe(localRecipe, LOCAL_OFFER);
         durableFunctions.register({
             name: STEP_FUNCTION,
@@ -358,6 +369,8 @@ export class OnboardingModule implements AgentModule {
                                   return [saveProfileTool(this)];
                               case "set_default_model":
                                   return [setDefaultModelTool(this)];
+                              case "find_recent_projects":
+                                  return [findRecentProjectsTool(this)];
                               case "finish_onboarding":
                                   return [finishOnboardingTool(this)];
                               case "start_first_task":
@@ -1604,6 +1617,57 @@ export class OnboardingModule implements AgentModule {
             updatedAt: Date.now(),
             version,
         });
+    }
+
+    /**
+     * The person's recent projects for find_recent_projects, or the one folder they named: read by
+     * the daemon itself, never through the model's shell, and bounded to a couple of seconds.
+     */
+    async findRecentProjects(folder?: string): Promise<string> {
+        const environment = this.#config.processEnvironment;
+        const home = environment["HOME"]?.trim() || homedir();
+        const evidenceSignal = AbortSignal.timeout(HISTORY_TIMEOUT_MS + EVIDENCE_TIMEOUT_MS);
+        const read: ReadGit = async (cwd, args, signal) =>
+            await this.#git.readOnly(cwd, args, { signal });
+        if (folder !== undefined) {
+            const named = folder === "~" ? home : folder.replace(/^~(?=\/)/u, home);
+            if (!isAbsolute(named)) {
+                return "Give the folder as an absolute path, or one starting with ~/.";
+            }
+            const found = (await stat(named).catch(() => undefined))?.isDirectory()
+                ? await realpath(named).catch(() => undefined)
+                : undefined;
+            if (found === undefined) return describeNamedFolder({ missing: named });
+            return describeNamedFolder({
+                path: found,
+                name: basename(found),
+                evidence: await readProjectEvidence(found, read, evidenceSignal),
+            });
+        }
+        const paths = this.#config.configuration.paths;
+        const recent = await findRecentFolders({
+            home,
+            claudeHome: environment["CLAUDE_CONFIG_DIR"]?.trim() || join(home, ".claude"),
+            codexHome: environment["CODEX_HOME"]?.trim() || join(home, ".codex"),
+            // Happy's own folders are where its agents work, not the person's projects.
+            skip: [
+                paths.happyHome,
+                paths.publicHome,
+                this.#config.workspacesHome,
+                this.#config.botsHome,
+                this.#config.tasksHome,
+            ],
+            deadline: Date.now() + HISTORY_TIMEOUT_MS,
+        });
+        const projects = await Promise.all(
+            recent.folders.map(async (found) => ({
+                path: found.path,
+                name: basename(found.path),
+                seen: { assistant: found.assistant, lastActive: found.lastActive },
+                evidence: await readProjectEvidence(found.path, read, evidenceSignal),
+            })),
+        );
+        return describeRecentProjects({ projects, incomplete: recent.incomplete, now: Date.now() });
     }
 
     /** The profile already held, or the person's global Git identity. */
