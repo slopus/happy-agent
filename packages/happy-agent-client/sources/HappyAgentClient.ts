@@ -3932,7 +3932,10 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: `v0/agents/${encodeURIComponent(agentId)}/send`,
-            json: { ...request, mode: requestedMode(request.mode) },
+            json: {
+                ...request,
+                ...(request.mode === undefined ? {} : { mode: requestedMode(request.mode) }),
+            },
             signal: options.signal,
         });
     }

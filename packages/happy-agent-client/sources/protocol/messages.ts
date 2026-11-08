@@ -1111,8 +1111,11 @@ export interface SendActionMessageRequest {
     delivery?: MessageDelivery;
     /** Opaque context profile. */
     profile?: string | null;
-    /** The model selection and permission mode this message runs with. */
-    mode: MessageMode;
+    /**
+     * The model selection and permission mode a `reply` press runs with; required for `reply`.
+     * An `onboarding.next` press is answered by no model and ignores it.
+     */
+    mode?: MessageMode;
 }
 
 /** `POST /v0/agents/:agentId/send` */

@@ -462,6 +462,23 @@ describe("HappyAgentClient", () => {
         );
     });
 
+    it("sends an onboarding press without a mode when the caller names none", async () => {
+        const { fetch, requests } = stubFetch(() => json({ cursor: "c1", message: {} }));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+        const press = {
+            type: "action" as const,
+            messageId: "message1",
+            blockIndex: 0,
+            controlIndex: 0,
+            actionId: "onboarding.next",
+            params: { step: "providers" },
+        };
+
+        await client.sendMessage("agent1", { content: [press], id: "press1" });
+
+        expect(requests[0]?.body).toBe(JSON.stringify({ content: [press], id: "press1" }));
+    });
+
     it("creates a user-controlled workspace root without a parent-selection option", async () => {
         expectTypeOf<CreateAgentRequest>().not.toHaveProperty("parentAgentId");
         const { fetch, requests } = stubFetch(() => json({ agent: {}, slashCommands: [] }, 201));
