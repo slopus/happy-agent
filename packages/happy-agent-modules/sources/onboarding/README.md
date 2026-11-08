@@ -6,7 +6,7 @@ through `send`. `packages/happy-agent/API.md` ("Onboarding in a conversation" an
 actions") is the contract.
 
 `OnboardingModule` takes Config, Durable Functions, History, Bots, Profile, Provider CLIs, Provider
-Routes, Provider Scan, and the Mobile Connector. The runtime adds it only in standalone mode; a team
+Routes, Provider Scan, the Mobile Connector, and Tasks. The runtime adds it only in standalone mode; a team
 server keeps the classic setup and answers the flow routes with `501`. It owns one stored state
 (owner `standalone`) and its versioned completion.
 
@@ -78,7 +78,9 @@ settles without an answer returns to the recipe's `handoffFailed` step, which ke
 the person chose ticked.
 
 While the model guides, the guide is in its instructions and the recipe's tools are offered:
-`save_profile`, `set_default_model`, and `finish_onboarding`. What the person did not do
+`save_profile`, `set_default_model`, `start_first_task`, and `finish_onboarding`.
+`start_first_task` creates the first task through Tasks as a new top-level task owned by the person,
+never a subtask of the Chief of Staff. What the person did not do
 themselves reaches it as hidden events: `providerAdded` when another AI finishes signing in, and
 `phonePaired`. The `local` guide has the model save the profile it was given and say so, ask
 before it reads anything, suggest up to three first tasks from the Git metadata of recent projects,

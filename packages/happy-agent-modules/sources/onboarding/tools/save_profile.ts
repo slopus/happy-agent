@@ -10,7 +10,7 @@ export function saveProfileTool(module: OnboardingModule) {
         capabilities: ["Save the person's name and email to their Happy profile."],
         defer: false,
         description:
-            "Save the person's name and email to their profile: exactly what they typed in this chat, or exactly what the onboarding begin event found once they confirmed it. Use it only when you have both; ask for whatever is missing instead of guessing. Answers with what was saved, so you continue with the next onboarding step.",
+            "Save the person's name and email to their profile: exactly what they typed in this chat, or exactly what the onboarding begin event gave you. Use it only when you have both; ask for whatever is missing instead of guessing. Answers with what was saved, so you continue with the next onboarding step.",
         parameters: Type.Object(
             {
                 name: Type.String({
