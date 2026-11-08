@@ -89,7 +89,9 @@ describe("Onboarding's scripted bootstrap", () => {
             expect(opening).toMatchObject({ role: "agent" });
             expect(textOf(opening)).toBe(
                 [
-                    "Hi, I'm Ada&#39;s Office. I run and coordinate agents across your work, and I'll get this computer set up with you. It takes a couple of minutes.",
+                    "Hi, I'm Ada&#39;s Office. Hand me the work you want done, and I'll run agents that do it, several at once, and keep going while you're away. I keep track of all of it, so you don't have to.",
+                    "",
+                    "Let's get this computer ready: the AI your agents think with, who they work for, and your first project. It takes about two minutes.",
                     "",
                     "<menu>",
                     '  <button data-action="onboarding.next" data-step="providers" data-emphasis>Start</button>',
@@ -129,7 +131,7 @@ describe("Onboarding's scripted bootstrap", () => {
                     .map((event) => event.payload["append"])
                     .join(""),
             ).toBe(
-                "Hi, I'm Ada&#39;s Office. I run and coordinate agents across your work, and I'll get this computer set up with you. It takes a couple of minutes.",
+                "Hi, I'm Ada&#39;s Office. Hand me the work you want done, and I'll run agents that do it, several at once, and keep going while you're away. I keep track of all of it, so you don't have to.\n\nLet's get this computer ready: the AI your agents think with, who they work for, and your first project. It takes about two minutes.",
             );
 
             // Starting again, or after a restart, says nothing more.
@@ -244,7 +246,7 @@ describe("Onboarding's scripted bootstrap", () => {
             expect(textOf(noneYet)).toBe("None yet");
             const advice = (await waitForStep(gym, agentId, "none-yet"))!;
             expect(textOf(advice)).toContain(
-                "I reuse the subscription you already pay for, so there's nothing new to pay for.",
+                "If your work already pays for ChatGPT or Claude, use that account; otherwise you can create one as you sign in.",
             );
             await press(gym, agentId, {
                 messageId: advice.id,
@@ -252,7 +254,7 @@ describe("Onboarding's scripted bootstrap", () => {
                 params: { step: "more" },
             });
             const catalog = (await waitForStep(gym, agentId, "more"))!;
-            expect(textOf(catalog)).toContain("Here's every AI I can connect:");
+            expect(textOf(catalog)).toContain("Here's every AI I can connect.");
             expect(textOf(catalog)).not.toContain('data-step="none-yet"');
 
             // Every choice outlives a restart.
@@ -318,7 +320,7 @@ describe("Onboarding's scripted bootstrap", () => {
             await writeFile(join(home, "answer-sign-in-check"), "");
             const routes = (await waitForStep(gym, agentId, "providers"))!;
             expect(routes.runId).toBe(runId);
-            expect(textOf(routes)).toContain("let's check which AI subscriptions you already use");
+            expect(textOf(routes)).toContain("let's give your agents a brain");
             await gym.waitForEvent(
                 (event) => event.type === "run.finished" && runOf(event)?.id === runId,
                 "the providers step to finish typing",

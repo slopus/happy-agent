@@ -361,7 +361,7 @@ describe("The model leading onboarding", () => {
             });
             const retry = (await waitForStep(gym, agentId, "choose-at-least-one"))!;
             expect(textOf(retry)).toContain(
-                "Select at least one to use, or sign in to another AI.",
+                "Your agents need at least one AI to think with. Tick one, or sign in to another AI.",
             );
             expect(textOf(retry)).toContain('value="codex"');
             expect(textOf(retry)).not.toContain("checked");
