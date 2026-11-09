@@ -467,6 +467,11 @@ detect this feature through `GET /v0/skills`: `404` or `501` means skill managem
 not that the catalog is empty. Protocol 25 alone does not guarantee this feature. Existing
 protocol-22 capabilities remain usable without it.
 
+Plugins are additive and do not increment the protocol version: the routes under `/v0/plugins`,
+the `plugins.updated` event, and the optional `plugin` attribution on global skill summaries.
+Clients detect plugins through `GET /v0/plugins`: `404` or `501` means plugins are unavailable,
+not that nothing is installed. Older daemons never emit the event and omit the attribution.
+
 Authentication discovery, JWT team authentication, and the `authentication` field on `401`
 bodies are additive and do not increment the protocol version. `404` from
 `GET /v0/authentication` means discovery is unavailable; clients then use their existing bearer
@@ -2334,6 +2339,8 @@ One summary has this shape:
 - `version` is a UUIDv7, advanced when metadata, document bytes, supporting files, status, or
   enablement changes. `updatedAt` is when the daemon observed that change, not a file's mtime.
   Unchanged rescans do not advance either field or emit events.
+- `plugin` is optional. It names the installed plugin a skill came from, or is `null`; see
+  "Plugin skills" under Plugins.
 
 All relative paths in this chapter are nonempty, at most 4,096 characters, and contain no absolute
 prefix, backslash, NUL, or empty, `.` or `..` segment. A skill ID is resolved from the catalog, not
@@ -2455,6 +2462,184 @@ refresh requires another refresh; an older response must not overwrite a newer s
 On journal loss or daemon replacement, reload the catalog and visible details from a fresh cursor.
 Disabled skills remain in the management list throughout. These are synchronization events, not
 desktop operating-system notifications or unsolicited messages to running agents.
+
+## Plugins
+
+A plugin is a versioned package from the central plugin catalog, described by the `plugin.json`
+manifest at the root of its archive. Happy Agent runs no plugin code. It installs one kind of plugin:
+an external plugin whose only content is skills. Every other plugin is listed as available but
+cannot be installed.
+
+Plugins have no install scope. An installed plugin belongs to the whole installation and is
+shared with everyone who uses it. A single-instance plugin is installed at most once; a plugin
+whose manifest sets `multiInstance: true` may be installed several times. In team mode onboarded
+members may read both lists, but only the configured owner may install or uninstall
+(`403 forbidden` for another member).
+
+The daemon reads the catalog from `[plugins] catalog_url` in the user `happy.toml`. The default is
+`https://slopus.github.io/happy-plugins/catalog.json`. Clients detect plugin support through
+`GET /v0/plugins`: `404` or `501` means plugins are unavailable, not that nothing is installed.
+
+### The catalog entry
+
+`GET /v0/plugins/available` lists one entry per catalog plugin version:
+
+```json
+{
+    "pluginId": "nvidia-skills",
+    "version": "1.0.0",
+    "name": "NVIDIA Skills",
+    "description": "Skills for building with NVIDIA tools.",
+    "kind": "external",
+    "multiInstance": false,
+    "installable": true,
+    "reason": null,
+    "manifest": { "id": "nvidia-skills", "version": "1.0.0", "...": "the published plugin.json" }
+}
+```
+
+- `pluginId`, `version`, `name`, `description`, `kind`, and `multiInstance` repeat the manifest's
+  `id`, `version`, `name`, `description`, `kind`, and `multiInstance`.
+- `installable` is `true` only for a plugin whose `kind` is `"external"`, that declares a
+  `skills` directory, and that declares no `auth`, `mcp`, `entry`, or `settings` content. An
+  empty `auth` or `settings` array counts as none.
+- `reason` is a human-readable English explanation when `installable` is `false`, such as "This
+  plugin runs code, which Happy Agent cannot install yet.", and `null` otherwise.
+- `manifest` is the catalog's manifest as published, including fields this daemon does not
+  interpret. Clients may display what they understand and must ignore the rest.
+
+A catalog entry whose manifest the daemon cannot read is left out of the list rather than shown
+with invented details.
+
+### The installation object
+
+```json
+{
+    "id": "p1a2b3c4",
+    "pluginId": "nvidia-skills",
+    "version": "1.0.0",
+    "name": "NVIDIA Skills",
+    "description": "Skills for building with NVIDIA tools.",
+    "status": "installed",
+    "error": null,
+    "path": "/Users/me/Happy/Plugins/nvidia-skills",
+    "createdAt": 1755400000000,
+    "updatedAt": 1755400000000
+}
+```
+
+- `id` is the installation ID, a CUID2. Multi-instance installations of one plugin have
+  different IDs.
+- `pluginId`, `version`, `name`, and `description` are copied from the manifest that was
+  installed.
+- `status` is `"installing"` while the daemon downloads and unpacks the plugin, `"installed"` once
+  its skills are in place, and `"failed"` when installation stopped. Installing continues across
+  daemon restarts.
+- `error` is a human-readable English diagnostic for a failed installation and `null` otherwise.
+- `path` is the absolute folder on the daemon's machine that holds the unpacked plugin. It sits in
+  the user-visible `Plugins` folder (`~/Happy/Plugins` on macOS, `~/happy/plugins` elsewhere) and
+  is named after the plugin, with a numeric suffix when that name is taken.
+- `createdAt` is when the installation was requested and `updatedAt` when its status last changed,
+  both epoch milliseconds.
+
+### `GET /v0/plugins`
+
+Lists the installation's plugins, including installing and failed ones, newest first. Response —
+`200`:
+
+```json
+{ "plugins": [], "cursor": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e" }
+```
+
+`plugins` contains installation objects, at most 256. `cursor` is the journal position captured
+before the snapshot read; follow events from it so a concurrent change cannot be missed.
+
+### `GET /v0/plugins/available`
+
+Reads the central catalog. Response — `200`:
+
+```json
+{
+    "plugins": [],
+    "catalogUrl": "https://slopus.github.io/happy-plugins/catalog.json",
+    "fetchedAt": 1755400000000
+}
+```
+
+`plugins` contains catalog entries, at most 1,000, in catalog order. `fetchedAt` is when the
+daemon read the catalog. The daemon may reuse a catalog it read within the last minute. A catalog
+that cannot be reached, is larger than 8 MiB, is not valid JSON, or has a format version other
+than `1` returns `503` with code `catalog_unavailable`.
+
+### `POST /v0/plugins`
+
+Installs one catalog plugin version. Request:
+
+```json
+{ "pluginId": "nvidia-skills", "version": "1.0.0", "mutationId": "optional-client-echo" }
+```
+
+The daemon reads the catalog, records the installation with `status: "installing"`, and returns
+before downloading. Response — `202`: `{ "plugin": { ... } }`, the new installation object. It
+then downloads the archive, refuses it unless its SHA-256 digest equals the catalog's `sha256`,
+unpacks it into the installation's `path`, and checks that its `plugin.json` names the requested
+`id` and `version`. Each status change emits `plugins.updated`.
+
+Errors:
+
+- `400 invalid_request` for a malformed body.
+- `404 not_found` when the catalog has no such plugin version.
+- `409` with code `not_installable` and the catalog entry's `reason` in `error` when the entry is
+  not installable.
+- `409` with code `already_installed` and the existing installation as `plugin` when a
+  single-instance plugin already has an installing or installed installation. A failed
+  installation does not count; uninstall it to tidy up.
+- `503 catalog_unavailable` as for `GET /v0/plugins/available`.
+
+A failed download, digest mismatch, unsafe archive entry, or mismatched manifest ends in
+`status: "failed"` with an explanation in `error`, and leaves nothing behind in the `Plugins`
+folder or the skills catalog. Archives are limited to 64 MiB compressed and 256 MiB unpacked.
+Archive entries may only be regular files and directories inside the plugin root.
+
+### `DELETE /v0/plugins/:installationId`
+
+Uninstalls one plugin in any status. The optional JSON body is `{ "mutationId": "..." }`. Response
+— `200`: `{ "plugin": { ... } }`, the removed installation's final object. The installation
+disappears from `GET /v0/plugins` at once and emits `plugins.updated`. The daemon then removes
+its skills and its folder, including any files a person added there; the departing skills are
+announced by `skills.updated`. An unknown or already-removed ID returns `404`.
+
+### Plugin skills
+
+An installed plugin's skills join the global skills catalog. The daemon links the plugin's
+`skills` directory into the global skills root as `~/.agents/skills/<folder>`, where `<folder>`
+is the last segment of the installation's `path`. Each skill therefore has a `path` beginning with
+that folder, and other assistants on the machine that read `~/.agents/skills` see the same
+skills. If an entry with that name already exists in the skills root and is not the daemon's own
+link to that plugin, the installation fails rather than replacing it.
+
+A global skill summary carries an optional `plugin` attribution:
+
+```json
+{ "plugin": { "installationId": "p1a2b3c4", "pluginId": "nvidia-skills", "name": "NVIDIA Skills" } }
+```
+
+It is `null` for a skill that did not come from a plugin. Plugin skills are otherwise ordinary
+global skills: they can be disabled and read the same way, and agents discover them like any
+other. Older daemons omit the field; clients treat its absence as `null`.
+
+### Live synchronization
+
+`plugins.updated` is a bounded invalidation. Its payload is:
+
+```json
+{ "installationIds": ["p1a2b3c4"], "mutationId": "optional-client-echo" }
+```
+
+`installationIds` names up to 100 affected installations, including removed ones, or is `null`
+when more changed. `mutationId` echoes the request that caused the change. The event follows the
+committed change and contains no catalog or archive data. Clients refresh `GET /v0/plugins` and
+any open installation. The available catalog has no event; clients read it when they show it.
 
 ## Daemon lifecycle
 
@@ -14494,6 +14679,12 @@ surface and are not part of bootstrap.
     - Optional `mutationId` for an API enablement change. This is the compact invalidation
       described under Global skills; refetch affected management snapshots, including disabled
       skills. It is not an agent-state event and contains no document bytes.
+
+**Plugins**
+
+- `plugins.updated` — an installation was requested, finished, failed, or was removed.
+    - `installationIds` (up to 100 IDs, or `null`) and optional `mutationId`. This is the compact
+      invalidation described under Plugins; refetch `GET /v0/plugins`.
 
 **Agents**
 
