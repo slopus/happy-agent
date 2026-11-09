@@ -134,23 +134,19 @@ describe("Windows sandbox command", () => {
             callback(null, stdout, ""),
         );
         await runSandboxCommand(["setup", "--json"]);
-        expect(console.log).toHaveBeenCalledExactlyOnceWith(
-            '{"status":"failed","setupVersion":0}',
-        );
+        expect(console.log).toHaveBeenCalledExactlyOnceWith('{"status":"failed","setupVersion":0}');
     });
 
-    it.each([["setup", "--json"], ["setup", "--retry", "--json"]])(
-        "returns JSON failure without launching prohibited setup: %j",
-        async (...args) => {
-            vi.stubEnv("HAPPY_WINDOWS_SANDBOX_NO_PROVISION", "1");
-            await runSandboxCommand(args);
-            expect(console.log).toHaveBeenCalledExactlyOnceWith(
-                '{"status":"failed","setupVersion":0}',
-            );
-            expect(resolveSupervisorBinary).not.toHaveBeenCalled();
-            expect(execFile).not.toHaveBeenCalled();
-        },
-    );
+    it.each([
+        ["setup", "--json"],
+        ["setup", "--retry", "--json"],
+    ])("returns JSON failure without launching prohibited setup: %j", async (...args) => {
+        vi.stubEnv("HAPPY_WINDOWS_SANDBOX_NO_PROVISION", "1");
+        await runSandboxCommand(args);
+        expect(console.log).toHaveBeenCalledExactlyOnceWith('{"status":"failed","setupVersion":0}');
+        expect(resolveSupervisorBinary).not.toHaveBeenCalled();
+        expect(execFile).not.toHaveBeenCalled();
+    });
 
     it.each(["setup", "status"])(
         "reports %s ready without Windows provisioning on Linux",

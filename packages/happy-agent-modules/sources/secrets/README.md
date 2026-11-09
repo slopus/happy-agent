@@ -33,8 +33,8 @@ and its bounds are fixed constants it exports so a caller can read them but not 
   command resolution, making the product catalog installation-wide.
 - `SECRETS_PAGE_SIZE` (50) — how many references one page returns when the caller does not ask for
   fewer.
-- `SECRETS_OUTPUT_CHARACTERS` (12,000) — the character budget every model-facing secrets result is
-  trimmed to fit.
+- `SECRETS_OUTPUT_CHARACTERS` (12,000) — the character budget for legacy storage formatters;
+  public catalog tool results do not use this cutoff.
 
 ## Authorization
 
@@ -69,11 +69,11 @@ not attach the resulting reference. Attach and detach also always require review
 or revoke the current agent's later access to a credential, but those catalog-only mutations stay
 in the current sandbox.
 
-- **`list_secrets`** — lists the global catalog as bounded safe metadata. Arguments are `limit`
+- **`list_secrets`** — lists the global catalog as paginated safe metadata. Arguments are `limit`
   (1–`SECRETS_PAGE_SIZE`) and a secret-name `cursor`. The model sees each secret's ID, description,
-  sorted environment-variable names, availability, ownership, UUIDv7 version, and timestamps. If
-  detailed rendering would exceed `SECRETS_OUTPUT_CHARACTERS`, it falls back to all IDs plus the
-  continuation cursor, so no actionable identity is lost.
+  sorted environment-variable names, and any unavailable or daemon-managed status. The complete
+  description and variable names of every returned entry are rendered regardless of output length,
+  along with the continuation cursor. The structured result also carries UUIDv7 versions and timestamps.
 - **`reference_secret`** — reads one safe reference by `id` and returns `{ secret: reference | null }`.
   `null` means no such secret is registered in the shared catalog.
 - **`create_secret`** — creates a global secret from exactly one source: inline `environment`
@@ -91,10 +91,9 @@ in the current sandbox.
   only safe identifiers plus `detached: boolean`.
 
 Governing principles across all six: the catalog owner is `GLOBAL_SECRET_OWNER_ID`, while typed
-project, workspace, and exact-agent grants control attachment availability; every list and lookup is bounded by
-`SECRETS_PAGE_SIZE` and
-`SECRETS_OUTPUT_CHARACTERS`; paging is a monotonically progressing integer cursor the store advances
-by exactly the number of rows returned; and no schema, tool result, or formatted string produced
+project, workspace, and exact-agent grants control attachment availability; catalog listing uses
+explicit page limits and a secret-name continuation cursor without shrinking pages or omitting metadata
+to meet a character budget; and no schema, tool result, or formatted string produced
 for the model carries a secret value — except the explicitly supported inline environment input,
 which remains in the tool transcript. `secretReferenceSchema` has, by design, no value-bearing
 property, so values never appear in results.
@@ -105,8 +104,8 @@ property, so values never appear in results.
 and an opaque catalog owner ID. Happy Agent integrations pass `GLOBAL_SECRET_OWNER_ID`; the agent ID
 is passed separately as `scopeRef` when attaching or resolving command secrets.
 
-- `list(ctx, actingAgentId, query?: SecretListInput): Promise<SecretPage>` — the same bounded,
-  size-shrinking page logic the `list_secrets` tool uses.
+- `list(ctx, actingAgentId, query?: SecretListInput): Promise<SecretPage>` — the legacy bounded,
+  size-shrinking storage page logic, separate from the public catalog used by `list_secrets`.
 - `reference(ctx, actingAgentId, secretId): Promise<SecretReference | undefined>` — one safe
   reference, or `undefined` if it does not exist.
 - `register(ctx, actingAgentId, input: SecretRegistrationInput): Promise<SecretReference>` —
@@ -143,8 +142,9 @@ is passed separately as `scopeRef` when attaching or resolving command secrets.
   values. Explicit IDs must already be attached to the scope and still be available to the model.
   The module performs the collision-safe merge itself and validates the final bounded contract.
 - `formatForModel`, `formatPageForModel`, `formatAttachmentForModel`, `formatDetachForModel` —
-  render results to the exact bounded text the tools send back, available to a host building its
-  own presentation on top of the same methods.
+  legacy bounded storage formatters, available to a host building its own presentation.
+- `formatCatalogPageForModel` — renders complete safe catalog metadata and its continuation cursor
+  for listing, reference, creation, update, and attachment tools, with no output-length cutoff.
 
 Resolution rejects a case-insensitive environment-name collision between selected secrets rather
 than applying silent last-write-wins. The command host owns the final merge with its ambient

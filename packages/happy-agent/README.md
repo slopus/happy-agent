@@ -125,7 +125,7 @@ they are not independent sandbox installations.
 Launchers can use the sandbox CLI without starting or connecting to the daemon:
 
 ```json
-{"status":"required","setupVersion":9,"previousAttempt":"cancelled"}
+{ "status": "required", "setupVersion": 9, "previousAttempt": "cancelled" }
 ```
 
 `sandbox status --json` prints exactly one JSON line with `status` (`ready` or

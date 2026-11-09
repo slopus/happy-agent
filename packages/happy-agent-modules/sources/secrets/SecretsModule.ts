@@ -1085,7 +1085,7 @@ export class SecretsModule implements AgentModule {
             throw new Error("Secret catalog page is invalid.");
         }
         const cursor = page.nextCursor === null ? "" : `\nnext=${JSON.stringify(page.nextCursor)}`;
-        const detailed = `${
+        return `${
             page.secrets.length === 0
                 ? "No secrets are registered."
                 : page.secrets
@@ -1101,16 +1101,6 @@ export class SecretsModule implements AgentModule {
                       )
                       .join("\n\n")
         }${cursor}`;
-        const compact = `${
-            page.secrets.length === 0
-                ? "No secrets are registered."
-                : page.secrets.map((secret) => secret.id).join("\n")
-        }${cursor}`;
-        const output = detailed.length <= SECRETS_OUTPUT_CHARACTERS ? detailed : compact;
-        if (output.length > SECRETS_OUTPUT_CHARACTERS) {
-            throw new Error("Secret catalog output cannot fit complete identities and cursor.");
-        }
-        return output;
     }
 
     /** Format an attachment result without allowing tool-added context to exceed the cap. */

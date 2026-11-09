@@ -1,5 +1,15 @@
 # Secrets module learnings
 
+## Catalog tools always show complete safe metadata
+
+Large catalog pages used to switch silently to IDs only once the rendered text exceeded 12,000
+characters, hiding the descriptions and environment-variable names needed to select a secret.
+Catalog tools now render every returned entry's full description, variable names, and applicable
+availability or ownership status, regardless of output length. Explicit page limits and continuation
+cursors remain unchanged; output size must not shrink a page or replace metadata with IDs. The same
+formatter serves listing, reference, creation, update, and attachment results. Values remain absent
+from all results and model-facing text.
+
 ## Git names are ordinary user secrets
 
 The catalog used to reserve `github` and `project-git` even though it no longer creates either
