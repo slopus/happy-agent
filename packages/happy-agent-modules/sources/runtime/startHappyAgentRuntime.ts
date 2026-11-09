@@ -100,6 +100,7 @@ import { TitlesModule } from "../titles/index.js";
 import { ToolDiscoveryModule } from "../toolDiscovery/index.js";
 import { UsageModule } from "../usage/index.js";
 import { UserInputModule } from "../userInput/index.js";
+import { UserEnvironmentModule } from "../userEnvironment/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
 import { TaskAutoJoinModule } from "../taskAutoJoin/index.js";
 import { TeammatesModule } from "../teammates/index.js";
@@ -225,6 +226,7 @@ export interface HappyAgentRuntimeModules {
     readonly toolDiscovery: ToolDiscoveryModule;
     readonly usage: UsageModule;
     readonly userInput: UserInputModule;
+    readonly userEnvironment: UserEnvironmentModule;
     readonly userSettings: UserSettingsModule;
     readonly surfaces: SurfacesModule;
     readonly feed: FeedModule;
@@ -592,6 +594,7 @@ export async function startHappyAgentRuntime(
         const compute = createComputeModules(computeModule, globalSkills, config, team);
         registerShutdown("team", async () => team.close());
         const userSettings = new UserSettingsModule(team);
+        const userEnvironment = new UserEnvironmentModule(team, tasks);
         const taskAutoJoin = new TaskAutoJoinModule(tasks, team, userSettings, durableFunctions);
         const surfaces = new SurfacesModule(
             durableFunctions,
@@ -905,6 +908,7 @@ export async function startHappyAgentRuntime(
             toolDiscovery,
             usage,
             userInput,
+            userEnvironment,
             userSettings,
             surfaces,
             feed,
@@ -942,6 +946,7 @@ export async function startHappyAgentRuntime(
             team,
             ...(team.enabled ? [] : [profile]),
             userSettings,
+            userEnvironment,
             git,
             durableFunctions,
             taskAutoJoin,

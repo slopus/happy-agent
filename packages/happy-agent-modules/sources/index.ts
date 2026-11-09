@@ -58,6 +58,10 @@ export * from "./artifactData/index.js";
 // User settings: each person's opaque key-value preferences, synced across their devices.
 export * from "./userSettings/index.js";
 
+// User environment: each person's reported time zone, languages, clock, week, and calendar,
+// announced to their agents once and again when it changes.
+export * from "./userEnvironment/index.js";
+
 // Tailcat: stable account-free internet exposure, controlled only by active admin bots.
 export * from "./tailcat/index.js";
 
