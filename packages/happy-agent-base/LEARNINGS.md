@@ -218,6 +218,16 @@ agent's loop to close, which deadlocks when a module or tool inside a loop asks.
 refuses the ref's own agent and its ancestors, so the code asking is never waiting on itself.
 Modules drop what they keep about the agent in `agentErasedTransact`, in the same transaction.
 
+## A response runs on its turn's lifetime
+
+Providers hear cancellation only through `ctx.lifetime`, but inference passed the turn's abort
+signal to nobody. An abort ended the turn and returned the response iterator in the background,
+yet a provider stream suspended on a stalled response never resumed to honour that return. The
+unsettled return held every later request at its wait for earlier work, so the agent stopped
+reaching inference, and a provider that did resume handed its stale answer to the next turn.
+Inference now runs on `withLifetime(..., abortSignal)`, as compaction already did, so an abort
+reaches the provider and the stream ends.
+
 ## Verification
 
 `verification/lean/` (Lean 4) and `verification/tla/` (TLA+) model this state machine. Keep

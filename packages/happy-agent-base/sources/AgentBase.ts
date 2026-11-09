@@ -2801,7 +2801,7 @@ export class AgentBase {
                     }
                 }
                 const response = await this.#span(ctx, "agent.inference", {}, (inferenceCtx) =>
-                    this.#requestInference(inferenceCtx, abortPromise),
+                    this.#requestInference(inferenceCtx, abort.signal, abortPromise),
                 );
                 // A cancellation arrived before the request was made, so the turn cycles rather
                 // than talking to a session it may no longer own.
@@ -3075,6 +3075,7 @@ export class AgentBase {
      */
     async #requestInference(
         ctx: Context,
+        signal: AbortSignal,
         abortPromise: Promise<typeof ABORTED>,
     ): Promise<
         | {
@@ -3137,7 +3138,10 @@ export class AgentBase {
         if (this.#draining) return undefined;
         const steered = new AbortController();
         this.#steeredResponse = steered;
-        const stream = session.run(this.#workContext(ctx), {
+        // The response is this turn's work, so it runs on this turn's lifetime: an abort reaches
+        // the provider, which ends the stream instead of leaving it suspended where its iterator
+        // can never be returned and the next request would wait for it forever.
+        const stream = session.run(withLifetime(this.#workContext(ctx), signal), {
             context: {
                 instructions,
                 messages: this.#messagesForProvider(this.#messages),
