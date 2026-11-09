@@ -10,10 +10,15 @@ import {
     uiDocumentSchema,
     uiPresentationSchema,
 } from "../sources/protocol/ui.js";
-import { uiActionText } from "../sources/ui/actionText.js";
+import {
+    normalizeQuickReply,
+    quickRepliesBlockSchema,
+    quickRepliesPresentationSchema,
+    quickRepliesProblems,
+    quickReplySchema,
+} from "../sources/protocol/quickReplies.js";
 import { UI_CATALOG_VERSION, uiActionDefinition, uiComponents } from "../sources/ui/catalog.js";
 import { uiActionProblem, uiDocumentProblems } from "../sources/ui/checks.js";
-import { uiOfferState } from "../sources/ui/offer.js";
 import {
     UI_MEMBER_PERMISSIONS,
     UI_PERMISSION_IDS,
@@ -31,22 +36,6 @@ import { redactUiValue, UI_SECRET_KEYWORD } from "../sources/ui/secret.js";
 
 /** Props for every component that has actions, as an offer stores them. */
 const OFFER_PROPS: Record<string, unknown> = {
-    choice: {
-        options: [
-            { id: "fix", label: "Fix the login redirect", primary: true },
-            { id: "tests", label: "Run the tests" },
-        ],
-    },
-    checklist: {
-        options: [
-            { id: "claude", label: "Claude" },
-            { id: "codex", label: "Codex", checked: true },
-            { id: "grok", label: "Grok" },
-        ],
-        submitLabel: "Use these",
-        emptyLabel: "Continue without these",
-    },
-    text_field: { label: "Your nickname", submitLabel: "Save" },
     provider_sign_in: { provider: "claude" },
     default_model: {},
     phone_pair: {},
@@ -57,18 +46,6 @@ const OFFER_PROPS: Record<string, unknown> = {
 
 /** One valid and at least one invalid payload for every action in the catalog. */
 const PAYLOADS: Record<string, { valid: unknown[]; invalid: unknown[] }> = {
-    "choice.choose": {
-        valid: [{ optionId: "fix" }],
-        invalid: [{}, { optionId: "Fix" }, { optionId: "fix", extra: true }],
-    },
-    "checklist.submit": {
-        valid: [{ selected: ["claude", "grok"] }, { selected: [] }],
-        invalid: [{ selected: ["claude", "claude"] }, { selected: "claude" }],
-    },
-    "text_field.submit": {
-        valid: [{ text: "Ada" }, { text: "Two\nlines" }],
-        invalid: [{ text: "" }, { text: "x".repeat(2_001) }, { text: "bell\u0007" }],
-    },
     "provider_sign_in.install": { valid: [{}], invalid: [{ provider: "claude" }] },
     "provider_sign_in.sign_in": { valid: [{}], invalid: [{ target: "team" }] },
     "provider_sign_in.submit_code": {
@@ -142,6 +119,11 @@ export function buildUiSchemaFile(): unknown {
             actionRequest: uiActionRequestSchema,
             capability: chatUiCapabilitySchema,
         },
+        quickReplies: {
+            block: quickRepliesBlockSchema,
+            presentation: quickRepliesPresentationSchema,
+            quickReply: quickReplySchema,
+        },
         components: Object.fromEntries(
             uiComponents.map((bundle) => [
                 bundle.type,
@@ -155,8 +137,6 @@ export function buildUiSchemaFile(): unknown {
                             {
                                 payload: action.payload,
                                 ...(action.result === undefined ? {} : { result: action.result }),
-                                transcript: action.transcript,
-                                once: action.once === true,
                                 permission: action.permission ?? "content.write",
                             },
                         ]),
@@ -196,20 +176,11 @@ export function buildUiActionFixtures(): unknown {
     });
     offer.push(
         ...[
-            { type: "choice.choose", payload: { optionId: "deploy" } },
-            { type: "checklist.submit", payload: { selected: ["claude", "gemini"] } },
             { type: "provider_sign_in.sign_in", payload: {} },
+            { type: "default_model.set", payload: { modelId: "claude-opus-5-5" } },
         ].map((action) => {
-            const component = { type: "choice", props: OFFER_PROPS["choice"] };
-            const target =
-                action.type === "checklist.submit"
-                    ? { type: "checklist", props: OFFER_PROPS["checklist"] }
-                    : component;
-            return {
-                component: target,
-                action,
-                problem: uiActionProblem(target, action) ?? null,
-            };
+            const component = { type: "default_model", props: OFFER_PROPS["default_model"] };
+            return { component, action, problem: uiActionProblem(component, action) ?? null };
         }),
     );
     const permissionProps: Record<string, unknown[]> = {
@@ -234,49 +205,26 @@ export function buildUiActionFixtures(): unknown {
             })),
         ),
     );
-    const actionText = [
-        { type: "choice.choose", payload: { optionId: "tests" } },
-        { type: "checklist.submit", payload: { selected: ["grok", "claude"] } },
-        { type: "checklist.submit", payload: { selected: [] } },
-        { type: "text_field.submit", payload: { text: "Ada" } },
-        { type: "provider_sign_in.sign_in", payload: {} },
-    ].map((action) => {
-        const componentType = uiActionDefinition(action.type)!.bundle.type;
-        const component = { type: componentType, props: OFFER_PROPS[componentType] };
-        return { component, action, text: uiActionText(component, action) ?? null };
+    const quickReplies = [
+        ["Yes, go ahead", "Not now"],
+        ["  Fix   the\tlogin  ", "Run the tests"],
+        [],
+        ["a", "b", "c", "d", "e", "f", "g"],
+        ["Same", "Same"],
+        ["x".repeat(201)],
+        ["bell\u0007"],
+        ["right-to-left \u202e"],
+    ].map((options) => {
+        const normalized = options.map(normalizeQuickReply);
+        return { options, normalized, problems: quickRepliesProblems(normalized) };
     });
-    const choose = { type: "choice.choose", payload: { optionId: "fix" } };
-    const other = { type: "choice.choose", payload: { optionId: "tests" } };
-    const openOffer = [
-        { once: false, accepted: choose, personSpokeAfter: true, action: other },
-        { once: true, personSpokeAfter: false, action: choose },
-        { once: true, personSpokeAfter: true, action: choose },
-        { once: true, accepted: choose, personSpokeAfter: true, action: choose },
-        { once: true, accepted: choose, personSpokeAfter: false, action: other },
-        {
-            once: true,
-            accepted: { type: "checklist.submit", payload: { selected: ["claude", "codex"] } },
-            personSpokeAfter: true,
-            action: { type: "checklist.submit", payload: { selected: ["claude", "codex"] } },
-        },
-    ].map((input) => ({
-        ...input,
-        state: uiOfferState(
-            {
-                once: input.once,
-                accepted: input.accepted,
-                personSpokeAfter: input.personSpokeAfter,
-            },
-            input.action,
-        ),
-    }));
     const result = Object.entries(RESULTS).map(([type, value]) => ({
         type,
         result: value,
         redacted: redactUiValue(uiActionDefinition(type)!.definition.result!, value),
     }));
     const documents = [
-        [{ id: "pick", fallback: "Fix · Tests", type: "choice", props: OFFER_PROPS["choice"] }],
+        [{ id: "model", fallback: "Choose your default model", type: "default_model", props: {} }],
         [
             {
                 id: "claude",
@@ -295,20 +243,7 @@ export function buildUiActionFixtures(): unknown {
             { id: "dup", fallback: "", type: "phone_app", props: {} },
             { id: "dup", fallback: "", type: "phone_app", props: {} },
         ],
-        [
-            {
-                id: "pick",
-                fallback: "",
-                type: "choice",
-                props: {
-                    options: [
-                        { id: "a", label: "A", primary: true },
-                        { id: "a", label: "B", primary: true },
-                    ],
-                },
-            },
-        ],
-        [{ id: "pick", fallback: "", type: "choice", props: { options: [] } }],
+        [{ id: "pair", fallback: "", type: "phone_pair", props: { device: "ios" } }],
         [{ id: "x", fallback: "", type: "slideshow", props: {} }],
     ].map((components) => ({
         document: { id: "u1", components },
@@ -322,8 +257,7 @@ export function buildUiActionFixtures(): unknown {
         payload,
         offer,
         permission,
-        actionText,
-        openOffer,
+        quickReplies,
         result,
         documents,
     };

@@ -85,6 +85,7 @@ export * from "./protocol/processes.js";
 export * from "./protocol/profile.js";
 export * from "./protocol/projects.js";
 export * from "./protocol/questions.js";
+export * from "./protocol/quickReplies.js";
 export * from "./protocol/runners.js";
 export * from "./protocol/secrets.js";
 export * from "./protocol/services.js";

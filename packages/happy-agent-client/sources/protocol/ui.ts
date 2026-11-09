@@ -3,7 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import { uiComponentSchema } from "../ui/catalog.js";
 import { MAX_UI_IMAGES } from "../ui/components/images.js";
 import { cuid2Schema, eventCursorSchema, Nullable } from "./common.js";
-import { mediaItemSchema, type ServiceMessage, type UserMessage } from "./messages.js";
+import { mediaItemSchema, type ServiceMessage } from "./messages.js";
 
 /**
  * Chat UI on the wire; see "Chat UI" in API.md. A document is a flat, ordered list of typed
@@ -62,15 +62,10 @@ export const uiActionOutcomeSchema = Type.Object({
         Type.Literal("rejected"),
         Type.Literal("failed"),
     ]),
-    /** A stable machine-readable code, such as `offer_closed` or `token_rejected`. */
+    /** A stable machine-readable code, such as `token_rejected`. */
     code: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
     /** One English sentence safe to show. */
     reason: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
-    /**
-     * The person's message the action became, when it said something; for a `once` action that
-     * was refused because the offer was already answered, the message that won.
-     */
-    messageId: Type.Optional(cuid2Schema),
 });
 export type UiActionOutcome = Static<typeof uiActionOutcomeSchema>;
 
@@ -86,8 +81,8 @@ export const uiActionInputSchema = Type.Object({
 export type UiActionInput = Static<typeof uiActionInputSchema>;
 
 /**
- * One action, in the service record of its attempt and in the person's message it became. The
- * payload is stored with every secret left out. Clients never send this block.
+ * One action, in the service record of its attempt. The payload is stored with every secret left
+ * out. Clients never send this block.
  */
 export const uiActionBlockSchema = Type.Object({
     type: Type.Literal("action"),
@@ -110,24 +105,6 @@ export const uiActionRequestSchema = Type.Object(
         uiId: Type.String({ minLength: 1, maxLength: 96 }),
         componentId: Type.String({ minLength: 1, maxLength: 64 }),
         action: uiActionInputSchema,
-        /**
-         * The model selection and permission mode a `"message"` action's turn runs with, as on
-         * `send`; ignored by silent actions.
-         */
-        mode: Type.Optional(
-            Type.Object({
-                providerId: Type.String({ minLength: 1, maxLength: 128 }),
-                modelId: Type.String({ minLength: 1, maxLength: 512 }),
-                effort: Type.String({ minLength: 1, maxLength: 64 }),
-                serviceTier: Nullable(Type.String({ minLength: 1, maxLength: 64 })),
-                permissionMode: Type.Union([
-                    Type.Literal("read_only"),
-                    Type.Literal("workspace_write"),
-                    Type.Literal("auto"),
-                    Type.Literal("full_access"),
-                ]),
-            }),
-        ),
     },
     { additionalProperties: false },
 );
@@ -137,8 +114,6 @@ export type UiActionRequest = Static<typeof uiActionRequestSchema>;
 export const uiActionResponseSchema = Type.Object({
     /** The attempt record: a service message with one `action` block, secrets left out. */
     record: Type.Unsafe<ServiceMessage>({ type: "object" }),
-    /** The person's message the action became, or `null`. */
-    message: Nullable(Type.Unsafe<UserMessage>({ type: "object" })),
     /** What the action returned, typed by its bundle; the only place a secret result appears. */
     result: Nullable(Type.Record(Type.String(), Type.Unknown())),
     /** The event cursor before the action; streaming from it replays everything it caused. */

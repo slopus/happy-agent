@@ -34,17 +34,14 @@ export const phonePairComponent = defineUiComponent({
                 },
                 { additionalProperties: false },
             ),
-            transcript: "silent",
             permission: "config.manage",
         },
         confirm: {
             payload: Type.Object({ pairingId: pairingIdSchema }, { additionalProperties: false }),
-            transcript: "silent",
             permission: "config.manage",
         },
         cancel: {
             payload: Type.Object({ pairingId: pairingIdSchema }, { additionalProperties: false }),
-            transcript: "silent",
             permission: "config.manage",
         },
     },

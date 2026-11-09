@@ -1,8 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
 import type { UiActionDefinition, UiBundle } from "./defineUiComponent.js";
-import { checklistComponent } from "./components/checklist.js";
-import { choiceComponent } from "./components/choice.js";
 import { defaultModelComponent } from "./components/defaultModel.js";
 import { fileTreeComponent } from "./components/fileTree.js";
 import { imagesComponent } from "./components/images.js";
@@ -15,7 +13,6 @@ import {
     notificationsComponent,
     serverLinkComponent,
 } from "./components/team.js";
-import { textFieldComponent } from "./components/textField.js";
 
 /**
  * The catalog's version. It advances when a component or action is added or changed, and
@@ -29,9 +26,6 @@ export const UI_CATALOG_VERSION = 1;
  */
 export const uiComponents = [
     imagesComponent,
-    choiceComponent,
-    checklistComponent,
-    textFieldComponent,
     fileTreeComponent,
     providerSignInComponent,
     defaultModelComponent,
@@ -56,9 +50,6 @@ export const TEAM_UI_COMPONENT_TYPES: readonly UiComponentType[] = [
 /** One wire component of any known type: `{ id, fallback, type, props }`. */
 export const uiComponentSchema = Type.Union([
     imagesComponent.componentSchema,
-    choiceComponent.componentSchema,
-    checklistComponent.componentSchema,
-    textFieldComponent.componentSchema,
     fileTreeComponent.componentSchema,
     providerSignInComponent.componentSchema,
     defaultModelComponent.componentSchema,
@@ -95,7 +86,7 @@ export function uiBundle(type: string): UiBundle | undefined {
     return (uiComponents as readonly UiBundle[]).find((bundle) => bundle.type === type);
 }
 
-/** An action type's bundle, name, and definition: its transcript, `once`, and permission. */
+/** An action type's bundle, name, and definition: its payload, result, and permission. */
 export function uiActionDefinition(actionType: string):
     | {
           readonly bundle: UiBundle;

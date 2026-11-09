@@ -28,13 +28,6 @@ export type UiLabel = Static<typeof uiLabelSchema>;
 export const uiDetailSchema = Type.String({ minLength: 1, maxLength: 200, pattern: PLAIN });
 export type UiDetail = Static<typeof uiDetailSchema>;
 
-/** Text a person typed into a component: 1–2,000 characters, line feeds allowed. */
-export const uiTypedTextSchema = Type.String({
-    minLength: 1,
-    maxLength: 2_000,
-    pattern: PLAIN_LINES,
-});
-
 /** The fallback line every wire component carries, which a client that cannot draw it shows. */
 export const uiFallbackSchema = Type.String({ maxLength: 500, pattern: PLAIN_LINES });
 

@@ -458,16 +458,22 @@ keeps showing the deleted resource as archived, and finds it gone with `404` on 
 resync. No request or response schema changes.
 
 Protocol 35 adds chat UI, described under [Chat UI](#chat-ui): the `ui` block on agent messages,
-the `ui` presentation of `show_ui` calls, the `action` block on person's messages and attempt
-records, `POST /v0/agents/:agentId/actions`, and `capabilities.chatUi` in health. A client that
-reads chat UI sends the request header `Happy-Protocol` with its protocol number, 35 or greater,
-on every request, event streams included. For a request without that header, or with a smaller
-number, the daemon projects chat UI in every message it returns or streams: a `ui` block becomes a
-`text` block holding the document's fallback text; a completed `show_ui` tool call becomes a `text`
-block holding its document's fallback text; an `action` block is left out of a person's message;
-and an attempt record, a service message whose content is only an `action` block, is left out of
-history pages, and its events are not delivered. An older client therefore reads every document as
-its fallback lines and never meets the new blocks. A daemon without chat UI omits the capability and
+the `ui` presentation of `show_ui` calls, the `action` block on attempt records,
+`POST /v0/agents/:agentId/actions`, and `capabilities.chatUi` in health. It also adds quick
+replies, described under [Quick replies](#quick-replies): the `quick_replies` block on agent
+messages, the `quick_replies` presentation of `suggest_replies` calls, and `quickReply` on `send`
+and on person's messages. A client that reads chat UI sends the request header `Happy-Protocol`
+with its protocol number, 35 or greater, on every request, event streams included. For a request
+without that header, or with a smaller number, the daemon projects chat UI in every message it
+returns or streams: a `ui` block becomes a `text` block holding the document's fallback text; a
+completed `show_ui` tool call becomes a `text` block holding its document's fallback text; a
+`quick_replies` block, and a completed `suggest_replies` tool call, become one `text` block such as
+`Suggested replies: Yes · Not now`, the options joined by a spaced middle dot; and an attempt
+record, a service message whose content is only an `action` block, is left out of history pages,
+and its events are not delivered. An older client therefore reads every document as its fallback
+lines and every suggestion as one line it can answer by typing, and never meets the new blocks.
+`quickReply` on a person's message is additive and left as it is. A daemon without chat UI omits
+the capability and
 answers `/actions` with `404`; clients then draw no components. From protocol 35, `present_files`'
 `layout` and media layouts in text are legacy: daemons still store, return, and serve them, and
 clients still draw them, but models are no longer taught to write them; `images` in `show_ui`
@@ -1596,8 +1602,8 @@ Fields:
   `search: true` advertises `POST /v0/search`, described under Search.
   `feedSubjectFilter: true` advertises `subjects` on `GET /v0/feed` and
   `POST /v0/feed/read-all`, described under Feed. `chatUi` advertises chat UI, described under
-  Chat UI: `{ "version": 1, "components": ["choice", "checklist", …] }`, the catalog version the
-  daemon speaks and exactly the component types it serves. `chatOnboarding: true`
+  Chat UI: `{ "version": 1, "components": ["provider_sign_in", "default_model", …] }`, the catalog
+  version the daemon speaks and exactly the component types it serves. `chatOnboarding: true`
   advertises onboarding in a conversation, described under "Onboarding in a conversation"; it is
   absent in team mode.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
@@ -3223,9 +3229,9 @@ for the caller, such as the standalone daemon's `local`, or a team server's `tea
   conversation to the model at once.
 - **The guided part.** Once the recipe hands off, the conversation's own model writes every
   message, following the recipe's guide, which is part of its instructions while onboarding runs.
-  It asks with `show_ui`: a `choice` for each question, a `text_field` for a nickname, `phone_app`
-  and `phone_pair` for the phone. A click on a `"message"` action is the person's message, and the
-  model answers it like typing. It does the work with ordinary tools whose calls are shown like any
+  It asks in its text and suggests the likely answers with `suggest_replies`; a tapped reply is the
+  person's message, sent like typing. It shows `phone_app` and `phone_pair` with `show_ui` for the
+  phone. It does the work with ordinary tools whose calls are shown like any
   other chat's. The person may type instead of clicking at any step. What the person did not do
   themselves, such as an assistant finishing its sign-in or a phone pairing, reaches the model as a
   hidden context entry that no client, transcript, or history page shows.
@@ -3274,21 +3280,23 @@ The standalone daemon's `local` recipe:
    without an answer, the server writes the recipe's failure words with the sign-in components
    again, and the next connection hands off again.
 3. The model saves the name and email it was given from the person's Git settings with
-   `save_profile` and says so, or asks for them when there are none, and renames the bot
-   "<First name>'s Chief of Staff" with `set_bot_name`, or to the nickname the person gives it in a
-   `text_field`. With the person's consent, given with a `choice`, it calls `find_recent_projects`,
-   which the daemon runs itself, read-only and within a few seconds, never through the bot's shell
-   or an automatic review. It reads the folders Claude Code and Codex last worked in, at most five,
-   or one folder the person names, with their Git metadata, and returns names, paths, dates,
-   branches and commit subjects, never file contents. The bot suggests up to three first tasks from
-   what it found in a `choice`, or asks what they want done when it found nothing, and starts the
-   one they pick with `start_first_task` as a new top-level task, which appears among the person's
-   tasks and is never a subtask of the bot. It then offers the phone with `phone_app` and
-   `phone_pair`, and ends onboarding with `finish_onboarding` when the first task finishes, or once
-   a first task was offered and the person stopped. It changes the default model with
-   `set_default_model` when the person asks. These five tools exist only while onboarding runs in
-   that conversation, and `set_bot_name`, `create_project`, `clone_project`, `send_agent_message`,
-   and `show_ui`, which the bot otherwise finds through tool search, are loaded there for that time.
+   `save_profile` and says so, or asks for them when there are none, and renames the bot "<First
+   name>'s Chief of Staff" with `set_bot_name`, or to the nickname the person gives it, suggesting a
+   few with `suggest_replies`. With the person's consent, asked for with `suggest_replies`, it calls
+   `find_recent_projects`, which the daemon runs itself, read-only and within a few seconds, never
+   through the bot's shell or an automatic review. It reads the folders Claude Code and Codex last
+   worked in, at most five, or one folder the person names, with their Git metadata, and returns
+   names, paths, dates, branches and commit subjects, never file contents. The bot suggests up to
+   three first tasks from what it found with `suggest_replies`, or asks what they want done when it
+   found nothing, with a few starting points as replies, and starts the one they pick with
+   `start_first_task` as a new top-level task, which appears among the person's tasks and is never a
+   subtask of the bot. It then offers the phone with `phone_app` and `phone_pair`, and ends
+   onboarding with `finish_onboarding` when the first task finishes, or once a first task was
+   offered and the person stopped. It changes the default model with `set_default_model` when the
+   person asks. These five tools exist only while onboarding runs in that conversation, and
+   `set_bot_name`, `create_project`, `clone_project`, `send_agent_message`, `show_ui`, and
+   `suggest_replies`, which the bot otherwise finds through tool search, are loaded there for that
+   time.
 4. Each task `start_first_task` starts joins the flow's `firstTasks`. Until such a task first
    finishes or fails, even once onboarding has finished, the bot hears hidden context entries
    about it: when one of its subtasks checks out a project, with the bot's next turn; and, as a
@@ -7171,6 +7179,9 @@ placeholder, served by `GET /v0/agents/:agentId/messages/:messageId/story-frame`
 own image, or for a video, a still taken when the agent posted it. Clients ignore a quote kind
 they do not recognize. The field is additive and does not increment the protocol version.
 
+A user message may also carry `quickReply`, `{ messageId, toolCallId?, index }`: the suggested
+reply its text is, set by the daemon from a checked `send`, as described under Quick replies.
+
 `profile` is separate from both mode and metadata. On the wire it is `null` or an opaque string of
 at most 512 characters. An internal request-profile codec decides which strings are currently
 meaningful; it accepts only `null` today. A string that does not match the current codec is
@@ -8482,7 +8493,10 @@ drawn top to bottom, with no nesting and no styling. There are two carriers and 
 
 A model shows UI only through `show_ui`. HTML or JSON written into a reply's text is never drawn as
 controls. Every click on a component goes through `POST /v0/agents/:agentId/actions`, so the
-conversation's own checks apply to every one of them; `send` stays for typed text.
+conversation's own checks apply to every one of them. Every action is silent: it changes server
+state and never becomes the person's words. Suggested answers the person can send are not
+components; they are quick replies, described under [Quick replies](#quick-replies), and sending
+one is an ordinary `send`.
 
 ```json
 {
@@ -8491,16 +8505,10 @@ conversation's own checks apply to every one of them; `send` stays for typed tex
         "id": "u1x8k2m9r4t8w1y5z3a6b0c2",
         "components": [
             {
-                "id": "next",
-                "type": "choice",
-                "fallback": "Look at my recent work · I'll name a folder · Skip for now",
-                "props": {
-                    "options": [
-                        { "id": "look", "label": "Look at my recent work", "primary": true },
-                        { "id": "folder", "label": "I'll name a folder" },
-                        { "id": "skip", "label": "Skip for now" }
-                    ]
-                }
+                "id": "claude",
+                "type": "provider_sign_in",
+                "fallback": "Sign in to Claude in Happy on your computer",
+                "props": { "provider": "claude" }
             }
         ]
     }
@@ -8527,22 +8535,19 @@ draws live components from the server's own state through the routes named below
 `capabilities.chatUi.components`; its `show_ui` accepts only those types and `/actions` serves only
 their actions.
 
-| Component          | Props                                                                                      | Actions · payload → result                                                                                                              | Transcript |
-| ------------------ | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| `images`           | `images: [{ mediaIndex, alt?, caption? }]` 1–12, `columns?: 1 \| 2 \| 3`                   | none                                                                                                                                    | —          |
-| `choice`           | `options: [{ id, label, primary? }]` 1–6, at most one primary                              | `choose { optionId }`, once                                                                                                             | message    |
-| `checklist`        | `options: [{ id, label, detail?, checked? }]` 1–32, `submitLabel`, `emptyLabel?`           | `submit { selected: id[] }`, once                                                                                                       | message    |
-| `text_field`       | `label`, `placeholder?`, `submitLabel`                                                     | `submit { text }` (1–2,000 characters), once                                                                                            | message    |
-| `file_tree`        | `paths: string[]` 1–200                                                                    | none                                                                                                                                    | —          |
-| `provider_sign_in` | `provider: "claude" \| "codex" \| "grok" \| "antigravity"`, `target?: "team" \| "private"` | `install {}` · `sign_in {}` · `submit_code { code: secret }` · `submit_token { token: secret }` · `cancel {}`                           | silent     |
-| `default_model`    | none                                                                                       | `set { providerId, modelId, effort }`                                                                                                   | silent     |
-| `phone_app`        | none                                                                                       | none                                                                                                                                    | —          |
-| `phone_pair`       | none                                                                                       | `start {}` → `{ pairingId, pairing: secret, expiresAt }` · `confirm { pairingId }` · `cancel { pairingId }`                             | silent     |
-| `invite`           | `role?`                                                                                    | `create { role }` → `{ inviteId, code: secret, expiresAt, serverName }` · `revoke { inviteId }`                                         | silent     |
-| `github_connect`   | none                                                                                       | `install {}` → `{ installUrl }` · `device_start {}` → `{ userCode: secret, verificationUri, expiresAt }` · `connect { installationId }` | silent     |
-| `compute_join`     | `pool?`                                                                                    | `create {}` → `{ commands: secret[], expiresAt }`                                                                                       | silent     |
-| `server_link`      | none                                                                                       | none                                                                                                                                    | —          |
-| `notifications`    | none                                                                                       | none                                                                                                                                    | —          |
+| Component          | Props                                                                                      | Actions · payload → result                                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `images`           | `images: [{ mediaIndex, alt?, caption? }]` 1–12, `columns?: 1 \| 2 \| 3`                   | none                                                                                                                                    |
+| `file_tree`        | `paths: string[]` 1–200                                                                    | none                                                                                                                                    |
+| `provider_sign_in` | `provider: "claude" \| "codex" \| "grok" \| "antigravity"`, `target?: "team" \| "private"` | `install {}` · `sign_in {}` · `submit_code { code: secret }` · `submit_token { token: secret }` · `cancel {}`                           |
+| `default_model`    | none                                                                                       | `set { providerId, modelId, effort }`                                                                                                   |
+| `phone_app`        | none                                                                                       | none                                                                                                                                    |
+| `phone_pair`       | none                                                                                       | `start {}` → `{ pairingId, pairing: secret, expiresAt }` · `confirm { pairingId }` · `cancel { pairingId }`                             |
+| `invite`           | `role?`                                                                                    | `create { role }` → `{ inviteId, code: secret, expiresAt, serverName }` · `revoke { inviteId }`                                         |
+| `github_connect`   | none                                                                                       | `install {}` → `{ installUrl }` · `device_start {}` → `{ userCode: secret, verificationUri, expiresAt }` · `connect { installationId }` |
+| `compute_join`     | `pool?`                                                                                    | `create {}` → `{ commands: secret[], expiresAt }`                                                                                       |
+| `server_link`      | none                                                                                       | none                                                                                                                                    |
+| `notifications`    | none                                                                                       | none                                                                                                                                    |
 
 The last five are Happy Cloud team components; a standalone daemon never serves them. Live
 components draw from the server's state: `provider_sign_in` from `GET /v0/provider-clis/:cliId`
@@ -8553,31 +8558,27 @@ and `provider_cli.updated` (with the states listed under Provider CLIs), `defaul
 polls the device flow itself, and the widget follows the Git credential state and its event; there
 is no poll action. Asking for a notification permission happens in the client.
 
-- `transcript: "message"` — a successful action can become the person's words. Clients show an
-  optimistic bubble with `uiActionText`.
-- `transcript: "silent"` — no bubble. The component shows its own pending and error state, from
-  its attempt records, on every device.
-- `once` — the action answers the offer. See "The open-offer rule" below.
+No action shows a bubble in the transcript. A component shows its own pending and error state, from
+its attempt records, on every device.
 
 **One implementation.** Each component's bundle — its props, and each action's strict payload,
-optional result, transcript, `once`, and permission — lives in `@slopus/happy-agent-client`
-under `sources/ui/`. The package exports `uiComponents`, `uiBundle(type)`,
-`uiActionDefinition(actionType)`, `uiActionText(component, action)`,
+optional result, and permission — lives in `@slopus/happy-agent-client` under `sources/ui/`. The
+package exports `uiComponents`, `uiBundle(type)`, `uiActionDefinition(actionType)`,
 `uiActionPermission(definition, props)`, `uiActionAllowed(definition, props, granted)`,
-`uiOfferState(offer, action)`, `uiActionProblem(component, action)`, `uiDocumentProblems(components)`,
-`redactUiValue(schema, value)`, and `uiDocumentFallback(document)`. For implementations in other
-languages it ships `fixtures/ui/ui.schema.json`, every schema with each action's transcript,
-`once`, and permission, and `fixtures/ui/actions.fixtures.json`, conformance vectors for payload
-validation, offer fit, permission resolution, action text, the open-offer rule, secret redaction,
-and document checks, all computed by those functions.
+`uiActionProblem(component, action)`, `uiDocumentProblems(components)`,
+`redactUiValue(schema, value)`, and `uiDocumentFallback(document)`, and for quick replies
+`normalizeQuickReply(option)` and `quickRepliesProblems(options)`. For implementations in other
+languages it ships `fixtures/ui/ui.schema.json`, every schema with each action's permission and the
+quick-reply schemas, and `fixtures/ui/actions.fixtures.json`, conformance vectors for payload
+validation, offer fit, permission resolution, secret redaction, document checks, and quick-reply
+checks, all computed by those functions.
 
 **Secrets.** A payload or result field marked secret is a token, a code, or a pairing payload. In
 `ui.schema.json` it carries `"x-happy-secret": true`. A secret is never stored, put in an event,
 logged, or given to a model; it lives only in the request, the hook that handles it, the result
 returned to the caller, and the store its module owns. Records are built from the schema's
 declared, non-secret fields only, a whitelist, so a field a schema does not name is left out too.
-A `"message"` action can never carry a secret. A client keeps a secret result in the widget's
-memory and drops it when the widget goes away.
+A client keeps a secret result in the widget's memory and drops it when the widget goes away.
 
 **Permissions.** Every action declares what the clicking person must hold, as a permission ID:
 `content.write`, `providers.manage`, `providers.own`, `config.manage`, `members.manage`,
@@ -8587,7 +8588,6 @@ can read the conversation:
 
 | Action                                                              | Permission                                                          |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `choice.choose`, `checklist.submit`, `text_field.submit`            | `content.write`                                                     |
 | `provider_sign_in.install`                                          | `providers.manage`                                                  |
 | `provider_sign_in.sign_in`, `submit_code`, `submit_token`, `cancel` | `target: "team"` → `providers.manage`; otherwise `providers.own`    |
 | `default_model.set`, `phone_pair.start`, `confirm`, `cancel`        | `config.manage`                                                     |
@@ -8610,8 +8610,8 @@ daemon checks every component against the catalog, the bundle's schema, and the 
 module's own checks (an unknown provider, a missing file). Any problem fails the call with the
 problems in its result, so the model can correct itself, and nothing is shown. The tool's
 description lists only the components this server serves. A successful call's result tells the
-model the document is shown and what each component does; the person's answers reach it as their
-messages.
+model the document is shown and what each component does; what the person does there reaches it as
+hidden notes.
 
 **Attempt records.** Every action that passes the route's checks is recorded first, as a `service`
 message whose content is exactly one `action` block:
@@ -8637,8 +8637,6 @@ message whose content is exactly one `action` block:
 - `outcome.status` — `pending` while the module's hook runs, then `accepted`, `rejected` (with
   `code` and `reason`), or `failed` (with `reason`, and `code: "interrupted"` when the daemon
   restarted mid-hook, or `code: "timeout"` when the hook did not answer in 15 seconds).
-- `outcome.messageId` — the person's message the action became, when it said something; on a
-  `once` action refused with `offer_closed`, the person's message that answered first.
 
 A record's ID is the request's `id`. It is stored in a run of its own that is already finished
 when it appears, whether the agent is idle or in the middle of a run: it is announced with
@@ -8650,32 +8648,77 @@ and error state from the records naming it.
 **What a hook does.** The module that contributes a component handles each of its actions. Its
 outcome is applied in one transaction with the record's:
 
-- the person's words: a `"message"` action's words become a user message whose content is a
-  `text` block with the words and the `action` block (outcome `accepted`). It enters the
-  conversation like a sent message, pending and then accepted, and the model answers it with the
-  request's `mode`. The model reads only the text; the `action` block is never sent to a provider,
-  like a `tool_call_request`;
 - a hidden note: a sentence the module writes about server state, such as "Claude is connected.",
   which the model reads with its next turn and no client shows;
 - a wake: a turn starts for the notes now, on the conversation's last mode, coalesced with any
   other wake;
 - a result: returned in the response alone, never stored.
 
-Text the model receives is written by the server. Request strings never reach it, except a
-`text_field` answer, which is the person's own words. Words stored for a press are the stored
-label, never text from the request.
-
-**The open-offer rule.** A `once` action answers its offer. It is accepted only while the component
-has no accepted `once` answer and no person's message has been recorded in the conversation after
-the offer's message. Otherwise it is rejected with `code: "offer_closed"` and `messageId`, the
-message that won. Sending the same action again with the same payload after it was accepted counts
-as accepted and changes nothing: no record or message is added, and the response carries the first
-record. Actions that are not `once` stay usable for as long as their message is visible.
-`uiOfferState` is the rule as a function.
+Text the model receives is written by the server; request strings never reach it. An action stays
+usable for as long as its message is visible.
 
 **Older clients.** Clients below protocol 35 meet chat UI only as fallback text, as described under
 Versioning. Relays that cannot draw chat UI, such as exported bots and the Happy mobile relay, send
 each document's fallback text in its place.
+
+#### Quick replies
+
+A conversation may suggest replies: up to six short answers the person can send with one tap. They
+are not chat UI components and not actions. Sending one is the same as typing it, and the message it
+sends remembers where its text came from. There are two carriers:
+
+- a `quick_replies` block in an agent message the daemon wrote itself, with no model involved, such
+  as onboarding's opening;
+- a `quick_replies` presentation on a completed `suggest_replies` tool call, when a model suggests
+  replies.
+
+```json
+{
+    "type": "quick_replies",
+    "options": ["Look at my recent work", "I'll name a folder", "Skip for now"]
+}
+```
+
+- `options` — 1–6 unique options. Each is plain text on one line, 1–200 characters, with no control
+  or bidirectional formatting character, shown as written: never Markdown, never linkified. The
+  daemon stores each with runs of whitespace collapsed to one space and trimmed.
+
+The presentation is the same object, `{ "type": "quick_replies", "options": [ … ] }`.
+
+**`suggest_replies`.** The tool a model suggests replies with. Its arguments are
+`{ "options": ["…", …] }`. The daemon normalizes the options and checks them as above; any problem
+fails the call with the problems in its result, so the model can correct itself, and nothing is
+suggested. The tool is available wherever `show_ui` is. A model asks its question in its reply's
+text and suggests the likely answers; the person may always type something else.
+
+**Drawing them.** Clients decide when to show the options, as pills. The recommended rule: under the
+latest agent message only, and hidden once any later person's message exists. A tap sends the
+option at once, with nothing to edit first.
+
+**Sending one.** A tap is an ordinary `POST /v0/agents/:agentId/send` whose `text` is the option,
+exactly, with `quickReply` naming it:
+
+```json
+{ "messageId": "tz4a98xxat96iws9zmbrgj3a", "toolCallId": "c7m2k9q4r8t1w5y3z6a0b2d4", "index": 0 }
+```
+
+- `messageId` — the agent message in this conversation that holds the suggestion: for a
+  `suggest_replies` call, the agent message whose content holds that tool call.
+- `toolCallId` — the `suggest_replies` call whose presentation holds the options. Required when the
+  options come from a presentation; absent when they are the message's own `quick_replies` block.
+- `index` — the option's position, from 0.
+
+Before it stores anything, the daemon checks that `messageId` is a visible agent message of this
+conversation, that it holds the named suggestion with an option at `index`, and that `text` equals
+that stored option exactly. Otherwise the send is `400 invalid_request` and nothing is stored. There
+is no other check: any suggestion still visible may be sent, any number of times, by anyone who can
+send in the conversation, and everything else is a normal send (`mode`, `delivery`, retry by `id`,
+pending and acceptance, and team-mode sender handling).
+
+The stored person's message carries `quickReply`, `{ messageId, toolCallId?, index }` as sent, set
+by the daemon after that check and never otherwise from the request. Its `content` holds only the
+text, and the model reads only the text. Clients show where it came from, such as "suggested by" the
+agent.
 
 #### File links
 
@@ -8838,6 +8881,10 @@ Request:
 - `clientMetadata` — optional freeform JSON object owned by the sending client. It is persisted
   and echoed unchanged on every complete representation of this message, but is not interpreted
   by the daemon or sent to the model.
+- `quickReply` — optional `{ messageId, toolCallId?, index }`: the suggested reply `text` is. The
+  daemon checks that the agent message holds that option and that `text` equals it exactly, and
+  answers `400 invalid_request` otherwise; the stored message carries it as provenance. See
+  "Quick replies".
 - `content` — optional rich blocks accompanying the text: text, inline images, and at most one
   `tool_call_request`. Image bytes travel **inline**, base64 in the block, exactly as they later
   appear in history — there is no separate upload step or attachment store. A tool-call request
@@ -8903,9 +8950,6 @@ Request:
   a `ui` block, or a completed `show_ui` call with a `ui` presentation.
 - `uiId`, `componentId` — the document and the component in it.
 - `action` — `{ "type": "<component>.<action>", "payload": { … } }`.
-- `mode` — the model selection and permission mode a `"message"` action's turn runs with, exactly
-  as on `send`, checked against the live model catalog. Required for `"message"` actions; ignored
-  by silent ones.
 
 The request body accepts only these fields. The daemon never logs the request body, and no error
 echoes a payload.
@@ -8919,17 +8963,12 @@ The daemon checks, in this order:
    guests.
 3. The caller holds the action's declared permission against the offer's stored props, under
    their own authority. Otherwise `403 forbidden`.
-4. An `id` already known returns its stored record, and the person's message it became, as they
-   now stand, with `result: null`.
+4. An `id` already known returns its stored record as it now stands, with `result: null`.
 5. The offer is in the daemon's own stored copy: a visible agent message of this conversation with
    `messageId`, holding document `uiId` with component `componentId`. Otherwise `404 not_found`.
-6. The action's type belongs to the component's type, the bundle has it, the payload matches its
-   schema exactly, and it fits the offer, such as `optionId` naming an offered option. Otherwise
-   `400 invalid_request`.
-7. A `once` action follows the open-offer rule. A closed offer is not an error: it is recorded as
-   `rejected` with `code: "offer_closed"`. A repeat of the accepted answer returns that answer's
-   record and stores nothing.
-8. At most 20 actions a minute per conversation and component; beyond that `429 rate_limited`.
+6. The action's type belongs to the component's type, the bundle has it, and the payload matches
+   its schema exactly. Otherwise `400 invalid_request`.
+7. At most 20 actions a minute per conversation and component; beyond that `429 rate_limited`.
 
 Nothing is stored for any refusal above. Then the daemon records the attempt as `pending`, runs the
 contributing module's hook with the whole payload, secrets included, in memory only, for at most
@@ -8955,26 +8994,24 @@ Response — `200`:
         ],
         "metadata": {}
     },
-    "message": null,
     "result": null,
     "cursor": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e"
 }
 ```
 
 - `record` — the attempt record with its final outcome: `accepted`, `rejected`, or `failed`.
-- `message` — the person's message the action became, pending or accepted, or `null`.
 - `result` — what the action returned, typed by its bundle, or `null`. It is the only place a
   secret result appears.
 - `cursor` — the event cursor before the action; streaming from it replays everything it caused.
 
 The record is announced with `run.finished` and `message.created` when it is stored and with
-`message.updated` when its outcome changes; a person's message is announced as a sent message is.
+`message.updated` when its outcome changes.
 
 When the daemon starts, every record still `pending` becomes `failed` with
 `code: "interrupted"`, so an attempt is never silently lost.
 
-Errors: `400 invalid_request` for a malformed body, a missing `mode` on a `"message"` action, an
-action of another component type, or a payload that fails its schema or does not fit the offer;
+Errors: `400 invalid_request` for a malformed body, an action of another component type, or a
+payload that fails its schema;
 `403 forbidden` without the action's permission; `404 not_found` for an unknown agent, a
 conversation the caller cannot read, or no such offer; `429 rate_limited`. A daemon without chat
 UI answers `404`.

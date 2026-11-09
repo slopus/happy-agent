@@ -1,25 +1,17 @@
 import { Type, type Static, type TLiteral, type TObject } from "@sinclair/typebox";
 
-import { containsUiSecret } from "./secret.js";
 import type { UiPermission } from "./permission.js";
 import { uiFallbackSchema, uiSlugSchema } from "./uiValues.js";
 
-/** Whether a successful action can become the person's words, or stays inside its component. */
-export type UiTranscript = "message" | "silent";
-
-/** One action a component can send. */
+/**
+ * One action a component can send. Every action is silent: it never becomes the person's words,
+ * and the component shows its own pending and error state.
+ */
 export interface UiActionDefinition {
     /** The strict payload a click sends. */
     readonly payload: TObject;
     /** What the action returns to the caller alone, never stored; absent for none. */
     readonly result?: TObject;
-    /**
-     * `"message"`: a successful action can become the person's words, and clients show an
-     * optimistic bubble. `"silent"`: no bubble; the component shows its own pending and error state.
-     */
-    readonly transcript: UiTranscript;
-    /** The action answers the offer: after the first accepted one, the offer is closed. */
-    readonly once?: boolean;
     /** What the clicking person must hold; absent means `content.write`. */
     readonly permission?: UiPermission;
 }
@@ -75,17 +67,10 @@ export type ResultOf<
     B extends UiBundle,
     K extends ActionNamesOf<B>,
 > = B["actions"][K]["result"] extends TObject ? Static<B["actions"][K]["result"]> : never;
-export type TranscriptOf<
-    B extends UiBundle,
-    K extends ActionNamesOf<B>,
-> = B["actions"][K]["transcript"];
 
 const TYPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 
-/**
- * Define one component bundle. Throws on a malformed type or action name, and on a secret in a
- * `"message"` action's payload, so a secret can never become someone's words.
- */
+/** Define one component bundle. Throws on a malformed type or action name. */
 export function defineUiComponent<
     const TypeName extends string,
     Props extends TObject,
@@ -97,14 +82,9 @@ export function defineUiComponent<
     if (!TYPE_PATTERN.test(definition.type)) {
         throw new Error(`"${definition.type}" is not a valid component type.`);
     }
-    for (const [name, action] of Object.entries(definition.actions)) {
+    for (const name of Object.keys(definition.actions)) {
         if (!TYPE_PATTERN.test(name)) {
             throw new Error(`"${definition.type}.${name}" is not a valid action name.`);
-        }
-        if (action.transcript === "message" && containsUiSecret(action.payload)) {
-            throw new Error(
-                `"${definition.type}.${name}" becomes the person's words, so it can't carry a secret.`,
-            );
         }
     }
     const input = (definition.input ?? definition.props) as Input;

@@ -32,12 +32,10 @@ export const providerSignInComponent = defineUiComponent({
     actions: {
         install: {
             payload: Type.Object({}, { additionalProperties: false }),
-            transcript: "silent",
             permission: "providers.manage",
         },
         sign_in: {
             payload: Type.Object({}, { additionalProperties: false }),
-            transcript: "silent",
             permission: byTarget,
         },
         submit_code: {
@@ -45,7 +43,6 @@ export const providerSignInComponent = defineUiComponent({
                 { code: UiSecret(Type.String({ minLength: 1, maxLength: 2_048 })) },
                 { additionalProperties: false },
             ),
-            transcript: "silent",
             permission: byTarget,
         },
         submit_token: {
@@ -53,12 +50,10 @@ export const providerSignInComponent = defineUiComponent({
                 { token: UiSecret(Type.String({ minLength: 1, maxLength: 4_096 })) },
                 { additionalProperties: false },
             ),
-            transcript: "silent",
             permission: byTarget,
         },
         cancel: {
             payload: Type.Object({}, { additionalProperties: false }),
-            transcript: "silent",
             permission: byTarget,
         },
     },

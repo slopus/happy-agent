@@ -21,6 +21,7 @@ import {
 } from "./common.js";
 import { artifactDisplaySchema, artifactTitleSchema, artifactTypeSchema } from "./artifacts.js";
 import { mediaLayoutStyleSchema } from "./mediaLayoutStyle.js";
+import type { QuickRepliesBlock, QuickRepliesPresentation, QuickReply } from "./quickReplies.js";
 import type { UiActionBlock, UiBlock, UiPresentation } from "./ui.js";
 import type { UsageBreakdown } from "./usage.js";
 import { userIdSchema } from "./users.js";
@@ -416,9 +417,13 @@ export const toolPresentationSchema = Type.Union([
 
 /**
  * Every display-ready tool-call presentation the client understands, with `show_ui`'s `ui`
- * presentation, whose schema is `uiPresentationSchema` in `protocol/ui.ts`.
+ * presentation and `suggest_replies`'s `quick_replies` presentation, whose schemas are in
+ * `protocol/ui.ts` and `protocol/quickReplies.ts`.
  */
-export type ToolPresentation = Static<typeof toolPresentationSchema> | UiPresentation;
+export type ToolPresentation =
+    | Static<typeof toolPresentationSchema>
+    | UiPresentation
+    | QuickRepliesPresentation;
 
 /** Stable provenance carried with a message without exposing internal module metadata. */
 export const messageMetadataSchema = Type.Object({
@@ -815,7 +820,8 @@ export type MessageBlock =
     | ConfigurationBlock
     | CompactionBlock
     | UiBlock
-    | UiActionBlock;
+    | UiActionBlock
+    | QuickRepliesBlock;
 
 /** Plain text. */
 export interface TextBlock {
@@ -968,6 +974,8 @@ export interface UserMessage {
     clientMetadata?: ClientMetadata;
     /** What this message replies to, shown above its content; `content` is only what was written. */
     quote?: MessageQuote;
+    /** The suggested reply this message's text is, set by the daemon from a checked `send`. */
+    quickReply?: QuickReply;
     /** Opaque request profile; a change resets the model's private conversation context. */
     profile?: string | null;
     /** `"pending"` until inference takes the message up. */
@@ -1053,6 +1061,11 @@ export interface SendMessageRequest {
     clientMetadata?: ClientMetadata;
     /** Optional rich blocks accompanying the text; image bytes travel inline. */
     content?: MessageBlock[];
+    /**
+     * The suggested reply `text` is. The daemon checks that the agent message holds that option
+     * and that `text` equals it exactly, and answers `400` otherwise.
+     */
+    quickReply?: QuickReply;
     /** Defaults to `"queue"`. On an idle agent the two are identical. */
     delivery?: MessageDelivery;
     /** Opaque context profile. Omitted and `null` both select the default profile. */

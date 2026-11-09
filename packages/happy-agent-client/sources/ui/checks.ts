@@ -21,20 +21,7 @@ export function uiPropsProblems(component: {
             `The ${component.type} props are invalid${first === undefined ? "" : ` at "${first.path || "/"}": ${first.message}`}.`,
         ];
     }
-    const props = component.props as Record<string, unknown>;
-    const problems: string[] = [];
-    const options = Array.isArray(props["options"])
-        ? (props["options"] as { id: string; primary?: boolean }[])
-        : [];
-    const ids = options.map((option) => option.id);
-    const repeated = ids.filter((id, index) => ids.indexOf(id) !== index);
-    if (repeated.length > 0) {
-        problems.push(`Option IDs must be unique; "${repeated[0]}" repeats.`);
-    }
-    if (options.filter((option) => option.primary === true).length > 1) {
-        problems.push("At most one option may be primary.");
-    }
-    return problems;
+    return [];
 }
 
 /** Problems with a document's components as a whole: 1–16, with unique IDs. */
@@ -60,8 +47,8 @@ export function uiDocumentProblems(
 
 /**
  * Why an action does not fit the offer it is sent to, or undefined when it does: the action
- * belongs to another component type, the bundle has no such action, the payload fails its schema,
- * or it names an option the offer does not have. Each is a `400` on `/actions`.
+ * belongs to another component type, the bundle has no such action, or the payload fails its
+ * schema. Each is a `400` on `/actions`.
  */
 export function uiActionProblem(
     component: { readonly type: string; readonly props: unknown },
@@ -73,20 +60,6 @@ export function uiActionProblem(
     }
     if (!Value.Check(found.definition.payload, action.payload)) {
         return `That ${action.type} payload is invalid.`;
-    }
-    const props = component.props as Record<string, unknown>;
-    const payload = action.payload as Record<string, unknown>;
-    const offered = Array.isArray(props["options"])
-        ? (props["options"] as { id: string }[]).map((option) => option.id)
-        : [];
-    if (action.type === "choice.choose" && !offered.includes(payload["optionId"] as string)) {
-        return "That option isn't offered.";
-    }
-    if (
-        action.type === "checklist.submit" &&
-        (payload["selected"] as string[]).some((id) => !offered.includes(id))
-    ) {
-        return "That option isn't offered.";
     }
     return undefined;
 }

@@ -17,7 +17,6 @@ export const defaultModelComponent = defineUiComponent({
                 },
                 { additionalProperties: false },
             ),
-            transcript: "silent",
             permission: "config.manage",
         },
     },

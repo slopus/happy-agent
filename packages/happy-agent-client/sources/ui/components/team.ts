@@ -39,7 +39,6 @@ export const inviteComponent = defineUiComponent({
                 },
                 { additionalProperties: false },
             ),
-            transcript: "silent",
             permission: "members.manage",
         },
         revoke: {
@@ -47,7 +46,6 @@ export const inviteComponent = defineUiComponent({
                 { inviteId: Type.String({ minLength: 1, maxLength: 64 }) },
                 { additionalProperties: false },
             ),
-            transcript: "silent",
             permission: "members.manage",
         },
     },
@@ -70,7 +68,6 @@ export const githubConnectComponent = defineUiComponent({
                 { installUrl: Type.String({ minLength: 1, maxLength: 2_048 }) },
                 { additionalProperties: false },
             ),
-            transcript: "silent",
             permission: "repositories.manage",
         },
         device_start: {
@@ -83,7 +80,6 @@ export const githubConnectComponent = defineUiComponent({
                 },
                 { additionalProperties: false },
             ),
-            transcript: "silent",
             // It makes the caller's own credential, so reading the conversation is enough.
             permission: { conversation: "read" },
         },
@@ -92,7 +88,6 @@ export const githubConnectComponent = defineUiComponent({
                 { installationId: Type.String({ minLength: 1, maxLength: 64 }) },
                 { additionalProperties: false },
             ),
-            transcript: "silent",
             permission: "repositories.manage",
         },
     },
@@ -119,7 +114,6 @@ export const computeJoinComponent = defineUiComponent({
                 },
                 { additionalProperties: false },
             ),
-            transcript: "silent",
             permission: "pools.manage",
         },
     },
