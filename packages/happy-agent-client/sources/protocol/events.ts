@@ -93,6 +93,7 @@ import type { SlashCommand } from "./slashCommands.js";
 import { connectionListResponseSchema } from "./connections.js";
 import { runnerListResponseSchema } from "./runners.js";
 import type { SkillsUpdatedPayload } from "./skills.js";
+import type { PluginsUpdatedPayload } from "./plugins.js";
 import type { WorkspaceServiceCreatedPayload, WorkspaceServiceUpdatedPayload } from "./services.js";
 import type { LiveSessionCreatedPayload, LiveSessionUpdatedPayload } from "./live.js";
 import type {
@@ -792,6 +793,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"git.updated", GitUpdatedPayload>
     | EventEnvelope<"files.updated", FilesUpdatedPayload>
     | EventEnvelope<"skills.updated", SkillsUpdatedPayload>
+    | EventEnvelope<"plugins.updated", PluginsUpdatedPayload>
     | EventEnvelope<"agent.created", AgentCreatedPayload>
     | EventEnvelope<"agent.updated", AgentUpdatedPayload>
     | EventEnvelope<"agent.removed", AgentRemovedPayload>

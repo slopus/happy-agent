@@ -9,6 +9,7 @@ import {
     resourceVersionSchema,
     timestampSchema,
 } from "./common.js";
+import { globalSkillPluginSchema } from "./plugins.js";
 
 /** A normalized relative path, never an arbitrary host-file address. */
 export const skillRelativePathSchema = Type.String({
@@ -33,6 +34,8 @@ export const globalSkillSchema = Type.Object({
     error: Nullable(Type.String()),
     version: resourceVersionSchema,
     updatedAt: timestampSchema,
+    /** The installed plugin this skill came from; absent on older daemons, treated as `null`. */
+    plugin: Type.Optional(Nullable(globalSkillPluginSchema)),
 });
 export type GlobalSkill = Static<typeof globalSkillSchema>;
 

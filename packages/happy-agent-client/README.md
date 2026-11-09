@@ -574,6 +574,15 @@ arrives during a read, keep the newer summary version, and resync on state loss 
 The client exposes the feed without automatically caching skills in `HappyReducer`. Older daemons'
 missing endpoints mean this feature is unavailable, not that no skills are installed.
 
+Plugins are additive without a protocol bump. Detect support through `listPlugins()`: `404` or
+`501` means unavailable, not that nothing is installed. `listAvailablePlugins()` reads the central
+catalog with each version marked `installable`, and a `reason` in plain English when it is not.
+`installPlugin({ pluginId, version })` answers `202` with an `installing` installation, or rejects
+with `409 not_installable` or `409 already_installed` (carrying the existing `plugin`).
+`uninstallPlugin(id)` removes an installation and its skills. Follow `plugins.updated` from the
+list's `cursor`. A global skill that came from a plugin carries an optional `plugin` attribution;
+treat its absence as `null`.
+
 Tool calls expose the complete `ToolPresentation` discriminated union — exploration, command,
 background-terminal interaction, file diff, web/X search, sub-agent creation, media, and
 artifact — together with an exported TypeBox schema for each variant and `toolPresentationSchema`

@@ -346,6 +346,13 @@ import type {
     SkillPageQuery,
     UpdateGlobalSkillRequest,
 } from "./protocol/skills.js";
+import type {
+    AvailablePluginListResponse,
+    InstallPluginRequest,
+    PluginInstallationListResponse,
+    PluginInstallationResponse,
+    UninstallPluginRequest,
+} from "./protocol/plugins.js";
 import { endpointUrl } from "./endpointUrl.js";
 import { readApiError } from "./HappyAgentApiError.js";
 import { EventStreamProtocolError, readEventStream } from "./readEventStream.js";
@@ -1033,6 +1040,49 @@ export class HappyAgentClient {
             data: await response.arrayBuffer(),
             etag: response.headers.get("etag"),
         };
+    }
+
+    // Plugins
+
+    /** `GET /v0/plugins` — installed plugins, including installing and failed ones. */
+    async listPlugins(options: RequestOptions = {}): Promise<PluginInstallationListResponse> {
+        return await this.#json({ method: "GET", path: "v0/plugins", signal: options.signal });
+    }
+
+    /** `GET /v0/plugins/available` — the central catalog, each version marked installable or not. */
+    async listAvailablePlugins(options: RequestOptions = {}): Promise<AvailablePluginListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/plugins/available",
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/plugins` — starts installing one catalog plugin version; answers `202`. */
+    async installPlugin(
+        request: InstallPluginRequest,
+        options: RequestOptions = {},
+    ): Promise<PluginInstallationResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/plugins",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/plugins/:installationId` — uninstalls a plugin and removes its skills. */
+    async uninstallPlugin(
+        installationId: Cuid2,
+        request: UninstallPluginRequest = {},
+        options: RequestOptions = {},
+    ): Promise<PluginInstallationResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/plugins/${encodeURIComponent(installationId)}`,
+            json: request,
+            signal: options.signal,
+        });
     }
 
     // Profile

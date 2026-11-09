@@ -85,6 +85,7 @@ export * from "./protocol/runners.js";
 export * from "./protocol/secrets.js";
 export * from "./protocol/services.js";
 export * from "./protocol/skills.js";
+export * from "./protocol/plugins.js";
 export * from "./protocol/slashCommands.js";
 export * from "./protocol/terminals.js";
 export * from "./protocol/usage.js";
