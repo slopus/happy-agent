@@ -11,6 +11,7 @@ describe("Rig model IDs", () => {
         [resolveClaudeModelId, "anthropic/sonnet-5-5", "claude-sonnet-5-5[1m]"],
         [resolveClaudeModelId, "anthropic/haiku-5-5", "claude-haiku-5-5[1m]"],
         [resolveClaudeModelId, "anthropic/sonnet-5", "claude-sonnet-5[1m]"],
+        [resolveClaudeModelId, "anthropic/fable-5-2", "claude-fable-5-2[1m]"],
         [resolveClaudeModelId, "anthropic/fable-5-1", "claude-fable-5-1[1m]"],
         [resolveClaudeModelId, "anthropic/fable-5", "claude-fable-5[1m]"],
         [resolveClaudeModelId, "anthropic/opus-5-5", "claude-opus-5-5[1m]"],

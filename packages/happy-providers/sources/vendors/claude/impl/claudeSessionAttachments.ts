@@ -3,7 +3,7 @@ import { release, type as osType, version as osVersion } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
- * The attachments Claude Code 2.1.280 and later record after the first prompt of a session.
+ * The attachments Claude Code 2.1.321 records after the first prompt of a session.
  *
  * On its first prompt the CLI persists an environment snapshot, the model identity, an empty
  * session context, and the calendar date, and it renders them into one system message placed
@@ -40,38 +40,40 @@ export type ClaudeSessionAttachment =
 
 /** Claude Code's own catalog entries for the models Rig serves, as the CLI renders them. */
 const CLAUDE_MODEL_IDENTITIES: Readonly<
-    Record<string, { displayName: string; knowledgeCutoff: string; oneMillionSuffix: boolean }>
+    Record<string, { displayName: string; knowledgeCutoff: string }>
 > = {
+    "claude-fable-5-2": {
+        displayName: "Fable 5.2",
+        knowledgeCutoff: "June 2026",
+    },
     "claude-fable-5-1": {
         displayName: "Fable 5.1",
         knowledgeCutoff: "June 2026",
-        oneMillionSuffix: false,
     },
     "claude-fable-5": {
         displayName: "Fable 5",
         knowledgeCutoff: "January 2026",
-        oneMillionSuffix: false,
     },
     "claude-opus-5-5": {
         displayName: "Opus 5.5",
         knowledgeCutoff: "June 2026",
-        oneMillionSuffix: true,
     },
-    "claude-opus-5": { displayName: "Opus 5", knowledgeCutoff: "May 2026", oneMillionSuffix: true },
+    "claude-opus-5": { displayName: "Opus 5", knowledgeCutoff: "May 2026" },
     "claude-opus-4-8": {
         displayName: "Opus 4.8",
         knowledgeCutoff: "January 2026",
-        oneMillionSuffix: true,
     },
     "claude-sonnet-5-5": {
         displayName: "Sonnet 5.5",
         knowledgeCutoff: "June 2026",
-        oneMillionSuffix: false,
+    },
+    "claude-haiku-5-5": {
+        displayName: "Haiku 5.5",
+        knowledgeCutoff: "June 2026",
     },
     "claude-sonnet-5": {
         displayName: "Sonnet 5",
         knowledgeCutoff: "January 2026",
-        oneMillionSuffix: false,
     },
 };
 
@@ -105,21 +107,21 @@ export function claudeSessionAttachments(options: {
     ];
 }
 
+/**
+ * Claude Code 2.1.321 names the model without its `[1m]` context suffix: the identity carries the
+ * bare ID and the plain display name even when the session selected the million-token window.
+ */
 export function claudeModelIdentity(model: string): {
     modelId: string;
     marketingName: string | null;
     knowledgeCutoff: string | null;
 } {
-    const oneMillion = model.toLowerCase().includes("[1m]");
     const base = model.replace(/\[1m\]$/i, "");
     const known = CLAUDE_MODEL_IDENTITIES[base];
-    if (known === undefined) return { modelId: model, marketingName: null, knowledgeCutoff: null };
+    if (known === undefined) return { modelId: base, marketingName: null, knowledgeCutoff: null };
     return {
-        modelId: model,
-        marketingName:
-            oneMillion && known.oneMillionSuffix
-                ? `${known.displayName} (1M context)`
-                : known.displayName,
+        modelId: base,
+        marketingName: known.displayName,
         knowledgeCutoff: known.knowledgeCutoff,
     };
 }

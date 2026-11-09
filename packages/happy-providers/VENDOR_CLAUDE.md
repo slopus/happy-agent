@@ -165,15 +165,17 @@ native compaction summary as the explicit result of `compact()`. Claude's SDK ma
 completed-turn thinking out of the outgoing API request when required by the active model or
 trajectory. That request-time projection does not change Rig's supplied session context.
 
-The bundled SDK and platform binaries are pinned together at `0.3.284` (Claude Code
-`2.1.284`), the first version that lists Sonnet 5.5. Unlike the older SDK used for the original
-provider capture, SDK 0.3.251 and later retain signed thinking when reconstructing a session,
-including model switches and compaction requests. The recreation test compares the complete
-cache prefix, reasoning included. The original golden capture remains unchanged; its test
-explicitly expects the retained thinking block on the two reconstructed requests and the
-first-prompt attachment message described below, and still compares every other field exactly.
-Claude Code 2.1.280 also appended a trailing newline and a continuation block to a replayed
-native compaction summary; 2.1.284 sends that summary exactly as captured again.
+The bundled SDK and platform binaries are pinned together at `0.3.321` (Claude Code
+`2.1.321`), the first version that lists Fable 5.2. The API itself refuses Fable 5.2 from older
+clients: Claude Code 2.1.284 receives a 400, "Claude Code 2.1.284 does not support this model;
+version 2.1.290 or newer is required." Unlike the older SDK used for the original provider
+capture, SDK 0.3.251 and later retain signed thinking when reconstructing a session, including
+model switches and compaction requests. The recreation test compares the complete cache prefix,
+reasoning included. The original golden capture remains unchanged; its test explicitly expects
+the retained thinking block on the two reconstructed requests, the first-prompt attachment
+message described below, `thinking.display: "updates"` on adaptive requests, and the 2.1.321
+summary rendering described under native compaction, and still compares every other field
+exactly.
 
 ### Resume placeholder
 
@@ -216,10 +218,11 @@ summary and the next prompt as one user turn.
 Claude Code 2.1.280 no longer folds the current-date reminder into the first user turn. On the
 first prompt of a session it records four transcript attachments, an environment snapshot
 (working directory, git repository and worktree flags, platform, shell, OS version), the model
-identity (wire ID, marketing name, knowledge cutoff), an empty session context, and the calendar
+identity (wire ID without the `[1m]` suffix, marketing name, knowledge cutoff), an empty session context, and the calendar
 date, and renders them as one `system`-role message placed directly after the first user turn.
 The first cache breakpoint sits on that message. The rendering is model-dependent: models on the
-CLI's lean prompt (Opus 4.8 onward, Fable, and Sonnet 5.5) receive one merged plain-text block,
+CLI's lean prompt (Opus 4.8 onward, Fable, Sonnet 5.5, and Haiku 5.5) receive one merged
+plain-text block,
 while Sonnet 5 receives one `<system-reminder>` per attachment. The gate is on for every
 first-party model from Opus 4.8 onward and has no environment switch for first-party accounts.
 
@@ -260,14 +263,14 @@ selected model. The real provider trace switches from Opus to Sonnet and verifie
 selected prompt and stable caller-owned tools on the wire.
 
 Curated million-token Claude models explicitly select the SDK's `[1m]` suffix, including
-Fable 5.1, Opus 5.5, and Sonnet 5.5. SDK 2.1.251 accepted `claude-fable-5-1` on the wire without
-having that exact model in its local context catalog. Without the suffix its continuation guard
-assumed 200k, so a successful response reporting 235k tokens made the next request fail locally
-before Rig's 400k compaction threshold. Native `/compact` bypasses that ordinary inference guard;
-manual compaction succeeding does not prove the continuation limit is configured correctly. The
-suffix also feeds the model identity the CLI renders: models in its 1M-suffix set, such as Opus
-5.5, are named "Opus 5.5 (1M context)", while Sonnet 5, Sonnet 5.5, and Fable stay unsuffixed in
-the name.
+Fable 5.2, Fable 5.1, Opus 5.5, and Sonnet 5.5. SDK 2.1.251 accepted `claude-fable-5-1` on the wire
+without having that exact model in its local context catalog. Without the suffix its continuation
+guard assumed 200k, so a successful response reporting 235k tokens made the next request fail
+locally before Rig's 400k compaction threshold. Native `/compact` bypasses that ordinary inference
+guard; manual compaction succeeding does not prove the continuation limit is configured correctly.
+Claude Code 2.1.321 strips the suffix before naming the model: every model's identity carries the
+bare ID and plain display name, such as "Opus 5.5" and `claude-opus-5-5`, where 2.1.284 rendered
+"Opus 5.5 (1M context)" and `claude-opus-5-5[1m]`.
 
 SDK results with `subtype: "success"` can still carry `is_error: true`. Their result text is
 an error diagnostic, never an assistant answer. Emit only the terminal failure for these
@@ -283,7 +286,9 @@ Rig sets `CLAUDE_CODE_MAX_RETRIES` from the shared inference retry budget, whose
 overriding inherited values so provider behavior is stable and follows live configuration.
 `impl/toClaudeRetryEvent.ts` converts each native
 retry notification into a Rig `retrying` event. Those retries remain inside Claude Code, avoiding
-duplicate tool or session effects.
+duplicate tool or session effects. Since 2.1.321 Claude Code also refreshes an OAuth token the API
+rejects with a 401 and resends the request once, before any output, even when the retry budget is
+zero; that recovery is native and not counted against the budget.
 
 Claude Code can instead terminate with a synthetic server error when a stream breaks after output
 has begun. Rig recognizes that specific incomplete-response result, rolls the open event block
@@ -308,6 +313,11 @@ compaction made a real inference request. The same result's `modelUsage` map car
 input, output, cache-read, and cache-creation counts from that request. Its keys may use the
 resolved model name instead of the requested alias, so the provider aggregates every entry into
 the completed compaction usage.
+
+Claude Code 2.1.321 renders a native summary with a reminder naming the tools used before it, a
+`Summary:` label, and a closing note that the messages after it were kept verbatim. When a
+compaction reply has no `<summary>` tags it asks the model once more with a stricter instruction,
+so test servers answer summary requests with tagged text, as real models do.
 
 The provider fixture covers custom retention instructions and post-compaction continuation.
 `tests/claude.live.test.ts` separately covers real native compaction without custom
@@ -363,6 +373,53 @@ and the SDK current-date reminder are normalized. `tests/claudeSession.test.ts` 
 message mapping, retry events, credential isolation, abort cleanup, images, models, and
 plain/custom compaction. `tests/claude.live.test.ts` verifies real inference, complete
 system prompts and schemas, model switching, both compaction forms, and continuation.
+
+## Adding a new Claude model
+
+Fable 5.2 needed every step below. Each one is a separate decision; none follows from another.
+
+1. **Claude Code version.** Find the first Claude Agent SDK release whose bundled CLI lists the
+   model (search the platform binary for its wire ID and read its catalog entry: context window,
+   max output, default effort, capabilities). The API may refuse older CLIs outright, as it did
+   Fable 5.2 below 2.1.290. Bump `@anthropic-ai/claude-agent-sdk` and all eight platform packages
+   together, raise the minimum in `tests/resolveClaudeCodeExecutablePath.test.ts`, and run the whole
+   provider suite against the new binary and against the old one: every failure that appears only
+   on the new binary is a Claude Code behavior change to understand and record here, not to patch
+   around.
+2. **Wire ID.** Add the model to `impl/resolveClaudeModelId.ts` with the `[1m]` suffix and to
+   `CLAUDE_MODEL_IDENTITIES` in `impl/claudeSessionAttachments.ts` with the CLI's display name and
+   knowledge cutoff, then add it to the recreation-cache test so a rebuilt session keeps its cache.
+3. **Publish this package**, then move every consumer to the new version in one change (see the
+   root `AGENTS.md`).
+4. **Catalog.** Add the model to `agentCatalog.ts` in `happy-agent-modules`: a `MODEL_CONTEXTS`
+   entry (context window, 400k auto-compact for 1M models) and a `CATALOG` row. Offer `off` only if
+   a raw request with disabled thinking succeeds. The first row per provider is that provider's
+   fallback default as well as the top of its picker; placement is the person's call (they put
+   Fable 5.2 first). Bedrock and other resellers are
+   a separate decision: add the model to `BEDROCK_RESOLD_MODEL_IDS` and the Bedrock resolvers only
+   when AWS documents a model ID and its regions. Anthropic listed no Bedrock ID for Fable 5.2.
+   `happy-agent-base/sources/models.ts` is frozen and is not part of this.
+5. **System prompt.** Capture the CLI's own `claude_code` preset prompt for the wire ID through a
+   loopback server (the API is never contacted), write it to
+   `systemPrompt/prompts/claude/claude_<model>_system_prompt.ts`, and map it in
+   `systemPrompt/impl/systemPromptForModel.ts`. Apply the same edits as the other Claude prompts:
+   `{{identity}}` first, and no Session-specific guidance, Memory, Environment, hooks, or
+   token-count text. A missing mapping silently falls back to the generic prompt.
+6. **Other model lists.** Add the model to `CLAUDE_TOOL_SEARCH_MODELS` in
+   `toolDiscovery/ToolDiscoveryModule.ts`. Check `providerScan/ProviderScanModule.ts` (verification
+   model), `auto/impl/reviewerModelForAgent.ts` (it matches `anthropic/opus-` and
+   `anthropic/fable-` prefixes), and the gym catalog assertion in
+   `happy_api_environment_onboarding_usage_matrix.test.ts`.
+7. **Usage meters.** Send a real request and read every `anthropic-ratelimit-unified-*` header and
+   the OAuth usage endpoint. A new window name (as `seven_day_fable` once was) needs parsing in
+   `claudeUsageFromRateLimitInfo.ts` and `fetchClaudeProviderUsage.ts`; Fable 5.2 added none.
+8. **Tools.** Read the model's "what's new" page for removed tool versions, tool-choice rules, and
+   beta headers, and the Claude Code changelog for built-in tool changes. Happy runs Claude Code
+   with only caller-owned MCP tools and ToolSearch, so most CLI tool changes do not reach it.
+9. **Live test** on at least two existing accounts: a plain answer, a tool round trip, and the raw
+   parameter checks (disabled thinking, each effort, forced tool choice). Never create logins.
+10. **Benchmarks.** The happy.engineering benchmarks page is a separate task with its own evidence
+    rules; adding a model does not update it.
 
 ## Intentional limitations
 

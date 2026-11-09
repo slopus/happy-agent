@@ -286,24 +286,8 @@ describe.skipIf(process.platform !== "linux")(
                     expect(resumedHistory).toContain(
                         '"type":"redacted_thinking","data":"synthetic-opaque-reasoning"',
                     );
-                    if (retries === 0) {
-                        // Native 401 recovery consumes the configured SDK retry budget. Rig must
-                        // expose the rejection, not replay it outside that budget.
-                        terminal.toMatchObject({
-                            type: "done",
-                            state: "error",
-                            providerError: { type: "authentication" },
-                        });
-                        expect(refreshBodies).toEqual([]);
-                        expect(inferenceAuthorizations).toEqual([
-                            "Bearer synthetic-original-access",
-                        ]);
-                        const unchanged = await readFile(original, "utf8");
-                        expect(unchanged).toContain("synthetic-original-access");
-                        expect(unchanged).toContain("synthetic-original-refresh");
-                        expect(childEnvironment?.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(selected);
-                        return;
-                    }
+                    // Claude Code 2.1.321 refreshes a rejected OAuth token once before any output,
+                    // outside its retry budget, so a zero budget still recovers.
                     terminal.toMatchObject({ type: "done", state: "normal" });
                     expect(refreshBodies).toHaveLength(1);
                     expect(refreshBodies[0]).toContain("synthetic-original-refresh");

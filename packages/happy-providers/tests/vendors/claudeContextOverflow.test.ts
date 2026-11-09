@@ -24,7 +24,7 @@ describe("Claude context limits through the real SDK", () => {
         );
     });
 
-    it.each(["anthropic/fable-5-1", "claude-fable-5-1[1m]"])(
+    it.each(["anthropic/fable-5-2", "anthropic/fable-5-1", "claude-fable-5-1[1m]"])(
         "continues %s after a 235k-token response",
         { timeout: 30_000 },
         async (model) => {

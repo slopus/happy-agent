@@ -285,9 +285,16 @@ async function withServer(
             response.end('{"type":"error","error":{"type":"not_found_error"}}');
             return;
         }
-        requests.push(JSON.parse((await readBody(request)).toString("utf8")) as CapturedRequest);
+        const body = (await readBody(request)).toString("utf8");
+        requests.push(JSON.parse(body) as CapturedRequest);
         response.writeHead(200, { "content-type": "text/event-stream" });
-        response.end(TEXT_RESPONSE);
+        // Claude Code 2.1.321 asks again when a compaction reply lacks summary tags, so a summary
+        // request is answered in the shape a real model returns.
+        response.end(
+            body.includes("Your task is to create a detailed summary")
+                ? textResponse("<summary>The notes say to ship on Friday.</summary>")
+                : textResponse("The notes say to ship on Friday."),
+        );
     });
     await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
@@ -397,34 +404,36 @@ async function withServer(
     }
 }
 
-const TEXT_RESPONSE = toSse([
-    {
-        type: "message_start",
-        message: {
-            id: "msg_user_tail",
-            type: "message",
-            role: "assistant",
-            model: "claude-opus-5-5",
-            content: [],
-            stop_reason: null,
-            stop_sequence: null,
-            usage: { input_tokens: 12, output_tokens: 1 },
+function textResponse(text: string): string {
+    return toSse([
+        {
+            type: "message_start",
+            message: {
+                id: "msg_user_tail",
+                type: "message",
+                role: "assistant",
+                model: "claude-opus-5-5",
+                content: [],
+                stop_reason: null,
+                stop_sequence: null,
+                usage: { input_tokens: 12, output_tokens: 1 },
+            },
         },
-    },
-    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
-    {
-        type: "content_block_delta",
-        index: 0,
-        delta: { type: "text_delta", text: "The notes say to ship on Friday." },
-    },
-    { type: "content_block_stop", index: 0 },
-    {
-        type: "message_delta",
-        delta: { stop_reason: "end_turn", stop_sequence: null },
-        usage: { output_tokens: 9 },
-    },
-    { type: "message_stop" },
-]);
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text },
+        },
+        { type: "content_block_stop", index: 0 },
+        {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 9 },
+        },
+        { type: "message_stop" },
+    ]);
+}
 
 function toSse(events: readonly unknown[]): string {
     return events

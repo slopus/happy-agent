@@ -1,4 +1,5 @@
 const CLAUDE_MODEL_IDS: Readonly<Record<string, string>> = {
+    "anthropic/fable-5-2": "claude-fable-5-2[1m]",
     "anthropic/fable-5-1": "claude-fable-5-1[1m]",
     "anthropic/fable-5": "claude-fable-5[1m]",
     "anthropic/opus-5-5": "claude-opus-5-5[1m]",

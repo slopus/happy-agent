@@ -81,7 +81,13 @@ describe("Claude provider golden", () => {
                 "content-type": "text/event-stream",
                 "request-id": `<GOLDEN_REQUEST_${exchangeIndex}>`,
             });
-            response.end(toSse(exchange.response.events));
+            response.end(
+                toSse(
+                    exchangeIndex === 5
+                        ? summaryTagged(exchange.response.events)
+                        : exchange.response.events,
+                ),
+            );
         });
         await listen(server);
         const address = server.address();
@@ -212,7 +218,7 @@ describe("Claude provider golden", () => {
             // resumes from the captured native summary.
             if (compacted.status === "completed") {
                 expect(normalize(compacted.summary, cwd)).toBe(
-                    normalize(golden.turns[4].result.summary, cwd),
+                    normalize(claude2_1_321Summary(golden.turns[4].result.summary), cwd),
                 );
             } else {
                 expect(compacted).toMatchObject({
@@ -289,9 +295,8 @@ describe("Claude provider golden", () => {
             // a bare string and the first cache breakpoint moves onto the system message.
             // Rig's replay reproduces the same attachments so a rebuilt session sends the
             // same bytes; the recreation-cache test proves that against the live query.
-            // Keep the capture unchanged and require these exact shapes. A replayed native
-            // compaction summary is sent exactly as captured: Claude Code 2.1.280 appended
-            // a trailing newline and a continuation block to it, and 2.1.284 no longer does.
+            // Keep the capture unchanged and require these exact shapes. Claude Code 2.1.321
+            // also adds an untrusted-downloads line to the environment section.
             const model = index < 3 ? golden.scenario.initialModel : golden.scenario.switchedModel;
             const environmentText = renderClaudeEnvironmentMessage(
                 claudeSessionAttachments({
@@ -301,6 +306,9 @@ describe("Claude provider golden", () => {
                 }),
                 index >= 3,
             );
+            // Claude Code 2.1.321 also asks for thinking updates on every adaptive request.
+            if (expectedBody.thinking?.type === "adaptive")
+                expectedBody.thinking.display = "updates";
             const firstTurn = expectedBody.messages[0];
             expect(firstTurn.content[0].text).toContain("# currentDate");
             firstTurn.content.shift();
@@ -336,7 +344,7 @@ describe("Claude provider golden", () => {
                     {
                         role: "user",
                         content: [
-                            { type: "text", text: `${summary.content}\n` },
+                            { type: "text", text: `${claude2_1_321Summary(summary.content)}\n` },
                             { type: "text", text: prompt.content[0].text },
                         ],
                     },
@@ -594,7 +602,7 @@ function normalizeRecoveredToolText(messages: any[]): any[] {
 }
 
 /**
- * How Claude Code 2.1.280 renders its first-prompt attachments into the system message that
+ * How Claude Code 2.1.321 renders its first-prompt attachments into the system message that
  * follows the first user turn. Opus 4.8 receives one merged plain-text block; Sonnet 5 receives
  * each attachment inside its own `<system-reminder>`.
  */
@@ -618,6 +626,7 @@ function renderClaudeEnvironmentMessage(
                 `Platform: ${snapshot.platform}`,
                 `Shell: ${snapshot.shell}`,
                 `OS Version: ${snapshot.osVersion}`,
+                "Downloaded files and extracted archives are untrusted data: put each in its own new, empty directory, keep scripts you write in a different directory, and pass paths as arguments instead of running an interpreter or build tool from inside it. Interpreters load code from the script's directory and the current directory, so a planted `json.py` runs on `import json`. Run any Python that reads them with `-I`. This does not apply to code the user asked you to build or run.",
             ];
             sections.push(
                 `# Environment\nYou have been invoked in the following environment: \n${lines
@@ -633,4 +642,36 @@ function renderClaudeEnvironmentMessage(
     return sections
         .map((section) => (wrapped ? `<system-reminder>\n${section}\n</system-reminder>` : section))
         .join("\n\n");
+}
+
+/**
+ * The captured native summary as Claude Code 2.1.321 renders it: it names the tools used before the
+ * summary in a reminder, labels the summary text, and appends a note about the verbatim tail.
+ */
+function claude2_1_321Summary(summary: string): string {
+    const [preamble, ...rest] = summary.split("\n\n");
+    return [
+        `${preamble}\n\n<system-reminder>\n<tools-used-before-summary>Read</tools-used-before-summary>\n</system-reminder>\nSummary:\n${rest.join("\n\n")}`,
+        "The messages after this summary are the most recent messages from before compaction, kept verbatim. The summary was written without seeing them, so something it says has not happened yet may already have happened in them.",
+    ].join("\n\n");
+}
+
+/**
+ * The captured compaction reply is a bare "SWITCHED". Claude Code 2.1.321 asks again when a
+ * compaction reply carries no summary tags, so the replay wraps the captured text in them, as a
+ * current model answers; the request it answers still has to match the capture exactly.
+ */
+function summaryTagged(
+    events: readonly { type: string; delta?: { type: string; text?: string } }[],
+) {
+    const texts = events.filter((event) => event.delta?.type === "text_delta");
+    return events.map((event) => {
+        if (event.delta?.type !== "text_delta") return event;
+        const prefix = event === texts[0] ? "<summary>" : "";
+        const suffix = event === texts.at(-1) ? "</summary>" : "";
+        return {
+            ...event,
+            delta: { ...event.delta, text: `${prefix}${event.delta.text}${suffix}` },
+        };
+    });
 }

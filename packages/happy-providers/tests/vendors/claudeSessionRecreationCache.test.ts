@@ -55,6 +55,7 @@ describe("Claude session recreation cache", () => {
         "anthropic/opus-5",
         "anthropic/sonnet-5-5",
         "anthropic/sonnet-5",
+        "anthropic/fable-5-2",
         "anthropic/fable-5-1",
         "anthropic/fable-5",
     ])(
@@ -83,7 +84,7 @@ describe("Claude session recreation cache", () => {
         15_000,
     );
 
-    it("preserves Haiku 5.5's cache prefix when the pinned SDK treats its model name as unknown", async () => {
+    it("names a million-token model without its context suffix, as the CLI does", async () => {
         await withServer("anthropic/haiku-5-5", async (harness) => {
             const liveSession = harness.session();
             const first = await harness.run(liveSession, [user("Refactor the parser.")]);
@@ -99,7 +100,7 @@ describe("Claude session recreation cache", () => {
             ]);
 
             expect(JSON.stringify(continued.request.messages[1])).toContain(
-                "You are powered by the model claude-haiku-5-5[1m].",
+                "You are powered by the model named Haiku 5.5. The exact model ID is claude-haiku-5-5. Assistant knowledge cutoff is June 2026.",
             );
             expect(cachePrefix(recreated.request)).toEqual(cachePrefix(continued.request));
         });
