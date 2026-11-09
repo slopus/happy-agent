@@ -24,9 +24,11 @@ export function suggestRepliesTool(chatUi: ChatUiModule) {
         defer: true,
         capabilities: ["Suggest short replies the person can send with one tap."],
         searchKeywords: ["quick replies", "suggestions", "buttons", "choice", "options", "answers"],
-        description: `Suggest up to ${MAX_QUICK_REPLIES} short replies the person can send with one tap, shown under your message. A tapped reply is sent as the person's own message, exactly as written, so word each one as they would say it.
+        description: `Suggest up to ${MAX_QUICK_REPLIES} replies the person can send with one tap. Clients show the options as a vertical stack of equal-width buttons under your reply. The stack stays on screen after the person taps one, with the chosen one highlighted. Tapping an option sends it as the person's message immediately, steering whatever you are doing, exactly as written.
 
-Ask your question in your reply's text, then call this with the likely answers. Each option is plain text on one line, at most 200 characters, never Markdown or links, and options are unique. The person can always type something else instead; never write the options in your text as well.`,
+So write each option as a short, self-contained answer in the person's own voice: capitalize the first word, keep it to one line (aim for under 40 characters so it fits the button), make the options parallel, and add no trailing period. Options are plain text, never Markdown or links, and unique, at most 200 characters.
+
+Ask your question in your reply's text, then call this with the likely answers. The person can always type something else instead; never write the options in your text as well.`,
         parameters: Type.Object(
             {
                 options: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), {
