@@ -17,6 +17,7 @@ import {
     type Context,
 } from "@steve.kite/stdlib";
 
+import { ChatUiModule } from "../chatUi/index.js";
 import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { NodeModule } from "../node/index.js";
@@ -24,6 +25,7 @@ import { TailcatModule } from "../tailcat/index.js";
 import { TeamAuthenticationError, TeamModule, teamUser } from "../team/index.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { MobilePairing } from "./impl/MobilePairing.js";
+import { contributePhoneComponents } from "./impl/phoneComponents.js";
 import {
     handshakeConfirmRequestSchema,
     handshakeRevealRequestSchema,
@@ -121,7 +123,9 @@ export class MobileConnectorModule implements AgentModule {
         node: NodeModule,
         tailcat: TailcatModule,
         durableFunctions: DurableFunctionsModule,
+        chatUi?: ChatUiModule,
     ) {
+        if (chatUi !== undefined) contributePhoneComponents(chatUi, this);
         this.#config = config;
         this.#team = team;
         this.#node = node;

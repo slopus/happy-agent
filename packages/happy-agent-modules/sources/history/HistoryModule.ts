@@ -455,6 +455,21 @@ export class HistoryModule implements AgentModule {
         ["005-history-words", migrateHistoryWords],
         ["006-history-block-words", migrateHistoryBlockWords],
         ["007-history-message-words", migrateHistoryMessageWords],
+        [
+            "008-history-drop-action-choices",
+            async (_ctx, database) => {
+                for (const table of [HISTORY_TABLE, HISTORY_PENDING_TABLE]) {
+                    await agentDatabaseRun(
+                        database,
+                        sql.raw(`
+                            UPDATE ${table}
+                            SET message_json = json_remove(message_json, '$.actionChoices')
+                            WHERE message_json LIKE '%"actionChoices"%'
+                        `),
+                    );
+                }
+            },
+        ],
     ];
 
     /**
@@ -564,6 +579,46 @@ export class HistoryModule implements AgentModule {
             );
             await indexHistoryToolCalls(txCtx.db, agentId, message);
             await indexHistoryWords(txCtx, agentId, message);
+        });
+    }
+
+    /**
+     * Record one message in a run of its own that is already finished when it appears, whatever
+     * run is open: no open run is closed or joined, and no model turn starts. Chat UI attempt
+     * records are stored this way. Joins the caller's transaction.
+     */
+    async recordStandalone(
+        ctx: Context,
+        agentId: string,
+        message: HistoryMessage,
+        runId: string,
+    ): Promise<void> {
+        const at = message.at ?? Date.now();
+        const stored: HistoryMessage = { ...message, at, runId };
+        if (
+            !Value.Check(historyAgentIdSchema, agentId) ||
+            !Value.Check(historyRecordIdSchema, runId) ||
+            !historyMessageWithinPersistenceBounds(stored)
+        ) {
+            throw new Error("The history module received an invalid standalone message.");
+        }
+        await this.#direct(ctx, async (txCtx) => {
+            const sequenceRows = await agentDatabaseRows<{ sequence: number | string }>(
+                txCtx.db,
+                sql`SELECT COALESCE(MAX(sequence), -1) + 1 AS sequence
+                    FROM ${sql.raw(HISTORY_RUNS_TABLE)}
+                    WHERE agent_id = ${agentId}`,
+            );
+            const sequence = toSafeInteger(sequenceRows[0]?.sequence, "history run sequence");
+            await agentDatabaseRun(
+                txCtx.db,
+                sql`INSERT INTO ${sql.raw(HISTORY_RUNS_TABLE)} (
+                        agent_id, sequence, run_id, status, reason, started_at, ended_at
+                    ) VALUES (
+                        ${agentId}, ${sequence}, ${runId}, 'completed', 'completed', ${at}, ${at}
+                    )`,
+            );
+            await this.#append(txCtx, agentId, stored);
         });
     }
 
@@ -725,11 +780,15 @@ export class HistoryModule implements AgentModule {
     }
 
     /**
-     * Whether a person's own message was recorded after `messageId` in this conversation: a
-     * visible user-role message, accepted already. Pending messages, and messages generated on the
-     * person's behalf, do not count. An inline action block stays pressable only until this holds.
+     * The first person's own message recorded after `messageId` in this conversation: a visible
+     * user-role message, accepted already. Pending messages, and messages generated on the
+     * person's behalf, do not count. A chat UI offer takes a `once` answer only until one exists.
      */
-    async personSpokeAfter(ctx: Context, agentId: string, messageId: string): Promise<boolean> {
+    async personMessageAfter(
+        ctx: Context,
+        agentId: string,
+        messageId: string,
+    ): Promise<string | undefined> {
         if (
             !Value.Check(historyAgentIdSchema, agentId) ||
             !Value.Check(historyRecordIdSchema, messageId)
@@ -737,9 +796,9 @@ export class HistoryModule implements AgentModule {
             throw new Error("The history module received an invalid message lookup.");
         }
         return await this.#direct(ctx, async (txCtx) => {
-            const rows = await agentDatabaseRows<{ found: number }>(
+            const rows = await agentDatabaseRows<{ record_id: string }>(
                 txCtx.db,
-                sql`SELECT 1 AS found
+                sql`SELECT later.record_id AS record_id
                     FROM ${sql.raw(HISTORY_TABLE)} AS later
                     WHERE later.agent_id = ${agentId}
                       AND later.role = 'user'
@@ -748,9 +807,10 @@ export class HistoryModule implements AgentModule {
                           SELECT position FROM ${sql.raw(HISTORY_TABLE)}
                           WHERE agent_id = ${agentId} AND record_id = ${messageId}
                       )
+                    ORDER BY later.position ASC
                     LIMIT 1`,
             );
-            return rows.length > 0;
+            return rows[0]?.record_id;
         });
     }
 
@@ -2874,6 +2934,9 @@ export class HistoryModule implements AgentModule {
                 if (block.type !== "reasoning") return [toHistoryInputBlock(block)];
                 return block.text === undefined ? [] : [{ type: "thinking", thinking: block.text }];
             });
+            // A chat UI action that became the person's words keeps its `action` block, which
+            // only the pending row holds: no provider is ever sent it.
+            blocks.push(...(pending?.blocks.filter((block) => block.type === "action") ?? []));
             await this.#append(ctx, scope.agent.id, {
                 at: acceptedAt,
                 blocks,

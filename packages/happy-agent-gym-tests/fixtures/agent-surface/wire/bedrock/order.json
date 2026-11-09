@@ -1,6 +1,7 @@
 [
   "tool_search_tool_regex",
   "read_agent_history",
+  "show_ui",
   "get_presence",
   "list_presences",
   "set_presence",

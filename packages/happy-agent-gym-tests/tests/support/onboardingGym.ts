@@ -2,6 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { UiActionResponse, UiDocument } from "@slopus/happy-agent-client";
 import { createAgentGym, type AgentGym, type AgentGymOptions } from "@slopus/happy-agent-gym";
 import { expect } from "vitest";
 
@@ -41,12 +42,21 @@ export interface OnboardingFlow {
     readonly completedVersion: number | null;
 }
 
+/** One block of a message, as much of it as these scenarios read. */
+export interface OnboardingBlock {
+    readonly type: string;
+    readonly text?: string;
+    readonly name?: string;
+    readonly ui?: UiDocument;
+    readonly presentation?: { readonly type: string; readonly ui?: UiDocument };
+    readonly [key: string]: unknown;
+}
+
 export interface OnboardingMessage {
     readonly id: string;
     readonly runId: string;
     readonly role: string;
-    readonly content: readonly { readonly type: string; readonly text?: string }[];
-    readonly actionChoices?: Record<string, unknown>;
+    readonly content: readonly OnboardingBlock[];
     readonly metadata?: Record<string, unknown>;
 }
 
@@ -122,8 +132,9 @@ export function textOf(message: OnboardingMessage | undefined): string {
     return message?.content.map((block) => block.text ?? "").join("") ?? "";
 }
 
+/** The conversation's messages, oldest first, as a client that reads chat UI sees them. */
 export async function messagesOf(gym: AgentGym, agentId: string): Promise<OnboardingMessage[]> {
-    const page = (await gym.http.ok("GET", `/v0/agents/${agentId}/messages`)) as {
+    const page = (await gym.client.getMessages(agentId)) as unknown as {
         runs: { id: string; messages: Omit<OnboardingMessage, "runId">[] }[];
     };
     return page.runs.flatMap((run) =>
@@ -143,64 +154,66 @@ export async function waitForSaid(
     }, `the conversation to say "${text}"`);
 }
 
+/** The chat UI document a message shows: its `ui` block, or a completed `show_ui` call's. */
+export function uiOf(message: OnboardingMessage | undefined): UiDocument | undefined {
+    for (const block of message?.content ?? []) {
+        if (block.type === "ui" && block.ui !== undefined) return block.ui;
+        if (block.type === "tool_call" && block.presentation?.type === "ui") {
+            return block.presentation.ui;
+        }
+    }
+    return undefined;
+}
+
 /**
- * Wait until the flow stands on `step` and the newest message is an agent message other than
- * `earlier`: the step's own message, when the step says one. A step an effect entered follows
- * the previous step's message with no press between, so name that message in `earlier`.
+ * Wait until the opening stands and its newest message, other than any in `earlier`, shows its
+ * components.
  */
-export async function waitForStep(
+export async function waitForOpening(
     gym: AgentGym,
     agentId: string,
-    step: string | null,
     earlier: readonly string[] = [],
-): Promise<OnboardingMessage | undefined> {
-    return await gym
-        .waitUntil(
-            async () => {
-                const flow = await flowOf(gym);
-                if (flow.step !== step) return undefined;
-                const last = (await messagesOf(gym, agentId)).at(-1);
-                return last?.role === "agent" && !earlier.includes(last.id) ? { last } : undefined;
-            },
-            `the flow to stand on ${String(step)}`,
-        )
-        .then(({ last }) => last);
+): Promise<OnboardingMessage> {
+    return await gym.waitUntil(async () => {
+        if ((await flowOf(gym)).step !== "opening") return undefined;
+        const last = (await messagesOf(gym, agentId)).at(-1);
+        return last?.role === "agent" && uiOf(last) !== undefined && !earlier.includes(last.id)
+            ? last
+            : undefined;
+    }, "the opening to show its components");
 }
 
-export interface Press {
-    readonly messageId: string;
-    readonly blockIndex?: number;
-    readonly controlIndex?: number;
-    readonly actionId?: string;
-    readonly params: Record<string, string>;
-    readonly values?: readonly string[];
+let actions = 0;
+
+/** A fresh action ID, which the daemon keeps as the attempt record's. */
+export function actionId(): string {
+    actions += 1;
+    return `act${String(actions).padStart(4, "0")}${Math.random().toString(36).slice(2, 12)}`;
 }
 
-export function pressBody(press: Press, extra: Record<string, unknown> = {}) {
-    return {
-        ...extra,
-        content: [
-            {
-                type: "action",
-                messageId: press.messageId,
-                blockIndex: press.blockIndex ?? 0,
-                controlIndex: press.controlIndex ?? 0,
-                actionId: press.actionId ?? "onboarding.next",
-                params: press.params,
-                ...(press.values === undefined ? {} : { values: press.values }),
-            },
-        ],
-    };
-}
-
-export async function press(
+/** Use `componentId`'s `name` action on the document `message` shows. */
+export async function act(
     gym: AgentGym,
     agentId: string,
-    body: Press,
-): Promise<OnboardingMessage> {
-    const response = await gym.http.request("POST", `/v0/agents/${agentId}/send`, pressBody(body));
-    expect(response.status, response.text).toBe(202);
-    return (response.body as { message: OnboardingMessage }).message;
+    message: OnboardingMessage,
+    componentId: string,
+    name: string,
+    payload: Record<string, unknown> = {},
+    extra: { readonly id?: string; readonly mode?: Record<string, unknown> } = {},
+): Promise<UiActionResponse> {
+    const ui = uiOf(message);
+    const component = ui?.components.find((candidate) => candidate.id === componentId);
+    if (ui === undefined || component === undefined) {
+        throw new Error(`The message shows no component "${componentId}".`);
+    }
+    return await gym.client.sendUiAction(agentId, {
+        id: extra.id ?? actionId(),
+        messageId: message.id,
+        uiId: ui.id,
+        componentId,
+        action: { type: `${component.type}.${name}`, payload },
+        ...(extra.mode === undefined ? {} : { mode: extra.mode as never }),
+    });
 }
 
 /** A stand-in Claude Code that signs in only with the code `good-code`. */

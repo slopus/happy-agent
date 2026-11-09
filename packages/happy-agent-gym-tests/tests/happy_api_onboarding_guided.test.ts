@@ -3,22 +3,27 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
     DONE,
     FIRST_TASK_ASKED,
+    FIRST_TASK_TURN,
     PHONE_STEP,
+    PHONE_TURN,
     RENAME,
     SAVE_PROFILE,
+    choice,
     cue,
+    lastMessage,
     reply,
+    showing,
     startGuidedGym,
-    useRoutes,
+    connectCodex,
 } from "./support/guidedOnboardingGym.js";
 import {
     OnboardingGyms,
     flowOf,
     messagesOf,
-    press,
     textOf,
     waitForSaid,
-    waitForStep,
+    uiOf,
+    waitForOpening,
 } from "./support/onboardingGym.js";
 
 /** The conversation's own model leading onboarding once an AI is connected. */
@@ -39,15 +44,15 @@ describe("The model leading onboarding", () => {
                 // person first, then the first message.
                 "event:begin": () => SAVE_PROFILE,
                 saved: () => RENAME,
-                renamed: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
-                "said:Skip for now": () => ({ content: [{ text: PHONE_STEP, type: "text" }] }),
+                renamed: () => FIRST_TASK_TURN,
+                "said:Skip for now": () => PHONE_TURN,
                 "said:Later": () => ({
                     content: [{ type: "tool_call", name: "finish_onboarding", arguments: {} }],
                 }),
                 finished: () => ({ content: [{ text: DONE, type: "text" }] }),
                 "said:Thanks": () => ({ content: [{ text: "Anytime.", type: "text" }] }),
             });
-            await useRoutes(gym, agentId, ["codex"]);
+            await connectCodex(gym, agentId);
 
             const firstTaskStep = await waitForSaid(
                 gym,
@@ -77,9 +82,9 @@ describe("The model leading onboarding", () => {
                 "Call find_recent_projects to see their recent work, and nothing else",
             );
             expect(begin?.instructions).toContain(
-                "Your onboarding tools are save_profile, set_default_model, set_bot_name, find_recent_projects, clone_project, create_project, start_first_task, send_agent_message and finish_onboarding.",
+                "Your onboarding tools are show_ui, save_profile, set_default_model, set_bot_name, find_recent_projects, clone_project, create_project, start_first_task, send_agent_message and finish_onboarding.",
             );
-            const event = JSON.stringify(begin?.messages.at(-1));
+            const event = JSON.stringify(lastMessage(begin));
             expect(event).toContain('\\"connected\\":[{\\"app\\":\\"ChatGPT\\"');
             expect(event).toContain(
                 '\\"model\\":{\\"name\\":\\"Gym Codex\\",\\"effort\\":\\"Medium\\"}',
@@ -105,7 +110,7 @@ describe("The model leading onboarding", () => {
             };
             expect(bots.find((bot) => bot.agent.id === agentId)?.name).toBe("Ada's Chief of Staff");
             // The scripted bootstrap was never model input.
-            expect(JSON.stringify(begin?.messages)).not.toContain("I found these on this computer");
+            expect(JSON.stringify(begin?.messages)).not.toContain("Connect the one you use");
             // The hidden event is no one's message.
             for (const message of await messagesOf(gym, agentId)) {
                 expect(textOf(message)).not.toContain("happy-onboarding-event");
@@ -132,11 +137,13 @@ describe("The model leading onboarding", () => {
             expect(profile).toMatchObject({ name: "Ada Lovelace", email: "ada@example.com" });
 
             const pressed = await reply(gym, agentId, firstTaskStep.id, 2);
-            expect(pressed.message.content).toEqual([{ type: "text", text: "Skip for now" }]);
-            const phoneStep = await waitForSaid(gym, agentId, "<figure data-phone-app></figure>");
+            expect(pressed.message.content).toEqual([
+                { type: "text", text: "Skip for now" },
+                expect.objectContaining({ type: "action" }),
+            ]);
+            const phoneStep = await waitForSaid(gym, agentId, PHONE_STEP);
             expect(await flowOf(gym)).toMatchObject({ status: "running" });
-            // The phone app figure is the first block, so the menu is the second.
-            await reply(gym, agentId, phoneStep.id, 1, 1);
+            await reply(gym, agentId, phoneStep.id, 1);
             await waitForSaid(gym, agentId, DONE);
             expect(await flowOf(gym)).toMatchObject({
                 status: "finished",
@@ -169,54 +176,38 @@ describe("The model leading onboarding", () => {
     );
 
     it(
-        "offers the other AIs chosen when the first one fails to answer, and verifies on the next",
+        "opens again with why when the model's first answer fails, and verifies on the next",
         async () => {
             let attempts = 0;
-            const { gym, agentId } = await startGuidedGym(
-                gyms,
-                {
-                    "event:begin": () => {
-                        attempts += 1;
-                        if (attempts === 1)
-                            return { error: { message: "The account is out of credit." } };
-                        return SAVE_PROFILE;
-                    },
-                    saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+            const { gym, agentId } = await startGuidedGym(gyms, {
+                "event:begin": () => {
+                    attempts += 1;
+                    if (attempts === 1)
+                        return { error: { message: "The account is out of credit." } };
+                    return SAVE_PROFILE;
                 },
-                { claude: true },
-            );
-            const routes = (await waitForStep(gym, agentId, "providers"))!;
-            expect(textOf(routes)).toContain('value="claude" checked');
-            expect(textOf(routes)).toContain('value="codex" checked');
-            await press(gym, agentId, {
-                messageId: routes.id,
-                params: { step: "use" },
-                values: ["claude", "codex"],
+                saved: () => FIRST_TASK_TURN,
             });
+            const opening = await waitForOpening(gym, agentId);
+            await connectCodex(gym, agentId);
 
-            const failed = await waitForSaid(gym, agentId, "I couldn't get an answer from Claude.");
-            expect((await flowOf(gym)).step).toBe("verify-failed");
+            const failed = await waitForOpening(gym, agentId, [opening.id]);
+            expect(textOf(failed)).toMatch(/^I couldn't put ChatGPT to work yet\. /u);
             expect(textOf(failed)).toContain("out of credit");
-            // The AI that failed starts unticked; the other one chosen is still ticked.
-            expect(textOf(failed)).toContain('value="claude">');
-            expect(textOf(failed)).toContain('value="codex" checked');
-            // Back in the script with no AI that answers, so there is nothing to skip to.
+            expect(uiOf(failed)?.components.map((component) => component.id)).toContain("codex");
+            // Back in the opening with no AI that answers, so there is nothing to skip to.
             expect(await flowOf(gym)).toMatchObject({
                 status: "running",
                 composer: "disabled",
                 skippable: false,
             });
 
-            await press(gym, agentId, {
-                messageId: failed.id,
-                params: { step: "use" },
-                values: ["codex"],
-            });
+            await connectCodex(gym, agentId);
             await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
             const begins = gym.inference.requests.filter(
                 (request) => cue(request) === "event:begin",
             );
-            expect(begins.map((request) => request.providerId)).toEqual(["claude", "codex"]);
+            expect(begins.map((request) => request.providerId)).toEqual(["codex", "codex"]);
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,
@@ -229,7 +220,7 @@ describe("The model leading onboarding", () => {
                 "Update the install steps in the README of site, at /home/ada/site. Its README still describes the old installer.";
             const { gym, agentId } = await startGuidedGym(gyms, {
                 "event:begin": () => SAVE_PROFILE,
-                saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+                saved: () => FIRST_TASK_TURN,
                 "said:Update the README in site": () => ({
                     content: [
                         {
@@ -239,13 +230,13 @@ describe("The model leading onboarding", () => {
                         },
                     ],
                 }),
-                started: () => ({ content: [{ text: PHONE_STEP, type: "text" }] }),
+                started: () => PHONE_TURN,
                 elsewhere: () => ({ content: [{ text: "On it.", type: "text" }] }),
                 "event:taskUpdated:finished": () => ({
                     content: [{ text: "Update the README is done.", type: "text" }],
                 }),
             });
-            await useRoutes(gym, agentId, ["codex"]);
+            await connectCodex(gym, agentId);
             await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
             // The tool is at hand while the model guides, not something to search for.
             const begin = gym.inference.requests.find((request) => cue(request) === "event:begin");
@@ -259,7 +250,7 @@ describe("The model leading onboarding", () => {
                 providerId: "codex",
                 modelId: "gym-codex",
             });
-            await waitForSaid(gym, agentId, "<figure data-phone-app></figure>");
+            await waitForSaid(gym, agentId, PHONE_STEP);
             const { tasks } = (await gym.http.ok("GET", "/v0/tasks")) as {
                 tasks: {
                     id: string;
@@ -288,7 +279,7 @@ describe("The model leading onboarding", () => {
             }, "the task to receive its opening message");
             expect(opening).toBeDefined();
             const result = gym.inference.requests.find((request) => cue(request) === "started");
-            expect(JSON.stringify(result?.messages.at(-1))).toContain(
+            expect(JSON.stringify(lastMessage(result))).toContain(
                 `happy://agents/${task.agent.id}`,
             );
             expect(gym.errors).toEqual([]);
@@ -299,26 +290,24 @@ describe("The model leading onboarding", () => {
     it(
         "still starts a first task on a computer with no recent projects, and hands over when it finishes",
         async () => {
-            const NOTHING_FOUND = [
-                "I didn't find recent projects on this computer, so let's start your first one here. What do you want done first? Tell me in a line, or pick a start.",
-                "",
-                "<menu>",
-                '  <button data-action="reply" data-emphasis data-text="Clone a repository I\'ll name">Clone a repo</button>',
-                '  <button data-action="reply" data-text="Start a new project in a folder I pick">Start a new project</button>',
-                '  <button data-action="reply">I\'ll name a folder</button>',
-                '  <button data-action="reply">Skip for now</button>',
-                "</menu>",
-            ].join("\n");
+            const NOTHING_FOUND =
+                "I didn't find recent projects on this computer, so let's start your first one here. What do you want done first? Tell me in a line, or pick a start.";
             const WORK =
                 "Start a new Python project at ~/weather: a command-line weather app that prints today's forecast for a city. Create the folder and register it as a project, then build the first working version in a subtask.";
             const { gym, agentId } = await startGuidedGym(gyms, {
                 "event:begin": () => SAVE_PROFILE,
-                saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+                saved: () => FIRST_TASK_TURN,
                 // Discovery found nothing, so the model offers starts instead of suggestions.
-                "said:Look at my recent work": () => ({
-                    content: [{ text: NOTHING_FOUND, type: "text" }],
-                }),
-                "said:Start a new project in a folder I pick": () => ({
+                "said:Look at my recent work": () =>
+                    showing(NOTHING_FOUND, [
+                        choice("start", [
+                            "Clone a repo",
+                            "Start a new project",
+                            "I'll name a folder",
+                            "Skip for now",
+                        ]),
+                    ]),
+                "said:Start a new project": () => ({
                     content: [
                         {
                             text: "What should it be, and which folder should it go in?",
@@ -356,7 +345,7 @@ describe("The model leading onboarding", () => {
                 }),
                 finished: () => ({ content: [{ text: DONE, type: "text" }] }),
             });
-            await useRoutes(gym, agentId, ["codex"]);
+            await connectCodex(gym, agentId);
             const asked = await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
             await reply(gym, agentId, asked.id, 0);
             const nothing = await waitForSaid(gym, agentId, "I didn't find recent projects");
@@ -373,16 +362,10 @@ describe("The model leading onboarding", () => {
                 expect(tool?.defer, name).not.toBe(true);
             }
 
-            const pressed = await reply(
-                gym,
-                agentId,
-                nothing.id,
-                1,
-                0,
-                "Start a new project in a folder I pick",
-            );
+            const pressed = await reply(gym, agentId, nothing.id, 1);
             expect(pressed.message.content).toEqual([
-                { type: "text", text: "Start a new project in a folder I pick" },
+                { type: "text", text: "Start a new project" },
+                expect.objectContaining({ type: "action" }),
             ]);
             await waitForSaid(gym, agentId, "which folder should it go in?");
             await gym.send("A command-line weather app in Python, in ~/weather", {
@@ -405,7 +388,7 @@ describe("The model leading onboarding", () => {
             const handover = gym.inference.requests.find(
                 (request) => cue(request) === "event:taskUpdated:finished",
             );
-            expect(JSON.stringify(handover?.messages.at(-1))).toContain(
+            expect(JSON.stringify(lastMessage(handover))).toContain(
                 "The weather app prints today's forecast for a city. Its tests pass.",
             );
             expect(await flowOf(gym)).toMatchObject({ status: "finished", completedVersion: 1 });
@@ -419,7 +402,7 @@ describe("The model leading onboarding", () => {
         async () => {
             const { gym, agentId } = await startGuidedGym(gyms, {
                 "event:begin": () => SAVE_PROFILE,
-                saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+                saved: () => FIRST_TASK_TURN,
                 "said:Think harder": () => ({
                     content: [
                         {
@@ -437,7 +420,7 @@ describe("The model leading onboarding", () => {
                     content: [{ text: "Your agents think on high effort now.", type: "text" }],
                 }),
             });
-            await useRoutes(gym, agentId, ["codex"]);
+            await connectCodex(gym, agentId);
             await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
             await gym.send("Think harder", {
                 sessionId: agentId,
@@ -446,7 +429,7 @@ describe("The model leading onboarding", () => {
             });
             await waitForSaid(gym, agentId, "Your agents think on high effort now.");
             const set = gym.inference.requests.find((request) => cue(request) === "model set");
-            expect(JSON.stringify(set?.messages.at(-1))).toContain(
+            expect(JSON.stringify(lastMessage(set))).toContain(
                 "Set. The default is now Gym Codex · High, and the rest of onboarding runs on it.",
             );
             const { config } = (await gym.http.ok("GET", "/v0/config")) as {
@@ -476,7 +459,7 @@ describe("The model leading onboarding", () => {
                 gyms,
                 {
                     "event:begin": () => SAVE_PROFILE,
-                    saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+                    saved: () => FIRST_TASK_TURN,
                 },
                 { device: "phone" },
             );
@@ -486,40 +469,10 @@ describe("The model leading onboarding", () => {
                 device: "tablet",
             });
             expect(unknown.status, unknown.text).toBe(400);
-            await useRoutes(gym, agentId, ["codex"]);
+            await connectCodex(gym, agentId);
             await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
             const begin = gym.inference.requests.find((request) => cue(request) === "event:begin");
-            expect(JSON.stringify(begin?.messages.at(-1))).toContain('\\"device\\":\\"phone\\"');
-            expect(gym.errors).toEqual([]);
-        },
-        TEST_TIMEOUT_MS,
-    );
-
-    it(
-        "keeps what the person unticked when Use selected had nothing selected",
-        async () => {
-            const { gym, agentId } = await startGuidedGym(gyms, {
-                "event:begin": () => SAVE_PROFILE,
-                saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
-            });
-            const routes = (await waitForStep(gym, agentId, "providers"))!;
-            await press(gym, agentId, {
-                messageId: routes.id,
-                params: { step: "use" },
-                values: [],
-            });
-            const retry = (await waitForStep(gym, agentId, "choose-at-least-one"))!;
-            expect(textOf(retry)).toContain(
-                "Your agents need at least one AI to think with. Choose one, or sign in to another.",
-            );
-            expect(textOf(retry)).toContain('value="codex"');
-            expect(textOf(retry)).not.toContain("checked");
-            await press(gym, agentId, {
-                messageId: retry.id,
-                params: { step: "use" },
-                values: ["codex"],
-            });
-            await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
+            expect(JSON.stringify(lastMessage(begin))).toContain('\\"device\\":\\"phone\\"');
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

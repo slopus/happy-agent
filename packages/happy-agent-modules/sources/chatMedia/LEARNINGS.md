@@ -72,6 +72,15 @@ write blank lines inside their HTML. A block that resolves no image, or loses co
 stays Markdown, so a mistake never hides what the agent wrote. Guidance is one sentence and one
 tiny example in the instructions. The `present_files` layout argument stays as it was.
 
+## Models arrange images with `show_ui`, not HTML
+
+Chat UI replaced the HTML layouts as what models are taught: CHAT_MEDIA_INSTRUCTIONS now point at
+the `images` component of `show_ui`, and `present_files` no longer teaches layout HTML. Clients
+still draw the layouts already in conversations, and `present_files` still accepts its layout
+argument, so older history keeps rendering. A `show_ui` result's media are stored through the same
+snapshot path as `present_files` (`storedItems` accepts the `ui` presentation), so exported bots
+send them as they send presented files.
+
 ## Layout parsing and splitting stay bounded on hostile text
 
 A security review of layouts in reply text found no way to run code or reach unshown media, but

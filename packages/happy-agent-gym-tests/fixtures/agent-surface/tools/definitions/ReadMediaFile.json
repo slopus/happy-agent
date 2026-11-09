@@ -311,13 +311,13 @@
                 "properties": {
                   "root": {
                     "items": {
-                      "$id": "T2",
+                      "$id": "T1",
                       "anyOf": [
                         {
                           "properties": {
                             "children": {
                               "items": {
-                                "$ref": "T2"
+                                "$ref": "T1"
                               },
                               "maxItems": 500,
                               "type": "array"

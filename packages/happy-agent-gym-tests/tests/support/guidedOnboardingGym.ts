@@ -8,9 +8,10 @@ import { expect } from "vitest";
 
 import {
     OnboardingGyms,
-    press,
-    textOf,
-    waitForStep,
+    act,
+    messagesOf,
+    uiOf,
+    waitForOpening,
     type OnboardingFlow,
 } from "./onboardingGym.js";
 
@@ -44,24 +45,49 @@ export const FIRST_TASK_ASKED = [
     "I've put **Ada Lovelace** · ada@example.com on your profile, from your Git settings, so your agents know who they work for, and I'll go by Ada's Chief of Staff. Change either anytime.",
     "",
     "Now let's give them real work. With your permission, I'll look at the projects you worked on recently on this computer and their Git history, without changing anything, and suggest where agents can help first.",
-    "",
-    "<menu>",
-    '  <button data-action="reply" data-emphasis>Look at my recent work</button>',
-    '  <button data-action="reply">I\'ll name a folder</button>',
-    '  <button data-action="reply">Skip for now</button>',
-    "</menu>",
 ].join("\n");
 
-export const PHONE_STEP = [
-    "Your agents keep working while you step away. Put Happy on your phone, and you can see them finish and answer their questions from anywhere. Scan a code to get the app, then open it.",
-    "",
-    "<figure data-phone-app></figure>",
-    "",
-    "<menu>",
-    '  <button data-action="reply" data-emphasis>I\'ve opened Happy</button>',
-    '  <button data-action="reply">Later</button>',
-    "</menu>",
-].join("\n");
+export const PHONE_STEP =
+    "Your agents keep working while you step away. Put Happy on your phone, and you can see them finish and answer their questions from anywhere. Scan a code to get the app, then open it.";
+
+/** A model turn: its words, then the components it shows with `show_ui`. */
+export function showing(
+    text: string,
+    components: readonly { id: string; type: string; props: Record<string, unknown> }[],
+) {
+    return {
+        content: [
+            { type: "text" as const, text },
+            { type: "tool_call" as const, name: "show_ui", arguments: { components } },
+        ],
+    };
+}
+
+/** A `choice` component offering `labels`, the first primary. */
+export function choice(id: string, labels: readonly string[]) {
+    return {
+        id,
+        type: "choice",
+        props: {
+            options: labels.map((label, index) => ({
+                id: `o${String(index)}`,
+                label,
+                ...(index === 0 ? { primary: true } : {}),
+            })),
+        },
+    };
+}
+
+/** The first task asked, with its answers. */
+export const FIRST_TASK_TURN = showing(FIRST_TASK_ASKED, [
+    choice("first-task", ["Look at my recent work", "I'll name a folder", "Skip for now"]),
+]);
+
+/** The phone step, with the app's codes and its answers. */
+export const PHONE_TURN = showing(PHONE_STEP, [
+    { id: "app", type: "phone_app", props: {} },
+    choice("phone", ["I've opened Happy", "Later"]),
+]);
 
 export const DONE =
     "You're all set, Ada. I stay at the top of your sidebar. Tell me what you want done next, and I'll put agents on it. Ask me for the phone code anytime.";
@@ -91,6 +117,18 @@ export const RENAME = {
     ],
 };
 
+/** What a request answers: its newest message other than a hidden chat UI note. */
+export function lastMessage(
+    request: GymInferenceRequest | undefined,
+): GymInferenceRequest["messages"][number] | undefined {
+    return request?.messages.findLast((message) => !isNote(message));
+}
+
+/** A hidden `<happy-note>` message chat UI leaves the model. */
+function isNote(message: GymInferenceRequest["messages"][number]): boolean {
+    return JSON.stringify(message).includes("<happy-note>");
+}
+
 /** The hidden onboarding events in one model message, oldest first. */
 export function eventsIn(
     message: GymInferenceRequest["messages"][number] | undefined,
@@ -116,7 +154,8 @@ export function eventsIn(
  * person's words; or a tool's result.
  */
 export function cue(request: GymInferenceRequest): string {
-    const last = request.messages.at(-1);
+    // A hidden chat UI note, such as a sign-in's, rides along after what the turn answers.
+    const last = lastMessage(request);
     const text = JSON.stringify(last ?? {});
     const event = eventsIn(last).at(-1);
     if (event !== undefined) {
@@ -127,6 +166,7 @@ export function cue(request: GymInferenceRequest): string {
     if (last?.role === "user") {
         return `said:${last.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("")}`;
     }
+    if (text.includes("Shown to the person in this chat")) return "shown";
     if (text.includes("Saved their name and email")) return "saved";
     if (text.includes("Onboarding is finished")) return "finished";
     if (text.includes("Not finished.")) return "not finished";
@@ -207,6 +247,8 @@ export async function startGuidedGym(
                 if (elsewhere === undefined) throw new Error("Unscripted request elsewhere.");
                 return elsewhere(request);
             }
+            // After show_ui, the model writes nothing more.
+            if (cue(request) === "shown" && answers["shown"] === undefined) return { content: [] };
             const answer = answers[cue(request)];
             if (answer === undefined) throw new Error(`Unscripted request: ${cue(request)}`);
             return answer(request);
@@ -221,43 +263,47 @@ export async function startGuidedGym(
     return { gym, agentId: onboarding, home };
 }
 
-/** Use selected on the routes table with `values` ticked. */
-export async function useRoutes(gym: AgentGym, agentId: string, values: string[]): Promise<void> {
-    const routes = (await waitForStep(gym, agentId, "providers"))!;
-    expect(textOf(routes)).toContain(
-        "I found these on this computer. Choose the ones I should use.",
-    );
-    await press(gym, agentId, { messageId: routes.id, params: { step: "use" }, values });
+/** Use Codex from the opening: signed in already, it connects, and the model takes over. */
+export async function connectCodex(gym: AgentGym, agentId: string): Promise<void> {
+    const opening = await waitForOpening(gym, agentId);
+    const used = await act(gym, agentId, opening, "codex", "sign_in");
+    expect(used.record).toMatchObject({ content: [{ outcome: { status: "accepted" } }] });
 }
 
-/** Press a `reply` control: `controlIndex` in the menu at `blockIndex`, after any figure. */
+/** Press option `optionIndex` of the `choice` the agent message `messageId` shows. */
 export async function reply(
     gym: AgentGym,
     agentId: string,
     messageId: string,
-    controlIndex: number,
-    blockIndex = 0,
-    /** The control's `data-text`, which a reply press names as its `text` parameter. */
-    text?: string,
+    optionIndex: number,
 ) {
-    const response = await gym.http.request("POST", `/v0/agents/${agentId}/send`, {
-        mode: {
-            ...gym.selection,
-            providerId: "codex",
-            modelId: "gym-codex",
-            permissionMode: "auto",
-        },
-        content: [
-            {
-                type: "action",
-                messageId,
-                blockIndex,
-                controlIndex,
-                actionId: "reply",
-                params: text === undefined ? {} : { text },
+    const message = (await messagesOf(gym, agentId)).find(
+        (candidate) => candidate.id === messageId,
+    );
+    const component = uiOf(message)?.components.find((candidate) => candidate.type === "choice");
+    if (message === undefined || component?.type !== "choice") {
+        throw new Error("The message shows no choice.");
+    }
+    const option = component.props.options[optionIndex];
+    if (option === undefined) throw new Error(`The choice has no option ${String(optionIndex)}.`);
+    const response = await act(
+        gym,
+        agentId,
+        message,
+        component.id,
+        "choose",
+        { optionId: option.id },
+        {
+            mode: {
+                ...gym.selection,
+                providerId: "codex",
+                modelId: "gym-codex",
+                permissionMode: "auto",
             },
-        ],
-    });
-    expect(response.status, response.text).toBe(202);
-    return response.body as { message: { id: string; content: { type: string; text?: string }[] } };
+        },
+    );
+    expect(response.record).toMatchObject({ content: [{ outcome: { status: "accepted" } }] });
+    return response as typeof response & {
+        message: { id: string; content: { type: string; text?: string }[] };
+    };
 }

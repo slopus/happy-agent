@@ -8,24 +8,19 @@ import {
 
 /** What one runtime offers a recipe: anything else it names is refused. */
 export interface OnboardingRuntimeOffer {
-    /** Each effect with every outcome it can return. */
-    readonly effects: Readonly<Record<string, readonly string[]>>;
-    readonly conditions: ReadonlySet<string>;
-    /** Plain variables, HTML-escaped where they are filled. */
+    /** Variables the opening, its failure words, and the guide may use. */
     readonly variables: ReadonlySet<string>;
-    /** Variables the runtime writes as whole Markdown or inline action blocks. */
-    readonly blocks: ReadonlySet<string>;
+    /** Chat UI component types the runtime can fill below the opening's words. */
+    readonly components: ReadonlySet<string>;
     readonly tools: ReadonlySet<string>;
     readonly requirements: ReadonlySet<string>;
 }
 
 const VARIABLE = /\{\{([^{}]*)\}\}/gu;
-const TARGETS = new Set(["handoff", "finish"]);
 
 /**
- * Every way a recipe does not fit its schema or the runtime that would run it: a target that is
- * no step, an effect outcome left unmapped, a condition, variable, tool, or requirement the
- * runtime does not offer. Empty when the recipe can run.
+ * Every way a recipe does not fit its schema or the runtime that would run it: a variable,
+ * component, tool, or requirement the runtime does not offer. Empty when the recipe can run.
  */
 export function checkOnboardingRecipe(
     recipe: unknown,
@@ -36,78 +31,16 @@ export function checkOnboardingRecipe(
         return [`The recipe does not match its schema at ${first?.path ?? "/"}: ${first?.message}`];
     }
     const problems: string[] = [];
-    const steps = recipe.bootstrap.steps;
-    const isStep = (id: string) => Object.hasOwn(steps, id);
-    const reaches = (target: string, where: string) => {
-        if (!TARGETS.has(target) && !isStep(target))
-            problems.push(`${where} names no step "${target}".`);
-    };
-    for (const id of TARGETS) if (isStep(id)) problems.push(`"${id}" is a target, not a step ID.`);
-    reaches(recipe.bootstrap.start, "bootstrap.start");
-    if (recipe.bootstrap.handoffFailed !== undefined) {
-        reaches(recipe.bootstrap.handoffFailed, "bootstrap.handoffFailed");
-    }
-    for (const [id, step] of Object.entries(steps)) {
-        for (const target of Object.keys(step.next ?? {})) {
-            if (!isStep(target)) problems.push(`Step "${id}" leads to no step "${target}".`);
+    const bootstrap = recipe.bootstrap;
+    if (bootstrap !== undefined) {
+        problems.push(...unknownVariables(bootstrap.say, offer, "The opening"));
+        if (bootstrap.failed !== undefined) {
+            problems.push(...unknownVariables(bootstrap.failed, offer, "The failure text"));
         }
-        if (step.say?.at(-1)?.when !== undefined) {
-            problems.push(`Step "${id}" may say nothing: its last entry has a condition.`);
-        }
-        for (const entry of step.say ?? []) {
-            const condition = entry.when?.replace(/^!/u, "");
-            if (condition !== undefined && !offer.conditions.has(condition)) {
-                problems.push(`Step "${id}" uses an unknown condition "${condition}".`);
+        for (const type of bootstrap.offer) {
+            if (!offer.components.has(type)) {
+                problems.push(`The opening offers a component this runtime can't fill: "${type}".`);
             }
-            problems.push(...unknownVariables(entry.text, offer, `Step "${id}"`));
-        }
-        if (step.effect !== undefined) {
-            const outcomes = Object.hasOwn(offer.effects, step.effect.name)
-                ? offer.effects[step.effect.name]
-                : undefined;
-            if (outcomes === undefined) {
-                problems.push(`Step "${id}" uses an unknown effect "${step.effect.name}".`);
-            } else {
-                for (const outcome of outcomes) {
-                    if (!Object.hasOwn(step.effect.then, outcome)) {
-                        problems.push(`Step "${id}" leaves the outcome "${outcome}" unmapped.`);
-                    }
-                }
-                for (const [outcome, target] of Object.entries(step.effect.then)) {
-                    if (!outcomes.includes(outcome)) {
-                        problems.push(
-                            `Step "${id}" maps an outcome "${outcome}" its effect never returns.`,
-                        );
-                    }
-                    reaches(target, `Step "${id}"`);
-                }
-            }
-        }
-        if (step.input !== undefined) {
-            const rule =
-                step.next !== undefined && Object.hasOwn(step.next, step.input.step)
-                    ? step.next[step.input.step]
-                    : undefined;
-            if (rule === undefined) {
-                problems.push(
-                    `Step "${id}" takes a typed answer toward "${step.input.step}", which is not one of its next steps.`,
-                );
-            } else if (rule.params === undefined || !Object.hasOwn(rule.params, step.input.param)) {
-                problems.push(
-                    `Step "${id}" takes a typed answer as "${step.input.param}", which its step "${step.input.step}" does not declare.`,
-                );
-            }
-            if (step.say === undefined) {
-                problems.push(`Step "${id}" takes a typed answer but asks nothing.`);
-            }
-        }
-        if (step.end !== undefined && (step.effect !== undefined || step.next !== undefined)) {
-            problems.push(
-                `Step "${id}" ends the bootstrap, so it can have no effect or next steps.`,
-            );
-        }
-        if (step.say === undefined && step.effect === undefined && step.end === undefined) {
-            problems.push(`Step "${id}" neither says nor does anything.`);
         }
     }
     problems.push(...unknownVariables(recipe.guide, offer, "The guide"));
@@ -146,7 +79,7 @@ function unknownVariables(
 ): string[] {
     return [...recipeText(text).matchAll(VARIABLE)].flatMap((match) => {
         const name = match[1] ?? "";
-        return offer.variables.has(name) || offer.blocks.has(name)
+        return offer.variables.has(name)
             ? []
             : [`${where} uses an unknown variable "{{${name}}}".`];
     });

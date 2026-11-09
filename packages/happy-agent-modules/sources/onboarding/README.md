@@ -1,65 +1,54 @@
 # Onboarding
 
 Onboarding happens in the Chief of Staff's conversation, and the daemon runs it. Clients draw the
-conversation, draw its inline actions with `@slopus/happy-agent-client`, and send each press
-through `send`. `packages/happy-agent/API.md` ("Onboarding in a conversation" and "Inline
-actions") is the contract.
+conversation and its chat UI with `@slopus/happy-agent-client`, and send each click through
+`POST /v0/agents/:agentId/actions`. `packages/happy-agent/API.md` ("Onboarding in a conversation"
+and "Chat UI") is the contract.
 
-`OnboardingModule` takes Config, Durable Functions, History, Bots, Profile, Provider CLIs, Provider
-Routes, Provider Scan, the Mobile Connector, and Tasks. The runtime adds it only in standalone mode; a team
-server keeps the classic setup and answers the flow routes with `501`. It owns one stored state
-(owner `standalone`) and its versioned completion.
+`OnboardingModule` takes Config, Durable Functions, History, Bots, Profile, Provider CLIs,
+Provider Scan, the Mobile Connector, Tasks, and Chat UI. The runtime adds it only in standalone
+mode; a team server keeps the classic setup and answers the flow routes with `501`. It owns one
+stored state (owner `standalone`) and its versioned completion.
 
 ## The recipe
 
 What onboarding says and does is data: `recipes/local.json`, checked against
 `OnboardingRecipe.ts` and against what this runtime offers (`LOCAL_OFFER` in
-`impl/localWords.ts`) when the module is constructed. A recipe that names an effect, outcome,
-condition, variable, tool, or requirement this runtime lacks does not start.
-`recipes/onboardingRecipe.schema.json` is generated from the TypeBox schema for recipes written
-elsewhere, such as Happy Cloud's team recipes; regenerate it with
-`node --import tsx scripts/write-onboarding-recipe-schema.ts` in this package, and
-`tests/onboarding/onboardingRecipeSchemaFile.test.ts` fails while it is stale.
+`impl/localWords.ts`) when the module is constructed. A recipe that names a variable, component,
+tool, or requirement this runtime lacks does not start. `recipes/onboardingRecipe.schema.json` is
+generated from the TypeBox schema for recipes written elsewhere, such as Happy Cloud's team
+recipes; regenerate it with `node --import tsx scripts/write-onboarding-recipe-schema.ts` in this
+package, and `tests/onboarding/onboardingRecipeSchemaFile.test.ts` fails while it is stale.
 
 A recipe has two parts:
 
-- **The bootstrap**, a graph of steps. A step says one message (the first `say` entry whose `when`
-  condition holds), offers `onboarding.next` controls toward the steps listed in its `next`, and may
-  run an effect whose outcome its `then` maps to the next target: a step, `handoff`, or `finish`.
-- **The guide**, the model's instructions once the bootstrap hands off, with the tools the model has
-  while it guides.
+- **The opening** (`bootstrap`, optional): one message the server writes itself, its `say` words
+  and below them the chat UI components its `offer` names, filled from the runtime's own state.
+  The `local` recipe offers `provider_sign_in`, one per AI that is installed or has an installer.
+  `failed` is said instead, with the same components, when a connected AI could not be put to
+  work. A recipe without an opening hands the conversation to the model at once.
+- **The guide**, the model's instructions once the opening hands off, with the tools the model has
+  while it guides. The model asks with `show_ui`, never with markup in its text.
 
-`{{name}}` in a text is a variable. Plain variables (`botName`, `provider`, `reason`, …) are
-HTML-escaped where they are filled. Block variables (`routesTable`, `providerMenu`,
-`installCommand`, …) are Markdown or inline action blocks the runtime writes in
-`impl/localWords.ts`.
+`{{name}}` in a text is a variable (`botName`, `machine`, `provider`, `reason`,
+`firstProjectRecipe`), HTML-escaped where it is filled.
 
-## The bootstrap
+## The opening
 
-Entering a step happens in the transaction that decided it: a start, a press, or an effect's
-outcome. It stores the step and the ID its message will have, and invokes the `onboarding.step`
-Durable Function. That function writes the step's message as an assistant message in a finished
-maintenance run of its own, with no provider or model, so it is never model input. A rerun after a
-restart finds the message already written. Then it runs the step's effect.
+Opening happens in the transaction that decided it: a start, or a connection that failed. It
+stores step `opening` and the ID its message will have, and invokes the `onboarding.opening`
+Durable Function. That function writes the message through Chat UI's `post` as an assistant
+message in a finished maintenance run of its own, with no provider or model, so it is never model
+input. A rerun after a restart finds the message already written.
 
-An effect either has an outcome at once or waits for something outside the conversation:
-
-- a sign-in the flow started, followed through Provider CLIs' updates;
-- a sign-in the person runs in their own terminal, looked for every few seconds while it is awaited;
-- a daemon restart, after a route was added to `runtime.toml`.
-
-Only the message of the step the flow stands on is live. A press is resolved against the stored
-message with the client's shared resolver (in `ApiModule`), then `press` records the choice on the
-pressed message, stores the press as the person's words in a finished run of its own, and enters
-the step it names. A press needs no mode, because no model answers it. While the recipe disables
-typing, a typed message to the conversation is refused with `409`.
-
-A step may take a typed answer (`input`), such as a team server's name step. While the flow stands
-on it the composer is enabled, and `ApiModule` asks `answer` before it treats a message as typing.
-A message that fits (`impl/typedAnswer.ts`: one line, short enough, one of the listed values when
-there are any) is stored and announced like a press, and enters the step the input names with the
-trimmed text as its parameter. Anything else follows the recipe's typing rule. The `local` recipe
-has no such step.
+The opening's components act through Provider CLIs, not through onboarding: install, sign in,
+paste a code or a token. Provider CLIs announces a connection (`onConnected`) when the widget's
+`sign_in` finds the AI signed in already, or when a sign-in the widget started finishes. A sign-in
+the person finishes in their own terminal connects too, once a changed sign-in state is seen from
+signed out to signed in; an AI that was signed in all along waits for its widget. Onboarding then
+enables that AI's provider and hands over, or opens again with `failed` and the reason. While the
+recipe disables typing, a typed message to the conversation is refused with `409` before anything
+else about it is checked.
 
 A start may name the kind of device the person is on. The first start's is kept as `startedOn`,
 holds the `onPhone` condition, and reaches the model in `begin`.
@@ -70,18 +59,17 @@ ends the typing at once.
 
 ## The hand-off
 
-The model runs on the first model of the first AI the person chose, which becomes the default for
+The model runs on the first model of the AI the person connected, which becomes the default for
 new conversations too. It hears `begin` as a hidden system message, with what is connected, the
 model's name and effort, and the profile found in Profile or the person's Git settings. Its first
 answer is the verification: `afterInferenceTransact` records the provider as verified. A turn that
-settles without an answer returns to the recipe's `handoffFailed` step, which keeps the other AIs
-the person chose ticked.
+settles without an answer opens again with the recipe's `failed` words and why.
 
 While the model guides, the guide is in its instructions and the recipe's tools are at hand:
 `save_profile`, `set_default_model`, `find_recent_projects`, `start_first_task`, and
-`finish_onboarding`, which exist only then, and `set_bot_name`, `create_project`, `clone_project`,
-and `send_agent_message`, which their modules offer deferred everywhere and `overrideTools` loads
-for that time, so the model renames the bot "<First name>'s Chief of Staff" or to a nickname, sets
+`finish_onboarding`, which exist only then, and `show_ui`, `set_bot_name`, `create_project`,
+`clone_project`, and `send_agent_message`, which their modules offer deferred everywhere and
+`overrideTools` loads for that time, so the model renames the bot "<First name>'s Chief of Staff" or to a nickname, sets
 up the first task's project, and passes the person's word to the task, without searching.
 `find_recent_projects` reads the recent work in the daemon: the folders in Claude Code's and
 Codex's session history and their Git metadata through the read-only Git scanner, bounded to a

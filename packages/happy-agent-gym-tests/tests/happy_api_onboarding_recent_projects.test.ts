@@ -8,11 +8,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
     FIRST_TASK_ASKED,
+    FIRST_TASK_TURN,
     SAVE_PROFILE,
     cue,
     reply,
     startGuidedGym,
-    useRoutes,
+    connectCodex,
 } from "./support/guidedOnboardingGym.js";
 import { OnboardingGyms, messagesOf, waitForSaid } from "./support/onboardingGym.js";
 
@@ -39,7 +40,7 @@ function looking(
 ): Record<string, (request: GymInferenceRequest) => GymTurn> {
     return {
         "event:begin": () => SAVE_PROFILE,
-        saved: () => ({ content: [{ text: FIRST_TASK_ASKED, type: "text" }] }),
+        saved: () => FIRST_TASK_TURN,
         looked: () => {
             timings.push(Date.now());
             return { content: [{ text: said, type: "text" }] };
@@ -134,7 +135,7 @@ describe("Onboarding looking at recent work", () => {
                 gyms,
                 looking({ "Look at my recent work": "" }, NOTHING, timings),
             );
-            await useRoutes(gym, agentId, ["codex"]);
+            await connectCodex(gym, agentId);
             const asked = await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
             await reply(gym, agentId, asked.id, 0);
             await waitForSaid(gym, agentId, NOTHING);
@@ -169,7 +170,7 @@ describe("Onboarding looking at recent work", () => {
                 looking({ "Look at my recent work": "" }, SUGGESTED, timings),
             );
             const site = await recentSite(home);
-            await useRoutes(gym, agentId, ["codex"]);
+            await connectCodex(gym, agentId);
             const asked = await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
             await reply(gym, agentId, asked.id, 0);
             await waitForSaid(gym, agentId, SUGGESTED);
@@ -203,7 +204,7 @@ describe("Onboarding looking at recent work", () => {
                 }),
             });
             const site = await recentSite(home);
-            await useRoutes(gym, agentId, ["codex"]);
+            await connectCodex(gym, agentId);
             const asked = await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
             await reply(gym, agentId, asked.id, 1);
             await waitForSaid(gym, agentId, "Which folder should I look at?");

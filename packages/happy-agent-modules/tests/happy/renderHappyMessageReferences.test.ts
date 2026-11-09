@@ -256,14 +256,4 @@ describe("resolveHappyReferenceLabel", () => {
             grid,
         ]);
     });
-
-    it("drops the agent's inline action blocks, which the phone cannot press", async () => {
-        const menu = '<menu>\n  <button data-action="reply">Ship it</button>\n</menu>\n';
-        const rendered = await renderHappyMessageReferences(
-            [message("agent", { t: "text", text: `Ready?\n\n${menu}\nOr say what to change.` })],
-            async () => undefined,
-        );
-
-        expect(textOf(rendered)).toEqual(["Ready?\n\nOr say what to change."]);
-    });
 });

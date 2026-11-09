@@ -5,11 +5,14 @@ import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
 
 import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import { ChatUiModule } from "../chatUi/index.js";
 import { ProviderScanModule } from "../providerScan/index.js";
 import { checkProviderCliSignIn } from "./impl/checkProviderCliSignIn.js";
 import { createProviderCliVersion } from "./impl/createProviderCliVersion.js";
 import { discoverProviderCli } from "./impl/discoverProviderCli.js";
 import { installerProcess } from "./impl/installerProcess.js";
+import { runProviderCliCommand } from "./impl/runProviderCliCommand.js";
+import { contributeSignInComponent } from "./impl/signInComponent.js";
 import {
     PROVIDER_CLI_DEFINITIONS,
     type ProviderCliDefinition,
@@ -39,6 +42,11 @@ const SIGN_IN_FUNCTION = "provider-cli-sign-in";
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1_000;
 const SIGN_IN_TIMEOUT_MS = 10 * 60 * 1_000;
 const OUTPUT_COALESCE_MS = 250;
+const TOKEN_LOGIN_TIMEOUT_MS = 30_000;
+/** A Claude Code setup token, from `claude setup-token`, or an Anthropic API key. */
+const CLAUDE_TOKEN = /^sk-ant-(oat01|api03)-[A-Za-z0-9_-]{20,}$/;
+/** An OpenAI API key. */
+const OPENAI_KEY = /^sk-[A-Za-z0-9_-]{20,}$/;
 
 const operationArgumentsSchema = Type.Object(
     {
@@ -52,6 +60,12 @@ const operationArgumentsSchema = Type.Object(
 type OperationArguments = typeof operationArgumentsSchema.static;
 
 type Listener = (providerCli: ProviderCli, mutationId: string | undefined) => void;
+/** A conversation's `provider_sign_in` widget connected an assistant. */
+export type ProviderCliConnectedListener = (
+    ctx: Context,
+    providerCli: ProviderCli,
+    agentId: string,
+) => void;
 
 interface Entry {
     installation: ProviderCliInstallation;
@@ -85,15 +99,22 @@ export class ProviderClisModule implements AgentModule {
     readonly #refreshes = new Map<ProviderCliId, Promise<void>>();
     readonly #pendingEmits = new Map<ProviderCliId, NodeJS.Timeout>();
     readonly #listeners = new Set<Listener>();
+    readonly #connectedListeners = new Set<ProviderCliConnectedListener>();
 
+    /**
+     * @param chatUi Where the `provider_sign_in` component is served. With it, a chat can install
+     * and sign in an assistant from its own widget.
+     */
     constructor(
         config: ConfigModule,
         providerScan: ProviderScanModule,
         durable: DurableFunctionsModule,
+        chatUi?: ChatUiModule,
     ) {
         this.#config = config;
         this.#providerScan = providerScan;
         this.#durable = durable;
+        if (chatUi !== undefined) contributeSignInComponent(chatUi, this);
         const now = Date.now();
         for (const id of PROVIDER_CLI_IDS) {
             this.#entries.set(id, {
@@ -150,6 +171,28 @@ export class ProviderClisModule implements AgentModule {
         return () => {
             this.#listeners.delete(listener);
         };
+    }
+
+    /**
+     * Hear every assistant a conversation's sign-in widget connected: signed in from the widget,
+     * by a token it saved, or found signed in already when the widget asked.
+     */
+    onConnected(listener: ProviderCliConnectedListener): () => void {
+        this.#connectedListeners.add(listener);
+        return () => {
+            this.#connectedListeners.delete(listener);
+        };
+    }
+
+    /** Announce that a conversation's widget connected an assistant. */
+    connected(ctx: Context, providerCli: ProviderCli, agentId: string): void {
+        for (const listener of this.#connectedListeners) {
+            try {
+                listener(ctx, providerCli, agentId);
+            } catch (error: unknown) {
+                ctx.log.warn("A provider CLI connection listener failed.", {}, error);
+            }
+        }
     }
 
     /** Every assistant, in display order, after refreshing those not busy with an operation. */
@@ -251,6 +294,74 @@ export class ProviderClisModule implements AgentModule {
             });
             return this.#project(id);
         });
+    }
+
+    /**
+     * Save a pasted setup token or API key through the assistant's own credential path: Codex
+     * stores an OpenAI key with `codex login --with-api-key`, read from its standard input; a
+     * Claude setup token or Anthropic key becomes a Claude provider in runtime.toml, which runs
+     * after the next start. The token goes nowhere else: never to arguments, logs, or results.
+     */
+    async saveToken(
+        ctx: Context,
+        id: ProviderCliId,
+        token: string,
+    ): Promise<
+        | { readonly saved: true; readonly restartRequired: boolean }
+        | { readonly saved: false; readonly code: string; readonly reason: string }
+    > {
+        const name = definition(id).name;
+        const rejected = {
+            saved: false,
+            code: "token_rejected",
+            reason: `${name} didn't accept this token.`,
+        } as const;
+        const trimmed = token.trim();
+        if (id === "claude") {
+            if (!CLAUDE_TOKEN.test(trimmed)) return rejected;
+            const providerId = trimmed.startsWith("sk-ant-oat01-") ? "claude-token" : "claude-key";
+            if (this.#config.hasProvider(providerId)) {
+                return {
+                    saved: false,
+                    code: "already_saved",
+                    reason: `A ${name} token is already saved on this computer.`,
+                };
+            }
+            await this.#config.addRuntimeProvider(ctx, providerId, {
+                type: "claude",
+                ...(providerId === "claude-token"
+                    ? { oauth_token: trimmed }
+                    : { api_key: trimmed }),
+            });
+            return { saved: true, restartRequired: true };
+        }
+        if (id === "codex") {
+            if (!OPENAI_KEY.test(trimmed)) return rejected;
+            await this.#refresh(ctx, id);
+            const path = this.#entry(id).installation.path;
+            if (path === null) {
+                return {
+                    saved: false,
+                    code: "not_installed",
+                    reason: `${name} isn't installed yet.`,
+                };
+            }
+            const result = await runProviderCliCommand(
+                path,
+                ["login", "--with-api-key"],
+                this.#config.processEnvironment,
+                TOKEN_LOGIN_TIMEOUT_MS,
+                `${trimmed}\n`,
+            );
+            if (result.code !== 0) return rejected;
+            await this.#refresh(ctx, id);
+            return { saved: true, restartRequired: false };
+        }
+        return {
+            saved: false,
+            code: "unsupported",
+            reason: `${name} signs in only through its own sign-in page.`,
+        };
     }
 
     /** Stop the running install or sign-in, if any. */

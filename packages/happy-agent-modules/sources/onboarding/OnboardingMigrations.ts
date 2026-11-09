@@ -34,4 +34,12 @@ export const onboardingMigrations: readonly AgentModuleMigration[] = [
             await agentDatabaseRun(database, sql`DELETE FROM ${sql.raw(ONBOARDING_TABLE)}`);
         },
     ],
+    // Builds with the step-graph bootstrap stored the step it stood on. The opening has no steps,
+    // so those rows are discarded the same way.
+    [
+        "003-onboarding-opening",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(database, sql`DELETE FROM ${sql.raw(ONBOARDING_TABLE)}`);
+        },
+    ],
 ];

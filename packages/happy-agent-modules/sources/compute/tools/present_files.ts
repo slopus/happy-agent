@@ -28,7 +28,7 @@ const presentFilesArgumentsSchema = Type.Object(
             Type.String({
                 maxLength: 1024 * 1024,
                 description:
-                    "Optional small HTML fragment with inline CSS arranging the files; leave it out for the automatic layout",
+                    "Legacy: a small HTML fragment arranging the files. Leave it out; arrange images with show_ui instead",
             }),
         ),
     },
@@ -58,8 +58,7 @@ Use it when the user should see or receive a file you made or found, such as a c
 
 The files are copied when you call this, so later changes to them do not change what the user sees. An image may be at most 32 MiB, a video 256 MiB, and a document or other file 64 MiB, with at most 256 MiB per call.
 
-Optional layout: a small fragment of HTML with inline CSS (flexbox, grid, figure and figcaption) that arranges the files; each <img src> names one of filepaths exactly as you wrote it. Images show at their natural size unless you size them; width: 100% fills the width. Scripts, links, colours, and positioning are not supported; anything unsupported is ignored and reported back, and a file the layout leaves out is shown after it. Leave layout out and the chat arranges the files itself. For example:
-<figure><img src="out/chart.png" style="width: 100%"><figcaption>Revenue by quarter</figcaption></figure>`;
+To show several images together, in a grid or with captions, use the images component of show_ui instead.`;
 
 /** Show files from the agent's machine to the user, inline in this chat. */
 export function presentFilesTool(compute: Compute, chatMedia: ChatMediaModule) {
@@ -69,14 +68,7 @@ export function presentFilesTool(compute: Compute, chatMedia: ChatMediaModule) {
         capabilities: [
             "Show images, videos, PDFs, and downloadable files to the user inline in the chat.",
         ],
-        searchKeywords: [
-            "show file",
-            "present image",
-            "share video",
-            "display pdf",
-            "send file",
-            "image layout",
-        ],
+        searchKeywords: ["show file", "present image", "share video", "display pdf", "send file"],
         description: PRESENT_FILES_DESCRIPTION,
         parameters: presentFilesArgumentsSchema,
         returnType: presentFilesResultSchema,
@@ -123,7 +115,7 @@ export function presentFilesTool(compute: Compute, chatMedia: ChatMediaModule) {
  * is measured before it is read, so a directory, an empty file, or one over its limit is refused
  * without reading it.
  */
-async function presentComputeFiles(
+export async function presentComputeFiles(
     ctx: Context,
     compute: Compute,
     chatMedia: ChatMediaModule,
@@ -176,7 +168,7 @@ async function presentComputeFiles(
 }
 
 /** Whether reading any of these files crosses the agent's filesystem boundary. */
-async function shouldReviewPaths(
+export async function shouldReviewPaths(
     ctx: Context,
     compute: Compute,
     paths: readonly string[],

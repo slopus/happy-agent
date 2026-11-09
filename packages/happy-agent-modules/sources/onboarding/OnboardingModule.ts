@@ -16,8 +16,6 @@ import {
 import {
     formatHappyMarkdownLink,
     messageModeSchema,
-    splitChatActionBlocks,
-    type ActionChoice,
     type OnboardingFlow,
 } from "@slopus/happy-agent-client";
 import { Type } from "@sinclair/typebox";
@@ -25,6 +23,7 @@ import { Value } from "@sinclair/typebox/value";
 import { afterCommit, detach, withLifetime, type Context } from "@steve.kite/stdlib";
 
 import { BotsModule } from "../bots/index.js";
+import { ChatUiModule } from "../chatUi/index.js";
 import { ConfigModule, DefaultModelError } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { GitModule } from "../git/index.js";
@@ -33,7 +32,6 @@ import { MobileConnectorModule, STANDALONE_MOBILE_OWNER } from "../mobileConnect
 import { ProfileModule } from "../profile/index.js";
 import { ProjectsModule } from "../projects/index.js";
 import { ProviderClisModule, type ProviderCli, type ProviderCliId } from "../providerClis/index.js";
-import { ProviderRoutesModule, type ProviderRoute } from "../providerRoutes/index.js";
 import { ProviderScanModule } from "../providerScan/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { UserInputModule, type UserInputRequest } from "../userInput/index.js";
@@ -41,37 +39,23 @@ import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { WorkspacesModule, type Workspace } from "../workspaces/index.js";
 import { assertOnboardingRecipe } from "./impl/checkOnboardingRecipe.js";
 import { describeNamedFolder, describeRecentProjects } from "./impl/describeRecentProjects.js";
-import { fillRecipeText, recipeVariables } from "./impl/fillRecipeText.js";
+import { fillRecipeText } from "./impl/fillRecipeText.js";
 import { findRecentFolders } from "./impl/findRecentFolders.js";
 import {
     APP_OF,
     LOCAL_OFFER,
-    MARK_OF,
-    chatProviderId,
     cliAccount,
-    codeBlock,
     effortLabel,
     listOf,
     machineWord,
-    providerMenu,
-    routeAccount,
-    routeApp,
-    routeChoosable,
-    routeCli,
-    routesTable,
     sentence,
 } from "./impl/localWords.js";
 import { readGitIdentity } from "./impl/readGitIdentity.js";
 import { readProjectEvidence, type ReadGit } from "./impl/readProjectEvidence.js";
-import { typedAnswer } from "./impl/typedAnswer.js";
 import { onboardingMigrations } from "./OnboardingMigrations.js";
-import type { OnboardingRecipe, OnboardingRecipeTarget } from "./OnboardingRecipe.js";
+import type { OnboardingRecipe } from "./OnboardingRecipe.js";
 import { OnboardingRequestError } from "./OnboardingRequestError.js";
-import type {
-    OnboardingConnection,
-    OnboardingFirstTask,
-    OnboardingState,
-} from "./OnboardingState.js";
+import type { OnboardingFirstTask, OnboardingState } from "./OnboardingState.js";
 import { queryOnboardingState } from "./persistence/queryOnboardingState.js";
 import { upsertOnboardingState } from "./persistence/upsertOnboardingState.js";
 import localRecipe from "./recipes/local.json" with { type: "json" };
@@ -88,11 +72,9 @@ const HISTORY_TIMEOUT_MS = 1_000;
 const EVIDENCE_TIMEOUT_MS = 2_000;
 /** Set in the run store of the turn that finished onboarding, which still follows the guide. */
 const CLOSING_KEY = "closing";
-const STEP_FUNCTION = "onboarding.step";
+const OPENING_FUNCTION = "onboarding.opening";
 /** How many scripted message IDs are remembered as paced; far more than are ever in flight. */
 const MAX_PACED = 256;
-/** How often a sign-in the person does in their own terminal is looked for while one is awaited. */
-const MANUAL_SIGN_IN_POLL_MS = 3_000;
 /** How many first tasks the flow keeps; start_first_task starts more without following them. */
 const MAX_FIRST_TASKS = 16;
 /** How many workspaces, projects, and questions are remembered per first task. */
@@ -104,14 +86,11 @@ const MAX_TASK_DEPTH = 8;
 /** How many of a first task's agents are looked at for one still running. */
 const MAX_TASK_AGENTS = 64;
 
-/** One bootstrap step's message and effect, run after the transaction that entered it. */
-const stepArgumentsSchema = Type.Object(
+/** One opening message, written after the transaction that asked for it. */
+const openingArgumentsSchema = Type.Object(
     {
-        step: Type.String({ minLength: 1, maxLength: 64 }),
-        messageId: Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()]),
-        runId: Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()]),
-        params: Type.Record(Type.String(), Type.String({ maxLength: 128 })),
-        values: Type.Array(Type.String({ maxLength: 256 }), { maxItems: 64 }),
+        messageId: Type.String({ minLength: 1, maxLength: 64 }),
+        runId: Type.String({ minLength: 1, maxLength: 64 }),
     },
     { additionalProperties: false },
 );
@@ -130,15 +109,6 @@ const useModelArgumentsSchema = Type.Object(
     },
     { additionalProperties: false },
 );
-
-/** What an effect did: an outcome the recipe maps to its next target, or a wait. */
-type EffectResult =
-    | {
-          readonly outcome: string;
-          readonly vars?: Readonly<Record<string, string>>;
-          readonly patch?: Partial<OnboardingState>;
-      }
-    | { readonly wait: true; readonly patch?: Partial<OnboardingState> };
 
 /** What happened that the person did not do themselves, told to the model as hidden context. */
 type OnboardingEvent =
@@ -173,21 +143,6 @@ type TaskUpdate =
 /** The kind of device a start names: a recipe may word its steps for a phone. */
 export type OnboardingDevice = "desktop" | "phone";
 
-/** One press on an `onboarding.next` control, already resolved against its stored message. */
-export interface OnboardingPress {
-    readonly agentId: string;
-    /** The ID the person's message is stored under. */
-    readonly id: string;
-    readonly pressed: HistoryMessage;
-    readonly blockIndex: number;
-    readonly choice: ActionChoice;
-    /** The words the press is stored as. */
-    readonly words: string;
-    readonly step: string;
-    readonly params: Readonly<Record<string, string>>;
-    readonly values: readonly string[];
-}
-
 export type OnboardingListener = (flow: OnboardingFlow, mutationId: string | undefined) => void;
 /** A scripted message committed: the API types out `proseLength` of it, then shows it whole. */
 export type OnboardingSpeechListener = (
@@ -201,21 +156,11 @@ export type OnboardingSpeechListener = (
  */
 export type OnboardingScriptedRunListener = (agentId: string, runId: string) => void;
 /**
- * A press committed in a finished run of its own, with the pressed message's new choice; a typed
- * answer has no pressed message.
- */
-export type OnboardingPressListener = (
-    agentId: string,
-    press: HistoryMessage,
-    pressed: HistoryMessage | undefined,
-) => void;
-
-/**
  * Onboarding in the Chief of Staff's conversation, run from a recipe: the stored flow and its
- * versioned completion, the scripted bootstrap written before any model is involved, the presses
- * on its `onboarding.next` controls, the effects behind them, and the hand-off to the
- * conversation's model with the recipe's guide. See "Onboarding in a conversation" in API.md and
- * this module's README.
+ * versioned completion, the scripted opening written before any model is involved, with a
+ * `provider_sign_in` component for each AI this computer can connect, and the hand-off to the
+ * conversation's model with the recipe's guide once one connects. The model then asks with chat
+ * UI through `show_ui`. See "Onboarding in a conversation" in API.md and this module's README.
  */
 export class OnboardingModule implements AgentModule {
     readonly name = "onboarding";
@@ -227,7 +172,6 @@ export class OnboardingModule implements AgentModule {
     readonly #bots: BotsModule;
     readonly #profile: ProfileModule;
     readonly #providerClis: ProviderClisModule;
-    readonly #providerRoutes: ProviderRoutesModule;
     readonly #providerScan: ProviderScanModule;
     readonly #mobileConnector: MobileConnectorModule;
     readonly #tasks: TasksModule;
@@ -235,19 +179,19 @@ export class OnboardingModule implements AgentModule {
     readonly #workspaces: WorkspacesModule;
     readonly #userInput: UserInputModule;
     readonly #git: GitModule;
+    readonly #chatUi: ChatUiModule;
     readonly #recipe: OnboardingRecipe;
     readonly #listeners = new Set<OnboardingListener>();
     readonly #speechListeners = new Set<OnboardingSpeechListener>();
     readonly #scriptedRunListeners = new Set<OnboardingScriptedRunListener>();
-    readonly #pressListeners = new Set<OnboardingPressListener>();
     /** Scripted messages the API announces at reading speed rather than at once. */
     readonly #paced = new Set<string>();
+    /** Assistants seen signed out while the opening waits, so their sign-in is noticed. */
+    readonly #signedOut = new Set<ProviderCliId>();
     /** Outside any agent's loop, for work that writes the conversation's own metadata. */
     readonly #background = new AsyncResource("happy-agent-onboarding");
     #versions = createUuidV7Factory();
     #unstarted: OnboardingState | undefined;
-    #manualSignInPoll: ReturnType<typeof setInterval> | undefined;
-    #manualSignInChecking = false;
     #ctx: Context | undefined;
     #agents: AgentSystemRef | undefined;
 
@@ -258,7 +202,6 @@ export class OnboardingModule implements AgentModule {
         bots: BotsModule,
         profile: ProfileModule,
         providerClis: ProviderClisModule,
-        providerRoutes: ProviderRoutesModule,
         providerScan: ProviderScanModule,
         mobileConnector: MobileConnectorModule,
         tasks: TasksModule,
@@ -266,6 +209,7 @@ export class OnboardingModule implements AgentModule {
         workspaces: WorkspacesModule,
         userInput: UserInputModule,
         git: GitModule,
+        chatUi: ChatUiModule,
     ) {
         this.#config = config;
         this.#durable = durableFunctions;
@@ -273,7 +217,6 @@ export class OnboardingModule implements AgentModule {
         this.#bots = bots;
         this.#profile = profile;
         this.#providerClis = providerClis;
-        this.#providerRoutes = providerRoutes;
         this.#providerScan = providerScan;
         this.#mobileConnector = mobileConnector;
         this.#tasks = tasks;
@@ -281,13 +224,14 @@ export class OnboardingModule implements AgentModule {
         this.#workspaces = workspaces;
         this.#userInput = userInput;
         this.#git = git;
+        this.#chatUi = chatUi;
         this.#recipe = assertOnboardingRecipe(localRecipe, LOCAL_OFFER);
         durableFunctions.register({
-            name: STEP_FUNCTION,
-            argumentsSchema: stepArgumentsSchema,
+            name: OPENING_FUNCTION,
+            argumentsSchema: openingArgumentsSchema,
             resultSchema: Type.Null(),
             executor: async (ctx, call) => {
-                await this.#runStep(ctx, call.arguments);
+                await this.#say(ctx, call.arguments.messageId, call.arguments.runId);
                 return null;
             },
         });
@@ -332,6 +276,13 @@ export class OnboardingModule implements AgentModule {
                 moduleCtx.log.warn("Onboarding could not follow a provider CLI.", {}, error);
             });
         });
+        // The opening's sign-in widget connected an AI: the model takes over.
+        this.#providerClis.onConnected((_eventCtx, cli, agentId) => {
+            const moduleCtx = this.#context();
+            void this.#connected(moduleCtx, cli, agentId).catch((error: unknown) => {
+                moduleCtx.log.warn("Onboarding could not hand off to the model.", {}, error);
+            });
+        });
         this.#workspaces.onEvent(async (_eventCtx, event) => {
             if (event.type !== "workspace_updated" || event.change !== "mark_ready") return;
             const subtask = event.workspace.subtaskAgentId;
@@ -357,10 +308,6 @@ export class OnboardingModule implements AgentModule {
             });
         });
         return {
-            afterStart: async (startCtx: Context) => {
-                await this.#resumeAfterRestart(startCtx);
-                await this.#watchManualSignIn(startCtx);
-            },
             // The turn that finishes onboarding still writes the handover the guide describes.
             instructions: async (hookCtx, scope) =>
                 (await this.#guiding(hookCtx, scope)) ||
@@ -464,12 +411,6 @@ export class OnboardingModule implements AgentModule {
         return () => this.#scriptedRunListeners.delete(listener);
     }
 
-    /** Hear every press the bootstrap answers, after it committed, to announce it. */
-    onPressRecorded(listener: OnboardingPressListener): () => void {
-        this.#pressListeners.add(listener);
-        return () => this.#pressListeners.delete(listener);
-    }
-
     /** Whether a message is a scripted one, which `onSpoken` announces instead. */
     paces(recordId: string): boolean {
         return this.#paced.has(recordId);
@@ -496,8 +437,8 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * Begin onboarding when it has not begun: the recipe's first step is entered and its message
-     * written. Once onboarding has begun, finished, or completed, nothing changes. Nothing is
+     * Begin onboarding when it has not begun: the opening is written, or, for a recipe without
+     * one, the model takes over at once. Once onboarding has begun, finished, or completed, nothing changes. Nothing is
      * stored before the first start, so a server that only advertises onboarding behaves exactly
      * as one without it; that first start decides whether the installation was already in use.
      */
@@ -519,140 +460,17 @@ export class OnboardingModule implements AgentModule {
             if (current.status !== "not_started" || current.completedVersion !== null) {
                 return await this.#project(txCtx, current);
             }
-            const next = await this.#enter(
-                txCtx,
-                device === undefined ? current : { ...current, startedOn: device },
-                this.#recipe.bootstrap.start,
-                { params: {}, values: [] },
-                mutationId,
-            );
+            const started = device === undefined ? current : { ...current, startedOn: device };
+            const next =
+                this.#recipe.bootstrap === undefined
+                    ? await this.#handoff(txCtx, started, mutationId)
+                    : await this.#open(txCtx, started, {}, mutationId);
             return await this.#project(txCtx, next);
         });
     }
 
     /**
-     * One press on an `onboarding.next` control, in the caller's transaction, after the API
-     * resolved it against the stored message. It must be on the current step's scripted message
-     * and lead where that step allows. The choice is recorded on the pressed message, the press
-     * is stored as the person's message in a finished run of its own that no model reads, and the
-     * step it names is entered; its message is written once this commits.
-     */
-    async press(ctx: Context, press: OnboardingPress): Promise<HistoryMessage> {
-        const bot = await this.#bots.chiefOfStaff(ctx);
-        if (bot?.agentId !== press.agentId) {
-            throw new OnboardingRequestError("invalid", "That action runs only in onboarding.");
-        }
-        const state = await this.#state(ctx);
-        const current = state.step === null ? undefined : this.#step(state.step);
-        if (
-            state.status !== "running" ||
-            current === undefined ||
-            state.stepMessageId !== press.pressed.recordId
-        ) {
-            throw new OnboardingRequestError(
-                "conflict",
-                "That step of onboarding is over.",
-                press.pressed,
-            );
-        }
-        const rule =
-            current.next !== undefined && Object.hasOwn(current.next, press.step)
-                ? current.next[press.step]
-                : undefined;
-        if (rule === undefined) {
-            throw new OnboardingRequestError("invalid", "That step of onboarding leads elsewhere.");
-        }
-        const params: Record<string, string> = {};
-        for (const [name, value] of Object.entries(press.params)) {
-            if (name === "step") continue;
-            const declared =
-                rule.params !== undefined && Object.hasOwn(rule.params, name)
-                    ? rule.params[name]
-                    : undefined;
-            if (declared === undefined || (declared.values && !declared.values.includes(value))) {
-                throw new OnboardingRequestError(
-                    "invalid",
-                    "That step of onboarding takes no such choice.",
-                );
-            }
-            params[name] = value;
-        }
-        if (press.values.length > 0 && rule.values !== "checklist") {
-            throw new OnboardingRequestError("invalid", "That step of onboarding takes no values.");
-        }
-        const chosen: HistoryMessage = {
-            ...press.pressed,
-            actionChoices: {
-                ...press.pressed.actionChoices,
-                [String(press.blockIndex)]: press.choice,
-            },
-        };
-        await this.#history.replace(ctx, press.agentId, chosen);
-        const message = await this.#recordWords(ctx, press.agentId, press.id, press.words, chosen);
-        await this.#enter(ctx, state, press.step, { params, values: [...press.values] });
-        return message;
-    }
-
-    /**
-     * A typed message for `agentId`, in the send's transaction, when the bootstrap's current step
-     * takes it as its answer: stored like a press, in a finished run of its own that no model
-     * reads, and the step its input names is entered with the trimmed text as its parameter.
-     * Undefined when the step takes no typed answer or this text does not fit, so the message
-     * follows the recipe's typing rule instead.
-     */
-    async answer(
-        ctx: Context,
-        answer: { readonly agentId: string; readonly id: string; readonly text: string },
-    ): Promise<HistoryMessage | undefined> {
-        const state = await this.#bootstrapIn(ctx, answer.agentId);
-        if (state?.step == null) return undefined;
-        const answered = typedAnswer(this.#step(state.step), answer.text);
-        if (answered === undefined) return undefined;
-        const message = await this.#recordWords(ctx, answer.agentId, answer.id, answer.text);
-        await this.#enter(ctx, state, answered.step, { params: answered.params, values: [] });
-        return message;
-    }
-
-    /** The person's words for a press or a typed answer, in a finished run that no model reads. */
-    async #recordWords(
-        ctx: Context,
-        agentId: string,
-        id: string,
-        words: string,
-        pressed?: HistoryMessage,
-    ): Promise<HistoryMessage> {
-        const runId = createId();
-        const now = Date.now();
-        await this.#history.beginMaintenanceRun(ctx, agentId, runId, now);
-        await this.#history.record(ctx, agentId, {
-            role: "user",
-            recordId: id,
-            runId,
-            delivery: "queue",
-            blocks: [{ type: "text", text: words }],
-            at: now,
-        });
-        await this.#history.finishMaintenanceRun(ctx, agentId, runId, "completed", now);
-        const message = await this.#history.message(ctx, agentId, id);
-        if (message === undefined) throw new Error("The person's words were not recorded.");
-        afterCommit(ctx, () => {
-            for (const listener of this.#pressListeners) {
-                try {
-                    listener(
-                        agentId,
-                        structuredClone(message),
-                        pressed === undefined ? undefined : structuredClone(pressed),
-                    );
-                } catch (error: unknown) {
-                    ctx.log.warn("An onboarding press listener failed.", {}, error);
-                }
-            }
-        });
-        return message;
-    }
-
-    /**
-     * A typed message for `agentId`, in the send's transaction. While the bootstrap runs in that
+     * A typed message for `agentId`, in the send's transaction. While the opening runs in that
      * conversation, a recipe that disables typing refuses it, and one that hands off on typing
      * hands the conversation to the model first, so the model answers it with the guide.
      */
@@ -672,17 +490,17 @@ export class OnboardingModule implements AgentModule {
     }
 
     #refuseTyping(): void {
-        if (this.#recipe.bootstrap.typing !== "disabled") return;
+        if (this.#recipe.bootstrap?.typing !== "disabled") return;
         throw new OnboardingRequestError(
             "conflict",
-            "This conversation takes typing once an AI is connected. Use the buttons above.",
+            "This conversation takes typing once an AI is connected. Connect one above.",
         );
     }
 
-    /** The state while the bootstrap runs in `agentId`'s conversation. */
+    /** The state while the opening runs in `agentId`'s conversation. */
     async #bootstrapIn(ctx: Context, agentId: string): Promise<OnboardingState | undefined> {
         const state = await queryOnboardingState(ctx, OWNER);
-        if (state?.status !== "running" || state.step === null) return undefined;
+        if (state?.status !== "running" || state.step !== "opening") return undefined;
         if ((await this.#bots.chiefOfStaff(ctx))?.agentId !== agentId) return undefined;
         return state;
     }
@@ -815,7 +633,6 @@ export class OnboardingModule implements AgentModule {
                 status: "finished",
                 step: null,
                 stepMessageId: null,
-                waiting: false,
             });
             await runKV.write(txCtx, CLOSING_KEY, true);
             return "Onboarding is finished. This is an ordinary chat from here.";
@@ -838,288 +655,99 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * Enter one target in the caller's transaction: a step, whose message and effect run once
-     * this commits; the hand-off to the model; or the end.
+     * Write the opening, in the caller's transaction: its message, with `vars` such as why the
+     * last hand-off failed, is written once this commits, in a finished run of its own.
      */
-    async #enter(
+    async #open(
         ctx: Context,
         state: OnboardingState,
-        target: OnboardingRecipeTarget,
-        input: {
-            readonly params: Readonly<Record<string, string>>;
-            readonly values: readonly string[];
-        },
+        vars: Readonly<Record<string, string>>,
         mutationId?: string,
     ): Promise<OnboardingState> {
-        if (target === "handoff") return await this.#handoff(ctx, state, mutationId);
-        if (target === "finish") {
-            return await this.#write(
-                ctx,
-                { ...state, status: "finished", step: null, stepMessageId: null, waiting: false },
-                mutationId,
-            );
-        }
-        const step = this.#step(target);
-        if (step === undefined) throw new Error(`The onboarding recipe has no step "${target}".`);
-        const messageId = step.say === undefined ? null : createId();
+        const messageId = createId();
         const next = await this.#write(
             ctx,
             {
                 ...state,
                 status: "running",
-                step: target,
+                step: "opening",
                 stepMessageId: messageId,
-                waiting: false,
+                vars: { ...vars },
                 verifying: false,
             },
             mutationId,
         );
         await this.#durable.invoke(ctx, {
-            function: STEP_FUNCTION,
-            arguments: {
-                step: target,
-                messageId,
-                runId: messageId === null ? null : createId(),
-                params: { ...input.params },
-                values: [...input.values],
-            },
+            function: OPENING_FUNCTION,
+            arguments: { messageId, runId: createId() },
         });
         return next;
     }
 
-    /** A step's message, then its effect, after the transaction that entered it. */
-    async #runStep(
-        ctx: Context,
-        call: {
-            readonly step: string;
-            readonly messageId: string | null;
-            readonly runId: string | null;
-            readonly params: Readonly<Record<string, string>>;
-            readonly values: readonly string[];
-        },
-    ): Promise<void> {
-        const state = await this.#state(ctx);
-        if (state.step !== call.step || state.stepMessageId !== call.messageId) return;
-        if (call.messageId !== null && call.runId !== null) {
-            await this.#say(ctx, call.step, call.messageId, call.runId);
-        }
-        const end = this.#step(call.step)?.end;
-        if (end !== undefined) {
-            await ctx.inTx(async (txCtx) => {
-                const current = await this.#state(txCtx);
-                if (current.step !== call.step || current.stepMessageId !== call.messageId) return;
-                await this.#enter(txCtx, current, end, { params: {}, values: [] });
-            });
-            return;
-        }
-        const effect = this.#step(call.step)?.effect;
-        if (effect === undefined || state.waiting) return;
-        const result = await this.#effect(ctx, effect.name, call.params, call.values);
-        await this.#settle(ctx, call.step, call.messageId, result);
-        if ("wait" in result) {
-            await this.#recheck(ctx);
-            await this.#watchManualSignIn(ctx);
-        }
-    }
-
-    /** Apply an effect's result, unless the flow moved on meanwhile. */
-    async #settle(
-        ctx: Context,
-        step: string,
-        messageId: string | null,
-        result: EffectResult,
-    ): Promise<void> {
-        await ctx.inTx(async (txCtx) => {
-            const state = await this.#state(txCtx);
-            if (state.step !== step || state.stepMessageId !== messageId) return;
-            const patched: OnboardingState = {
-                ...state,
-                ...result.patch,
-                ...("wait" in result ? {} : { vars: { ...result.vars } }),
-            };
-            if ("wait" in result) {
-                await this.#write(txCtx, { ...patched, waiting: true });
-                return;
-            }
-            const then = this.#step(step)?.effect?.then;
-            const target =
-                then !== undefined && Object.hasOwn(then, result.outcome)
-                    ? then[result.outcome]
-                    : undefined;
-            if (target === undefined) {
-                txCtx.log.warn("An onboarding effect returned an outcome its step does not map.", {
-                    step,
-                    outcome: result.outcome,
-                });
-                return;
-            }
-            await this.#enter(txCtx, patched, target, { params: {}, values: [] });
-        });
-    }
-
-    /** The local runtime's effects. */
-    async #effect(
-        ctx: Context,
-        name: string,
-        params: Readonly<Record<string, string>>,
-        values: readonly string[],
-    ): Promise<EffectResult> {
-        const state = await this.#state(ctx);
-        const subject = chatProviderId(params["provider"] ?? "") ?? state.subject ?? undefined;
-        switch (name) {
-            case "routes.use":
-                return await this.#useRoutes(ctx, values);
-            case "provider.choose": {
-                if (subject === undefined) return failed("Choose an AI first.");
-                const cli = await this.#providerClis.get(ctx, subject);
-                if (cli.signIn.status === "signed_in") return await this.#useCli(ctx, cli);
-                const patch = { subject };
-                if (cli.installation.status === "installed") return { outcome: "signIn", patch };
-                if (cli.installer !== null) return { outcome: "install", patch };
-                return { outcome: "manual", patch };
-            }
-            case "provider.connect": {
-                if (subject === undefined) return failed("Choose an AI first.");
-                const cli = await this.#providerClis.get(ctx, subject);
-                if (cli.signIn.status === "signed_in") return await this.#useCli(ctx, cli);
-                try {
-                    if (cli.installation.status !== "installed") {
-                        await this.#providerClis.install(ctx, subject);
-                    } else {
-                        await this.#providerClis.signIn(ctx, subject, undefined);
-                    }
-                } catch (error: unknown) {
-                    return { ...failed(errorText(error)), patch: { subject } };
-                }
-                return { wait: true, patch: { subject } };
-            }
-            case "provider.await": {
-                if (subject === undefined) return failed("Choose an AI first.");
-                const cli = await this.#providerClis.get(ctx, subject);
-                if (cli.signIn.status === "signed_in") return await this.#useCli(ctx, cli);
-                return { wait: true, patch: { subject } };
-            }
-            case "daemon.restart":
-                return { wait: true };
-            default:
-                return failed("That step can't run here.");
-        }
-    }
-
     /**
-     * Use selected on the detected routes: each ticked one that is not a provider yet is set up,
-     * the unticked ones' providers are turned off, and the model runs on the first one. A route
-     * added to runtime.toml runs only after a restart, which the flow waits for.
+     * A signed-in assistant becomes one the conversation can run on: its provider is turned on.
+     * Fails, with the reason, when it is signed in yet this daemon has no provider for it.
      */
-    async #useRoutes(ctx: Context, values: readonly string[]): Promise<EffectResult> {
-        const routes = (await this.#routes(ctx)).filter(routeChoosable);
-        const chosen = routes.filter((route) => values.includes(route.id));
-        if (chosen.length === 0) return { outcome: "none", vars: { ticked: values.join(" ") } };
-        const connections: OnboardingConnection[] = [];
-        const failures: string[] = [];
-        let restart = false;
-        for (const route of chosen) {
-            let providerId = route.providerId;
-            if (route.use !== null) {
-                try {
-                    const used = await this.#providerRoutes.use(ctx, route.id);
-                    restart ||= used.restartRequired;
-                    providerId = used.route.providerId ?? route.use.providerId;
-                } catch {
-                    failures.push(route.name);
-                    continue;
-                }
-            }
-            // Two routes to one provider, such as a sign-in and the token that replaces it, are
-            // one connection.
-            if (
-                providerId === null ||
-                connections.some((connection) => connection.providerId === providerId)
-            ) {
-                continue;
-            }
-            const account = routeAccount(route);
-            connections.push({
-                app: routeApp(route),
-                ...(account === undefined ? {} : { account }),
-                providerId,
-            });
-        }
-        const chosenIds = connections.map((connection) => connection.providerId);
-        const off = routes.flatMap((route) =>
-            !chosen.includes(route) &&
-            route.providerId !== null &&
-            !chosenIds.includes(route.providerId)
-                ? [route.providerId]
-                : [],
-        );
-        if (off.length > 0) {
-            await this.#providerScan
-                .setOverrides(ctx, Object.fromEntries(off.map((id) => [id, { enabled: false }])))
-                .catch((error: unknown) => {
-                    ctx.log.warn("Onboarding could not turn off the unticked routes.", {}, error);
-                });
-        }
-        const subject = chosen.map(routeCli).find((cli) => cli !== undefined) ?? null;
-        if (connections.length === 0) {
-            return {
-                ...failed(
-                    failures.length > 0
-                        ? `${listOf(failures)} couldn't be set up.`
-                        : "None of them could be set up.",
-                ),
-                patch: { subject },
-            };
-        }
-        const patch = { subject, chosen: chosenIds, connections };
-        if (restart) {
-            const names = chosen.map((route) => route.name);
-            return {
-                outcome: "restart",
-                vars: { routesReady: `${listOf(names)} ${names.length === 1 ? "is" : "are"}` },
-                patch: { ...patch, restartRequired: true },
-            };
-        }
-        return { outcome: "ok", patch };
-    }
-
-    /**
-     * A signed-in assistant becomes the one the conversation runs on, or is `unusable`: signed in,
-     * yet with no provider this daemon can run.
-     */
-    async #useCli(ctx: Context, cli: ProviderCli): Promise<EffectResult> {
-        const patch = { subject: cli.id };
+    async #useCli(
+        ctx: Context,
+        cli: ProviderCli,
+    ): Promise<
+        | {
+              readonly connection: {
+                  readonly app: string;
+                  readonly account?: string;
+                  readonly providerId: string;
+              };
+          }
+        | { readonly reason: string }
+    > {
         if (cli.providerId === null) {
-            return {
-                ...unusable("My settings on this computer have no connection for it."),
-                patch,
-            };
+            return { reason: "My settings on this computer have no connection for it." };
         }
         try {
             await this.#providerScan.setOverrides(ctx, { [cli.providerId]: { enabled: true } });
         } catch (error: unknown) {
-            return { ...unusable(errorText(error)), patch };
+            return { reason: errorText(error) };
         }
         const account = cliAccount(cli);
         return {
-            outcome: "ok",
-            patch: {
-                ...patch,
-                chosen: [cli.providerId],
-                connections: [
-                    {
-                        app: APP_OF[cli.id],
-                        ...(account === undefined ? {} : { account }),
-                        providerId: cli.providerId,
-                    },
-                ],
+            connection: {
+                app: APP_OF[cli.id],
+                ...(account === undefined ? {} : { account }),
+                providerId: cli.providerId,
             },
         };
     }
 
     /**
-     * Follow one provider CLI while a step waits for it: start the sign-in once an install the
-     * flow started finishes, carry on once it is signed in, and say why when it failed. In the
+     * The opening's widget connected an AI in the Chief of Staff's conversation: it becomes the one
+     * the model runs on, and the model takes over. One that cannot run says why, with the sign-in
+     * components again.
+     */
+    async #connected(ctx: Context, cli: ProviderCli, agentId: string): Promise<void> {
+        if ((await this.#bootstrapIn(ctx, agentId)) === undefined) return;
+        const used = await this.#useCli(ctx, cli);
+        await ctx.inTx(async (txCtx) => {
+            const state = await this.#bootstrapIn(txCtx, agentId);
+            if (state === undefined) return;
+            if ("reason" in used) {
+                await this.#open(txCtx, state, {
+                    provider: APP_OF[cli.id],
+                    reason: sentence(used.reason),
+                });
+                return;
+            }
+            await this.#handoff(txCtx, {
+                ...state,
+                chosen: [used.connection.providerId],
+                connections: [used.connection],
+            });
+        });
+    }
+
+    /**
+     * Follow one provider CLI. While the opening waits, a sign-in that finished outside the
+     * widget, such as in the person's own terminal, connects it as the widget would. In the
      * guided part, an assistant that finishes signing in joins the others and the model hears it.
      */
     async #cliChanged(ctx: Context, cli: ProviderCli): Promise<void> {
@@ -1129,95 +757,14 @@ export class OnboardingModule implements AgentModule {
             await this.#providerAdded(ctx, state, cli);
             return;
         }
-        const effect = this.#step(state.step)?.effect?.name;
-        if (
-            !state.waiting ||
-            state.subject !== cli.id ||
-            (effect !== "provider.connect" && effect !== "provider.await")
-        ) {
+        // Only a change seen happen counts: an AI found signed in already waits for its widget.
+        if (cli.signIn.status !== "signed_in") {
+            if (cli.signIn.status === "signed_out") this.#signedOut.add(cli.id);
             return;
         }
-        if (cli.signIn.status === "signed_in") {
-            await this.#settle(ctx, state.step, state.stepMessageId, await this.#useCli(ctx, cli));
-            return;
-        }
-        if (effect !== "provider.connect") return;
-        const operation = cli.operation;
-        if (
-            operation?.kind === "install" &&
-            operation.status === "succeeded" &&
-            cli.installation.status === "installed"
-        ) {
-            await this.#providerClis
-                .signIn(ctx, cli.id, undefined)
-                .catch(async (error: unknown) => {
-                    await this.#settle(
-                        ctx,
-                        state.step!,
-                        state.stepMessageId,
-                        failed(errorText(error)),
-                    );
-                });
-            return;
-        }
-        if (operation?.status === "failed") {
-            await this.#settle(
-                ctx,
-                state.step,
-                state.stepMessageId,
-                failed(operation.error?.message ?? "It stopped before it finished."),
-            );
-        }
-    }
-
-    /**
-     * While the flow waits for a sign-in the person runs themselves, nothing the daemon started
-     * reports it, so the assistant is checked every few seconds until the flow moves on.
-     */
-    async #watchManualSignIn(ctx: Context): Promise<void> {
-        if (this.#manualSignInPoll !== undefined || !(await this.#awaitingManualSignIn(ctx)))
-            return;
-        const poll = setInterval(() => {
-            if (this.#manualSignInChecking) return;
-            this.#manualSignInChecking = true;
-            const moduleCtx = this.#context();
-            void (async () => {
-                if (
-                    moduleCtx.lifetime?.aborted === true ||
-                    !(await this.#awaitingManualSignIn(moduleCtx))
-                ) {
-                    clearInterval(poll);
-                    this.#manualSignInPoll = undefined;
-                    return;
-                }
-                await this.#recheck(moduleCtx);
-            })()
-                .catch((error: unknown) => {
-                    moduleCtx.log.warn("Onboarding could not look for a sign-in.", {}, error);
-                })
-                .finally(() => {
-                    this.#manualSignInChecking = false;
-                });
-        }, MANUAL_SIGN_IN_POLL_MS);
-        poll.unref();
-        this.#manualSignInPoll = poll;
-    }
-
-    async #awaitingManualSignIn(ctx: Context): Promise<boolean> {
-        const state = await queryOnboardingState(ctx, OWNER);
-        return (
-            state?.status === "running" &&
-            state.step !== null &&
-            state.waiting &&
-            this.#step(state.step)?.effect?.name === "provider.await"
-        );
-    }
-
-    /** A wait was just stored: anything the assistant did before that still counts. */
-    async #recheck(ctx: Context): Promise<void> {
-        const state = await this.#state(ctx);
-        if (!state.waiting || state.subject === null) return;
-        await this.#cliChanged(ctx, await this.#providerClis.get(ctx, state.subject));
+        if (!this.#signedOut.delete(cli.id) || cli.operation?.status === "running") return;
+        const bot = await this.#bots.chiefOfStaff(ctx);
+        if (bot !== undefined) await this.#connected(ctx, cli, bot.agentId);
     }
 
     /** In the guided part, a sign-in that just finished adds that assistant and tells the model. */
@@ -1233,21 +780,13 @@ export class OnboardingModule implements AgentModule {
             return;
         }
         const result = await this.#useCli(ctx, cli);
-        if (!("outcome" in result) || result.outcome !== "ok") return;
+        if ("reason" in result) return;
         await ctx.inTx(async (txCtx) => {
             const current = await this.#state(txCtx);
             if (current.status !== "running" || current.step !== null) return;
-            const account = cliAccount(cli);
             await this.#write(txCtx, {
                 ...current,
-                connections: [
-                    ...current.connections,
-                    {
-                        app: APP_OF[cli.id],
-                        ...(account === undefined ? {} : { account }),
-                        providerId: cli.providerId!,
-                    },
-                ],
+                connections: [...current.connections, result.connection],
             });
             await this.#tell(txCtx, current, { kind: "providerAdded", app: APP_OF[cli.id] });
         });
@@ -1420,7 +959,8 @@ export class OnboardingModule implements AgentModule {
     /**
      * The model takes over: it runs on the first chosen AI's first model, which becomes the
      * default too, the guide joins its instructions, and it hears `begin` as hidden context. Its
-     * first answer is the verification. No model to run on returns to the bootstrap.
+     * first answer is the verification. With no model to run on, the opening is written again
+     * with the reason.
      */
     async #handoff(
         ctx: Context,
@@ -1433,18 +973,16 @@ export class OnboardingModule implements AgentModule {
             )
             .at(0);
         const bot = await this.#bots.chiefOfStaff(ctx);
-        const failedTarget = this.#recipe.bootstrap.handoffFailed;
         if (model === undefined || bot === undefined) {
             const reason =
                 bot === undefined
                     ? "My conversation isn't here."
                     : "It offers no model I can use yet.";
-            if (failedTarget === undefined) throw new Error(reason);
-            return await this.#enter(
+            if (this.#recipe.bootstrap === undefined) throw new Error(reason);
+            return await this.#open(
                 ctx,
-                { ...state, vars: { reason } },
-                failedTarget,
-                { params: {}, values: [] },
+                state,
+                { provider: state.connections[0]?.app ?? "that AI", reason },
                 mutationId,
             );
         }
@@ -1461,7 +999,6 @@ export class OnboardingModule implements AgentModule {
                 status: "running",
                 step: null,
                 stepMessageId: null,
-                waiting: false,
                 restartRequired: false,
                 model: { providerId: model.providerId, modelId: model.id },
                 verifying: true,
@@ -1483,44 +1020,22 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * The model's first turn ended without an answer: back to the recipe's step for that, where
-     * the routes table keeps the other AIs the person chose ticked and the one that failed not.
+     * The model's first turn ended without an answer: the opening is written again with the
+     * recipe's failure words, and the next connection hands off again.
      */
     async #handoffFailed(ctx: Context, error: string): Promise<void> {
-        const target = this.#recipe.bootstrap.handoffFailed;
-        const routes = (await this.#routes(ctx)).filter(routeChoosable);
         await ctx.inTx(async (txCtx) => {
             const state = await this.#state(txCtx);
             if (!state.verifying) return;
-            const ticked = routes.flatMap((route) => {
-                const providerId = route.providerId ?? route.use?.providerId;
-                return providerId !== undefined &&
-                    state.chosen.includes(providerId) &&
-                    providerId !== state.model?.providerId
-                    ? [route.id]
-                    : [];
-            });
-            const reset = {
-                ...state,
-                verifying: false,
-                vars: { reason: sentence(error), ticked: ticked.join(" ") },
-            };
-            if (target === undefined) {
-                await this.#write(txCtx, reset);
+            const provider =
+                state.connections.find(
+                    (connection) => connection.providerId === state.model?.providerId,
+                )?.app ?? "that AI";
+            if (this.#recipe.bootstrap === undefined) {
+                await this.#write(txCtx, { ...state, verifying: false });
                 return;
             }
-            await this.#enter(txCtx, reset, target, { params: {}, values: [] });
-        });
-    }
-
-    /** A provider added to runtime.toml before the restart runs now: the flow carries on. */
-    async #resumeAfterRestart(ctx: Context): Promise<void> {
-        const state = await queryOnboardingState(ctx, OWNER);
-        if (state?.step == null || !state.waiting) return;
-        if (this.#step(state.step)?.effect?.name !== "daemon.restart") return;
-        await this.#settle(ctx, state.step, state.stepMessageId, {
-            outcome: "ok",
-            patch: { restartRequired: false },
+            await this.#open(txCtx, state, { provider, reason: sentence(error) });
         });
     }
 
@@ -1551,11 +1066,11 @@ export class OnboardingModule implements AgentModule {
 
     async #guide(ctx: Context): Promise<string> {
         const bot = await this.#bots.chiefOfStaff(ctx);
-        return fillRecipeText(
-            this.#recipe.guide,
-            { botName: bot?.name ?? "Chief of Staff", machine: machineWord(process.platform) },
-            { firstProjectRecipe: this.#firstProjectRecipe() },
-        );
+        return fillRecipeText(this.#recipe.guide, {
+            botName: bot?.name ?? "Chief of Staff",
+            machine: machineWord(process.platform),
+            firstProjectRecipe: this.#firstProjectRecipe(),
+        });
     }
 
     #firstProjectRecipe(): string {
@@ -1710,10 +1225,18 @@ export class OnboardingModule implements AgentModule {
         });
     }
 
-    /** One scripted message, in a finished run of its own with no provider or model. */
-    async #say(ctx: Context, stepId: string, messageId: string, runId: string): Promise<void> {
+    /**
+     * One opening message, in a finished run of its own with no provider or model: the recipe's
+     * words, or its failure words with why the last hand-off failed, and below them a
+     * `provider_sign_in` for each AI this computer can connect. Nothing is written when the
+     * opening moved on meanwhile.
+     */
+    async #say(ctx: Context, messageId: string, runId: string): Promise<void> {
+        const state = await this.#state(ctx);
+        if (state.step !== "opening" || state.stepMessageId !== messageId) return;
+        const bootstrap = this.#recipe.bootstrap;
         const bot = await this.#bots.chiefOfStaff(ctx);
-        if (bot === undefined) {
+        if (bot === undefined || bootstrap === undefined) {
             ctx.log.warn("Onboarding has no conversation to speak in.");
             return;
         }
@@ -1721,8 +1244,20 @@ export class OnboardingModule implements AgentModule {
         if ((await this.#history.message(ctx, bot.agentId, messageId)) !== undefined) return;
         const run = await this.#beginSaying(ctx, bot.agentId, runId);
         let text: string;
+        let components: { id: string; type: string; props: unknown }[];
         try {
-            text = await this.#render(ctx, stepId);
+            text = fillRecipeText(
+                state.vars["reason"] !== undefined && bootstrap.failed !== undefined
+                    ? bootstrap.failed
+                    : bootstrap.say,
+                {
+                    botName: bot.name,
+                    machine: machineWord(process.platform),
+                    provider: state.vars["provider"] ?? "that AI",
+                    reason: state.vars["reason"] ?? "",
+                },
+            );
+            components = await this.#offer(ctx, bootstrap.offer);
         } catch (error: unknown) {
             await ctx.inTx(async (txCtx) => {
                 await this.#history.finishMaintenanceRun(
@@ -1738,23 +1273,25 @@ export class OnboardingModule implements AgentModule {
         }
         await ctx.inTx(async (txCtx) => {
             if ((await this.#history.message(txCtx, bot.agentId, messageId)) !== undefined) return;
-            const now = Date.now();
             // Marked before it is recorded, so the API never announces it whole.
             this.#paced.add(messageId);
             if (this.#paced.size > MAX_PACED) {
                 this.#paced.delete(this.#paced.values().next().value!);
             }
-            await this.#history.record(txCtx, bot.agentId, {
-                role: "assistant",
+            const message = await this.#chatUi.post(txCtx, bot.agentId, {
                 recordId: messageId,
                 runId: run,
-                blocks: [{ type: "text", text }],
-                at: now,
+                text,
+                components,
             });
-            await this.#history.finishMaintenanceRun(txCtx, bot.agentId, run, "completed", now);
-            const message = await this.#history.message(txCtx, bot.agentId, messageId);
-            if (message === undefined) return;
-            const prose = proseLength(text);
+            await this.#history.finishMaintenanceRun(
+                txCtx,
+                bot.agentId,
+                run,
+                "completed",
+                Date.now(),
+            );
+            const prose = text.trimEnd().length;
             afterCommit(txCtx, () => {
                 for (const listener of this.#speechListeners) {
                     try {
@@ -1767,94 +1304,23 @@ export class OnboardingModule implements AgentModule {
         });
     }
 
-    /** A step's words, with what the daemon finds now. */
-    async #render(ctx: Context, stepId: string): Promise<string> {
-        const state = await this.#state(ctx);
-        const entries = this.#step(stepId)?.say ?? [];
-        let routes: Promise<ProviderRoute[]> | undefined;
-        let cli: Promise<ProviderCli | undefined> | undefined;
-        const routesOf = () =>
-            (routes ??= this.#routes(ctx).then((all) => all.filter(routeChoosable)));
-        const cliOf = () =>
-            (cli ??=
-                state.subject === null
-                    ? Promise.resolve(undefined)
-                    : this.#providerClis.get(ctx, state.subject).catch(() => undefined));
-        const holds = async (condition: string): Promise<boolean> => {
-            switch (condition) {
-                case "routesFound":
-                    return (await routesOf()).length > 0;
-                case "installed":
-                    return (await cliOf())?.installation.status === "installed";
-                case "installable":
-                    return (await cliOf())?.installer != null;
-                case "subjectKnown":
-                    return state.subject !== null;
-                case "onPhone":
-                    return state.startedOn === "phone";
-                default:
-                    return false;
-            }
-        };
-        let entry = entries.at(-1);
-        for (const candidate of entries) {
-            const when = candidate.when;
-            if (
-                when === undefined ||
-                (when.startsWith("!") ? !(await holds(when.slice(1))) : await holds(when))
-            ) {
-                entry = candidate;
-                break;
+    /**
+     * The components the opening offers, by type, filled from this computer's state:
+     * `provider_sign_in` is one per AI it can install or has installed.
+     */
+    async #offer(
+        ctx: Context,
+        types: readonly string[],
+    ): Promise<{ id: string; type: string; props: unknown }[]> {
+        const components: { id: string; type: string; props: unknown }[] = [];
+        for (const type of types) {
+            if (type !== "provider_sign_in") continue;
+            for (const cli of await this.#providerClis.list(ctx)) {
+                if (cli.installation.status !== "installed" && cli.installer === null) continue;
+                components.push({ id: cli.id, type, props: { provider: cli.id } });
             }
         }
-        if (entry === undefined) return "";
-        const subject: ProviderCliId | null = state.subject;
-        const found = await cliOf();
-        const bot = await this.#bots.chiefOfStaff(ctx);
-        const variables: Record<string, string> = {
-            botName: bot?.name ?? "Chief of Staff",
-            machine: machineWord(process.platform),
-            provider:
-                subject !== null
-                    ? APP_OF[subject]
-                    : (state.connections[0]?.app ?? "the AI you chose"),
-            providerCli: subject ?? "",
-            providerMark: subject === null ? "" : MARK_OF[subject],
-            cliName: found?.name ?? (subject === null ? "" : APP_OF[subject]),
-            vendor: found?.vendor ?? "",
-            installHost: found?.installer?.sourceHost ?? "",
-            reason: state.vars["reason"] ?? "",
-            routesReady: state.vars["routesReady"] ?? "",
-        };
-        const blocks: Record<string, string> = {};
-        for (const name of recipeVariables(entry.text)) {
-            switch (name) {
-                case "routesTable": {
-                    const ticked = state.vars["ticked"];
-                    blocks[name] = routesTable(
-                        await routesOf(),
-                        ticked === undefined ? undefined : ticked.split(" ").filter(Boolean),
-                    );
-                    break;
-                }
-                case "providerMenu":
-                    blocks[name] = providerMenu({ withNone: true });
-                    break;
-                case "providerCatalog":
-                    blocks[name] = providerMenu({ withNone: false });
-                    break;
-                case "installCommand":
-                    blocks[name] = found?.installer ? codeBlock(found.installer.command) : "";
-                    break;
-                case "signInCommand":
-                    blocks[name] = codeBlock(found?.commands.signIn ?? `${subject ?? ""} login`);
-                    break;
-                case "firstProjectRecipe":
-                    blocks[name] = this.#firstProjectRecipe();
-                    break;
-            }
-        }
-        return fillRecipeText(entry.text, variables, blocks);
+        return components;
     }
 
     /**
@@ -1883,18 +1349,6 @@ export class OnboardingModule implements AgentModule {
                 ctx.log.warn("An onboarding run listener failed.", {}, error);
             }
         }
-    }
-
-    async #routes(ctx: Context): Promise<ProviderRoute[]> {
-        return await this.#providerRoutes.list(ctx).catch((error: unknown) => {
-            ctx.log.warn("Onboarding could not list provider routes.", {}, error);
-            return [];
-        });
-    }
-
-    #step(id: string) {
-        const steps = this.#recipe.bootstrap.steps;
-        return Object.hasOwn(steps, id) ? steps[id] : undefined;
     }
 
     /** The stored state, or one not started that keeps its version until something is stored. */
@@ -1942,8 +1396,6 @@ export class OnboardingModule implements AgentModule {
         const bot = await this.#bots.chiefOfStaff(ctx);
         const bootstrapping = state.status === "running" && state.step !== null;
         const guiding = state.status === "running" && state.step === null;
-        const input =
-            bootstrapping && state.step !== null ? this.#step(state.step)?.input : undefined;
         return {
             version: state.version,
             recipe: state.recipe,
@@ -1951,14 +1403,14 @@ export class OnboardingModule implements AgentModule {
             step: state.status === "running" ? state.step : null,
             agentId: bot?.agentId ?? null,
             composer:
-                bootstrapping && input === undefined && this.#recipe.bootstrap.typing === "disabled"
+                bootstrapping && this.#recipe.bootstrap?.typing === "disabled"
                     ? "disabled"
                     : "enabled",
             composerPlaceholder:
                 (guiding
                     ? this.#recipe.composerPlaceholder
                     : bootstrapping
-                      ? (input?.placeholder ?? this.#recipe.bootstrap.composerPlaceholder)
+                      ? this.#recipe.bootstrap?.composerPlaceholder
                       : undefined) ?? null,
             restartRequired: state.restartRequired,
             // Nothing works before an AI is connected and the model has the conversation.
@@ -1981,8 +1433,6 @@ export class OnboardingModule implements AgentModule {
             status: "not_started",
             step: null,
             stepMessageId: null,
-            waiting: false,
-            subject: null,
             vars: {},
             chosen: [],
             connections: [],
@@ -2047,24 +1497,6 @@ function briefly(text: string): string | undefined {
     return oneLine(sentences.slice(0, 2).join("").trim());
 }
 
-function failed(reason: string): EffectResult {
-    return { outcome: "failed", vars: { reason: sentence(reason) } };
-}
-
-function unusable(reason: string): EffectResult {
-    return { outcome: "unusable", vars: { reason: sentence(reason) } };
-}
-
 function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
-}
-
-/** How much of a message is prose, typed out before its first block lays down whole. */
-function proseLength(text: string): number {
-    let length = 0;
-    for (const segment of splitChatActionBlocks(text)) {
-        if (segment.type !== "markdown") break;
-        length += segment.text.length;
-    }
-    return text.slice(0, length).trimEnd().length;
 }

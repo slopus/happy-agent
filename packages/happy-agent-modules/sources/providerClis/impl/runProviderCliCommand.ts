@@ -10,14 +10,16 @@ export interface ProviderCliCommandResult {
 }
 
 /**
- * Run one short local command of a vendor program with no input, no window, and a hard time
- * bound. Output is capped; the result never throws.
+ * Run one short local command of a vendor program with no window and a hard time bound, and with
+ * no input unless `input` is given, which is written to its standard input and never to its
+ * arguments. Output is capped; the result never throws.
  */
 export async function runProviderCliCommand(
     command: string,
     args: readonly string[],
     env: Readonly<NodeJS.ProcessEnv>,
     timeoutMs: number,
+    input?: string,
 ): Promise<ProviderCliCommandResult> {
     return await new Promise((resolve) => {
         let stdout = "";
@@ -36,7 +38,7 @@ export async function runProviderCliCommand(
             child = spawn(batch ? `"${command}"` : command, args, {
                 env: { ...env },
                 shell: batch,
-                stdio: ["ignore", "pipe", "pipe"],
+                stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
                 windowsHide: true,
             });
         } catch {
@@ -55,6 +57,10 @@ export async function runProviderCliCommand(
             if (stderr.length < MAX_OUTPUT) stderr += chunk.toString("utf8");
         });
         child.on("error", () => finish(null));
+        if (input !== undefined) {
+            child.stdin?.on("error", () => undefined);
+            child.stdin?.end(input);
+        }
         // A browser the program started may inherit its output pipes and keep them open long
         // after the program has finished, so `exit` only waits briefly for the rest of the output.
         let exitCode: number | null = null;

@@ -1,6 +1,7 @@
 [
   "tool_search",
   "read_agent_history.4551c7ff5ff0",
+  "show_ui",
   "get_presence",
   "list_presences",
   "set_presence",

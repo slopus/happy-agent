@@ -4,11 +4,14 @@ import { afterEach, describe, expect, it, onTestFinished } from "vitest";
 import {
     DONE,
     FIRST_TASK_ASKED,
+    FIRST_TASK_TURN,
     PHONE_STEP,
+    PHONE_TURN,
     SAVE_PROFILE,
     eventsIn,
+    lastMessage,
     startGuidedGym,
-    useRoutes,
+    connectCodex,
 } from "./support/guidedOnboardingGym.js";
 import {
     OnboardingGyms,
@@ -54,23 +57,23 @@ function guided(
 ) {
     return {
         "event:begin": () => SAVE_PROFILE,
-        saved: () => say(FIRST_TASK_ASKED),
+        saved: () => FIRST_TASK_TURN,
         "said:Update the README in site": () => START_FIRST_TASK,
-        started: () => say(PHONE_STEP),
+        started: () => PHONE_TURN,
         ...answers,
     };
 }
 
 /** Ask for the first task and wait until the Chief of Staff has offered the phone. */
 async function startFirstTask(gym: AgentGym, agentId: string) {
-    await useRoutes(gym, agentId, ["codex"]);
+    await connectCodex(gym, agentId);
     await waitForSaid(gym, agentId, "**Ada Lovelace** · ada@example.com");
     await gym.send("Update the README in site", {
         sessionId: agentId,
         providerId: "codex",
         modelId: "gym-codex",
     });
-    await waitForSaid(gym, agentId, "<figure data-phone-app></figure>");
+    await waitForSaid(gym, agentId, PHONE_STEP);
     const task = await gym.waitUntil(
         async () => (await flowOf(gym)).firstTasks?.[0],
         "a first task",
@@ -84,7 +87,7 @@ function taskUpdates(gym: AgentGym, agentId: string): Record<string, unknown>[] 
     return gym.inference.requests
         .filter((request) => request.sessionId === agentId)
         .flatMap((request) =>
-            eventsIn(request.messages.at(-1)).filter((event) => event["kind"] === "taskUpdated"),
+            eventsIn(lastMessage(request)).filter((event) => event["kind"] === "taskUpdated"),
         );
 }
 
@@ -115,7 +118,7 @@ async function checkOut() {
             "event:taskUpdated:finished": () => say("Update the README is done."),
             // The task, and the subtask it opens.
             elsewhere: async (request) => {
-                const last = JSON.stringify(request.messages.at(-1));
+                const last = JSON.stringify(lastMessage(request));
                 if (last.includes("Update the install steps")) {
                     await opening;
                     return {
@@ -205,7 +208,7 @@ describe("The first task's updates", () => {
                     "said:Thanks": () => say("Anytime."),
                     // The task, the only other conversation.
                     elsewhere: (request) => {
-                        const last = JSON.stringify(request.messages.at(-1));
+                        const last = JSON.stringify(lastMessage(request));
                         if (last.includes("Update the install steps")) {
                             return {
                                 content: [
@@ -368,12 +371,10 @@ describe("The first task's updates", () => {
             const woken = gym.inference.requests.filter(
                 (request) =>
                     request.sessionId === agentId &&
-                    eventsIn(request.messages.at(-1)).some(
-                        (event) => event["kind"] === "taskUpdated",
-                    ),
+                    eventsIn(lastMessage(request)).some((event) => event["kind"] === "taskUpdated"),
             );
             expect(woken).toHaveLength(1);
-            expect(eventsIn(woken[0]!.messages.at(-1))).toEqual([
+            expect(eventsIn(lastMessage(woken[0]!))).toEqual([
                 checkedOut,
                 expect.objectContaining({ state: "finished" }),
             ]);

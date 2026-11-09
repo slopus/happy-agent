@@ -4,7 +4,9 @@ Phones pair with this daemon by scanning a QR code and then reach it directly ov
 private Tailcat socket or an operator-configured HTTPS origin. `MobileConnectorModule` depends on Config, Team, Node, Tailcat, and
 Durable Functions. The API module takes it to authenticate phone credentials and serve the
 desktop and handshake routes; this module owns the pairing state machine, the device store, and
-the exposure.
+the exposure. Given Chat UI, it contributes `phone_app` (the codes that download the app) and
+`phone_pair` (`start`, whose result carries the pairing QR payload as a secret only the clicking
+client receives, then `confirm` and `cancel`).
 
 ```text
 phone ── server.tailcat:24781 ── Tailcat (own identity, mobile.private.json, binds no port)

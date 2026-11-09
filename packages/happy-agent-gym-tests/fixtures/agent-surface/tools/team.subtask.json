@@ -1,6 +1,7 @@
 [
   "ToolSearch",
   "read_agent_history.4551c7ff5ff0",
+  "show_ui",
   "get_presence",
   "list_presences",
   "set_presence",
@@ -98,7 +99,7 @@
   "read_skill",
   "BashOutput",
   "Bash.fd08acc32d74",
-  "Read.5ec61f018e9f",
+  "Read.0c5c70d2ce9a",
   "Edit.57d38ea47aa1",
   "Write.426cb6d90b68",
   "Glob.d4f19c27f67a",

@@ -79,49 +79,40 @@ describe("history inline action migration", () => {
     });
 });
 
-describe("inline action choices after the migration", () => {
-    it("keeps the choices a press records on a message once every migration has run", async () => {
+describe("history action choices migration", () => {
+    it("drops the choices an earlier preview recorded on a pressed message", async () => {
         const history = new HistoryModule();
-        const database = moduleDatabase(history.migrations, "history-inline-action-choices");
+        const earlier = history.migrations.filter(
+            ([key]) => key !== "008-history-drop-action-choices",
+        );
+        const migration = history.migrations.find(
+            ([key]) => key === "008-history-drop-action-choices",
+        );
+        if (migration === undefined) throw new Error("Expected the action choices migration.");
+        const database = moduleDatabase(earlier, "history-action-choices-migration");
         await database.ready;
         try {
-            await history.record(database.context, "happyagent", {
-                role: "agent",
-                recordId: "offerrecord",
-                at: 0,
-                blocks: [
-                    { type: "text", text: '<menu><button data-action="reply">Yes</button></menu>' },
-                ],
-            });
-            const [stored] = (
-                await history.read(database.context, "happyagent", { from: "start" })
-            ).messages.map(({ message }) => message);
-            if (stored === undefined) throw new Error("Expected the offer.");
-            await history.replace(database.context, "happyagent", {
-                ...stored,
-                actionChoices: { "0": { kind: "button", index: 0 } },
-            });
-            // A press is the person's plain words; nothing the migration would rewrite.
-            await history.record(database.context, "happyagent", {
-                role: "user",
-                recordId: "pressrecord",
-                at: 1,
-                blocks: [{ type: "text", text: "Yes" }],
-            });
+            await agentDatabaseRun(
+                database.database,
+                sql`INSERT INTO happy_agent_module_history
+                    (agent_id, position, record_id, role, message_json, search_text,
+                     assistant_messages, user_messages, text_characters, thinking_blocks,
+                     tool_calls, tool_results)
+                    VALUES ('happyagent', 0, ${offer.recordId}, ${offer.role},
+                            ${JSON.stringify(offer)}, '', 0, 0,
+                            ${offer.blocks[0]!.text.length}, 0, 0, 0)`,
+            );
+            await migration[1](database.context, database.database);
 
             const page = await history.read(database.context, "happyagent", { from: "start" });
             expect(page.messages.map(({ message }) => message)).toEqual([
-                { ...stored, actionChoices: { "0": { kind: "button", index: 0 } } },
                 {
-                    role: "user",
-                    recordId: "pressrecord",
-                    at: 1,
-                    blocks: [{ type: "text", text: "Yes" }],
+                    role: "agent",
+                    recordId: "offerrecord",
+                    at: 0,
+                    blocks: [{ type: "text", text: "Which AI should I use?" }],
                 },
             ]);
-            expect(
-                await history.personSpokeAfter(database.context, "happyagent", "offerrecord"),
-            ).toBe(true);
         } finally {
             database.close();
         }

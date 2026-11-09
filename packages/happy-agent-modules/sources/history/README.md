@@ -168,11 +168,18 @@ module, under these keys:
 
 Per-call presentation state is kept apart from the response: `tool_name` is written to that call's
 scoped `scope.runKV` by `beforeToolCallTransact`, and `tool_presentation.<callId>` — a bounded
-`file_diff`, `media`, or `artifact` presentation the tool returned — is written to
+`file_diff`, `media`, `artifact`, or `ui` presentation the tool returned — is written to
 `scope.historyKV` after successful execution. Both are read by `afterToolCallTransact`, which
 deletes the presentation as it records it; the run store clears the name when the agent settles.
 The presentation cannot use the call's run store, because a transactional tool commits its result
 before `afterToolCall` runs, and the commit ends that call's stores.
+
+Chat UI writes two kinds of messages through History. `recordStandalone` stores an attempt
+record (a service message holding one `action` block) in a finished run of its own, never closing
+the run in progress. `replace` updates that record when its outcome settles. An accepted
+`"message"` action queues the person's message with its words and the `action` block, and the
+block survives acceptance. `personMessageAfter` tells Chat UI whether the person spoke after an
+offer, which closes it.
 
 Sub-agent creation is different: its resolved identity must exist before execution creates the
 child, not only with a successful result. Its bounded `spawnPresentation` stays on the original

@@ -1,7 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { agentRequestProfileSchema, cuid2Schema } from "@slopus/happy-agent-base";
 import {
-    actionBlockSchema,
     clientMetadataSchema,
     messageModeSchema,
     toolCallRequestBlockSchema,
@@ -230,8 +229,6 @@ const messageSendContentSchema = Type.Union([
             maxContains: 1,
         },
     ),
-    // A press on an inline action is the whole message: one action block and no text.
-    Type.Array(actionBlockSchema, { minItems: 1, maxItems: 1 }),
 ]);
 
 export const messageSendBodySchema = Type.Object(
@@ -240,11 +237,9 @@ export const messageSendBodySchema = Type.Object(
         content: Type.Optional(messageSendContentSchema),
         delivery: Type.Optional(Type.Union([Type.Literal("queue"), Type.Literal("steer")])),
         id: Type.Optional(apiIdSchema),
-        /** Required, except for an `onboarding.next` press, which no model answers. */
-        mode: Type.Optional(requestedAgentModeSchema),
+        mode: requestedAgentModeSchema,
         profile: Type.Optional(agentRequestProfileSchema),
-        /** Required, except in a press, which has none. */
-        text: Type.Optional(Type.String({ minLength: 1, maxLength: 1_000_000 })),
+        text: Type.String({ minLength: 1, maxLength: 1_000_000 }),
     },
     { additionalProperties: false },
 );

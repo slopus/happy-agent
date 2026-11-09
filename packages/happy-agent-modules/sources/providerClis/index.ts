@@ -10,4 +10,4 @@ export {
     type ProviderCliId,
     type ProviderCliOperation,
 } from "./ProviderCli.js";
-export { ProviderClisModule } from "./ProviderClisModule.js";
+export { ProviderClisModule, type ProviderCliConnectedListener } from "./ProviderClisModule.js";

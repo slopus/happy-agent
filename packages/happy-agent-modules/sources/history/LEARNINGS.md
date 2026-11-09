@@ -303,10 +303,11 @@ conversation unreadable for anyone who had tried it in a preview. Migration
 `004-history-inline-actions-as-text` rewrites each press as a text block holding the words on the
 control and drops the choices, reading only the rows whose JSON mentions either.
 
-Inline actions came back in the shape that migration leaves: a press is the person's plain words,
-never an `action` block, so nothing written now needs rewriting. `actionChoices` returned as an
-optional field on agent messages, keyed by decimal block index. Migration 004 stays as it is and
-runs only once, so it never strips choices recorded after it.
+Inline actions came back once more with `actionChoices` on agent messages, and were then replaced
+by chat UI. Migration `008-history-drop-action-choices` removes `actionChoices` from stored and
+pending messages; migrations 004 and 008 stay as they are and run once. Chat UI's `action` block is
+a new shape, not the old one: it lives on attempt records and on the person's message an action
+became, and it names its document by `uiId` and component, never by block index.
 
 ## Search finds what people and agents wrote, never what they could not see
 
@@ -323,3 +324,11 @@ from the person, because those are not what anyone remembers saying. The caller 
 conversations the person may see and History checks each match against them before reading the
 message, so a snippet can never leak from a conversation they cannot open. Older history is indexed
 by a bounded durable backfill after upgrade rather than at startup.
+
+## Chat UI attempt records never close the run in progress
+
+A chat UI click while the model is answering must be recorded at once, and recording it with the
+ordinary append would have joined or ended the active run. `recordStandalone` stores a message in
+a finished run of its own, inserted as completed with equal start and end, and never touches the
+active run. An accepted `"message"` action keeps its `action` block on the person's message,
+copied from the pending row when the message is accepted.

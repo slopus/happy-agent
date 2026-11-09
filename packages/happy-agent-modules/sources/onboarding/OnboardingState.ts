@@ -1,7 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 
-import { providerCliIdSchema } from "../providerClis/index.js";
-import { onboardingStepIdSchema } from "./OnboardingRecipe.js";
+import { onboardingRecipeIdSchema } from "./OnboardingRecipe.js";
 
 const idSchema = Type.String({ minLength: 1, maxLength: 64 });
 const providerIdSchema = Type.String({ minLength: 1, maxLength: 200 });
@@ -52,21 +51,17 @@ export const onboardingStateSchema = Type.Object(
         /** UUIDv7, advanced on every change. */
         version: Type.String({ minLength: 1, maxLength: 64 }),
         updatedAt: Type.Integer({ minimum: 0 }),
-        recipe: onboardingStepIdSchema,
+        recipe: onboardingRecipeIdSchema,
         status: Type.Union([
             Type.Literal("not_started"),
             Type.Literal("running"),
             Type.Literal("finished"),
         ]),
-        /** The bootstrap step the flow stands on, or `null` once the model guides or outside it. */
-        step: Type.Union([onboardingStepIdSchema, Type.Null()]),
-        /** The scripted message of that step, the only one whose `onboarding.next` is live. */
+        /** `"opening"` while the scripted opening waits for an AI; `null` once the model guides. */
+        step: Type.Union([Type.Literal("opening"), Type.Null()]),
+        /** The opening's newest message, written again after a failed hand-off. */
         stepMessageId: Type.Union([idSchema, Type.Null()]),
-        /** The step's effect is waiting for something outside the conversation. */
-        waiting: Type.Boolean(),
-        /** The provider CLI the person chose, which the step's words and effects are about. */
-        subject: Type.Union([providerCliIdSchema, Type.Null()]),
-        /** Words an effect left for the next message, such as why something failed. */
+        /** Words the next opening message says, such as why the hand-off failed. */
         vars: Type.Record(
             Type.String({ pattern: "^[a-z][A-Za-z0-9]{0,63}$" }),
             Type.String({ maxLength: 4_000 }),

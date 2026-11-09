@@ -448,6 +448,9 @@ export * from "./contextWindow/index.js";
 // Chat media: generated images and presented files shown inline, snapshotted outside history.
 export * from "./chatMedia/index.js";
 
+// Chat UI: components modules contribute, show_ui, and every click through /actions.
+export * from "./chatUi/index.js";
+
 // Image generation: one prompt becomes one PNG on a configured Codex account, written to disk.
 export * from "./imageGeneration/index.js";
 

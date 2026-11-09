@@ -3,13 +3,22 @@
 Happy runs on the coding assistants people already use: Claude Code, Codex, Grok, and
 Antigravity. This module finds each assistant's program on the computer, tells whether it is signed
 in, installs a missing one with its vendor's official installer, and runs the vendor's own sign-in.
-Happy never handles a password or a token. It starts the vendor program and relays what that
-program prints, so the desktop can show progress and the page to open.
+Happy never handles a password. It starts the vendor program and relays what that program prints,
+so the desktop can show progress and the page to open. A pasted setup token or API key goes only
+through the vendor's own credential path (`saveToken`): Codex reads an OpenAI key on
+`codex login --with-api-key`'s standard input, and a Claude setup token or key becomes a Claude
+provider in `runtime.toml`, used after the next start.
 
 `ProviderClisModule` takes the config module, the provider scan module, and the Durable Functions
 module. The config module supplies the environment and the folders to search, so tests and isolated
 installations can point discovery somewhere else. After an install or sign-in succeeds, the module
 runs the provider scan so the new assistant's models show up without a restart.
+
+Given Chat UI, the module contributes `provider_sign_in` (`impl/signInComponent.ts`): install,
+sign in, submit a code, submit a token, and cancel, each calling this module directly. The code and
+token are `Secret` fields. When a widget's sign-in finishes, or its `sign_in` finds the assistant
+signed in already, the conversation gets a hidden note and `onConnected` listeners, such as
+onboarding, hear which conversation connected it.
 
 ## The catalog
 

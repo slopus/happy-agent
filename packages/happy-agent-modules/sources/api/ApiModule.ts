@@ -128,8 +128,10 @@ import {
     networkIdSchema,
     skillPageQuerySchema,
     updateGlobalSkillRequestSchema,
-    resolveChatActionPress,
-    type ActionBlock,
+    uiActionRequestSchema,
+    UI_CATALOG_VERSION,
+    UI_MEMBER_PERMISSIONS,
+    UI_PERMISSION_IDS,
     type ArtifactFileInput as ArtifactRequestFile,
     type ArtifactSourceInput as ArtifactRequestSource,
     type AuthenticationChallenge,
@@ -218,6 +220,7 @@ import {
 } from "../tasks/index.js";
 import type { TeammatesModule } from "../teammates/index.js";
 import { OnboardingRequestError, type OnboardingModule } from "../onboarding/index.js";
+import { ChatUiActionError, type ChatUiModule } from "../chatUi/index.js";
 import {
     CompactionAgentBusyError,
     CompactionAlreadyRunningError,
@@ -447,9 +450,10 @@ import {
     projectEventDiagnostics,
     projectMessageDiagnostics,
 } from "./projectCredentialDiagnostics.js";
+import { projectChatUiEvent, projectChatUiMessage, readsChatUi } from "./projectChatUi.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 
-const API_PROTOCOL_VERSION = 34;
+const API_PROTOCOL_VERSION = 35;
 
 const addServerConnectionRequestSchema = Type.Object(
     {
@@ -698,6 +702,7 @@ export class ApiModule implements AgentModule {
     readonly #nodeSearch: NodeSearchModule | undefined;
     readonly #teammates: TeammatesModule | undefined;
     readonly #onboardingFlow: OnboardingModule | undefined;
+    readonly #chatUi: ChatUiModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -878,9 +883,11 @@ export class ApiModule implements AgentModule {
         nodeSearch?: NodeSearchModule,
         teammates?: TeammatesModule,
         onboarding?: OnboardingModule,
+        chatUi?: ChatUiModule,
     ) {
         this.#teammates = teammates;
         this.#onboardingFlow = onboarding;
+        this.#chatUi = chatUi;
         this.#abort = abort;
         this.#config = config;
         this.#events = events;
@@ -2156,7 +2163,7 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/events") {
-                this.#handleEventPull(ctx, url, response);
+                this.#handleEventPull(ctx, request, url, response);
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/events/stream") {
@@ -3186,49 +3193,6 @@ export class ApiModule implements AgentModule {
                               });
                           });
                       }),
-                      // A press the bootstrap answers is its own finished run, announced with
-                      // the choice it locked, before the scripted answer that follows.
-                      this.#onboardingFlow.onPressRecorded((agentId, press, pressed) => {
-                          void this.#queueAgentWork(ctx, agentId, undefined, async () => {
-                              // A typed answer chose no control, so no message changed.
-                              if (pressed !== undefined) {
-                                  this.#journal.append("message.updated", {
-                                      agentId,
-                                      runId: pressed.runId ?? null,
-                                      message: messageResource(pressed),
-                                  });
-                              }
-                              const run =
-                                  press.runId === undefined
-                                      ? undefined
-                                      : await this.#history.run(ctx, agentId, press.runId);
-                              if (run === undefined) return;
-                              const resource = await this.#runResource(ctx, run);
-                              this.#journal.append("run.started", {
-                                  agentId,
-                                  run: {
-                                      ...resource,
-                                      status: "running",
-                                      reason: null,
-                                      endedAt: null,
-                                  },
-                                  acceptedMessageIds: [press.recordId],
-                              });
-                              this.#journal.append("message.created", {
-                                  agentId,
-                                  runId: run.id,
-                                  message: messageResource(press),
-                              });
-                              boundedAdd(
-                                  this.#announcedTerminalRuns,
-                                  run.id,
-                                  MAX_ANNOUNCED_TERMINAL_RUNS,
-                              );
-                              this.#journal.append("run.finished", { agentId, run: resource });
-                          }).catch(() => {
-                              ctx.log.warn("The API could not announce a press.", { agentId });
-                          });
-                      }),
                   ]),
             ...(this.#providerClis === undefined
                 ? []
@@ -3285,6 +3249,24 @@ export class ApiModule implements AgentModule {
                 );
                 boundedAdd(this.#apiPendingMessageIds, pending.id, MAX_ANNOUNCED_PENDING_MESSAGES);
             }),
+            ...(this.#chatUi === undefined
+                ? []
+                : [
+                      // An attempt record's outcome changed in place.
+                      this.#chatUi.onRecordUpdated((agentId, record) => {
+                          void this.#queueAgentWork(ctx, agentId, undefined, async () => {
+                              this.#journal.append("message.updated", {
+                                  agentId,
+                                  runId: record.runId ?? null,
+                                  message: messageResource(record),
+                              });
+                          }).catch(() => {
+                              ctx.log.warn("The API could not announce a chat UI outcome.", {
+                                  agentId,
+                              });
+                          });
+                      }),
+                  ]),
             this.#history.onToolSpawn((_ctx, agentId, message) => {
                 if (messageHiddenFromUser(message)) return;
                 this.#appendForAgent(agentId, "message.updated", {
@@ -5093,7 +5075,7 @@ export class ApiModule implements AgentModule {
             return true;
         }
         const action =
-            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity)$/.exec(
+            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|actions|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity)$/.exec(
                 url.pathname,
             );
         if (action !== null) {
@@ -5103,8 +5085,12 @@ export class ApiModule implements AgentModule {
                 await this.#handleAgentSend(ctx, request, response, agentId);
                 return true;
             }
+            if (operation === "actions" && request.method === "POST") {
+                await this.#handleAgentAction(ctx, request, response, agentId);
+                return true;
+            }
             if (operation === "messages" && request.method === "GET") {
-                await this.#handleAgentMessages(ctx, response, url, agentId);
+                await this.#handleAgentMessages(ctx, request, response, url, agentId);
                 return true;
             }
             if (operation === "question" && request.method === "GET") {
@@ -5640,171 +5626,74 @@ export class ApiModule implements AgentModule {
         agentId: string,
     ): Promise<void> {
         await this.#assertUserControlledAgent(ctx, agentId);
-        const body = await bodyAs(request, messageSendBodySchema, "agent message");
-        const press = body.content?.[0]?.type === "action" ? body.content[0] : undefined;
-        if (press !== undefined && body.text !== undefined) {
-            throw invalidRequest("A press on an inline action has no text.");
-        }
-        if (press?.actionId === "onboarding.next") {
-            sendJson(response, 202, await this.#pressOnboarding(ctx, agentId, body.id, press));
-            return;
-        }
-        const { mode, text } = body;
-        if (press === undefined && text !== undefined) {
-            const answered = await this.#answerOnboarding(ctx, agentId, body.id, text);
-            if (answered !== undefined) {
-                sendJson(response, 202, answered);
-                return;
-            }
-        }
-        if (press === undefined) {
-            await this.#onboardingFlow?.refuseTyping(ctx, agentId).catch((error: unknown) => {
-                throw onboardingApiError(error);
-            });
-        }
-        if (mode === undefined) throw invalidRequest("A message needs a mode.");
-        if (press === undefined && text === undefined)
-            throw invalidRequest("A message needs text.");
-        sendJson(
-            response,
-            202,
-            await this.#sendUserMessage(ctx, agentId, { ...body, mode, text: text ?? "" }, press),
-        );
-    }
-
-    /**
-     * The control a press names, checked against this agent's own stored message with the shared
-     * resolver: a visible agent message, a valid block with no choice yet and no person's message
-     * after it, and this exact control. Nothing in the request names a label.
-     */
-    async #resolvePress(
-        ctx: Context,
-        agentId: string,
-        press: ActionBlock,
-    ): Promise<{
-        readonly stored: HistoryMessage;
-        readonly found: Extract<ReturnType<typeof resolveChatActionPress>, { kind: "found" }>;
-    }> {
-        const stored = await this.#history.message(ctx, agentId, press.messageId);
-        if (
-            stored === undefined ||
-            (stored.role !== "assistant" && stored.role !== "agent") ||
-            messageHiddenFromUser(stored)
-        ) {
-            throw notFound("No message in this conversation has that ID.");
-        }
-        const found = resolveChatActionPress(
-            {
-                texts: stored.blocks.flatMap((block) =>
-                    block.type === "text" ? [block.text] : [],
-                ),
-                ...(stored.actionChoices === undefined ? {} : { choices: stored.actionChoices }),
-                live: !(await this.#history.personSpokeAfter(ctx, agentId, stored.recordId)),
-            },
-            press,
-        );
-        if (found.kind === "found") return { stored, found };
-        if (found.code === "not_found") throw notFound(found.reason);
-        if (found.code === "conflict") {
-            throw new ApiError(409, "conflict", found.reason, { message: messageResource(stored) });
-        }
-        throw invalidRequest(found.reason);
-    }
-
-    /**
-     * A press on an `onboarding.next` control. Onboarding's scripted bootstrap answers it, so no
-     * model reads it and it takes no mode: the choice, the person's message in a finished run of
-     * its own, and the next step commit together. See "Onboarding in a conversation" in API.md.
-     */
-    async #pressOnboarding(
-        ctx: Context,
-        agentId: string,
-        requestedId: string | undefined,
-        press: ActionBlock,
-    ): Promise<{ readonly message: unknown; readonly cursor: string | null }> {
-        const onboarding = this.#onboardingFlow;
-        if (onboarding === undefined || this.#team.enabled) {
-            throw invalidRequest("Onboarding actions run only in this daemon's onboarding.");
-        }
-        const id = requestedId ?? createId();
-        return await this.#serializeMessageSend(id, async () => {
-            const cursor = this.#journal.cursor();
-            const existing = await ctx.inTx(
-                async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
-            );
-            if (existing !== undefined) return { message: existing, cursor };
-            try {
-                const message = await ctx.inTx(async (txCtx) => {
-                    await this.#assertUserControlledAgent(txCtx, agentId);
-                    const { stored, found } = await this.#resolvePress(txCtx, agentId, press);
-                    if (found.action.id !== "onboarding.next") {
-                        throw invalidRequest("That control runs another action.");
-                    }
-                    return await onboarding.press(txCtx, {
-                        agentId,
-                        id,
-                        pressed: stored,
-                        blockIndex: press.blockIndex,
-                        choice: found.choice,
-                        words: found.words,
-                        step: found.action.step,
-                        params: found.action.params,
-                        values: found.values,
-                    });
-                });
-                return { message: messageResource(message), cursor };
-            } catch (error: unknown) {
-                throw onboardingApiError(error);
-            }
+        // While the opening takes no typing, a typed message is refused whatever it holds.
+        await this.#onboardingFlow?.refuseTyping(ctx, agentId).catch((error: unknown) => {
+            throw onboardingApiError(error);
         });
+        const body = await bodyAs(request, messageSendBodySchema, "agent message");
+        sendJson(response, 202, await this.#sendUserMessage(ctx, agentId, body));
     }
 
     /**
-     * A typed message that answers the onboarding step the flow stands on, as a press does: no
-     * model reads it and it takes no mode. Undefined when that step takes no typed answer or the
-     * text does not fit it, so the message is sent as any other.
+     * One click on a chat UI component. The route checks that the caller can read the
+     * conversation and that it takes messages; chat UI does the rest. See
+     * `POST /v0/agents/:agentId/actions` in API.md. The body is never logged.
      */
-    async #answerOnboarding(
+    async #handleAgentAction(
         ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
         agentId: string,
-        requestedId: string | undefined,
-        text: string,
-    ): Promise<{ readonly message: unknown; readonly cursor: string | null } | undefined> {
-        const onboarding = this.#onboardingFlow;
-        if (onboarding === undefined || this.#team.enabled) return undefined;
-        const id = requestedId ?? createId();
-        return await this.#serializeMessageSend(id, async () => {
-            const cursor = this.#journal.cursor();
-            const existing = await ctx.inTx(
-                async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
-            );
-            if (existing !== undefined) return { message: existing, cursor };
-            try {
-                const message = await ctx.inTx(
-                    async (txCtx) => await onboarding.answer(txCtx, { agentId, id, text }),
-                );
-                return message === undefined
-                    ? undefined
-                    : { message: messageResource(message), cursor };
-            } catch (error: unknown) {
-                throw onboardingApiError(error);
+    ): Promise<void> {
+        const chatUi = this.#chatUi;
+        if (chatUi === undefined) throw notFound("This server has no chat UI.");
+        await this.#requireAgent(ctx, agentId);
+        await this.#assertUserControlledAgent(ctx, agentId);
+        const body = await bodyAs(request, uiActionRequestSchema, "chat UI action");
+        const user = teamUser(ctx);
+        const guest = this.#team.enabled && user !== undefined && isTeamGuest(user);
+        const granted = !this.#team.enabled
+            ? UI_PERMISSION_IDS
+            : user === undefined || guest
+              ? []
+              : user.isOwner
+                ? UI_PERMISSION_IDS
+                : UI_MEMBER_PERMISSIONS;
+        const cursor = this.#journal.cursor();
+        let result;
+        try {
+            result = await chatUi.act(ctx, {
+                agentId,
+                request: body,
+                person: { userId: user?.id, guest, granted: new Set(granted) },
+            });
+        } catch (error: unknown) {
+            if (error instanceof ChatUiActionError) {
+                throw new ApiError(error.status, error.code, error.message);
             }
+            throw error;
+        }
+        sendJson(response, 200, {
+            record: messageResource(result.record),
+            message:
+                result.message === null
+                    ? null
+                    : "status" in result.message
+                      ? pendingMessageResource(result.message)
+                      : messageResource(result.message),
+            result: result.result,
+            cursor,
         });
     }
 
     /**
      * Send a person's message to an agent, as `send` does: a repeated `id` sends nothing new and
-     * answers with the message as it stands. A press on a `reply` control is sent the same way,
-     * as the words on the control, and records its choice in the same transaction.
+     * answers with the message as it stands.
      */
     async #sendUserMessage(
         ctx: Context,
         agentId: string,
-        body: Static<typeof messageSendBodySchema> & {
-            mode: NonNullable<Static<typeof messageSendBodySchema>["mode"]>;
-            text: string;
-        },
-        press?: ActionBlock,
+        body: Static<typeof messageSendBodySchema>,
     ): Promise<{ readonly message: unknown; readonly cursor: string | null }> {
         body.mode = requestedAgentMode(body.mode);
         const id = body.id ?? createId();
@@ -5814,10 +5703,7 @@ export class ApiModule implements AgentModule {
                 async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
             );
             if (existing !== undefined) return { message: existing, cursor };
-            const text =
-                press === undefined
-                    ? body.text
-                    : (await this.#resolvePress(ctx, agentId, press)).found.words;
+            const text = body.text;
 
             const selected = this.#config.models.find(
                 (model) =>
@@ -5846,12 +5732,7 @@ export class ApiModule implements AgentModule {
             if (serviceTier === undefined) {
                 throw invalidRequest("The selected service tier is unavailable.");
             }
-            const content = [
-                { type: "text" as const, text },
-                ...(body.content ?? []).flatMap((block) =>
-                    block.type === "action" ? [] : [block],
-                ),
-            ];
+            const content = [{ type: "text" as const, text }, ...(body.content ?? [])];
             const userId = this.#team.enabled ? teamUser(ctx)?.id : undefined;
             const profile = decodeRequestProfile(body.profile);
             const options: AgentBaseMessageOptions = {
@@ -5905,11 +5786,7 @@ export class ApiModule implements AgentModule {
             try {
                 await ctx.inTx(async (txCtx) => {
                     await this.#assertUserControlledAgent(txCtx, agentId);
-                    if (press === undefined) {
-                        await this.#onboardingFlow?.typed(txCtx, agentId);
-                    } else {
-                        await this.#choose(txCtx, agentId, press);
-                    }
+                    await this.#onboardingFlow?.typed(txCtx, agentId);
                     await this.#history.queuePending(txCtx, pending);
                     // A person writing in a task joins the teammates they mention and marks the
                     // task unread for everyone else in it, atomically with the message.
@@ -5962,26 +5839,6 @@ export class ApiModule implements AgentModule {
             this.#finishPendingMessageAnnouncement(id);
             await this.#flushAcceptedMessages(ctx, agentId);
             return { message, cursor };
-        });
-    }
-
-    /**
-     * Lock the block a press chose, in the send's transaction: checked again against the message
-     * as it stands there, and announced with the whole message once it commits.
-     */
-    async #choose(ctx: Context, agentId: string, press: ActionBlock): Promise<void> {
-        const { stored, found } = await this.#resolvePress(ctx, agentId, press);
-        const chosen: HistoryMessage = {
-            ...stored,
-            actionChoices: { ...stored.actionChoices, [String(press.blockIndex)]: found.choice },
-        };
-        await this.#history.replace(ctx, agentId, chosen);
-        afterCommit(ctx, () => {
-            this.#journal.append("message.updated", {
-                agentId,
-                runId: chosen.runId ?? null,
-                message: messageResource(chosen),
-            });
         });
     }
 
@@ -6130,6 +5987,7 @@ export class ApiModule implements AgentModule {
 
     async #handleAgentMessages(
         ctx: Context,
+        request: IncomingMessage,
         response: ServerResponse,
         url: URL,
         agentId: string,
@@ -6162,9 +6020,23 @@ export class ApiModule implements AgentModule {
                     page.runs.map((run) => run.id),
                 ),
             );
+            const chatUi = readsChatUi(request);
             const runs = ctx.span("api.messages.project", () =>
-                page.runs.map((run, index) => {
+                page.runs.flatMap((run, index) => {
                     const usage = runUsage[index] as UsageRunSummary;
+                    const messages = run.messages
+                        .filter((message) => !messageHiddenFromUser(message))
+                        .flatMap((message) => {
+                            const projected = projectMessageDiagnostics(
+                                messageResource(message, { omitToolData }),
+                                this.#canDiscloseCredentialSource(ctx),
+                            );
+                            // Below protocol 35, chat UI reads as fallback text and attempt
+                            // records are left out, with the runs they leave empty.
+                            const read = chatUi ? projected : projectChatUiMessage(projected);
+                            return read === undefined ? [] : [read];
+                        });
+                    if (messages.length === 0 && run.messages.length > 0 && !chatUi) return [];
                     return {
                         id: run.id,
                         status: run.status,
@@ -6173,14 +6045,7 @@ export class ApiModule implements AgentModule {
                         endedAt: run.endedAt,
                         usage: usage.usage,
                         costUsd: usage.costUsd,
-                        messages: run.messages
-                            .filter((message) => !messageHiddenFromUser(message))
-                            .map((message) =>
-                                projectMessageDiagnostics(
-                                    messageResource(message, { omitToolData }),
-                                    this.#canDiscloseCredentialSource(ctx),
-                                ),
-                            ),
+                        messages,
                     };
                 }),
             );
@@ -6643,7 +6508,13 @@ export class ApiModule implements AgentModule {
         void task.finally(() => this.#backgroundMetadataUpdates.delete(task));
     }
 
-    #handleEventPull(ctx: Context, url: URL, response: ServerResponse): void {
+    #handleEventPull(
+        ctx: Context,
+        request: IncomingMessage,
+        url: URL,
+        response: ServerResponse,
+    ): void {
+        const chatUi = readsChatUi(request);
         const after = optionalCursor(url.searchParams.get("after"));
         const until = optionalCursor(url.searchParams.get("until"));
         const limit = integerParameter(url.searchParams.get("limit"), 100, 1, 10_000);
@@ -6657,9 +6528,12 @@ export class ApiModule implements AgentModule {
             ...replay,
             events: replay.events
                 .filter((event) => this.#journal.visibleTo(event, teamUser(ctx)?.id))
-                .map((event) =>
-                    projectEventDiagnostics(event, this.#canDiscloseCredentialSource(ctx)),
-                ),
+                .flatMap((event) => {
+                    const read = chatUi ? event : projectChatUiEvent(event);
+                    return read === undefined
+                        ? []
+                        : [projectEventDiagnostics(read, this.#canDiscloseCredentialSource(ctx))];
+                }),
         });
     }
 
@@ -6687,6 +6561,17 @@ export class ApiModule implements AgentModule {
             maxWritableBytes: MAX_SSE_BUFFER_BYTES,
         });
         this.#streams.add(writer);
+        const chatUi = readsChatUi(request);
+        // One event as this stream's client reads it; below protocol 35 some are left out.
+        const send = (event: ApiEvent): boolean => {
+            const read = chatUi ? event : projectChatUiEvent(event);
+            if (read === undefined) return true;
+            return writer.write(
+                sseEventFrame(
+                    projectEventDiagnostics(read, this.#canDiscloseCredentialSource(ctx)),
+                ),
+            );
+        };
         // Live document frames address a stream by this name; journal events never use it.
         const streamId = this.#surfaces === undefined ? undefined : createId();
         if (streamId !== undefined)
@@ -6709,11 +6594,7 @@ export class ApiModule implements AgentModule {
                 pending.push(event);
                 return;
             }
-            writer.write(
-                sseEventFrame(
-                    projectEventDiagnostics(event, this.#canDiscloseCredentialSource(ctx)),
-                ),
-            );
+            send(event);
         });
         const current = this.#journal.cursor();
         const gap = after !== undefined && !this.#journal.hasCursor(after);
@@ -6740,26 +6621,11 @@ export class ApiModule implements AgentModule {
         }
         for (const event of replay) {
             if (!this.#journal.visibleTo(event, teamUser(ctx)?.id)) continue;
-            if (
-                !writer.write(
-                    sseEventFrame(
-                        projectEventDiagnostics(event, this.#canDiscloseCredentialSource(ctx)),
-                    ),
-                )
-            )
-                return;
+            if (!send(event)) return;
         }
         replaying = false;
         for (const event of pending) {
-            if (
-                event.cursor > current &&
-                !writer.write(
-                    sseEventFrame(
-                        projectEventDiagnostics(event, this.#canDiscloseCredentialSource(ctx)),
-                    ),
-                )
-            )
-                return;
+            if (event.cursor > current && !send(event)) return;
         }
         pending.splice(0);
         heartbeat = setInterval(() => {
@@ -11127,7 +10993,14 @@ export class ApiModule implements AgentModule {
             capabilities: {
                 desktopLiveControl: this.#live !== undefined,
                 webSocketTunnels: true,
-                inlineActions: true,
+                ...(this.#chatUi === undefined
+                    ? {}
+                    : {
+                          chatUi: {
+                              version: UI_CATALOG_VERSION,
+                              components: [...this.#chatUi.components],
+                          },
+                      }),
                 ...(this.#onboardingFlow === undefined || this.#team.enabled
                     ? {}
                     : { chatOnboarding: true }),
@@ -11652,12 +11525,7 @@ function onboardingApiError(error: unknown): unknown {
     if (!(error instanceof OnboardingRequestError)) return error;
     if (error.code === "not_found") return notFound(error.message);
     if (error.code === "conflict") {
-        return new ApiError(
-            409,
-            "conflict",
-            error.message,
-            error.pressed === undefined ? {} : { message: messageResource(error.pressed) },
-        );
+        return new ApiError(409, "conflict", error.message);
     }
     return invalidRequest(error.message);
 }

@@ -4,40 +4,41 @@
 
 Kirill wanted onboarding controlled on the agent side. The desktop used to script, word, and
 sequence the whole flow. Now the daemon writes every message in the Chief of Staff's conversation
-and does the work behind each press. Clients draw the conversation, run only what a client can
+and does the work behind each click. Clients draw the conversation, run only what a client can
 (opening a page, restarting the daemon), and keep their own flow for daemons without
 `capabilities.chatOnboarding`.
 
 ## What onboarding says is a recipe, not code
 
 The first chat onboarding hardcoded its words and its order in TypeScript, so Happy Cloud could not
-run its own team onboarding without copying the daemon. Kirill asked for recipes as data. The
-bootstrap is now a step graph in `recipes/local.json`, and each runtime implements only the effects,
-conditions, and variables it offers. The module refuses a recipe that names anything else when it
-is constructed, rather than failing at the step that needs it. The JSON Schema generated from
-`OnboardingRecipe.ts` is the shared format.
+run its own team onboarding without copying the daemon. Kirill asked for recipes as data. Each
+runtime implements only the variables, components, tools, and requirements it offers, and the
+module refuses a recipe that names anything else when it is constructed, rather than failing
+later. The JSON Schema generated from `OnboardingRecipe.ts` is the shared format.
 
-## A press is the person's plain words
+## The opening is one message with chat UI, not a step graph
 
-The first version stored a press as an `action` block with labels and outcomes. Once chat
-onboarding was removed, history needed migration 004 to keep those conversations readable. A
-press is now stored as the words on the control, as if typed. The pressed message records the
-choice in `actionChoices`. Presses resolve with the client's shared resolver, so a server never
-trusts a label or parameter from the request.
+The scripted part was a graph of steps whose HTML menus the server resolved itself (`onboarding.next`
+presses, `actionChoices`, typed answers, a routes table, a manual-sign-in poll). Kirill replaced
+inline actions with chat UI. The opening is now one message: its words, and below them a
+`provider_sign_in` per AI. The widget does the install and sign-in through Provider CLIs, and a
+connection hands over to the model; a failed one says why with the widgets again. Everything after
+the opening is the model's, asking with `show_ui`. History's migration 008 drops the old
+`actionChoices`.
 
-## Only the bootstrap is scripted, and nothing is redrawn
+## Only the opening is scripted, and nothing is redrawn
 
-Every new step appears at the bottom, and earlier messages are never rewritten. Install and
-sign-in progress is a live `data-provider-cli` figure the app draws, not a message edited in place.
-There is no scripted "Connected" line: the model's first message opens with it.
+Every new message appears at the bottom, and earlier messages are never rewritten. Install and
+sign-in progress is the live `provider_sign_in` widget, not a message edited in place. There is no
+scripted "Connected" line: the model's first message opens with it.
 
 ## Every step says what it unlocks before it asks
 
 Kirill found the copy flat: steps asked for things without saying why. He wants the bot to be a
 good storyteller that sells each step without being obnoxious. A design pass then wrote the final
-script for every setup, and `recipes/local.json` holds its local part word for word. Each message
-opens with one or two plain sentences on what the step unlocks, then asks one thing; it holds at
-most one set of controls, after any figure and last. The guide restates every rule, because a model
+script for every setup, and `recipes/local.json` holds its local part. Each message opens with one
+or two plain sentences on what the step unlocks, then asks one thing, then shows that step's
+components with `show_ui`, with at most one choice, and writes nothing after. The guide restates every rule, because a model
 drops any rule its guide does not repeat.
 
 There is no separate welcome step with a Start button: the first step introduces the Chief of Staff
@@ -50,11 +51,10 @@ filler. The bot speaks in the first person: with the default name it is "your Ch
 never "I'm Chief of Staff". It never calls itself Happy; Happy names only the phone app. Messages
 have no exclamation marks, em dashes, emoji, filler, hype, hedging, or sign-offs, and make no
 pricing or quality claims about an AI: the person's existing subscription is reused, so there is
-nothing new to pay for. A menu that picks an AI emphasizes none of them, so no vendor is
-recommended over another; elsewhere at most one control, the recommended next step, is emphasized.
+nothing new to pay for. The opening offers each AI's sign-in side by side and recommends none; in
+a choice at most one option, the recommended next step, is primary.
 
-Every setback says what happened and offers a way on in the same message. After "I'll do it
-myself", doing it for them is offered again only when it is possible, and never emphasized.
+Every setback says what happened and offers a way on in the same message.
 `tests/onboarding/localRecipe.test.ts` holds these rules.
 
 ## The profile is said, not asked
@@ -164,45 +164,36 @@ started with a stable version, and every hook does nothing. The decision is made
 instead, so an installation used with the flag off is never sent through onboarding when the flag
 is turned on later.
 
-## Typed answers stay in the script, and the device is said once
+## The device is said once
 
-On a team server, typing a name at the first step ended the scripted part (`typing: "handoff"`), so
-the model took over before anything was set up. A step can now take a typed answer: text that fits
-is handled exactly like a press and keeps the script going, and only text that does not fit
-follows the typing rule. Phones need some steps worded differently, so a start may name the device;
-only the start that began onboarding counts, so someone who starts on a phone and continues on a
-computer keeps the wording already sent. Both are part of the shared recipe format, so Happy Cloud
-implements the same rules.
+Phones need some steps worded differently, so a start may name the device; only the start that
+began onboarding counts, so someone who starts on a phone and continues on a computer keeps the
+wording already sent.
 
-## A sign-in in the person's own terminal is looked for
+## A sign-in in the person's own terminal connects once it is seen
 
-Nothing the daemon started reports a sign-in the person runs themselves, and no figure is on
-screen to refresh Provider CLIs. The manual step would wait forever. While it waits, the module
-checks that assistant every few seconds and stops as soon as the flow moves on.
+Nothing the daemon started reports a sign-in the person runs themselves. The opening no longer
+polls: a change from signed out to signed in that Provider CLIs observes, such as when the widget
+reads its live state, connects as the widget would. An AI found signed in all along is not taken
+on its own; the person presses its "Sign in", which connects it as it is.
 
 ## Signed in but unusable is not a failed sign-in
 
-A Claude that signed in but has no provider here first came back as `failed`. That showed "That
-didn't work" right after a sign-in that worked. Effects now return `unusable`, which the recipe
-sends to "I couldn't put Claude to work yet", naming the cause.
-
-## A failed first answer offers the other AIs chosen
-
-With two AIs chosen, the person could not fall back to the second when the first failed to
-answer. The failure step repeats the routes table with the failed one unticked and the others still
-ticked.
+A Claude that signed in but has no provider here must not read "That didn't work" right after a
+sign-in that worked. The opening says "I couldn't put Claude to work yet", naming the cause, with
+the sign-ins again.
 
 ## The composer says why it is locked
 
-During the bootstrap a disabled composer still read "Message…" and looked open. The recipe gives
-the bootstrap its own placeholder ("Choose an answer above"). The guided part keeps "Or just tell
+During the scripted part a disabled composer still read "Message…" and looked open. The recipe gives
+the opening its own placeholder ("Connect an AI above"). The guided part keeps "Or just tell
 me in your own words…".
 
 ## The flow says when the person can skip
 
 Locally nothing works before an AI is connected, so the desktop must not offer "Skip setup" during
 the script, while team flows can offer it at once. Reading `step` for that would make clients
-depend on the recipe's steps. The flow carries `skippable` instead: `false` during the bootstrap
+depend on the recipe. The flow carries `skippable` instead: `false` during the opening
 (including after a failed hand-off sends it back), `true` once the model has the conversation or
 onboarding finished.
 
@@ -214,14 +205,14 @@ only while it guides, and it calls them as soon as the person answers. They are 
 no search keywords. A deferred copy would make the model search for a tool it needs at that moment.
 The rename after the person's name needs `set_bot_name`, which Bots offers deferred everywhere; a
 recipe's `tools` may name it, and the module's `overrideTools` loads it while the model guides
-instead of offering a second copy, because two tools with one name are refused. `create_project`,
-`clone_project` and `send_agent_message` are loaded the same way.
+instead of offering a second copy, because two tools with one name are refused. `show_ui`,
+`create_project`, `clone_project` and `send_agent_message` are loaded the same way.
 
 ## The Chief of Staff is named after the person
 
 Kirill wants the bot to read as theirs: "Ada's Chief of Staff" as soon as the first name is known,
 and a nickname replaces it when one is given. The guide calls `set_bot_name` right after
-`save_profile`, or after the typed answer when there was no profile, and says so in a few words.
+`save_profile`, or after they type their name when there was no profile, and says so in a few words.
 The rename is the model's call through the guide; no code renames the bot.
 
 ## A bot's or conversation's own metadata changes after its tool call
@@ -244,17 +235,9 @@ while a subtask works, or before that subtask has even begun because its checkou
 made, is not finished. There are no timers and no progress pings. The flow lists the tasks as
 `firstTasks`, so the desktop can leave the focused layout as soon as the first one starts.
 
-## A step types at once, even while it is still working out what to say
+## The opening types at once, even while it is still working out what to offer
 
-The providers step must detect routes before it can write its table, and on a Mac the sign-in
-checks behind that can take seconds; the conversation sat silent until they finished. A scripted
-message's run now starts, and is announced, before its words are rendered. The API then counts the
-time spent rendering toward the usual 300–500 ms before the first words, so a fast step looks the
-same as before.
-
-## The routes table ticks what will actually be used
-
-With `CLAUDE_CODE_OAUTH_TOKEN` set, the table ticked the Claude Code sign-in while the token's own
-row said it was used instead. The provider routes now leave a replaced route unticked with its own
-explanation, the token row reads "Token" rather than "API key", a key for a built-in AI is named as
-that AI, and two ticked routes to one provider make a single connection.
+The opening must check each AI before it can offer its sign-in, and on a Mac those checks can take
+seconds; the conversation sat silent until they finished. The scripted message's run now starts,
+and is announced, before its words and components are rendered. The API counts the time spent
+rendering toward the usual 300–500 ms before the first words.

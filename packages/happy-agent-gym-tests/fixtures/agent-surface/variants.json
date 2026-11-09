@@ -8,6 +8,7 @@
       ],
       "removed": [
         "ToolSearch",
+        "show_ui",
         "get_presence",
         "list_presences",
         "set_presence",
@@ -434,7 +435,7 @@
       "added": [],
       "changed": [
         "claude_web_search.9989aa9ab6a5",
-        "Read.e2dab96d8fcd"
+        "Read.696e484ce6e1"
       ],
       "removed": [
         "ToolSearch"
@@ -532,6 +533,7 @@
       "removed": [
         "ToolSearch",
         "read_agent_history",
+        "show_ui",
         "get_presence",
         "list_presences",
         "set_presence",
@@ -732,6 +734,7 @@
       ],
       "removed": [
         "ToolSearch",
+        "show_ui",
         "get_presence",
         "list_presences",
         "set_presence",
@@ -1069,6 +1072,7 @@
       "removed": [
         "ToolSearch",
         "read_agent_history",
+        "show_ui",
         "get_presence",
         "list_presences",
         "set_presence",

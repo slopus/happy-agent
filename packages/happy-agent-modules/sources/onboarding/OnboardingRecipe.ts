@@ -13,7 +13,7 @@ import { Type, type Static } from "@sinclair/typebox";
  */
 
 /** A recipe's ID: a lowercase slug. */
-const recipeIdSchema = Type.String({
+export const onboardingRecipeIdSchema = Type.String({
     minLength: 1,
     maxLength: 64,
     pattern: "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
@@ -82,7 +82,7 @@ const bootstrapSchema = Type.Object(
 export const onboardingRecipeSchema = Type.Object(
     {
         $schema: Type.Optional(Type.String()),
-        id: recipeIdSchema,
+        id: onboardingRecipeIdSchema,
         version: Type.Integer({
             minimum: 1,
             maximum: 1_000_000,

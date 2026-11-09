@@ -3,7 +3,7 @@
     "Read and modify files, run shell commands, inspect images, and manage background processes."
   ],
   "defer": false,
-  "description": "Reads a file from the local filesystem. Paths outside the active workspace may require permission or be blocked by the selected permission mode.\nIf the user provides a path to a file, assume the path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The file_path parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Results are returned using cat -n format, with line numbers starting at 1\n- This tool reads common image formats (for example PNG and JPG) and presents them visually.\n- Jupyter notebooks (.ipynb files) are not supported. Ask the user to export the notebook to a plain-text format before reading it.\n- This tool can only read files, not directories. To read a directory, use an ls command via the Bash tool.\n- You will regularly be asked to read screenshots. If the user provides a path to a screenshot, ALWAYS use this tool to view the file at the path. This tool will work with all temporary file paths.\n- Empty files are returned as `(empty file)`.",
+  "description": "Reads a file from the local filesystem. Paths outside the active workspace may require permission or be blocked by the selected permission mode.\nIf the user provides a path to a file, assume the path is valid. It is okay to read a file that does not exist; an error will be returned.\n\nUsage:\n- The file_path parameter must be an absolute path, not a relative path\n- By default, it reads up to 2000 lines starting from the beginning of the file\n- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters\n- Results are returned using cat -n format, with line numbers starting at 1\n- This tool reads text files. Image input is not supported by the current model.\n- Jupyter notebooks (.ipynb files) are not supported. Ask the user to export the notebook to a plain-text format before reading it.\n- This tool can only read files, not directories. To read a directory, use an ls command via the Bash tool.\n- Empty files are returned as `(empty file)`.",
   "durable": true,
   "inputSchema": {
     "additionalProperties": false,
@@ -307,13 +307,13 @@
                     "properties": {
                       "root": {
                         "items": {
-                          "$id": "T2",
+                          "$id": "T1",
                           "anyOf": [
                             {
                               "properties": {
                                 "children": {
                                   "items": {
-                                    "$ref": "T2"
+                                    "$ref": "T1"
                                   },
                                   "maxItems": 500,
                                   "type": "array"
