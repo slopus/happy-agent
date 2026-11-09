@@ -1,4 +1,4 @@
-/** Installed catalog plugins; detect support through the installed list, not a protocol bump. */
+/** Installed and available plugins; detect support through the installed list, not a protocol bump. */
 import { Type, type Static } from "@sinclair/typebox";
 
 import {
@@ -20,11 +20,34 @@ export type PluginId = Static<typeof pluginIdSchema>;
 /** A manifest's semantic version, kept as published. */
 export const pluginVersionSchema = Type.String({ minLength: 1, maxLength: 128 });
 
+/** The catalog an entry or installation came from; the two are never merged. */
+export const pluginSourceSchema = Type.Union([Type.Literal("public"), Type.Literal("cluster")]);
+export type PluginSource = Static<typeof pluginSourceSchema>;
+
+export const pluginSourceStatusSchema = Type.Union([
+    Type.Literal("synced"),
+    Type.Literal("syncing"),
+    Type.Literal("failed"),
+    Type.Literal("unavailable"),
+]);
+export type PluginSourceStatus = Static<typeof pluginSourceStatusSchema>;
+
+/** How fresh one source's cached list is; a failed source keeps serving its last good list. */
+export const pluginSourceSyncSchema = Type.Object({
+    source: pluginSourceSchema,
+    status: pluginSourceStatusSchema,
+    url: Nullable(Type.String()),
+    lastSyncedAt: Nullable(timestampSchema),
+    error: Nullable(Type.String()),
+});
+export type PluginSourceSync = Static<typeof pluginSourceSyncSchema>;
+
 export const pluginKindSchema = Type.Union([Type.Literal("external"), Type.Literal("internal")]);
 export type PluginKind = Static<typeof pluginKindSchema>;
 
 /** One catalog plugin version and whether this daemon can install it. */
 export const availablePluginSchema = Type.Object({
+    source: pluginSourceSchema,
     pluginId: pluginIdSchema,
     version: pluginVersionSchema,
     name: Type.String({ minLength: 1, maxLength: 256 }),
@@ -40,9 +63,10 @@ export const availablePluginSchema = Type.Object({
 export type AvailablePlugin = Static<typeof availablePluginSchema>;
 
 export const availablePluginListResponseSchema = Type.Object({
-    plugins: Type.Array(availablePluginSchema, { maxItems: 1_000 }),
-    catalogUrl: Type.String(),
-    fetchedAt: timestampSchema,
+    plugins: Type.Array(availablePluginSchema, { maxItems: 2_000 }),
+    sources: Type.Array(pluginSourceSyncSchema, { maxItems: 16 }),
+    /** Journal position captured before reading. */
+    cursor: eventCursorSchema,
 });
 export type AvailablePluginListResponse = Static<typeof availablePluginListResponseSchema>;
 
@@ -55,6 +79,7 @@ export type PluginInstallationStatus = Static<typeof pluginInstallationStatusSch
 
 export const pluginInstallationSchema = Type.Object({
     id: cuid2Schema,
+    source: pluginSourceSchema,
     pluginId: pluginIdSchema,
     version: pluginVersionSchema,
     name: Type.String({ minLength: 1, maxLength: 256 }),
@@ -76,6 +101,8 @@ export const pluginInstallationListResponseSchema = Type.Object({
 export type PluginInstallationListResponse = Static<typeof pluginInstallationListResponseSchema>;
 
 export const installPluginRequestSchema = Type.Object({
+    /** Defaults to `"public"`, so `pluginId` and `version` always name one entry. */
+    source: Type.Optional(pluginSourceSchema),
     pluginId: pluginIdSchema,
     version: pluginVersionSchema,
     mutationId: Type.Optional(mutationIdSchema),
@@ -101,6 +128,8 @@ export type GlobalSkillPlugin = Static<typeof globalSkillPluginSchema>;
 /** Compact invalidation; removed installations may be named here too. */
 export const pluginsUpdatedPayloadSchema = Type.Object({
     installationIds: Nullable(Type.Array(cuid2Schema, { maxItems: 100 })),
+    /** `true` when a source's cached list or sync state changed; absent means `false`. */
+    catalog: Type.Optional(Type.Boolean()),
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type PluginsUpdatedPayload = Static<typeof pluginsUpdatedPayloadSchema>;

@@ -1049,7 +1049,7 @@ export class HappyAgentClient {
         return await this.#json({ method: "GET", path: "v0/plugins", signal: options.signal });
     }
 
-    /** `GET /v0/plugins/available` — the central catalog, each version marked installable or not. */
+    /** `GET /v0/plugins/available` — the cached catalog sources, each version marked installable. */
     async listAvailablePlugins(options: RequestOptions = {}): Promise<AvailablePluginListResponse> {
         return await this.#json({
             method: "GET",
@@ -1058,7 +1058,7 @@ export class HappyAgentClient {
         });
     }
 
-    /** `POST /v0/plugins` — starts installing one catalog plugin version; answers `202`. */
+    /** `POST /v0/plugins` — starts installing one cached catalog plugin version; answers `202`. */
     async installPlugin(
         request: InstallPluginRequest,
         options: RequestOptions = {},

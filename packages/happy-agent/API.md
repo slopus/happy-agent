@@ -2465,10 +2465,10 @@ desktop operating-system notifications or unsolicited messages to running agents
 
 ## Plugins
 
-A plugin is a versioned package from the central plugin catalog, described by the `plugin.json`
-manifest at the root of its archive. Happy Agent runs no plugin code. It installs one kind of plugin:
-an external plugin whose only content is skills. Every other plugin is listed as available but
-cannot be installed.
+A plugin is a versioned package from a plugin catalog, described by the `plugin.json` manifest
+at the root of its archive. Happy Agent runs no plugin code. It installs one kind of plugin: an
+external plugin whose only content is skills. Every other plugin is listed as available but cannot
+be installed.
 
 Plugins have no install scope. An installed plugin belongs to the whole installation and is
 shared with everyone who uses it. A single-instance plugin is installed at most once; a plugin
@@ -2476,16 +2476,54 @@ whose manifest sets `multiInstance: true` may be installed several times. In tea
 members may read both lists, but only the configured owner may install or uninstall
 (`403 forbidden` for another member).
 
-The daemon reads the catalog from `[plugins] catalog_url` in the user `happy.toml`. The default is
-`https://slopus.github.io/happy-plugins/catalog.json`. Clients detect plugin support through
-`GET /v0/plugins`: `404` or `501` means plugins are unavailable, not that nothing is installed.
+Clients learn about plugins only from the daemon; they never read a catalog themselves. Clients
+detect plugin support through `GET /v0/plugins`: `404` or `501` means plugins are unavailable,
+not that nothing is installed.
 
-### The catalog entry
+### Catalog sources
 
-`GET /v0/plugins/available` lists one entry per catalog plugin version:
+The daemon keeps one cached list per catalog source and refreshes each in the background, when it
+starts and about every 15 minutes after that. Two sources exist:
+
+- `"public"` — the central catalog, read from `[plugins] catalog_url` in the user `happy.toml`.
+  The default is `https://slopus.github.io/happy-plugins/catalog.json`.
+- `"cluster"` — the plugins of the cluster this installation is linked to: its private,
+  admin-created plugins and its internal plugins. This version of Happy Agent has no cluster link,
+  so the cluster source always reports `status: "unavailable"` and contributes no entries.
+
+The sources are separate and never merged into one list entry: the same plugin ID may appear once
+from each source. A source that cannot be read keeps serving the last list it read successfully,
+which survives daemon restarts, and reports the failure in its sync state instead of failing the
+whole response. A catalog larger than 8 MiB, not valid JSON, or with a format version other than
+`1` is a failed sync.
+
+One source's sync state has this shape:
 
 ```json
 {
+    "source": "public",
+    "status": "synced",
+    "url": "https://slopus.github.io/happy-plugins/catalog.json",
+    "lastSyncedAt": 1755400000000,
+    "error": null
+}
+```
+
+- `status` is `"synced"` when the most recent sync succeeded, `"syncing"` before the first sync
+  has finished, `"failed"` when the most recent sync failed, and `"unavailable"` when the source is
+  not configured.
+- `url` is the address the daemon reads, or `null` when it has none.
+- `lastSyncedAt` is when the source was last read successfully, in epoch milliseconds, or `null`
+  when it never was. A failed source's entries are as old as this time.
+- `error` is a human-readable English explanation of the most recent failure, or `null`.
+
+### The catalog entry
+
+`GET /v0/plugins/available` lists one entry per plugin version per source:
+
+```json
+{
+    "source": "public",
     "pluginId": "nvidia-skills",
     "version": "1.0.0",
     "name": "NVIDIA Skills",
@@ -2498,11 +2536,13 @@ The daemon reads the catalog from `[plugins] catalog_url` in the user `happy.tom
 }
 ```
 
+- `source` is the catalog the entry came from, `"public"` or `"cluster"`.
 - `pluginId`, `version`, `name`, `description`, `kind`, and `multiInstance` repeat the manifest's
   `id`, `version`, `name`, `description`, `kind`, and `multiInstance`.
 - `installable` is `true` only for a plugin whose `kind` is `"external"`, that declares a
   `skills` directory, and that declares no `auth`, `mcp`, `entry`, or `settings` content. An
-  empty `auth` or `settings` array counts as none.
+  empty `auth` or `settings` array counts as none. The rule is the same for both sources, so a
+  cluster's internal plugins are never installable here and its private skills-only plugins are.
 - `reason` is a human-readable English explanation when `installable` is `false`, such as "This
   plugin runs code, which Happy Agent cannot install yet.", and `null` otherwise.
 - `manifest` is the catalog's manifest as published, including fields this daemon does not
@@ -2516,6 +2556,7 @@ with invented details.
 ```json
 {
     "id": "p1a2b3c4",
+    "source": "public",
     "pluginId": "nvidia-skills",
     "version": "1.0.0",
     "name": "NVIDIA Skills",
@@ -2530,6 +2571,7 @@ with invented details.
 
 - `id` is the installation ID, a CUID2. Multi-instance installations of one plugin have
   different IDs.
+- `source` is the catalog the plugin was installed from.
 - `pluginId`, `version`, `name`, and `description` are copied from the manifest that was
   installed.
 - `status` is `"installing"` while the daemon downloads and unpacks the plugin, `"installed"` once
@@ -2556,45 +2598,65 @@ before the snapshot read; follow events from it so a concurrent change cannot be
 
 ### `GET /v0/plugins/available`
 
-Reads the central catalog. Response — `200`:
+Returns the cached catalog lists without contacting any catalog. Response — `200`:
 
 ```json
 {
     "plugins": [],
-    "catalogUrl": "https://slopus.github.io/happy-plugins/catalog.json",
-    "fetchedAt": 1755400000000
+    "sources": [
+        {
+            "source": "public",
+            "status": "synced",
+            "url": "https://...",
+            "lastSyncedAt": 1755400000000,
+            "error": null
+        },
+        {
+            "source": "cluster",
+            "status": "unavailable",
+            "url": null,
+            "lastSyncedAt": null,
+            "error": null
+        }
+    ],
+    "cursor": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e"
 }
 ```
 
-`plugins` contains catalog entries, at most 1,000, in catalog order. `fetchedAt` is when the
-daemon read the catalog. The daemon may reuse a catalog it read within the last minute. A catalog
-that cannot be reached, is larger than 8 MiB, is not valid JSON, or has a format version other
-than `1` returns `503` with code `catalog_unavailable`.
+`plugins` contains catalog entries, at most 2,000: the public source's entries in catalog order,
+then the cluster's. `sources` holds the sync state of every source. `cursor` is the journal
+position captured before the read. A source that has failed or not yet synced simply contributes
+its last cached entries, or none.
 
 ### `POST /v0/plugins`
 
-Installs one catalog plugin version. Request:
+Installs one cached catalog plugin version. Request:
 
 ```json
-{ "pluginId": "nvidia-skills", "version": "1.0.0", "mutationId": "optional-client-echo" }
+{
+    "source": "public",
+    "pluginId": "nvidia-skills",
+    "version": "1.0.0",
+    "mutationId": "optional-client-echo"
+}
 ```
 
-The daemon reads the catalog, records the installation with `status: "installing"`, and returns
-before downloading. Response — `202`: `{ "plugin": { ... } }`, the new installation object. It
-then downloads the archive, refuses it unless its SHA-256 digest equals the catalog's `sha256`,
-unpacks it into the installation's `path`, and checks that its `plugin.json` names the requested
-`id` and `version`. Each status change emits `plugins.updated`.
+`source` is optional and defaults to `"public"`, so `pluginId` and `version` always name one
+entry. The daemon looks the entry up in that source's cached list, records the installation with
+`status: "installing"`, and returns before downloading. Response — `202`: `{ "plugin": { ... } }`,
+the new installation object. It then downloads the archive, refuses it unless its SHA-256 digest
+equals the catalog's `sha256`, unpacks it into the installation's `path`, and checks that its
+`plugin.json` names the requested `id` and `version`. Each status change emits `plugins.updated`.
 
 Errors:
 
 - `400 invalid_request` for a malformed body.
-- `404 not_found` when the catalog has no such plugin version.
+- `404 not_found` when that source's cached list has no such plugin version.
 - `409` with code `not_installable` and the catalog entry's `reason` in `error` when the entry is
   not installable.
 - `409` with code `already_installed` and the existing installation as `plugin` when a
-  single-instance plugin already has an installing or installed installation. A failed
-  installation does not count; uninstall it to tidy up.
-- `503 catalog_unavailable` as for `GET /v0/plugins/available`.
+  single-instance plugin with that ID already has an installing or installed installation, from
+  either source. A failed installation does not count; uninstall it to tidy up.
 
 A failed download, digest mismatch, unsafe archive entry, or mismatched manifest ends in
 `status: "failed"` with an explanation in `error`, and leaves nothing behind in the `Plugins`
@@ -2633,13 +2695,15 @@ other. Older daemons omit the field; clients treat its absence as `null`.
 `plugins.updated` is a bounded invalidation. Its payload is:
 
 ```json
-{ "installationIds": ["p1a2b3c4"], "mutationId": "optional-client-echo" }
+{ "installationIds": ["p1a2b3c4"], "catalog": false, "mutationId": "optional-client-echo" }
 ```
 
 `installationIds` names up to 100 affected installations, including removed ones, or is `null`
-when more changed. `mutationId` echoes the request that caused the change. The event follows the
-committed change and contains no catalog or archive data. Clients refresh `GET /v0/plugins` and
-any open installation. The available catalog has no event; clients read it when they show it.
+when more changed; it is `[]` when only the catalog changed. `catalog` is `true` when a source's
+cached list or sync state changed, so clients showing `GET /v0/plugins/available` read it again;
+when absent it means `false`. `mutationId` echoes the request that caused the change. The event
+follows the committed change and contains no catalog or archive data. Clients refresh
+`GET /v0/plugins` and any open installation.
 
 ## Daemon lifecycle
 
@@ -14682,9 +14746,11 @@ surface and are not part of bootstrap.
 
 **Plugins**
 
-- `plugins.updated` — an installation was requested, finished, failed, or was removed.
-    - `installationIds` (up to 100 IDs, or `null`) and optional `mutationId`. This is the compact
-      invalidation described under Plugins; refetch `GET /v0/plugins`.
+- `plugins.updated` — an installation was requested, finished, failed, or was removed, or a
+  catalog source's cached list or sync state changed.
+    - `installationIds` (up to 100 IDs, or `null`), optional `catalog`, and optional `mutationId`.
+      This is the compact invalidation described under Plugins; refetch `GET /v0/plugins`, and
+      `GET /v0/plugins/available` when `catalog` is `true`.
 
 **Agents**
 

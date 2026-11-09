@@ -19,6 +19,7 @@ import {
 const cursor = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
 const installation: PluginInstallation = {
     id: "p1a2b3c4",
+    source: "public",
     pluginId: "nvidia-skills",
     version: "1.0.0",
     name: "NVIDIA Skills",
@@ -30,6 +31,7 @@ const installation: PluginInstallation = {
     updatedAt: 1_755_400_000_000,
 };
 const available: AvailablePlugin = {
+    source: "public",
     pluginId: "nvidia-skills",
     version: "1.0.0",
     name: "NVIDIA Skills",
@@ -64,13 +66,37 @@ describe("plugins protocol", () => {
                 reason: "This plugin runs code, which Happy Agent cannot install yet.",
             }),
         ).toBe(true);
+        const sources = [
+            {
+                source: "public",
+                status: "failed",
+                url: "https://slopus.github.io/happy-plugins/catalog.json",
+                lastSyncedAt: 1,
+                error: "Could not download the plugin catalog.",
+            },
+            {
+                source: "cluster",
+                status: "unavailable",
+                url: null,
+                lastSyncedAt: null,
+                error: null,
+            },
+        ];
         expect(
             Value.Check(availablePluginListResponseSchema, {
-                plugins: [available],
-                catalogUrl: "https://slopus.github.io/happy-plugins/catalog.json",
-                fetchedAt: 1,
+                plugins: [available, { ...available, source: "cluster" }],
+                sources,
+                cursor,
             }),
         ).toBe(true);
+        expect(Value.Check(availablePluginSchema, { ...available, source: "private" })).toBe(false);
+        expect(
+            Value.Check(availablePluginListResponseSchema, {
+                plugins: [],
+                sources: [{ ...sources[0], status: "stale" }],
+                cursor,
+            }),
+        ).toBe(false);
         // New daemon fields must not break older consumers of these shapes.
         expect(Value.Check(pluginInstallationSchema, { ...installation, future: true })).toBe(true);
     });
@@ -87,6 +113,20 @@ describe("plugins protocol", () => {
             }),
         ).toBe(true);
         expect(Value.Check(installPluginRequestSchema, { pluginId: "nvidia-skills" })).toBe(false);
+        expect(
+            Value.Check(installPluginRequestSchema, {
+                source: "cluster",
+                pluginId: "team-skills",
+                version: "0.1.0",
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(installPluginRequestSchema, {
+                source: "github",
+                pluginId: "team-skills",
+                version: "0.1.0",
+            }),
+        ).toBe(false);
     });
 
     it("attributes global skills to plugins optionally", () => {
@@ -125,6 +165,9 @@ describe("plugins protocol", () => {
         ).toBe(true);
         expect(Value.Check(pluginsUpdatedPayloadSchema, { installationIds: null })).toBe(true);
         expect(
+            Value.Check(pluginsUpdatedPayloadSchema, { installationIds: [], catalog: true }),
+        ).toBe(true);
+        expect(
             Value.Check(pluginsUpdatedPayloadSchema, {
                 installationIds: Array.from({ length: 101 }, () => "p"),
             }),
@@ -150,11 +193,7 @@ describe("plugins protocol", () => {
                     return Response.json({ plugin: installation }, { status: 202 });
                 if (init?.method === "DELETE") return Response.json({ plugin: installation });
                 if (url.pathname.endsWith("/available"))
-                    return Response.json({
-                        plugins: [available],
-                        catalogUrl: "https://catalog",
-                        fetchedAt: 1,
-                    });
+                    return Response.json({ plugins: [available], sources: [], cursor });
                 return Response.json({ plugins: [installation], cursor });
             },
         });

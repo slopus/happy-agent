@@ -575,13 +575,16 @@ The client exposes the feed without automatically caching skills in `HappyReduce
 missing endpoints mean this feature is unavailable, not that no skills are installed.
 
 Plugins are additive without a protocol bump. Detect support through `listPlugins()`: `404` or
-`501` means unavailable, not that nothing is installed. `listAvailablePlugins()` reads the central
-catalog with each version marked `installable`, and a `reason` in plain English when it is not.
-`installPlugin({ pluginId, version })` answers `202` with an `installing` installation, or rejects
-with `409 not_installable` or `409 already_installed` (carrying the existing `plugin`).
-`uninstallPlugin(id)` removes an installation and its skills. Follow `plugins.updated` from the
-list's `cursor`. A global skill that came from a plugin carries an optional `plugin` attribution;
-treat its absence as `null`.
+`501` means unavailable, not that nothing is installed. Clients never read a catalog themselves:
+`listAvailablePlugins()` returns the daemon's cached `public` and `cluster` lists, each entry
+marked `installable` with a plain-English `reason` when it is not, plus each source's sync state.
+A failed source keeps its last good entries; `unavailable` means it is not configured.
+`installPlugin({ source, pluginId, version })` (`source` defaults to `"public"`) answers `202` with
+an `installing` installation, or rejects with `409 not_installable` or `409 already_installed`
+(carrying the existing `plugin`). `uninstallPlugin(id)` removes an installation and its skills.
+Follow `plugins.updated` from the list's `cursor`; `catalog: true` means the available list or a
+sync state changed. A global skill that came from a plugin carries an optional `plugin`
+attribution; treat its absence as `null`.
 
 Tool calls expose the complete `ToolPresentation` discriminated union — exploration, command,
 background-terminal interaction, file diff, web/X search, sub-agent creation, media, and
