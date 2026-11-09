@@ -37,3 +37,15 @@ stub programs on an isolated `PATH`, an isolated `HOME`, empty program directori
 (`HAPPY_AGENT_PROGRAM_DIRECTORIES=""`), and a fake applications folder
 (`HAPPY_AGENT_APPLICATIONS_DIRECTORY`), so nothing reaches the real assistants. Real installs and
 sign-ins are verified only in a throwaway virtual machine.
+
+## A sign-in that can't be confirmed says why
+
+On a Mac, Claude Code keeps its sign-in in the keychain, which a daemon started outside the desktop
+session (over SSH, say) can't read reliably: Claude then reports itself signed out, and the module
+reports `unknown` rather than claim a sign-out. That used to happen silently. A widget showed
+"Signed in · Max", the person used it, the model's first turn failed, and the new card read "Sign-in
+not checked" with no reason. Every inconclusive check now carries a reason. A sign-in seen before
+that a check can no longer confirm becomes a failed `sign_in` operation with that reason. A sign-in
+that ends unconfirmed says it may have worked but couldn't be confirmed. When the keychain is the
+cause, `signIn` fails at once with that reason instead of starting a sign-in it could never see
+finish.

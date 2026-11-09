@@ -11,10 +11,33 @@ import { runProviderCliCommand } from "./runProviderCliCommand.js";
 const CHECK_TIMEOUT_MS = 10_000;
 const MAX_AUTH_FILE_BYTES = 256 * 1_024;
 
-type SignInState = Pick<ProviderCliSignIn, "status" | "account">;
+/**
+ * What a check found. An `unknown` result says why in `unchecked`, one English sentence safe to
+ * show, so a sign-in that can no longer be confirmed never drops silently to "not checked".
+ */
+export type ProviderCliSignInCheck = Pick<ProviderCliSignIn, "status" | "account"> & {
+    readonly unchecked?: string;
+};
+type SignInState = ProviderCliSignInCheck;
 
-const UNKNOWN: SignInState = { status: "unknown", account: null };
 const SIGNED_OUT: SignInState = { status: "signed_out", account: null };
+
+/** An inconclusive check, and why. */
+function unknown(unchecked: string): SignInState {
+    return { status: "unknown", account: null, unchecked };
+}
+
+const NAMES: Readonly<Record<ProviderCliId, string>> = {
+    claude: "Claude Code",
+    codex: "Codex",
+    grok: "Grok",
+    antigravity: "Antigravity",
+};
+
+/** The check ran but its answer could not be read. */
+function unanswered(id: ProviderCliId): SignInState {
+    return unknown(`${NAMES[id]} didn't say whether it's signed in.`);
+}
 
 const claudeStatusSchema = Type.Object({
     loggedIn: Type.Boolean(),
@@ -53,19 +76,20 @@ export async function checkProviderCliSignIn(
     executable: string | null,
     machine: ProviderCliMachine,
 ): Promise<SignInState> {
+    const missing = unknown(`${NAMES[id]} isn't installed, so its sign-in can't be checked.`);
     try {
         switch (id) {
             case "claude":
-                return executable === null ? UNKNOWN : await checkClaude(executable, machine);
+                return executable === null ? missing : await checkClaude(executable, machine);
             case "codex":
-                return executable === null ? UNKNOWN : await checkCodex(executable, machine);
+                return executable === null ? missing : await checkCodex(executable, machine);
             case "grok":
                 return await checkGrok(machine);
             case "antigravity":
-                return executable === null ? UNKNOWN : await checkAntigravity(executable, machine);
+                return executable === null ? missing : await checkAntigravity(executable, machine);
         }
     } catch {
-        return UNKNOWN;
+        return unanswered(id);
     }
 }
 
@@ -77,12 +101,12 @@ async function checkClaude(executable: string, machine: ProviderCliMachine): Pro
         CHECK_TIMEOUT_MS,
     );
     const status = parseJson(result.stdout);
-    if (!Value.Check(claudeStatusSchema, status)) return UNKNOWN;
+    if (!Value.Check(claudeStatusSchema, status)) return unanswered("claude");
     if (!status.loggedIn) {
         // Claude keeps its login in the macOS keychain, which only the person's desktop session
         // can read: from any other session a signed-in Claude reports itself signed out.
         return machine.platform === "darwin" && !(await inDesktopSession(machine))
-            ? UNKNOWN
+            ? unknown(KEYCHAIN_UNREADABLE)
             : SIGNED_OUT;
     }
     return {
@@ -100,7 +124,7 @@ async function checkCodex(executable: string, machine: ProviderCliMachine): Prom
     );
     const text = `${result.stdout}\n${result.stderr}`;
     if (/not logged in/i.test(text)) return SIGNED_OUT;
-    if (result.code !== 0 || !/logged in/i.test(text)) return UNKNOWN;
+    if (result.code !== 0 || !/logged in/i.test(text)) return unanswered("codex");
     const codexHome = machine.env["CODEX_HOME"]?.trim() || join(homeOf(machine), ".codex");
     const auth = parseJson(await readSmallFile(join(codexHome, "auth.json")));
     const idToken = Value.Check(codexAuthSchema, auth) ? auth.tokens?.id_token : undefined;
@@ -126,7 +150,7 @@ async function checkGrok(machine: ProviderCliMachine): Promise<SignInState> {
     const source = await readSmallFile(path);
     if (source === undefined) return SIGNED_OUT;
     const store = parseJson(source);
-    if (!Value.Check(grokAuthSchema, store)) return UNKNOWN;
+    if (!Value.Check(grokAuthSchema, store)) return unanswered("grok");
     const session = store[GROK_OAUTH_SCOPE];
     if (session?.key === undefined || session.key.trim().length === 0) return SIGNED_OUT;
     return { status: "signed_in", account: { email: session.email ?? null, plan: null } };
@@ -158,8 +182,12 @@ async function checkAntigravity(
     const text = `${result.stdout}\n${result.stderr}`;
     if (/please sign in|not logged in/i.test(text)) return SIGNED_OUT;
     if (result.code === 0) return { status: "signed_in", account: { email: null, plan: null } };
-    return UNKNOWN;
+    return unanswered("antigravity");
 }
+
+/** Why a Claude that reports itself signed out may only be out of reach, on a Mac. */
+export const KEYCHAIN_UNREADABLE =
+    "Claude Code keeps its sign-in in the macOS keychain, which Happy can't read because it wasn't started from your desktop session. Start Happy from your desktop, or sign in with a setup token.";
 
 let desktopSession: Promise<boolean> | undefined;
 

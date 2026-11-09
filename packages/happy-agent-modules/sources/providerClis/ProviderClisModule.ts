@@ -7,7 +7,7 @@ import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { ChatUiModule } from "../chatUi/index.js";
 import { ProviderScanModule } from "../providerScan/index.js";
-import { checkProviderCliSignIn } from "./impl/checkProviderCliSignIn.js";
+import { KEYCHAIN_UNREADABLE, checkProviderCliSignIn } from "./impl/checkProviderCliSignIn.js";
 import { createProviderCliVersion } from "./impl/createProviderCliVersion.js";
 import { discoverProviderCli } from "./impl/discoverProviderCli.js";
 import { installerProcess } from "./impl/installerProcess.js";
@@ -74,6 +74,8 @@ export type ProviderCliConnectedListener = (
 interface Entry {
     installation: ProviderCliInstallation;
     signIn: Pick<ProviderCliSignIn, "status" | "account">;
+    /** Why the last check could not say whether it is signed in, while `signIn` is `unknown`. */
+    unchecked: string | null;
     operation: ProviderCliOperation | null;
     /** The request that started or last changed the operation, echoed by its events. */
     mutationId: string | undefined;
@@ -130,6 +132,7 @@ export class ProviderClisModule implements AgentModule {
                     desktopApp: null,
                 },
                 signIn: { status: "unknown", account: null },
+                unchecked: null,
                 operation: null,
                 mutationId: undefined,
                 version: createProviderCliVersion(now),
@@ -264,6 +267,12 @@ export class ProviderClisModule implements AgentModule {
                     id,
                     `${definition(id).name} isn't installed yet.`,
                 );
+            }
+            // A sign-in out of this process's reach, such as Claude's in a keychain that only the
+            // desktop session reads, would not be seen even once it finished: say so instead.
+            if (entry.signIn.status === "unknown" && entry.unchecked === KEYCHAIN_UNREADABLE) {
+                this.#failNow(id, "sign_in", { code: "sign_in_failed", message: entry.unchecked });
+                return this.#project(id);
             }
             const chosen = method ?? definition(id).methods[0];
             if (chosen === undefined || !definition(id).methods.includes(chosen)) {
@@ -554,6 +563,7 @@ export class ProviderClisModule implements AgentModule {
             this.#finish(ctx, id, args.operationId, "succeeded", null);
             return;
         }
+        const unchecked = this.#entry(id).unchecked;
         this.#finish(ctx, id, args.operationId, "failed", {
             code: code === "timeout" ? "expired" : code === null ? "unavailable" : "sign_in_failed",
             message:
@@ -561,7 +571,9 @@ export class ProviderClisModule implements AgentModule {
                     ? `Signing in to ${cli.name} wasn't finished in time. Start it again.`
                     : code === null
                       ? `${cli.name} couldn't be started to sign in.`
-                      : `${cli.name} didn't finish signing in.`,
+                      : unchecked !== null
+                        ? `${cli.name} may have signed in, but Happy couldn't confirm it. ${unchecked}`
+                        : `${cli.name} didn't finish signing in.`,
         });
     }
 
@@ -622,9 +634,23 @@ export class ProviderClisModule implements AgentModule {
         if (running !== undefined) return await running;
         const refresh = (async () => {
             const before = JSON.stringify([this.#entry(id).installation, this.#entry(id).signIn]);
+            const wasSignedIn = this.#entry(id).signIn.status === "signed_in";
             await this.#discover(id);
             await this.#checkSignIn(id);
             const entry = this.#entry(id);
+            // A sign-in seen before that a check can no longer confirm says why, as a failed
+            // sign-in, rather than dropping silently to "not checked".
+            if (
+                wasSignedIn &&
+                entry.signIn.status === "unknown" &&
+                entry.unchecked !== null &&
+                activeOperation(entry) === undefined
+            ) {
+                this.#failNow(id, "sign_in", {
+                    code: "sign_in_failed",
+                    message: `Happy can no longer confirm ${definition(id).name}'s sign-in. ${entry.unchecked}`,
+                });
+            }
             const after = JSON.stringify([entry.installation, entry.signIn]);
             const first = !entry.discovered;
             entry.discovered = true;
@@ -643,13 +669,47 @@ export class ProviderClisModule implements AgentModule {
 
     async #checkSignIn(id: ProviderCliId): Promise<void> {
         const entry = this.#entry(id);
-        entry.signIn =
+        const check =
             entry.installation.status === "installed" || id === "grok"
                 ? await checkProviderCliSignIn(id, entry.installation.path, this.#machine())
-                : { status: "unknown", account: null };
+                : undefined;
+        entry.signIn =
+            check === undefined
+                ? { status: "unknown", account: null }
+                : { status: check.status, account: check.account };
+        entry.unchecked = check?.unchecked ?? null;
+        // A program that isn't installed is not an inconclusive check: it has nothing to say.
         if (entry.installation.status !== "installed" && entry.signIn.status !== "signed_in") {
             entry.signIn = { status: "unknown", account: null };
+            entry.unchecked = null;
         }
+    }
+
+    /**
+     * Record an operation that failed before anything ran, such as a sign-in this process could
+     * not confirm. It replaces a settled operation, never a running one, as the next one would.
+     */
+    #failNow(
+        id: ProviderCliId,
+        kind: ProviderCliOperation["kind"],
+        error: ProviderCliOperationError,
+    ): void {
+        const entry = this.#entry(id);
+        if (activeOperation(entry) !== undefined) return;
+        const now = Date.now();
+        entry.operation = {
+            id: createId(),
+            kind,
+            status: "failed",
+            message: error.message,
+            authorization: null,
+            output: [],
+            error,
+            startedAt: now,
+            finishedAt: now,
+        };
+        this.#touch(id);
+        this.#emitNow(id);
     }
 
     #machine(): ProviderCliMachine {
