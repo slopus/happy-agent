@@ -402,9 +402,10 @@ Fable 5.2 needed every step below. Each one is a separate decision; none follows
 5. **System prompt.** Capture the CLI's own `claude_code` preset prompt for the wire ID through a
    loopback server (the API is never contacted), write it to
    `systemPrompt/prompts/claude/claude_<model>_system_prompt.ts`, and map it in
-   `systemPrompt/impl/systemPromptForModel.ts`. Apply the same edits as the other Claude prompts:
-   `{{identity}}` first, and no Session-specific guidance, Memory, Environment, hooks, or
-   token-count text. A missing mapping silently falls back to the generic prompt.
+   `systemPrompt/impl/systemPromptForModel.ts`. Follow the porting rules in
+   [`systemPrompt/AGENTS.md`](../happy-agent-modules/sources/systemPrompt/AGENTS.md): `{{identity}}`
+   first, and no Session-specific guidance, Memory, Environment, hooks, games line, or token-count
+   text. A missing mapping silently falls back to the generic prompt.
 6. **Other model lists.** Add the model to `CLAUDE_TOOL_SEARCH_MODELS` in
    `toolDiscovery/ToolDiscoveryModule.ts`. Check `providerScan/ProviderScanModule.ts` (verification
    model), `auto/impl/reviewerModelForAgent.ts` (it matches `anthropic/opus-` and

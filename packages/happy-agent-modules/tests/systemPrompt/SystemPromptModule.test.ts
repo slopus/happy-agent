@@ -475,6 +475,7 @@ describe("SystemPromptModule", () => {
         expect(fable52).not.toContain("Fable 5.1");
         expect(fable52).not.toContain("# Memory");
         expect(fable52).not.toContain("Hooks may intercept");
+        expect(fable52).not.toContain("games");
         // GPT-6.1 Sol has Codex's own GPT-6 instructions; the other Codex models keep the GPT-5.6
         // prompt they share.
         const gpt61Sol = systemPromptForModel({ model: "openai/gpt-6.1-sol" });
