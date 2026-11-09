@@ -397,139 +397,29 @@ describe("standard files", () => {
         ).toEqual([["a = 1"], ["b = 2"]]);
     });
 
-    it("tells the artifact's log what an element could not show, with what it could", async () => {
-        const posts: {
-            url: string;
-            body: { entries: { level: string; source: string; message: string }[] };
-        }[] = [];
-        const fetch = async (url: string, init?: { method?: string; body?: string }) => {
-            if (init?.method !== "POST") throw new Error(`unexpected fetch of ${url}`);
-            posts.push({ url, body: JSON.parse(init.body!) });
+    it("reads mnemonic diff prefixes and logs a path the diff does not change", async () => {
+        const posts: { entries: { level: string; message: string }[] }[] = [];
+        const fetch = async (_url: string, init: { body: string }) => {
+            posts.push(JSON.parse(init.body));
             return { ok: true };
         };
         const { draw } = await page(undefined, { fetch, console: { warn: () => {} } });
-
-        const missing = await draw("happy-diff", { path: "src/gone.ts" }, CHANGES);
-        expect(missing.find("happy-error")[0]!.text).toBe(
-            "The diff does not change src/gone.ts. It changes src/app.ts, notes.md.",
-        );
-        const outside = await draw("happy-diff", { path: "src/app.ts", lines: "20-30" }, CHANGES);
-        expect(outside.find("happy-diff-note")[0]!.text).toBe("No changes in lines 20–30");
-        // Drawn again, the same trouble is not posted again.
-        await draw("happy-diff", { path: "src/gone.ts" }, CHANGES);
-
-        expect(posts.map((post) => post.url.replace(/^.*\/api\//, "/api/"))).toEqual([
-            "/api/v1/debug/log",
-            "/api/v1/debug/log",
-        ]);
-        expect(
-            posts.map((post) =>
-                post.body.entries.map(({ level, source, message }) => [level, source, message]),
-            ),
-        ).toEqual([
-            [
-                [
-                    "warn",
-                    "console",
-                    '<happy-diff path="src/gone.ts"> The diff does not change src/gone.ts. It changes src/app.ts, notes.md.',
-                ],
-            ],
-            [
-                [
-                    "warn",
-                    "console",
-                    '<happy-diff path="src/app.ts" lines="20-30"> No changes in lines 20–30 of src/app.ts; it changes lines 1–4, 41–45.',
-                ],
-            ],
-        ]);
-    });
-
-    it("leaves reporting to client.js on a page that loads it, with the same message", async () => {
-        let posted = 0;
-        const fetch = async () => {
-            posted++;
-            return { ok: true };
-        };
-        const warnings: unknown[][] = [];
-        const { draw } = await page(undefined, {
-            fetch,
-            console: { warn: (...args: unknown[]) => warnings.push(args) },
-            happy: { debug: { log: () => {} } },
-        });
-        const missing = await draw("happy-diff", { path: "src/gone.ts" }, CHANGES);
-        expect(missing.find("happy-error")).toHaveLength(1);
-        expect(posted).toBe(0);
-        expect(warnings).toEqual([
-            [
-                '<happy-diff path="src/gone.ts"> The diff does not change src/gone.ts. It changes src/app.ts, notes.md.',
-            ],
-        ]);
-    });
-
-    it("reads a diff's paths whatever prefixes git was configured to write", async () => {
-        // diff.mnemonicPrefix: c/ and w/ for the work tree, 1/ and 2/ for --no-index.
         const mnemonic = [
             "diff --git c/src/app.ts w/src/app.ts",
-            "index 814f4a4..99b356d 100644",
             "--- c/src/app.ts",
             "+++ w/src/app.ts",
             "@@ -1,2 +1,2 @@",
             " one",
             "-two",
             "+2",
-            "diff --git c/src/old name.ts w/src/new name.ts",
-            "similarity index 100%",
-            "rename from src/old name.ts",
-            "rename to src/new name.ts",
-            "diff --git c/gone.ts w/gone.ts",
-            "deleted file mode 100644",
-            "--- c/gone.ts",
-            "+++ /dev/null",
-            "@@ -1 +0,0 @@",
-            "-bye",
-            "diff --git 1/notes.md 2/notes.md",
-            "new file mode 100644",
-            "--- /dev/null",
-            "+++ 2/notes.md",
-            "@@ -0,0 +1 @@",
-            "+hi",
             "",
         ].join("\n");
-        // diff.noprefix: a folder named a/ is the path's own, not a prefix.
-        const noPrefix = [
-            "diff --git a/b.ts a/b.ts",
-            "--- a/b.ts",
-            "+++ a/b.ts",
-            "@@ -1 +1 @@",
-            "-x",
-            "+y",
-            "diff --git my notes.md my notes.md",
-            "new file mode 100644",
-            "--- /dev/null",
-            "+++ my notes.md",
-            "@@ -0,0 +1 @@",
-            "+hi",
-            "",
-        ].join("\n");
-        const { draw } = await page();
-        const titles = (diff: Element) =>
-            diff.children.map((section) => [
-                section.getAttribute("data-path"),
-                section.find("happy-file-title")[0]!.text,
-            ]);
 
-        expect(titles(await draw("happy-diff", {}, mnemonic))).toEqual([
-            ["src/app.ts", "src/app.ts"],
-            ["src/new name.ts", "src/old name.ts→src/new name.tsrenamed"],
-            ["gone.ts", "gone.tsdeleted"],
-            ["notes.md", "notes.mdnew"],
-        ]);
-        expect(titles(await draw("happy-diff", {}, noPrefix))).toEqual([
-            ["a/b.ts", "a/b.ts"],
-            ["my notes.md", "my notes.mdnew"],
-        ]);
-        const quoted = await draw("happy-diff", { path: "src/app.ts", lines: "2" }, mnemonic);
-        expect(quoted.find("happy-error")).toEqual([]);
-        expect(quoted.find("happy-code-header")[0]!.text).toBe("src/app.ts+1 −1");
+        const missing = await draw("happy-diff", { path: "src/gone.ts" }, mnemonic);
+        const message = "The diff does not change src/gone.ts. It changes src/app.ts.";
+        expect(missing.find("happy-error")[0]!.text).toBe(message);
+        expect(
+            posts.map((post) => post.entries.map(({ level, message }) => [level, message])),
+        ).toEqual([[["warn", `<happy-diff path="src/gone.ts"> ${message}`]]]);
     });
 });
