@@ -379,7 +379,7 @@ mobile credentials with separate authority, as specified under "Credentials on t
 
 All routes are prefixed with `/v0`. Independently of the path version, every daemon advertises
 its identity through the health endpoint as a single `version` object: a numeric `protocol`
-(integer, currently 34) and the `daemon` product version string. Protocol versions from 22 onward
+(integer, currently 35) and the `daemon` product version string. Protocol versions from 22 onward
 are backward-compatible and additive. Clients support that compatibility range for existing
 capabilities instead of requiring equality with their own protocol number. A client may require
 a newer protocol for a capability it needs and must explain that an upgrade is required when the
@@ -456,6 +456,22 @@ and the removal events that announce it: `project.removed`, `workspace.removed`,
 it sees one. An older client ignores these event types as it does every type it does not recognize,
 keeps showing the deleted resource as archived, and finds it gone with `404` on its next read or
 resync. No request or response schema changes.
+
+Protocol 35 adds chat UI, described under [Chat UI](#chat-ui): the `ui` block on agent messages,
+the `ui` presentation of `show_ui` calls, the `action` block on person's messages and attempt
+records, `POST /v0/agents/:agentId/actions`, and `capabilities.chatUi` in health. A client that
+reads chat UI sends the request header `Happy-Protocol` with its protocol number, 35 or greater,
+on every request, event streams included. For a request without that header, or with a smaller
+number, the daemon projects chat UI in every message it returns or streams: a `ui` block becomes a
+`text` block holding the document's fallback text; a completed `show_ui` tool call becomes a `text`
+block holding its document's fallback text; an `action` block is left out of a person's message;
+and an attempt record, a service message whose content is only an `action` block, is left out of
+history pages, and its events are not delivered. An older client therefore reads every document as
+its fallback lines and never meets the new blocks. A daemon without chat UI omits the capability and
+answers `/actions` with `404`; clients then draw no components. From protocol 35, `present_files`'
+`layout` and media layouts in text are legacy: daemons still store, return, and serve them, and
+clients still draw them, but models are no longer taught to write them; `images` in `show_ui`
+replaces them.
 
 Account provenance, configuration history blocks, and structured error details are additive output
 and do not increment the protocol version. Clients tolerate their absence and older clients keep
@@ -1579,8 +1595,9 @@ Fields:
   `artifactCovers: true` advertises artifact `cover` and `summary`, described under Artifacts.
   `search: true` advertises `POST /v0/search`, described under Search.
   `feedSubjectFilter: true` advertises `subjects` on `GET /v0/feed` and
-  `POST /v0/feed/read-all`, described under Feed. `inlineActions: true` advertises presses on
-  inline actions and `actionChoices`, described under Inline actions. `chatOnboarding: true`
+  `POST /v0/feed/read-all`, described under Feed. `chatUi` advertises chat UI, described under
+  Chat UI: `{ "version": 1, "components": ["choice", "checklist", …] }`, the catalog version the
+  daemon speaks and exactly the component types it serves. `chatOnboarding: true`
   advertises onboarding in a conversation, described under "Onboarding in a conversation"; it is
   absent in team mode.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
@@ -3175,13 +3192,13 @@ read the flag on next bootstrap.
 ### Onboarding in a conversation
 
 A server that reports `capabilities.chatOnboarding: true` can run onboarding itself, as a
-conversation. Clients render that conversation as they render any other, draw its inline actions
-(see "Inline actions"), and send each press through `send`. They do not script, sequence, or word
-any of it, and they never depend on its steps. A standalone daemon runs it in the built-in bot's
-conversation (system key `chief_of_staff`), under whatever name that bot has now. Happy Cloud team
-servers run their own for each member, in the conversation the flow names. In team mode the
-daemon omits the capability and answers the routes below with `501` and code `unsupported` before
-parsing a request body.
+conversation. Clients render that conversation as they render any other, draw its chat UI (see
+"Chat UI"), and send each click through `POST /v0/agents/:agentId/actions`. They do not script,
+sequence, or word any of it, and they never depend on its steps. A standalone daemon runs it in the
+built-in bot's conversation (system key `chief_of_staff`), under whatever name that bot has now.
+Happy Cloud team servers run their own for each member, in the conversation the flow names. In team
+mode the daemon omits the capability and answers the routes below with `501` and code
+`unsupported` before parsing a request body.
 
 Nothing starts by itself. A client that wants it calls `POST /v0/onboarding/flow/start` once it has
 connected to a compatible server and `GET /v0/onboarding` reports `completed: false`, then opens the
@@ -3193,34 +3210,31 @@ What the conversation says, and in which order, is the server's **recipe**: data
 for the caller, such as the standalone daemon's `local`, or a team server's `team-owner`,
 `teammate`, and `viewer`. A recipe ID is a lowercase slug. A recipe has two parts.
 
-- **The scripted bootstrap.** Before any model is involved, the server writes the conversation's
-  messages itself. They are ordinary agent messages, each in a finished run of its own with no
-  provider or model, and they are never model input. Each step's message offers its next steps as
-  `onboarding.next` controls. A press is the person's message, and the server answers it with the
-  next step's message; no model reads either. Only the message of the step the flow stands on is
-  live. While the bootstrap runs, the composer is disabled unless the recipe lets typing hand the
-  conversation to the model at once. While `composer` is `"disabled"`, a typed message sent to that
-  conversation is refused with `409 conflict` and changes nothing. Where typing hands off, the typed
-  message ends the bootstrap and the model answers it with the guide. A step may also take a typed
-  answer, such as a name, when the recipe says so. While the flow stands on such a step, `composer`
-  is `"enabled"`. A typed message that fits the step is its answer, handled exactly like a press: it
-  needs no mode, and one sent is ignored; it is stored as the person's message in a finished run of
-  its own that no model reads; it is announced like a press, with `message.created` for the person's
-  words and then the next step's messages; and the server answers it with the next step's message. A
-  typed message that does not fit the step follows the recipe's typing rule above, as on any other
-  step.
+- **The opening**, optional. Before any model is involved, the server writes one agent message
+  itself, in a finished run of its own with no provider or model, and it is never model input: the
+  recipe's words, then a `ui` block with the components the recipe offers, such as one
+  `provider_sign_in` for each AI the server can connect. Their actions are silent: installing,
+  signing in, pasting a sign-in code, a setup token, or an API key. When one of them connects an AI,
+  the server hands the conversation to the model. While the opening waits, the composer is disabled
+  unless the recipe lets typing hand the conversation to the model at once. While `composer` is
+  `"disabled"`, a typed message sent to that conversation is refused with `409 conflict` and
+  changes nothing. Where typing hands off, the typed message ends the opening and the model answers
+  it with the guide. A recipe without an opening, such as Happy Cloud's team recipes, hands the
+  conversation to the model at once.
 - **The guided part.** Once the recipe hands off, the conversation's own model writes every
   message, following the recipe's guide, which is part of its instructions while onboarding runs.
-  It answers presses and typed messages alike, and does the work with ordinary tools whose calls
-  are shown like any other chat's. The person may type instead of pressing at any step. What the
-  person did not do themselves, such as an assistant finishing its sign-in or a phone pairing,
-  reaches the model as a hidden context entry that no client, transcript, or history page shows.
+  It asks with `show_ui`: a `choice` for each question, a `text_field` for a nickname, `phone_app`
+  and `phone_pair` for the phone. A click on a `"message"` action is the person's message, and the
+  model answers it like typing. It does the work with ordinary tools whose calls are shown like any
+  other chat's. The person may type instead of clicking at any step. What the person did not do
+  themselves, such as an assistant finishing its sign-in or a phone pairing, reaches the model as a
+  hidden context entry that no client, transcript, or history page shows.
 
-The server announces each scripted message the way a model's answer streams: `run.started`, a pause
-of 300–500 ms while the run has no text, `message.created` with empty text, `message.delta` events
-of a word or a few every 30–60 ms with jitter, then `message.updated` with the whole message and
-`run.finished`. Action blocks arrive with the whole message, never split. When anything else happens
-in the conversation meanwhile, such as the person sending a message, the rest of the message
+The server announces the opening the way a model's answer streams: `run.started`, a pause of
+300–500 ms while the run has no text, `message.created` with empty text, `message.delta` events of a
+word or a few every 30–60 ms with jitter, then `message.updated` with the whole message and
+`run.finished`. The `ui` block arrives with the whole message, never split. When anything else
+happens in the conversation meanwhile, such as the person sending a message, the rest of the message
 arrives at once; the typing never holds anything up. A client that reads history or reconnects sees
 the finished message.
 
@@ -3247,30 +3261,34 @@ a client that turns chat onboarding on later returns an existing user to onboard
 
 The standalone daemon's `local` recipe:
 
-1. The bootstrap introduces the Chief of Staff, shows the AI subscriptions and other routes this
-   computer already has, or asks which one they use, and connects it. Installing and signing in to a
-   provider CLI happen in the `data-provider-cli` figure, through the provider CLI routes. When an
-   install started from onboarding succeeds, the daemon starts that assistant's sign-in itself.
+1. The opening introduces the Chief of Staff and shows one `provider_sign_in` for each AI the
+   daemon can connect. A click installs the assistant's program, starts its own sign-in, hands it a
+   sign-in code, or saves a pasted setup token or API key through the same credential path the
+   assistant's settings use; a token the provider refuses is rejected with `token_rejected`. On an
+   AI that is already signed in, `sign_in` connects it as it is. When an install started from the
+   widget succeeds, the daemon starts that assistant's sign-in itself. A sign-in the person runs in
+   their own terminal is noticed too.
 2. When an AI is connected, its first model becomes the bot's model and the default for new
-   conversations, and the guided part begins. The model's first answer is the real request
-   onboarding requires. If the bot's turn settles without an answer, the bootstrap says what
-   failed and offers the other AIs the person chose, a sign-in again, or another AI.
+   conversations, and the guided part begins with a hidden context entry naming what is connected.
+   The model's first answer is the real request onboarding requires. If the bot's turn settles
+   without an answer, the server writes the recipe's failure words with the sign-in components
+   again, and the next connection hands off again.
 3. The model saves the name and email it was given from the person's Git settings with
    `save_profile` and says so, or asks for them when there are none, and renames the bot
-   "<First name>'s Chief of Staff" with `set_bot_name`, or to the nickname the person gives it.
-   With the person's consent, it calls `find_recent_projects`, which the daemon runs itself,
-   read-only and within a few seconds, never through the bot's shell or an automatic review. It
-   reads the folders Claude Code and Codex last worked in, at most five, or one folder the person
-   names, with their Git metadata, and returns names, paths, dates, branches and commit subjects,
-   never file contents. The bot suggests up to three first tasks from what it found, or asks what
-   they want done when it found nothing, and starts the one they pick with `start_first_task` as a
-   new top-level task, which appears among the person's tasks and is never a subtask of the bot.
-   It then offers the phone, and ends onboarding with `finish_onboarding` when the first task
-   finishes, or once a first task was offered and the person stopped. It changes the default model
-   with `set_default_model` when the person asks. These five tools exist only while onboarding
-   runs in that conversation, and `set_bot_name`, `create_project`, `clone_project` and
-   `send_agent_message`, which the bot otherwise finds through tool search, are loaded there for
-   that time.
+   "<First name>'s Chief of Staff" with `set_bot_name`, or to the nickname the person gives it in a
+   `text_field`. With the person's consent, given with a `choice`, it calls `find_recent_projects`,
+   which the daemon runs itself, read-only and within a few seconds, never through the bot's shell
+   or an automatic review. It reads the folders Claude Code and Codex last worked in, at most five,
+   or one folder the person names, with their Git metadata, and returns names, paths, dates,
+   branches and commit subjects, never file contents. The bot suggests up to three first tasks from
+   what it found in a `choice`, or asks what they want done when it found nothing, and starts the
+   one they pick with `start_first_task` as a new top-level task, which appears among the person's
+   tasks and is never a subtask of the bot. It then offers the phone with `phone_app` and
+   `phone_pair`, and ends onboarding with `finish_onboarding` when the first task finishes, or once
+   a first task was offered and the person stopped. It changes the default model with
+   `set_default_model` when the person asks. These five tools exist only while onboarding runs in
+   that conversation, and `set_bot_name`, `create_project`, `clone_project`, `send_agent_message`,
+   and `show_ui`, which the bot otherwise finds through tool search, are loaded there for that time.
 4. Each task `start_first_task` starts joins the flow's `firstTasks`. Until such a task first
    finishes or fails, even once onboarding has finished, the bot hears hidden context entries
    about it: when one of its subtasks checks out a project, with the bot's next turn; and, as a
@@ -3285,7 +3303,7 @@ The standalone daemon's `local` recipe:
     "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
     "recipe": "local",
     "status": "running",
-    "step": "providers",
+    "step": "opening",
     "agentId": "a9b8c7d6e5f4g3h2i1j0k9l8",
     "composer": "disabled",
     "composerPlaceholder": "Choose an answer above",
@@ -3308,20 +3326,21 @@ The standalone daemon's `local` recipe:
 - `recipe` — the recipe the server runs for the caller. Clients treat it as an opaque name.
 - `status` — `"not_started"`, `"running"`, or `"finished"`. Clients treat an unknown value as
   `"running"`.
-- `step` — the bootstrap step the flow stands on, or `null` once the guided part has begun or
-  outside onboarding. For tests and diagnostics; clients never draw from it.
+- `step` — `"opening"` while the opening waits for an AI, or `null` once the guided part has begun
+  or outside onboarding. For tests and diagnostics; clients never draw from it.
 - `agentId` — the conversation where the caller's onboarding runs, or `null` before it exists.
-- `composer` — `"disabled"` while the bootstrap does not accept typing, otherwise `"enabled"`.
+- `composer` — `"disabled"` while the opening does not accept typing, otherwise `"enabled"`.
   Clients disable the composer in that conversation while it is `"disabled"`.
 - `composerPlaceholder` — the composer's placeholder in that conversation while onboarding runs,
   such as "Choose an answer above" while the composer is disabled or "Or just tell me in your own
   words…" once the model guides, or `null`.
 - `restartRequired` — `true` when a provider chosen during onboarding takes effect only after the
-  daemon restarts. Clients restart it through the ordinary drain and restart, and the bootstrap
-  carries on after the restart.
+  daemon restarts. Clients restart it through the ordinary drain and restart, and onboarding
+  carries on after the restart. The standalone daemon's opening connects AIs through their own
+  sign-in, which needs no restart, so it reports `false`.
 - `skippable` — optional: whether the person can leave onboarding now and still use the app, such
   as through a client's "Skip setup". `false` while the server needs onboarding to go further before
-  anything works, such as the standalone daemon's bootstrap before an AI is connected and handed
+  anything works, such as the standalone daemon's opening before an AI is connected and handed
   the conversation; otherwise `true`. Leaving changes nothing on the server: the flow stays as it
   is and the conversation can be picked up later. A server that omits it leaves the choice to the
   client.
@@ -3344,8 +3363,8 @@ Begins onboarding when it has not begun: the recipe's first message is written a
 optional: `{ "mutationId": "optional-client-value", "device": "desktop" }`.
 
 - `device` — optional: `"desktop"` or `"phone"`, the kind of device the person is starting on. The
-  server keeps the device of the start that began onboarding; a later start, or a press from
-  another device, changes nothing. A recipe may word its scripted steps for a phone, and the hidden
+  server keeps the device of the start that began onboarding; a later start, or a click from
+  another device, changes nothing. The hidden
   context entry that begins the guided part tells the model the device when it is known. Omitted,
   the device is unknown and the recipe's general wording is used.
 
@@ -3589,8 +3608,8 @@ Starts the vendor's own sign-in with the installed program. Request body, every 
   `400`. A team connection needs the `providers.manage` permission and a private one
   `providers.own`; without it the sign-in is refused with `403` and code `forbidden`. A provider the
   caller cannot see, such as another member's private one, is `404`. Without `target`, the sign-in
-  is private. A client sends the target a
-  `data-provider-cli` figure's `data-target` names (see "Inline action blocks"). The standalone
+  is private. A `provider_sign_in` component's `target` prop names it (see "Chat UI"), and its actions
+  reach the same sign-in through `/actions`. The standalone
   daemon serves one user and ignores `target`.
 
 Response — `200`: `{ "providerCli": { ... } }` with the new `"running"` sign-in operation. It
@@ -7932,7 +7951,9 @@ In every layout, including the automatic one and `columns`, an image item withou
 is shown at most at its natural size. `layout` is additive and does not increment the protocol
 version.
 
-`present_files` is a tool every agent with a machine has, whichever model it runs. It takes
+`present_files` is a tool every agent with a machine has, whichever model it runs. Its `layout`
+argument is legacy from protocol 35: it still works and clients still draw stored trees, but models
+are no longer taught to use it, and `show_ui`'s `images` component replaces it. It takes
 `{ "filepaths": ["…"], "layout"? }` — one to ten paths on the agent's machine, absolute or
 relative to its working directory — and presents those files exactly as above. A path outside the
 agent's workspace follows the ordinary permission boundary for reading files. An image may be at
@@ -8377,6 +8398,10 @@ scheme.
 
 #### Media layouts in text
 
+Legacy from protocol 35: daemons still store and return these blocks and clients still draw them,
+but models are no longer taught to write them. A model shows images with `show_ui`'s `images`
+component instead (see "Chat UI").
+
 An agent may arrange media it already showed in the conversation by writing plain HTML in its
 Markdown reply, without another tool call:
 
@@ -8446,230 +8471,211 @@ Media layouts in text are additive and do not increment the protocol version. Re
 schemas are unchanged apart from the optional `source`. A client that does not render them shows
 the HTML as its Markdown renderer does.
 
-#### Inline actions
+#### Chat UI
 
-An agent message's `text` may hold inline action blocks: a small, closed subset of HTML that
-clients draw as controls where it was written, so the person can answer with a click instead of
-typing. Any agent may write them. Onboarding in a conversation is written in them too. A press is
-the person's own message, described under "Pressing an inline action". A daemon that accepts
-presses reports `capabilities.inlineActions: true`. On any other daemon, clients draw valid blocks
-with no control pressable.
+A conversation may show chat UI: a **document**, a flat, ordered list of 1–16 typed components
+drawn top to bottom, with no nesting and no styling. There are two carriers and one renderer:
 
-```html
-<menu>
-    <button data-action="reply" data-emphasis>Push it</button>
-    <button data-action="reply" data-text="Not yet, run the tests first">Not yet</button>
-</menu>
+- a `ui` block in an agent message the daemon wrote itself, with no model involved, such as
+  onboarding's opening;
+- a `ui` presentation on a completed `show_ui` tool call, when a model shows UI.
+
+A model shows UI only through `show_ui`. HTML or JSON written into a reply's text is never drawn as
+controls. Every click on a component goes through `POST /v0/agents/:agentId/actions`, so the
+conversation's own checks apply to every one of them; `send` stays for typed text.
+
+```json
+{
+    "type": "ui",
+    "ui": {
+        "id": "u1x8k2m9r4t8w1y5z3a6b0c2",
+        "components": [
+            {
+                "id": "next",
+                "type": "choice",
+                "fallback": "Look at my recent work · I'll name a folder · Skip for now",
+                "props": {
+                    "options": [
+                        { "id": "look", "label": "Look at my recent work", "primary": true },
+                        { "id": "folder", "label": "I'll name a folder" },
+                        { "id": "skip", "label": "Skip for now" }
+                    ]
+                }
+            }
+        ]
+    }
+}
 ```
 
-**One implementation.** `@slopus/happy-agent-client` exports the one splitter, parser, press
-resolver, and action registry that every client and server uses, with conformance fixtures
-(`fixtures/inlineActions.fixtures.json` and `fixtures/inlineActions.registry.json`). No client or
-server keeps a copy of the grammar.
+- `ui.id` — the document's CUID2, unique in the conversation.
+- `components` — 1–16 components, each `{ id, type, fallback, props }`. `id` is a lowercase slug
+  of 1–64 (`^[a-z0-9][a-z0-9_-]{0,63}$`), unique in the document. `type` is a component type from
+  the catalog below. `fallback` is one line of at most 500 characters the daemon computes; a
+  client that cannot draw the type shows that line instead. `props` match the type's schema
+  exactly.
 
-```ts
-splitChatActionBlocks(markdown: string):
-    ({ type: "markdown"; text: string } | { type: "action"; html: string; complete: boolean })[];
-parseChatActionBlock(html: string): ChatActionBlock | undefined;
-chatActionBlocksOf(markdown: string): (ChatActionBlock | undefined)[];
-messageChatActionBlocks(texts: readonly string[]): (ChatActionBlock | undefined)[];
-stripChatActionBlocks(markdown: string): string;
-resolveChatActionPress(texts: readonly string[], choices, press): ChatActionPressResolution;
+The `ui` presentation is `{ "type": "ui", "ui": { … }, "items": [ … ] }`. `items` are media items
+as in the `media` presentation, at most 12; an `images` component names them by index, and their
+bytes are `GET /v0/agents/:agentId/tool-calls/:toolCallId/media/:index`. A `ui` block carries no
+media, so only `show_ui` can show `images`.
+
+Every label, detail, placeholder, and path in a component is plain text, shown as written: never
+Markdown, never linkified, never HTML, never a URL. A component carries no URL or route; a client
+draws live components from the server's own state through the routes named below.
+
+**The catalog.** Version 1. A server serves a subset and lists exactly that subset in
+`capabilities.chatUi.components`; its `show_ui` accepts only those types and `/actions` serves only
+their actions.
+
+| Component          | Props                                                                                      | Actions · payload → result                                                                                                              | Transcript |
+| ------------------ | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `images`           | `images: [{ mediaIndex, alt?, caption? }]` 1–12, `columns?: 1 \| 2 \| 3`                   | none                                                                                                                                    | —          |
+| `choice`           | `options: [{ id, label, primary? }]` 1–6, at most one primary                              | `choose { optionId }`, once                                                                                                             | message    |
+| `checklist`        | `options: [{ id, label, detail?, checked? }]` 1–32, `submitLabel`, `emptyLabel?`           | `submit { selected: id[] }`, once                                                                                                       | message    |
+| `text_field`       | `label`, `placeholder?`, `submitLabel`                                                     | `submit { text }` (1–2,000 characters), once                                                                                            | message    |
+| `file_tree`        | `paths: string[]` 1–200                                                                    | none                                                                                                                                    | —          |
+| `provider_sign_in` | `provider: "claude" \| "codex" \| "grok" \| "antigravity"`, `target?: "team" \| "private"` | `install {}` · `sign_in {}` · `submit_code { code: secret }` · `submit_token { token: secret }` · `cancel {}`                           | silent     |
+| `default_model`    | none                                                                                       | `set { providerId, modelId, effort }`                                                                                                   | silent     |
+| `phone_app`        | none                                                                                       | none                                                                                                                                    | —          |
+| `phone_pair`       | none                                                                                       | `start {}` → `{ pairingId, pairing: secret, expiresAt }` · `confirm { pairingId }` · `cancel { pairingId }`                             | silent     |
+| `invite`           | `role?`                                                                                    | `create { role }` → `{ inviteId, code: secret, expiresAt, serverName }` · `revoke { inviteId }`                                         | silent     |
+| `github_connect`   | none                                                                                       | `install {}` → `{ installUrl }` · `device_start {}` → `{ userCode: secret, verificationUri, expiresAt }` · `connect { installationId }` | silent     |
+| `compute_join`     | `pool?`                                                                                    | `create {}` → `{ commands: secret[], expiresAt }`                                                                                       | silent     |
+| `server_link`      | none                                                                                       | none                                                                                                                                    | —          |
+| `notifications`    | none                                                                                       | none                                                                                                                                    | —          |
+
+The last five are Happy Cloud team components; a standalone daemon never serves them. Live
+components draw from the server's state: `provider_sign_in` from `GET /v0/provider-clis/:cliId`
+and `provider_cli.updated` (with the states listed under Provider CLIs), `default_model` from
+`GET /v0/config` `defaults` and `config.updated`, `phone_pair` from `GET /v0/mobile-connector` and
+`mobile_connector.updated`, `phone_app` from the client's own download codes. On a signed-in AI,
+`provider_sign_in`'s `sign_in` connects it as it is. After `github_connect.device_start` the server
+polls the device flow itself, and the widget follows the Git credential state and its event; there
+is no poll action. Asking for a notification permission happens in the client.
+
+- `transcript: "message"` — a successful action can become the person's words. Clients show an
+  optimistic bubble with `uiActionText`.
+- `transcript: "silent"` — no bubble. The component shows its own pending and error state, from
+  its attempt records, on every device.
+- `once` — the action answers the offer. See "The open-offer rule" below.
+
+**One implementation.** Each component's bundle — its props, and each action's strict payload,
+optional result, transcript, `once`, and permission — lives in `@slopus/happy-agent-client`
+under `sources/ui/`. The package exports `uiComponents`, `uiBundle(type)`,
+`uiActionDefinition(actionType)`, `uiActionText(component, action)`,
+`uiActionPermission(definition, props)`, `uiActionAllowed(definition, props, granted)`,
+`uiOfferState(offer, action)`, `uiActionProblem(component, action)`, `uiDocumentProblems(components)`,
+`redactUiValue(schema, value)`, and `uiDocumentFallback(document)`. For implementations in other
+languages it ships `fixtures/ui/ui.schema.json`, every schema with each action's transcript,
+`once`, and permission, and `fixtures/ui/actions.fixtures.json`, conformance vectors for payload
+validation, offer fit, permission resolution, action text, the open-offer rule, secret redaction,
+and document checks, all computed by those functions.
+
+**Secrets.** A payload or result field marked secret is a token, a code, or a pairing payload. In
+`ui.schema.json` it carries `"x-happy-secret": true`. A secret is never stored, put in an event,
+logged, or given to a model; it lives only in the request, the hook that handles it, the result
+returned to the caller, and the store its module owns. Records are built from the schema's
+declared, non-secret fields only, a whitelist, so a field a schema does not name is left out too.
+A `"message"` action can never carry a secret. A client keeps a secret result in the widget's
+memory and drops it when the widget goes away.
+
+**Permissions.** Every action declares what the clicking person must hold, as a permission ID:
+`content.write`, `providers.manage`, `providers.own`, `config.manage`, `members.manage`,
+`pools.manage`, or `repositories.manage` (Happy Cloud's IDs). An action that declares nothing needs
+`content.write`. A declaration may depend on one prop of the offer, or ask only that the person
+can read the conversation:
+
+| Action                                                              | Permission                                                          |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `choice.choose`, `checklist.submit`, `text_field.submit`            | `content.write`                                                     |
+| `provider_sign_in.install`                                          | `providers.manage`                                                  |
+| `provider_sign_in.sign_in`, `submit_code`, `submit_token`, `cancel` | `target: "team"` → `providers.manage`; otherwise `providers.own`    |
+| `default_model.set`, `phone_pair.start`, `confirm`, `cancel`        | `config.manage`                                                     |
+| `invite.create`, `invite.revoke`                                    | `members.manage`                                                    |
+| `github_connect.install`, `github_connect.connect`                  | `repositories.manage`                                               |
+| `github_connect.device_start`                                       | reading the conversation only; it makes the caller's own credential |
+| `compute_join.create`                                               | `pools.manage`                                                      |
+
+Authority is always the clicking person's, at click time, against the offer's stored props; never
+that of whoever wrote the offer. A standalone daemon's person holds every permission. In team mode
+the owner holds every permission and members hold `content.write` and `providers.own`. Clients
+disable what the viewer cannot do with `uiActionAllowed`; that is for display only, and the server
+decides.
+
+**`show_ui`.** The tool a model shows UI with. Its arguments are
+`{ "components": [{ "id", "type", "props" }, …] }`, 1–16 components, where `props` are the type's
+input: its props, except that `images` takes `images: [{ path, alt?, caption? }]`, files on the
+agent's machine that the daemon snapshots into `items` under the ordinary file-read boundary. The
+daemon checks every component against the catalog, the bundle's schema, and the contributing
+module's own checks (an unknown provider, a missing file). Any problem fails the call with the
+problems in its result, so the model can correct itself, and nothing is shown. The tool's
+description lists only the components this server serves. A successful call's result tells the
+model the document is shown and what each component does; the person's answers reach it as their
+messages.
+
+**Attempt records.** Every action that passes the route's checks is recorded first, as a `service`
+message whose content is exactly one `action` block:
+
+```json
+{
+    "type": "action",
+    "messageId": "tz4a98xxat96iws9zmbrgj3a",
+    "uiId": "u1x8k2m9r4t8w1y5z3a6b0c2",
+    "componentId": "claude",
+    "action": { "type": "provider_sign_in.submit_token", "payload": {} },
+    "outcome": {
+        "status": "rejected",
+        "code": "token_rejected",
+        "reason": "Claude didn't accept this token."
+    }
+}
 ```
 
-These functions never throw. A block they cannot read is `undefined` and is drawn as the inert text
-it was written as, so nothing the agent wrote is hidden.
+- `messageId`, `uiId`, `componentId` — the offer: the agent message holding the document, the
+  document, and the component.
+- `action` — the action's type and its payload with every secret left out.
+- `outcome.status` — `pending` while the module's hook runs, then `accepted`, `rejected` (with
+  `code` and `reason`), or `failed` (with `reason`, and `code: "interrupted"` when the daemon
+  restarted mid-hook, or `code: "timeout"` when the hook did not answer in 15 seconds).
+- `outcome.messageId` — the person's message the action became, when it said something; on a
+  `once` action refused with `offer_closed`, the person's message that answered first.
 
-**Security.** A block is untrusted model output and is never treated as HTML:
+A record's ID is the request's `id`. It is stored in a run of its own that is already finished
+when it appears, whether the agent is idle or in the middle of a run: it is announced with
+`run.finished` and `message.created`, never `run.started`, and it never starts or joins a model
+turn. Its outcome is changed in place and announced with `message.updated`. No model ever reads a
+record. A client does not draw records as messages; a component reads its own pending, accepted,
+and error state from the records naming it.
 
-- Clients draw a block only from its parsed structure. No part of it reaches an HTML renderer,
-  `innerHTML`, or a Markdown renderer. Every label, detail, cell, and placeholder is plain text,
-  shown as written, never interpreted as Markdown, never linkified, and never used as a URL.
-- The grammar reads no URL from anything. No control opens a page, a file, or a link written in
-  the markup. A figure carries only the identifier of what it shows, and the client draws it from
-  the server's own state through the routes named below.
-- Only the elements and attributes listed here are allowed. Any other element or attribute,
-  including `style`, `class`, `id`, `href`, `src`, any `on*` attribute, and `xmlns`, makes the
-  block invalid.
-- The tokenizer is strict. Element and attribute names are lowercase ASCII. Every attribute value
-  is quoted with `"` or `'`, or the attribute has no value. An attribute that repeats on one
-  element, an end tag that does not close the innermost open element, an element left open, a
-  self-closing `/>` on anything but `input`, a comment, a `<!` or `<?` construct, and a `<` in text
-  that does not start an allowed tag each make the block invalid. Text writes `<` as `&lt;`.
-- The only named character references are `&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`, `&nbsp;`,
-  `&middot;`, `&hellip;`, `&mdash;`, and `&ndash;`, with the semicolon. Numeric references
-  (`&#38;`, `&#x26;`) are allowed. Any other `&name;`, and any `&#` that is not a complete numeric
-  reference to an allowed character, makes the block invalid. An `&` that starts no reference, as
-  in "R&D", is literal. A decoded character is text and is never read again as markup.
-- No character of the block, raw or decoded, may be NUL, a C0 control other than tab, line feed,
-  or carriage return, DEL, a C1 control, an unpaired surrogate, or a bidirectional formatting
-  character (U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069). Any of them makes the block
-  invalid, so a label cannot be reordered to read as something else.
-- Bounds: a block is at most 32,768 characters, 256 elements, and 10 levels of nesting. An element
-  has at most 16 attributes, an attribute value at most 1,024 characters, and a control at most
-  8 parameters. A label, cell, or placeholder is at most 200 characters after whitespace is
-  collapsed, and a detail or status text at most 1,000. A menu holds 1–16 buttons, a checklist
-  1–64 options and at most 4 other buttons, a steps list 1–32 steps, and a table 3–6 columns. Only
-  the first 32 blocks of a message are read; later blocks are counted but invalid. Exceeding any
-  bound makes the block invalid; nothing is truncated.
-- An action is pressable only when its ID is in the closed registry below and its parameters
-  check. An unknown action, or a known one whose parameters do not check, is drawn but cannot be
-  pressed. Nothing is ever inferred from a label.
-- The server never trusts a press. It reads the block from its own stored copy of the message and
-  checks the control, its parameters, and every value against it, as described under "Pressing an
-  inline action". The words stored for a press come from that copy, never from the request.
-- Text typed into a code field goes only to the action that takes it. It is never written into a
-  message, history, an event, model input, a log, or any durable record.
+**What a hook does.** The module that contributes a component handles each of its actions. Its
+outcome is applied in one transaction with the record's:
 
-**Blocks.** A block starts at the start of a line indented at most three spaces, in Markdown that
-`splitMediaLayoutBlocks` left outside its layouts, outside a fenced code block, and outside a code
-span. Its start tag is `<menu`, `<form`, or `<output`, written in lowercase and followed by
-whitespace, `>`, `/`, or the end of the line; or `<ol`, `<ul`, or `<figure`, written in lowercase
-and followed on the same line by a space or tab and, before any `>`, a space or tab and an
-attribute name beginning with `data-` and a letter. A `<figure>` holding an `<img>` is a media layout
-and never reaches this splitter. The block runs until its root element closes, counting only start
-and end tags of the root's own name and skipping quoted attribute values, and then takes the rest
-of the line its root closes on. A block whose root never closes runs to the end of the text and is
-incomplete. A last line without a newline that is only the start of such a tag, such as `<me`, is
-incomplete as well. While text streams, clients hold an incomplete block back rather than showing
-its HTML. Once the message is final, an incomplete block is inert text.
+- the person's words: a `"message"` action's words become a user message whose content is a
+  `text` block with the words and the `action` block (outcome `accepted`). It enters the
+  conversation like a sent message, pending and then accepted, and the model answers it with the
+  request's `mode`. The model reads only the text; the `action` block is never sent to a provider,
+  like a `tool_call_request`;
+- a hidden note: a sentence the module writes about server state, such as "Claude is connected.",
+  which the model reads with its next turn and no client shows;
+- a wake: a turn starts for the notes now, on the conversation's last mode, coalesced with any
+  other wake;
+- a result: returned in the response alone, never stored.
 
-A complete block is valid when its root is one of the following and it keeps every rule above.
-Whitespace between elements is ignored, and any other text between elements makes it invalid.
+Text the model receives is written by the server. Request strings never reach it, except a
+`text_field` answer, which is the person's own words. Words stored for a press are the stored
+label, never text from the request.
 
-- `<menu>` — buttons, each `<button data-action="ID" …>Label</button>`. A button's label is plain
-  text. `data-action` may be absent, and then the button is never pressable.
-- `<form data-action="ID">` — a checklist: `<label>` rows, each holding one
-  `<input type="checkbox" value="V" [checked] [disabled]>` first, then its label text and at most
-  one `<small>` detail. Then exactly one `<button type="submit">Label</button>`, and at most four
-  `<button type="button" data-action="ID" …>Label</button>` others. `value` is 1–256 characters
-  and unique within the checklist. The submit may carry `data-empty-label`: its label while
-  nothing is ticked, such as "Continue without these".
-- `<form data-action="ID" data-table data-columns="Use|AI|Account|Route">` — a checklist drawn as
-  a table. `data-columns` holds the column headings separated by `|`: the checkbox's column, the
-  item's, then one per cell. Each row holds its item text, then one `<small>` per cell column, with
-  at most one more `<small>` before them as the item's sub-line.
-- `<form data-action="ID">` with exactly one `<input type="text" [placeholder="…"]>` and one
-  `<button type="submit">Label</button>` — a code field.
-- `<ol data-steps>` — steps, each `<li data-status="pending|running|done|failed">Label
-<small>detail</small></li>`.
-- `<output data-status="info|running|done|failed">Text <small>detail</small></output>` — one
-  status line. `data-status` defaults to `info`.
-- `<ul data-tree>` — places, drawn as a file tree from nested `<li>name<ul>…</ul></li>`, with at
-  most one nested `<ul>` in each `<li>`.
-- `<figure data-KIND …></figure>` — one live figure, with exactly one kind attribute, no other
-  content, and only the attributes its kind lists below.
+**The open-offer rule.** A `once` action answers its offer. It is accepted only while the component
+has no accepted `once` answer and no person's message has been recorded in the conversation after
+the offer's message. Otherwise it is rejected with `code: "offer_closed"` and `messageId`, the
+message that won. Sending the same action again with the same payload after it was accepted counts
+as accepted and changes nothing: no record or message is added, and the response carries the first
+record. Actions that are not `once` stay usable for as long as their message is visible.
+`uiOfferState` is the rule as a function.
 
-Optional presentation attributes are `data-emphasis` on a button (the first one in a block counts;
-at most one control is emphasized) and `data-mark` on a button, checklist row, or step: `claude`,
-`openai`, `grok`, or `gemini`, the product mark drawn before its label. `data-connected` on a menu
-button draws a connected check. Every other `data-X` attribute of a button, or of a form, is the
-action's parameter `X`; `X` is lowercase letters, digits, and inner hyphens. A checklist's ticked
-values and a code field's text are the action's `values` and never come from an attribute.
-
-**Figures.** Each is drawn live by the client, as the viewer, from the server's own state. A figure
-appearing never starts anything by itself. An unknown kind, an unknown setting, or an ID the client
-does not know draws as an invalid block does.
-
-- `data-provider-cli="ID"` — one provider CLI by its `id`, drawn from
-  `GET /v0/provider-clis/:cliId` and its `provider_cli.updated` events:
-    - `installation.status` `"missing"` with an `installer`: the disclosure (`installer.command`,
-      `sourceHost`, `vendorSite`) and an Install and sign in control, which calls
-      `POST /v0/provider-clis/:cliId/install`. Installed inside a desktop app is simply installed.
-    - installed, with `signIn.status` `"signed_out"` or `"unknown"`: a Sign in control, which calls
-      `POST /v0/provider-clis/:cliId/sign-in`.
-    - an `operation` that is `"running"` or `"waiting"`: its `message`, a control that opens
-      `authorization.url` when there is one, `authorization.userCode` beside it for a device
-      sign-in, a code field when `authorization.acceptsCode` is `true`, which calls
-      `POST /v0/provider-clis/:cliId/sign-in/code`, and Cancel, which calls
-      `POST /v0/provider-clis/:cliId/cancel`.
-    - `signIn.status` `"signed_in"`: signed in, with the account's email when known.
-    - an `operation` that `"failed"`: its `error` and a control to try again. One that was
-      `"cancelled"` draws as the state before it started.
-
-    Every control calls these provider CLI routes; none is a press. A client opens
-    `authorization.url` by itself only for an operation it started from this figure, and only when
-    `openedByProgram` is `false`; otherwise it shows the control. On a team server, the optional
-    `data-target="team|private"` names whose connection a sign-in makes. There, sign-in sends
-    `{ "providerId": … }` for `team` and `{ "scope": "private" }` for `private`. Without
-    permission to manage providers, `team` falls back to `private`, and the figure draws sign-in
-    states only, never an install disclosure.
-
-- `data-setting="default-model"` — the default model for new conversations, from `GET /v0/config`
-  `defaults` and the `models` map's names, refreshed on `config.updated`. It shows the model's name
-  and effort, with a control that changes them through `PATCH /v0/config` `defaults`.
-- `data-phone-app` — the codes that download Happy's phone app.
-- `data-phone-pair` — this computer's phone pairing from `GET /v0/mobile-connector`, drawn live,
-  with the control that starts a pairing through the mobile connector's own routes. The block
-  carries no address or token.
-
-Team servers also serve these figures, each drawn as the viewer under their own permissions.
-Anything a control creates stays in the figure's memory, never in a message, history, or model
-input. Each falls back to a settings link when the viewer cannot do what it offers. A standalone
-daemon serves none of their routes, and its clients draw them as an unknown figure.
-
-- `data-invite [data-role="ROLE"]` — a role picker from `GET /v0/roles`, starting at `data-role`
-  or `member`. Create calls `POST /v0/invites` with the role and shows that invite's code once,
-  with the name a teammate joins with, a copy control, and how long it works. The team server
-  answers `201` with `{ "invite": { "id", "code", "expiresAt", "role", "serverName" } }`; the join
-  name is `serverName`, the server's own name rather than its display name, or `null` when the
-  server cannot say. Revoke calls
-  `DELETE /v0/invites/:inviteId`. Without permission it says that owners and admins can invite
-  teammates. Fallback: `happy://settings/members`.
-- `data-members` — `GET /v0/members` and, with permission to manage members, `GET /v0/invites`
-  without codes, live on `member.updated`, `member.removed`, `invite.created`, `invite.removed`,
-  and `profile.updated`. Fallback: `happy://settings/members`.
-- `data-providers [data-scope="team|private"]` — the server's provider connections by vendor and
-  scope, from `GET /v0/cloud/providers`, live on `config.updated`. Its connect control opens
-  `happy://settings/providers`.
-- `data-compute-join [data-pool="POOL"]` — a compute pool, `default` when absent, from
-  `GET /v0/compute/pools` and `GET /v0/compute/nodes`, live on `compute.nodes.updated`. Add a
-  machine calls `POST /v0/compute/pools/:poolId/join-tokens` and shows the commands it returns,
-  with copy controls and their expiry, then the pool's nodes. Fallback:
-  `happy://settings/computes`.
-- `data-server-link` — this server's URL and a code for the phone app's server link, built from
-  health `instanceId`. Fallback: `happy://settings/mobile-access`.
-
-**Actions.** The registry is closed. Each action has parameters, says whether it takes a
-checklist's `values` and whether it takes a code field's text, and says who runs it (`server`:
-the press is sent; `client`: the client runs it and sends nothing). Today every action is run by
-the server:
-
-| Action            | Parameters                                                           | Values | Code | Pressable where                                                         |
-| ----------------- | -------------------------------------------------------------------- | ------ | ---- | ----------------------------------------------------------------------- |
-| `reply`           | `text`, optional, 1–2,000 characters                                 | yes    | no   | any conversation the person may send to                                 |
-| `onboarding.next` | `step`, required, a lowercase slug of 1–64; up to 4 more, each 1–128 | yes    | yes  | only the server's scripted onboarding message for the step it stands on |
-
-A parameter name the action does not list makes the control unpressable, except for
-`onboarding.next`'s four free parameters, whose names follow the parameter rule above. A code
-field is pressable only for an action that takes a code, so a `reply` code field never is.
-
-**Numbering.** `blockIndex` is the zero-based position of a block among every complete block in
-the message's text blocks, in order, valid or not; an incomplete block is never numbered.
-`controlIndex` is the control's position within its block: a menu's buttons in order; a
-checklist's submit `0` and its other buttons `1`, `2`, … in order; a code field's submit `0`.
-
-**Choices.** `actionChoices` is optional on an agent message and present once a person pressed
-one of its blocks. It maps a `blockIndex`, as a decimal string, to that block's one choice:
-
-- `{ "kind": "button", "index": 1 }` — the control pressed, by its `controlIndex`.
-- `{ "kind": "checklist", "values": ["t1", "t3"] }` — a checklist submitted with these values.
-- `{ "kind": "submitted" }` — a code field submitted. What was typed is never stored.
-
-The kind set may grow; a block with any choice is locked. Clients draw the chosen control as
-pressed, emphasize nothing else, and accept no further press on it.
-
-**Liveness.** A block is pressable only while it has no choice and no person's message is recorded
-in the conversation's history after the message holding it. Once the person types or presses
-anything, every block above goes inert. Pending messages not yet accepted, and system and service
-messages, do not count. `onboarding.next` is also limited to the scripted message of the step the
-onboarding flow stands on. The client exports `chatActionBlockLive` with this rule, and the server
-applies the same rule to every press.
-
-**Fallback.** A surface that cannot press inline actions drops each complete block with
-`stripChatActionBlocks`, closing up the blank lines around it, and keeps an incomplete one as
-written. The daemon applies this to the text it relays to exported bots and to the Happy mobile app.
-The agent's model reads its own messages as it wrote them.
+**Older clients.** Clients below protocol 35 meet chat UI only as fallback text, as described under
+Versioning. Relays that cannot draw chat UI, such as exported bots and the Happy mobile relay, send
+each document's fallback text in its place.
 
 #### File links
 
@@ -8826,8 +8832,7 @@ Request:
   client already keys by. Omitted, the daemon generates one. Sending again with an `id` the
   agent already has creates nothing and returns the message as it now stands, which makes
   retrying a send whose response was lost safe.
-- `text` — the message text. Required, 1–1,000,000 characters, except in a press, which has
-  none (see "Pressing an inline action"). In team mode, when a member sends
+- `text` — the message text. Required, 1–1,000,000 characters. In team mode, when a member sends
   it to a task's agent, the members it links as `happy://users/<userId>` join the task (see Tasks,
   "Mentioning from a message").
 - `clientMetadata` — optional freeform JSON object owned by the sending client. It is persisted
@@ -8872,93 +8877,107 @@ Request:
 
 The request body accepts only the fields above; an unknown field is `400 invalid_request`.
 
-#### Pressing an inline action
+### `POST /v0/agents/:agentId/actions`
 
-With `capabilities.inlineActions`, pressing an inline action control (see "Inline actions") is the
-person's own message, sent through this route with exactly one `action` block in `content` and no
-`text`:
+One click on a chat UI component (see "Chat UI"). Every action of every component goes through this
+route, so the conversation's own checks apply to each one.
+
+Request:
 
 ```json
 {
-    "id": "q2w8e4r6t1y3u5i7o9p0a2s4",
-    "content": [
-        {
-            "type": "action",
-            "messageId": "tz4a98xxat96iws9zmbrgj3a",
-            "blockIndex": 0,
-            "controlIndex": 1,
-            "actionId": "reply",
-            "params": { "text": "Not yet, run the tests first" }
-        }
-    ],
-    "mode": {
-        "providerId": "codex",
-        "modelId": "openai/gpt-5.6-sol",
-        "effort": "medium",
-        "serviceTier": null,
-        "permissionMode": "auto"
+    "id": "k3c9q2m7p0a4b8c1d5e6f7g2",
+    "messageId": "tz4a98xxat96iws9zmbrgj3a",
+    "uiId": "u1x8k2m9r4t8w1y5z3a6b0c2",
+    "componentId": "claude",
+    "action": {
+        "type": "provider_sign_in.submit_token",
+        "payload": { "token": "sk-ant-oat01-…" }
     }
 }
 ```
 
-- `messageId` — the agent message in this conversation that holds the control.
-- `blockIndex`, `controlIndex` — the block and the control in it, numbered as under Inline
-  actions.
-- `actionId`, `params` — the control's action ID and every one of its parameters exactly as
-  written, each value a string, and never a presentation attribute such as `data-mark` or
-  `data-columns`.
-- `values` — optional, at most 64 strings: a checklist's ticked values, each 1–256 characters, or
-  a code field's one text, 1–2,048 printable characters. Omitted or empty for any other control.
-- `id`, `mode`, `delivery`, `profile`, and `clientMetadata` are as for any send. `content` holds
-  nothing else. `mode` is required for a `reply` press, which a model answers, and optional for
-  `onboarding.next`, which no model answers and which ignores it, so a client can press during the
-  bootstrap before any model exists.
+- `id` — required: the idempotency key and the ID of the attempt record, matching
+  `^[a-z][a-z0-9]+$`, 2–96 characters.
+- `messageId` — the agent message in this conversation holding the document: one whose content has
+  a `ui` block, or a completed `show_ui` call with a `ui` presentation.
+- `uiId`, `componentId` — the document and the component in it.
+- `action` — `{ "type": "<component>.<action>", "payload": { … } }`.
+- `mode` — the model selection and permission mode a `"message"` action's turn runs with, exactly
+  as on `send`, checked against the live model catalog. Required for `"message"` actions; ignored
+  by silent ones.
 
-The daemon resolves the press against its own stored copy of the message with
-`resolveChatActionPress`: the message is a visible agent message of this conversation; the block
-at `blockIndex` exists, is valid, has no choice, and is live; its control at `controlIndex` names
-exactly this action ID and exactly these parameters; the action is in the registry and pressable
-in this conversation; every value is one the checklist offers and the person could change, or one
-it shows ticked and fixed, with no repeats; and a code value is sent only to a code field whose
-action takes a code. Nothing in the request names a label.
+The request body accepts only these fields. The daemon never logs the request body, and no error
+echoes a payload.
 
-Then, in one transaction, the daemon records the choice in the pressed message's `actionChoices`,
-announces it as `message.updated` with the whole pressed message, and stores the press as the
-person's message: an ordinary user message whose `content` is one `text` block. Its words are:
+The daemon checks, in this order:
 
-- a button: its `text` parameter when it has one, otherwise its label;
-- a checklist's submit: its label, a colon, and the labels of the ticked options in the order the
-  checklist shows them, joined with ", " ("Use selected: Claude, Codex"); with nothing ticked, its
-  `data-empty-label` when present, otherwise its label alone;
-- a checklist's other button: its label;
-- a code field's submit: its label alone.
+1. The caller is authenticated, as on every route.
+2. The caller can read the conversation, by the same rule as reading its history, and the agent
+   accepts messages; otherwise as `send` answers. Happy Cloud answers `404` for a private Chief of
+   Staff to anyone else. A guest of an exported bot may send only actions its module marks safe for
+   guests.
+3. The caller holds the action's declared permission against the offer's stored props, under
+   their own authority. Otherwise `403 forbidden`.
+4. An `id` already known returns its stored record, and the person's message it became, as they
+   now stand, with `result: null`.
+5. The offer is in the daemon's own stored copy: a visible agent message of this conversation with
+   `messageId`, holding document `uiId` with component `componentId`. Otherwise `404 not_found`.
+6. The action's type belongs to the component's type, the bundle has it, the payload matches its
+   schema exactly, and it fits the offer, such as `optionId` naming an offered option. Otherwise
+   `400 invalid_request`.
+7. A `once` action follows the open-offer rule. A closed offer is not an error: it is recorded as
+   `rejected` with `code: "offer_closed"`. A repeat of the accepted answer returns that answer's
+   record and stores nothing.
+8. At most 20 actions a minute per conversation and component; beyond that `429 rate_limited`.
 
-Reads never carry the `action` block. Every client, relay, search, history excerpt, and model
-reads a press as the person's ordinary message. A press of `reply` is accepted or queued like any
-message and the agent's model answers it. A press of `onboarding.next` is answered by the server's
-scripted onboarding, in a finished run of its own that no model reads; see "Onboarding in a
-conversation". A code field's text is handed to the action alone and is never stored, returned,
-echoed in an event, logged, or given to a model.
+Nothing is stored for any refusal above. Then the daemon records the attempt as `pending`, runs the
+contributing module's hook with the whole payload, secrets included, in memory only, for at most
+15 seconds, and applies its outcome in one transaction (see "What a hook does").
 
-Response — `202`: the stored user message and the event cursor, as for any send. Sending the same
-`id` again returns that message as it stands.
+Response — `200`:
 
-Checks run in the order of any send: unknown agent, an agent that does not accept messages, a
-malformed body, and an `id` the agent already has. Then:
+```json
+{
+    "record": {
+        "id": "k3c9q2m7p0a4b8c1d5e6f7g2",
+        "role": "service",
+        "createdAt": 1755400000000,
+        "content": [
+            {
+                "type": "action",
+                "messageId": "tz4a98xxat96iws9zmbrgj3a",
+                "uiId": "u1x8k2m9r4t8w1y5z3a6b0c2",
+                "componentId": "claude",
+                "action": { "type": "provider_sign_in.submit_token", "payload": {} },
+                "outcome": { "status": "accepted" }
+            }
+        ],
+        "metadata": {}
+    },
+    "message": null,
+    "result": null,
+    "cursor": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e"
+}
+```
 
-- `404 not_found` — no visible agent message in this conversation has `messageId`, or it has no
-  complete block at `blockIndex`.
-- `400 invalid_request` — `text` beside the action block, another block beside it, an invalid
-  block, no control at `controlIndex`, an action ID or parameters other than the control's, an
-  action not in the registry or not pressable in this conversation, a value the checklist does not
-  offer or the person could not change, a repeated value, a code for an action that takes none, or
-  an `onboarding.next` step or parameter the onboarding step does not accept.
-- `409 conflict` — the block already has a choice, is no longer live, or belongs to an onboarding
-  step that is over. The error body carries `message`, the pressed message as it now stands, beside
-  `error` and `code`, so the client draws the choice that won.
+- `record` — the attempt record with its final outcome: `accepted`, `rejected`, or `failed`.
+- `message` — the person's message the action became, pending or accepted, or `null`.
+- `result` — what the action returned, typed by its bundle, or `null`. It is the only place a
+  secret result appears.
+- `cursor` — the event cursor before the action; streaming from it replays everything it caused.
 
-The choice and the person's message commit together: a rejected press records neither, and a
-committed one has both.
+The record is announced with `run.finished` and `message.created` when it is stored and with
+`message.updated` when its outcome changes; a person's message is announced as a sent message is.
+
+When the daemon starts, every record still `pending` becomes `failed` with
+`code: "interrupted"`, so an attempt is never silently lost.
+
+Errors: `400 invalid_request` for a malformed body, a missing `mode` on a `"message"` action, an
+action of another component type, or a payload that fails its schema or does not fit the offer;
+`403 forbidden` without the action's permission; `404 not_found` for an unknown agent, a
+conversation the caller cannot read, or no such offer; `429 rate_limited`. A daemon without chat
+UI answers `404`.
 
 ### `GET /v0/agents/:agentId/messages`
 
@@ -15390,7 +15409,7 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
       everything.
 - `message.updated` — a message changed structurally after it entered a run: a block was added,
   a tool call or compaction changed `status`, a compaction gained `tokensAfter`, a result or
-  presentation arrived, or a person's press gave an agent message a new `actionChoices` entry.
+  presentation arrived, or a chat UI attempt record's outcome changed.
   Pending acceptance is carried by `run.started` or `run.boundary`, not duplicated here.
     - `agentId` (ID string).
     - `runId` (ID string).

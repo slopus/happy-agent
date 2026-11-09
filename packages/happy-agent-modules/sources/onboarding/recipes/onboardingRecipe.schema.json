@@ -4,7 +4,7 @@
     "description": "What one kind of onboarding says and does, as data. Generated from OnboardingRecipe.ts in @slopus/happy-agent-modules; edit that file and regenerate rather than this one.",
     "additionalProperties": false,
     "type": "object",
-    "required": ["id", "version", "requirements", "bootstrap", "guide", "tools", "figures"],
+    "required": ["id", "version", "requirements", "guide", "tools"],
     "properties": {
         "$schema": {
             "type": "string"
@@ -36,19 +36,62 @@
         },
         "bootstrap": {
             "additionalProperties": false,
-            "description": "The scripted part, which the server writes itself before any model is involved. Its messages are never model input.",
+            "description": "The scripted opening, written by the server before any model is involved. A recipe without one hands the conversation to the model at once.",
             "type": "object",
-            "required": ["start", "typing", "steps"],
+            "required": ["say", "offer", "typing"],
             "properties": {
-                "start": {
-                    "minLength": 1,
-                    "maxLength": 64,
-                    "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-                    "description": "The first step.",
-                    "type": "string"
+                "say": {
+                    "description": "The opening: one message the server writes itself, before any model is involved, with `{{name}}` variables the runtime offers, HTML-escaped. It is never model input.",
+                    "anyOf": [
+                        {
+                            "minLength": 1,
+                            "maxLength": 20000,
+                            "type": "string"
+                        },
+                        {
+                            "minItems": 1,
+                            "maxItems": 400,
+                            "type": "array",
+                            "items": {
+                                "maxLength": 2000,
+                                "type": "string"
+                            }
+                        }
+                    ]
+                },
+                "offer": {
+                    "maxItems": 8,
+                    "uniqueItems": true,
+                    "description": "Chat UI components the runtime puts below the opening's words, by type, each filled from the runtime's own state: `provider_sign_in` is one per AI the runtime can connect. A runtime refuses a type it cannot fill. The opening hands the conversation to the model once one of them connects an AI.",
+                    "type": "array",
+                    "items": {
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                        "type": "string"
+                    }
+                },
+                "failed": {
+                    "description": "Said when the model's first turn after the hand-off ends without an answer, with `{{provider}}` and `{{reason}}`; the opening's components follow it again.",
+                    "anyOf": [
+                        {
+                            "minLength": 1,
+                            "maxLength": 20000,
+                            "type": "string"
+                        },
+                        {
+                            "minItems": 1,
+                            "maxItems": 400,
+                            "type": "array",
+                            "items": {
+                                "maxLength": 2000,
+                                "type": "string"
+                            }
+                        }
+                    ]
                 },
                 "typing": {
-                    "description": "`disabled`: the composer is disabled until the hand-off, and a typed message is refused. `handoff`: the composer stays enabled, and a typed message ends the bootstrap at once and is answered by the model with the guide.",
+                    "description": "`disabled`: the composer is disabled until the hand-off, and a typed message is refused. `handoff`: the composer stays enabled, and a typed message ends the opening at once and is answered by the model with the guide.",
                     "anyOf": [
                         {
                             "const": "disabled",
@@ -63,198 +106,8 @@
                 "composerPlaceholder": {
                     "minLength": 1,
                     "maxLength": 200,
-                    "description": "The composer's placeholder while the bootstrap runs, such as why it takes no typing.",
+                    "description": "The composer's placeholder while the opening waits, such as why it takes no typing.",
                     "type": "string"
-                },
-                "handoffFailed": {
-                    "minLength": 1,
-                    "maxLength": 64,
-                    "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-                    "description": "The step to return to when the model's first turn ends without an answer.",
-                    "type": "string"
-                },
-                "steps": {
-                    "minProperties": 1,
-                    "maxProperties": 64,
-                    "additionalProperties": false,
-                    "type": "object",
-                    "patternProperties": {
-                        "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$": {
-                            "additionalProperties": false,
-                            "type": "object",
-                            "properties": {
-                                "say": {
-                                    "minItems": 1,
-                                    "maxItems": 8,
-                                    "description": "The step's message: the first entry whose `when` condition holds, or that has none, so entries are alternatives in order and the last has no `when`. `{{name}}` is replaced by the runtime's variable of that name. Plain variables are HTML-escaped; block variables are Markdown or inline action blocks the runtime writes. A step without `say` says nothing and only runs its effect.",
-                                    "type": "array",
-                                    "items": {
-                                        "additionalProperties": false,
-                                        "type": "object",
-                                        "required": ["text"],
-                                        "properties": {
-                                            "when": {
-                                                "minLength": 1,
-                                                "maxLength": 65,
-                                                "pattern": "^!?[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$",
-                                                "description": "A condition the runtime offers, or `!` and one for its opposite. The entry is said only while it holds.",
-                                                "type": "string"
-                                            },
-                                            "text": {
-                                                "description": "Words to say: one string, or lines joined with line feeds so long text stays readable.",
-                                                "anyOf": [
-                                                    {
-                                                        "minLength": 1,
-                                                        "maxLength": 20000,
-                                                        "type": "string"
-                                                    },
-                                                    {
-                                                        "minItems": 1,
-                                                        "maxItems": 400,
-                                                        "type": "array",
-                                                        "items": {
-                                                            "maxLength": 2000,
-                                                            "type": "string"
-                                                        }
-                                                    }
-                                                ]
-                                            }
-                                        }
-                                    }
-                                },
-                                "effect": {
-                                    "additionalProperties": false,
-                                    "description": "Work the runtime does once the step's message is written. Its outcome picks the next target in `then`; every outcome the runtime's effect can return must be mapped, and no other. An effect may wait for something outside the conversation, such as a sign-in, before it has an outcome.",
-                                    "type": "object",
-                                    "required": ["name", "then"],
-                                    "properties": {
-                                        "name": {
-                                            "minLength": 1,
-                                            "maxLength": 64,
-                                            "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$",
-                                            "type": "string"
-                                        },
-                                        "then": {
-                                            "minProperties": 1,
-                                            "additionalProperties": false,
-                                            "type": "object",
-                                            "patternProperties": {
-                                                "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$": {
-                                                    "description": "Where the bootstrap goes: a step, `handoff` to the model, or `finish`.",
-                                                    "anyOf": [
-                                                        {
-                                                            "minLength": 1,
-                                                            "maxLength": 64,
-                                                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-                                                            "description": "A lowercase slug. `handoff` and `finish` are targets, never step IDs.",
-                                                            "type": "string"
-                                                        },
-                                                        {
-                                                            "const": "handoff",
-                                                            "type": "string"
-                                                        },
-                                                        {
-                                                            "const": "finish",
-                                                            "type": "string"
-                                                        }
-                                                    ]
-                                                }
-                                            }
-                                        }
-                                    }
-                                },
-                                "end": {
-                                    "description": "Where the bootstrap goes once the step's message is written, for a step with no effect and no `next`.",
-                                    "anyOf": [
-                                        {
-                                            "const": "handoff",
-                                            "type": "string"
-                                        },
-                                        {
-                                            "const": "finish",
-                                            "type": "string"
-                                        }
-                                    ]
-                                },
-                                "input": {
-                                    "additionalProperties": false,
-                                    "description": "A typed answer the step takes, such as a name. While the flow stands on the step the composer is enabled, whatever `bootstrap.typing` says. A typed message whose text, trimmed, is one line of 1 to `maxLength` characters, and one of the parameter's `values` when they are listed, is the step's answer: it is stored and announced like a press, no model reads it, and the flow enters `step` with the trimmed text as `param`. Any other typed message follows `bootstrap.typing`.",
-                                    "type": "object",
-                                    "required": ["step", "param"],
-                                    "properties": {
-                                        "step": {
-                                            "minLength": 1,
-                                            "maxLength": 64,
-                                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-                                            "description": "The step a typed answer leads to: one of this step's `next` steps.",
-                                            "type": "string"
-                                        },
-                                        "param": {
-                                            "minLength": 1,
-                                            "maxLength": 64,
-                                            "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-                                            "description": "The parameter of that `next` step the answer fills; the step must declare it.",
-                                            "type": "string"
-                                        },
-                                        "maxLength": {
-                                            "minimum": 1,
-                                            "maximum": 128,
-                                            "description": "The longest answer, in characters (Unicode code points); 128 when omitted.",
-                                            "type": "integer"
-                                        },
-                                        "placeholder": {
-                                            "minLength": 1,
-                                            "maxLength": 200,
-                                            "description": "The composer's placeholder while the flow stands on this step, instead of the bootstrap's.",
-                                            "type": "string"
-                                        }
-                                    }
-                                },
-                                "next": {
-                                    "additionalProperties": false,
-                                    "description": "The steps this step's message may lead to: each `onboarding.next` control in it names one of these in `data-step`. A press toward any other step is refused.",
-                                    "type": "object",
-                                    "patternProperties": {
-                                        "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$": {
-                                            "additionalProperties": false,
-                                            "type": "object",
-                                            "properties": {
-                                                "params": {
-                                                    "maxProperties": 4,
-                                                    "additionalProperties": false,
-                                                    "description": "The `data-` parameters a press toward this step may carry, each with one of its `values` when they are listed.",
-                                                    "type": "object",
-                                                    "patternProperties": {
-                                                        "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$": {
-                                                            "additionalProperties": false,
-                                                            "type": "object",
-                                                            "properties": {
-                                                                "values": {
-                                                                    "minItems": 1,
-                                                                    "maxItems": 32,
-                                                                    "type": "array",
-                                                                    "items": {
-                                                                        "minLength": 1,
-                                                                        "maxLength": 128,
-                                                                        "type": "string"
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                },
-                                                "values": {
-                                                    "description": "A press toward this step may carry a checklist's ticked values.",
-                                                    "const": "checklist",
-                                                    "type": "string"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
         },
@@ -265,7 +118,7 @@
             "type": "string"
         },
         "guide": {
-            "description": "The model's instructions while the guided part runs, with `{{name}}` variables as in `say`. Its hidden context entries are described here too.",
+            "description": "The model's instructions while the guided part runs, with `{{name}}` variables as in `say`. Its hidden context entries are described here too. The model asks with chat UI through `show_ui`, never with markup in its text.",
             "anyOf": [
                 {
                     "minLength": 1,
@@ -290,19 +143,6 @@
             "type": "array",
             "items": {
                 "pattern": "^[a-z][a-z0-9_]{0,63}$",
-                "type": "string"
-            }
-        },
-        "figures": {
-            "maxItems": 32,
-            "uniqueItems": true,
-            "description": "The figure kinds the recipe's messages and guide may show, by their `data-` name.",
-            "type": "array",
-            "items": {
-                "minLength": 1,
-                "maxLength": 64,
-                "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$",
-                "description": "A lowercase slug. `handoff` and `finish` are targets, never step IDs.",
                 "type": "string"
             }
         }

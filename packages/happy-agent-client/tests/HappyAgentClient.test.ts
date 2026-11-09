@@ -468,21 +468,24 @@ describe("HappyAgentClient", () => {
         );
     });
 
-    it("sends an onboarding press without a mode when the caller names none", async () => {
-        const { fetch, requests } = stubFetch(() => json({ cursor: "c1", message: {} }));
+    it("sends a chat UI action to its own route with the protocol header", async () => {
+        const { fetch, requests } = stubFetch(() =>
+            json({ cursor: "c1", record: {}, message: null, result: null }),
+        );
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
-        const press = {
-            type: "action" as const,
+        const request = {
+            id: "attempt1",
             messageId: "message1",
-            blockIndex: 0,
-            controlIndex: 0,
-            actionId: "onboarding.next",
-            params: { step: "providers" },
+            uiId: "ui1",
+            componentId: "claude",
+            action: { type: "provider_sign_in.sign_in", payload: {} },
         };
 
-        await client.sendMessage("agent1", { content: [press], id: "press1" });
+        await client.sendUiAction("agent1", request);
 
-        expect(requests[0]?.body).toBe(JSON.stringify({ content: [press], id: "press1" }));
+        expect(requests[0]?.url).toBe("http://agent.local/v0/agents/agent1/actions");
+        expect(requests[0]?.body).toBe(JSON.stringify(request));
+        expect(requests[0]?.headers.get("happy-protocol")).toBe("35");
     });
 
     it("sends the team target a provider CLI figure names with its sign-in", async () => {

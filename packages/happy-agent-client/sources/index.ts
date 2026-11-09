@@ -44,10 +44,7 @@ export * from "./happyLinks.js";
 export * from "./happyServerLinks.js";
 export * from "./happyLinksInMarkdown.js";
 export * from "./mediaLayoutBlocks.js";
-export * from "./chatActionBlocks.js";
-export * from "./chatActionRegistry.js";
-export * from "./chatActionPress.js";
-export { MAX_CHAT_ACTION_BLOCK_LENGTH } from "./chatActionHtml.js";
+export * from "./ui/index.js";
 export * from "./mediaLayoutHtml.js";
 export {
     artifactAddressPublic,
@@ -95,6 +92,7 @@ export * from "./protocol/skills.js";
 export * from "./protocol/plugins.js";
 export * from "./protocol/slashCommands.js";
 export * from "./protocol/terminals.js";
+export * from "./protocol/ui.js";
 export * from "./protocol/usage.js";
 export * from "./protocol/users.js";
 export * from "./protocol/userSettings.js";

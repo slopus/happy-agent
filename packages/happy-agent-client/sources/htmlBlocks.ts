@@ -1,8 +1,8 @@
 /**
  * HTML blocks in Markdown: blocks that start at the start of a line indented at most three spaces,
  * outside fenced code and outside a code span, and run until their root element closes, counting
- * only that tag, so blank lines inside never end them. Media layouts (`mediaLayoutBlocks`) and
- * inline action blocks (`chatActionBlocks`) are both found this way, each with its own rules.
+ * only that tag, so blank lines inside never end them. Media layouts (`mediaLayoutBlocks`) are
+ * found this way.
  */
 
 import { fenceOpening, isFenceClose, type MarkdownFence } from "./markdownBlocks.js";

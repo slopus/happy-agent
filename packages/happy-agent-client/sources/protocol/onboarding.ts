@@ -19,13 +19,13 @@ export const onboardingFlowSchema = Type.Object({
     recipe: Type.String({ minLength: 1 }),
     /** `not_started`, `running`, `finished`, or newer; treat an unknown value as `running`. */
     status: Type.String({ minLength: 1 }),
-    /** The bootstrap step, or null once the model leads. For tests and diagnostics only. */
+    /** `"opening"` while the scripted opening waits, or null once the model leads. Diagnostics only. */
     step: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     /** The conversation where the caller's onboarding runs. */
     agentId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
     composer: Type.Union([Type.Literal("enabled"), Type.Literal("disabled")]),
     composerPlaceholder: Type.Union([Type.String(), Type.Null()]),
-    /** A provider chosen during onboarding needs the daemon restarted. */
+    /** A provider chosen during onboarding needs the daemon restarted; `false` on a standalone daemon. */
     restartRequired: Type.Boolean(),
     /**
      * Whether the person can leave onboarding now, such as through "Skip setup", and still use the

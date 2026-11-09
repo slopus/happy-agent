@@ -236,9 +236,14 @@ import type {
     MessageHistoryQuery,
     MessageHistoryResponse,
     SendMessageRequest,
-    SendActionMessageRequest,
     SendMessageResponse,
 } from "./protocol/messages.js";
+import {
+    CHAT_UI_PROTOCOL_VERSION,
+    HAPPY_PROTOCOL_HEADER,
+    type UiActionRequest,
+    type UiActionResponse,
+} from "./protocol/ui.js";
 import type { BackgroundProcessResponse } from "./protocol/processes.js";
 import type { ProfileResponse, ProfileUpdateRequest } from "./protocol/profile.js";
 import { userIdsSchema, type UsersResponse } from "./protocol/users.js";
@@ -3926,7 +3931,7 @@ export class HappyAgentClient {
      */
     async sendMessage(
         agentId: Cuid2,
-        request: SendMessageRequest | SendActionMessageRequest,
+        request: SendMessageRequest,
         options: RequestOptions = {},
     ): Promise<SendMessageResponse> {
         return await this.#json({
@@ -3934,8 +3939,32 @@ export class HappyAgentClient {
             path: `v0/agents/${encodeURIComponent(agentId)}/send`,
             json: {
                 ...request,
-                ...(request.mode === undefined ? {} : { mode: requestedMode(request.mode) }),
+                mode: requestedMode(request.mode),
             },
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/agents/:agentId/actions` — one click on a chat UI component. The daemon checks the
+     * conversation and the action's permission, records the attempt with secrets left out, and
+     * runs the owning module's hook. A rejection is `200` with outcome `"rejected"`; `400`, `403`,
+     * and `404` throw {@link HappyAgentApiError} with codes `invalid_request`, `forbidden`, and
+     * `not_found`, and nothing was stored. Reusing `id` returns the stored outcome. `result` is
+     * the only place a secret result appears: keep it in memory and drop it with the widget.
+     */
+    async sendUiAction(
+        agentId: Cuid2,
+        request: UiActionRequest,
+        options: RequestOptions = {},
+    ): Promise<UiActionResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/agents/${encodeURIComponent(agentId)}/actions`,
+            json:
+                request.mode === undefined
+                    ? request
+                    : { ...request, mode: requestedMode(request.mode) },
             signal: options.signal,
         });
     }
@@ -4410,6 +4439,8 @@ export class HappyAgentClient {
     async #send(request: HttpRequest): Promise<Response> {
         const headers: Record<string, string> = {
             accept: request.accept ?? "application/json",
+            // This client reads chat UI, so the daemon sends it rather than fallback text.
+            [HAPPY_PROTOCOL_HEADER]: String(CHAT_UI_PROTOCOL_VERSION),
         };
         const token = typeof this.#token === "function" ? await this.#token() : this.#token;
         if (token !== undefined) headers.authorization = `Bearer ${token}`;

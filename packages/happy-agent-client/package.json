@@ -1,6 +1,6 @@
 {
     "name": "@slopus/happy-agent-client",
-    "version": "0.0.161-preview.11",
+    "version": "0.0.161-preview.12",
     "description": "Typed client for the Happy agent HTTP API.",
     "license": "MIT",
     "repository": {
@@ -21,8 +21,8 @@
             "default": "./dist/index.js"
         },
         "./searchFusion.fixtures.json": "./fixtures/searchFusion.fixtures.json",
-        "./inlineActions.fixtures.json": "./fixtures/inlineActions.fixtures.json",
-        "./inlineActions.registry.json": "./fixtures/inlineActions.registry.json"
+        "./ui.schema.json": "./fixtures/ui/ui.schema.json",
+        "./ui/actions.fixtures.json": "./fixtures/ui/actions.fixtures.json"
     },
     "publishConfig": {
         "access": "public"
@@ -30,7 +30,8 @@
     "scripts": {
         "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json",
         "check": "tsc --noEmit",
-        "test": "vitest run --passWithNoTests"
+        "test": "vitest run --passWithNoTests",
+        "write:ui-fixtures": "node --import tsx scripts/write-ui-fixtures.ts"
     },
     "dependencies": {
         "@sinclair/typebox": "^0.34.49",

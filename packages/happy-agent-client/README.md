@@ -729,32 +729,39 @@ as API.md specifies under "Media layouts in text". This package holds the one sp
 
 Never load a `src` yourself; show only the matched item's snapshot.
 
-## Inline actions
+## Chat UI
 
-Agent text may hold inline action blocks: a closed subset of HTML drawn as buttons, checklists,
-tables, code fields, steps, status lines, trees, and live figures, as API.md specifies under
-"Inline actions". Treat every block as untrusted model output. This package holds the one
-grammar every client and server uses; keep no copy of it.
+A conversation may hold chat UI: a flat, ordered list of typed components, as API.md specifies
+under "Chat UI". The daemon writes a document in a `ui` block of an agent message; a model shows
+one with `show_ui`, whose tool call carries a `ui` presentation (`items` holds the media an
+`images` component names by index). Every component also carries a `fallback` line; draw that line
+for a type this build does not know. Every label and detail is plain text: never Markdown, never
+linkified, never HTML.
 
-- `splitChatActionBlocks(markdown)` splits the Markdown that `splitMediaLayoutBlocks` leaves into
-  `markdown` and `action` segments. Hold an incomplete last block while the text streams.
-- `parseChatActionBlock(html)` reads one block into a `ChatActionBlock`, or `undefined` when it
-  breaks any rule; draw `undefined` as the inert text it was written as. The tokenizer is strict:
-  an unknown element or attribute, `style`, `on*`, an unquoted or repeated attribute, a comment,
-  a stray `<`, an unknown character reference, a control or bidirectional formatting character,
-  mismatched nesting, or an exceeded bound refuses the whole block.
-- `messageChatActionBlocks(texts)` numbers a message's blocks by `blockIndex` across its text
-  blocks, counting every complete block, valid or not; `chatActionBlocksOf(markdown)` does one
-  text. Only the first `MAX_CHAT_ACTION_BLOCKS` are read.
-- A control is pressable when its `action` is present, its block has no `actionChoices` entry, and
-  `chatActionBlockLive(history, messageId)` holds. Send it with `sendMessage(agentId, { content:
-[{ type: "action", messageId, blockIndex, controlIndex, actionId, params, values }], mode })`.
-  The daemon stores the press as the person's plain text and records the choice on the message.
-- `CHAT_ACTIONS` is the closed action registry. `resolveChatActionPress` is the server's check of
-  a press against its stored message.
-- `stripChatActionBlocks(markdown)` is the fallback for surfaces that cannot press blocks.
+`sources/ui/` holds one bundle per component type (`choiceComponent`, `providerSignInComponent`,
+…): its props, and each action's strict payload, optional result, `transcript`, `once`, and
+`permission`. `uiComponents` lists them; `uiBundle(type)` and `uiActionDefinition(actionType)`
+look them up.
 
-Draw every label, detail, and cell as plain text: never as Markdown, never linkified, never as
-HTML. A figure carries only an identifier; draw it from the server's own state.
-`inlineActions.fixtures.json` and `inlineActions.registry.json`, shipped with the package, are the
-conformance vectors and the registry as data, for servers written in other languages.
+- Send each click with `sendUiAction(agentId, { id, messageId, uiId, componentId, action, mode })`.
+  `action` is `{ type: "<component>.<action>", payload }`; `mode` is needed only for `"message"`
+  actions, whose words become the person's message and start a turn. Show `uiActionText(component,
+action)` as the optimistic bubble for those. A rejection is a `200` whose record's outcome is
+  `"rejected"`: turn the optimistic bubble into a greyed "Not sent" one rather than removing it.
+- Silent actions show no bubble. Draw the component's pending and error state from its attempt
+  records: the `service` messages whose one `action` block names this `messageId`, `uiId`, and
+  `componentId`. Their payloads never hold a secret.
+- `result` in the response is the only place a secret result (a pairing code, an invite code)
+  appears. Keep it in the widget's memory and drop it when the widget goes away.
+- Disable what the viewer can't do with `uiActionAllowed(definition, props, granted)`. A standalone
+  daemon's person holds every permission in `UI_PERMISSION_IDS`. This is display only; the server
+  decides.
+- A `once` action closes its offer once accepted, or once the person wrote after it;
+  `uiOfferState` is the rule.
+
+This client sends `Happy-Protocol: 35` with every request. A daemon projects chat UI to fallback
+text for a client that sends no such header. `fixtures/ui/ui.schema.json` (every schema, with
+secret fields marked `"x-happy-secret": true`) and `fixtures/ui/actions.fixtures.json`
+(conformance vectors computed by this package), shipped as `./ui.schema.json` and
+`./ui/actions.fixtures.json`, are the contract for implementations in other languages.
+Regenerate them with `pnpm write:ui-fixtures`.
