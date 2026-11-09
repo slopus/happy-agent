@@ -79,7 +79,7 @@ async function settled(element: Element): Promise<Element> {
  * Runs components.js on a fake page whose host serves `code` as `/api/v1/code.js`, or serves
  * nothing there, and returns a way to draw one of its elements.
  */
-async function page(code?: string) {
+async function page(code?: string, globals: Record<string, unknown> = {}) {
     const folder = await mkdtemp(join(tmpdir(), "happy-components-"));
     folders.push(folder);
     await mkdir(join(folder, "api", "v1"), { recursive: true });
@@ -112,6 +112,7 @@ async function page(code?: string) {
             },
             URL,
             Promise,
+            ...globals,
         },
         { importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER },
     );
@@ -128,6 +129,7 @@ async function page(code?: string) {
             inline?: string,
         ) {
             const element = new (defined.get(tag)!)();
+            (element as { localName: string }).localName = tag;
             for (const [name, value] of Object.entries(attributes))
                 element.setAttribute(name, value);
             if (inline === undefined) element.source = source;
@@ -393,5 +395,31 @@ describe("standard files", () => {
                 .find("happy-lines")[0]!
                 .children[0]!.children.map((row) => row.children.map((cell) => cell.text)),
         ).toEqual([["a = 1"], ["b = 2"]]);
+    });
+
+    it("reads mnemonic diff prefixes and logs a path the diff does not change", async () => {
+        const posts: { entries: { level: string; message: string }[] }[] = [];
+        const fetch = async (_url: string, init: { body: string }) => {
+            posts.push(JSON.parse(init.body));
+            return { ok: true };
+        };
+        const { draw } = await page(undefined, { fetch, console: { warn: () => {} } });
+        const mnemonic = [
+            "diff --git c/src/app.ts w/src/app.ts",
+            "--- c/src/app.ts",
+            "+++ w/src/app.ts",
+            "@@ -1,2 +1,2 @@",
+            " one",
+            "-two",
+            "+2",
+            "",
+        ].join("\n");
+
+        const missing = await draw("happy-diff", { path: "src/gone.ts" }, mnemonic);
+        const message = "The diff does not change src/gone.ts. It changes src/app.ts.";
+        expect(missing.find("happy-error")[0]!.text).toBe(message);
+        expect(
+            posts.map((post) => post.entries.map(({ level, message }) => [level, message])),
+        ).toEqual([[["warn", `<happy-diff path="src/gone.ts"> ${message}`]]]);
     });
 });

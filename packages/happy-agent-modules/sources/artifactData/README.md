@@ -80,7 +80,9 @@ Limits are in `ARTIFACT_DATA_LIMITS`: 512-character keys, 256 KiB values, 1 MiB 
 
 Pages report problems to `POST /api/v1/debug/log`: the SDK sends uncaught errors, unhandled
 rejections, `console.error` and `console.warn`, its own sync trouble, and `happy.debug.log` calls,
-in batches it drops rather than retries. Each artifact's log is `logs.sqlite` beside its store, in
+in batches it drops rather than retries. The standard components report each element that cannot
+show what it was given as a `console` warning, posting it themselves on a page without the SDK, each
+message once and at most 20 per page. Each artifact's log is `logs.sqlite` beside its store, in
 WAL mode with normal sync, because losing the last few reports in a crash costs nothing. It keeps
 the newest 1,000 entries of the last 7 days, pruned on every append, and accepts 120 entries per
 user per artifact per minute (`ARTIFACT_LOG_LIMITS`); the rest are counted as dropped.

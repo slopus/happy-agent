@@ -45,6 +45,41 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
         return node("div", "happy-error", message);
     }
 
+    var reported = {};
+    var reportCount = 0;
+
+    /**
+     * Tells the artifact's debug log that an element could not show what it was given, so the
+     * agent that wrote the page reads it with read_artifact_logs instead of only a reader seeing
+     * it. A page with client.js already reports its console, so this posts only for one without,
+     * each message once and at most 20 in all.
+     */
+    function report(element, message) {
+        var described = "<" + element.localName;
+        ["src", "path", "lines"].forEach(function (name) {
+            var value = element.getAttribute(name);
+            if (value) described += " " + name + '="' + value + '"';
+        });
+        described += "> " + message;
+        if (global.console) global.console.warn(described);
+        if ((global.happy && global.happy.debug) || typeof global.fetch !== "function") return;
+        if (reported[described] || reportCount >= 20) return;
+        reported[described] = true;
+        reportCount++;
+        try {
+            global.fetch(BASE + "debug/log", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                cache: "no-store",
+                keepalive: true,
+                body: JSON.stringify({
+                    entries: [{ level: "warn", source: "console", message: described.slice(0, 4096), at: Date.now() }],
+                    url: String(global.location.href).slice(0, 1024),
+                }),
+            }).catch(function () { /* dropped */ });
+        } catch (error) { /* dropped */ }
+    }
+
     function countsNode(added, removed) {
         var span = node("span", "happy-counts");
         if (added) span.appendChild(node("span", "happy-added", "+" + added));
@@ -140,8 +175,9 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
                 });
             }).catch(function (error) {
                 if (token !== self._token) return;
-                self.replaceChildren(failure(error && error.message ? error.message : String(error)));
-                if (global.console) global.console.warn("<" + self.localName + ">", error);
+                var message = error && error.message ? error.message : String(error);
+                self.replaceChildren(failure(message));
+                report(self, message);
             }).then(function () {
                 if (token === self._token) self.removeAttribute("aria-busy");
             });
@@ -176,13 +212,42 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
 
     // Diffs.
 
+    function unquote(value) {
+        if (value.length < 2 || value.charAt(0) !== '"' || value.charAt(value.length - 1) !== '"') return value;
+        try { return JSON.parse(value); } catch (error) { return value.slice(1, -1); }
+    }
+
+    /** A side of a "---" or "+++" line, as written, without its date; null for /dev/null. */
     function diffPath(raw) {
-        var value = raw.replace(/\t.*$/, "");
-        if (value.charAt(0) === '"' && value.charAt(value.length - 1) === '"') {
-            try { value = JSON.parse(value); } catch (error) { value = value.slice(1, -1); }
+        var value = unquote(raw.replace(/\t.*$/, ""));
+        return value === "/dev/null" ? null : value;
+    }
+
+    /**
+     * The path two sides of one file share past the folder git puts before each. That is "a/" and
+     * "b/" by default, but "c/", "i/", "w/", "1/", and the like with diff.mnemonicPrefix, and
+     * nothing with diff.noprefix, so the prefix is read from the sides rather than assumed. Null
+     * when they name different files.
+     */
+    function sharedPath(one, two) {
+        if (one === two) return one;
+        var oneSlash = one.indexOf("/");
+        var twoSlash = two.indexOf("/");
+        if (oneSlash <= 0 || twoSlash <= 0 || oneSlash + 1 === one.length) return null;
+        return one.slice(oneSlash + 1) === two.slice(twoSlash + 1) ? one.slice(oneSlash + 1) : null;
+    }
+
+    /** The path a "diff --git" line names on both sides, or null for a rename. */
+    function gitHeaderPath(rest) {
+        var quoted = /^("(?:[^"\\]|\\.)*"|[^"]\S*) ("(?:[^"\\]|\\.)*")$/.exec(rest) || /^("(?:[^"\\]|\\.)*") (.*)$/.exec(rest);
+        if (quoted) return sharedPath(unquote(quoted[1]), unquote(quoted[2]));
+        // Unquoted paths may hold spaces, so try each space; only the right one leaves both
+        // sides naming the same file.
+        for (var at = rest.indexOf(" "); at > 0; at = rest.indexOf(" ", at + 1)) {
+            var shared = sharedPath(rest.slice(0, at), rest.slice(at + 1));
+            if (shared !== null) return shared;
         }
-        if (value === "/dev/null") return null;
-        return value.replace(/^[ab]\//, "");
+        return null;
     }
 
     /** Parse a unified diff, as 'git diff' or 'diff -u' write it, into files of hunks. */
@@ -195,7 +260,9 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
         var lines = text.split(/\r?\n/);
         if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
         function start() {
-            file = { oldPath: undefined, newPath: undefined, status: null, binary: false, hunks: [], added: 0, removed: 0 };
+            // gitPath is what a "diff --git" line names on both sides; named is set once rename or
+            // copy lines name the sides, which carry no prefix and so are kept.
+            file = { oldPath: undefined, newPath: undefined, gitPath: null, named: false, status: null, binary: false, hunks: [], added: 0, removed: 0 };
             files.push(file);
             hunk = null;
         }
@@ -224,8 +291,8 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
             if (line.charAt(0) === "\\") continue;
             if (line.indexOf("diff --git ") === 0) {
                 start();
-                var names = /^diff --git "?a\/(.*?)"? "?b\/(.*?)"?$/.exec(line);
-                if (names) { file.oldPath = names[1]; file.newPath = names[2]; }
+                file.gitPath = gitHeaderPath(line.slice(11));
+                if (file.gitPath !== null) { file.oldPath = file.gitPath; file.newPath = file.gitPath; }
                 continue;
             }
             var header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/.exec(line);
@@ -248,16 +315,24 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
             }
             if (line.indexOf("--- ") === 0 && i + 1 < lines.length && lines[i + 1].indexOf("+++ ") === 0) {
                 if (file === null || file.hunks.length > 0 || file.binary) start();
-                file.oldPath = diffPath(line.slice(4));
-                file.newPath = diffPath(lines[i + 1].slice(4));
+                var oldSide = diffPath(line.slice(4));
+                var newSide = diffPath(lines[i + 1].slice(4));
                 i++;
+                if (file.named) continue;
+                // Without a "diff --git" line to say which file this is, as 'diff -u' writes, the
+                // sides say it themselves, or carry the usual a/ and b/.
+                var shared = file.gitPath !== null ? file.gitPath : oldSide !== null && newSide !== null ? sharedPath(oldSide, newSide) : null;
+                file.oldPath = oldSide === null ? null : shared !== null ? shared : oldSide.replace(/^a\//, "");
+                file.newPath = newSide === null ? null : shared !== null ? shared : newSide.replace(/^b\//, "");
                 continue;
             }
             if (file === null) continue;
             if (line.indexOf("new file mode") === 0) file.status = "added";
             else if (line.indexOf("deleted file mode") === 0) file.status = "deleted";
-            else if (line.indexOf("rename from ") === 0) { file.status = "renamed"; file.oldPath = line.slice(12); }
-            else if (line.indexOf("rename to ") === 0) { file.status = "renamed"; file.newPath = line.slice(10); }
+            else if (line.indexOf("rename from ") === 0) { file.status = "renamed"; file.named = true; file.oldPath = unquote(line.slice(12)); }
+            else if (line.indexOf("rename to ") === 0) { file.status = "renamed"; file.named = true; file.newPath = unquote(line.slice(10)); }
+            else if (line.indexOf("copy from ") === 0) { file.named = true; file.oldPath = unquote(line.slice(10)); }
+            else if (line.indexOf("copy to ") === 0) { file.named = true; file.newPath = unquote(line.slice(8)); }
             else if (line.indexOf("Binary files ") === 0 || line.indexOf("GIT binary patch") === 0) file.binary = true;
         }
         return files.map(function (entry) {
@@ -333,6 +408,16 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
             });
         });
         return trimmed;
+    }
+
+    /** The lines a file's hunks span, numbered as a lines attribute counts, such as "lines 3–9, 41–45". */
+    function changedRanges(file) {
+        var useOld = file.status === "deleted";
+        return "lines " + file.hunks.map(function (hunk) {
+            var start = useOld ? hunk.oldStart : hunk.newStart;
+            var count = useOld ? hunk.oldCount : hunk.newCount;
+            return count <= 1 ? String(start) : start + "–" + (start + count - 1);
+        }).join(", ");
     }
 
     /** One file's hunks as the git patch the renderer reads. */
@@ -471,11 +556,16 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
 
         renderParts(input, draw) {
             var text = input.type === "property" ? String(input.value === undefined || input.value === null ? "" : input.value) : input.text;
+            var self = this;
             var files = parseDiff(text);
             var path = this.getAttribute("path");
             if (path) {
+                var all = files;
                 files = files.filter(function (file) { return file.path === path || file.oldPath === path; });
-                if (files.length === 0) throw new Error("The diff does not change " + path + ".");
+                if (files.length === 0) {
+                    var names = all.slice(0, 5).map(function (file) { return file.path; }).join(", ");
+                    throw new Error("The diff does not change " + path + "." + (names ? " It changes " + names + (all.length > 5 ? " and " + (all.length - 5) + " more." : ".") : ""));
+                }
             }
             if (files.length === 0) throw new Error("The diff has no changes.");
             var range = parseRange(this.getAttribute("lines"));
@@ -488,6 +578,9 @@ export const ARTIFACT_COMPONENTS_SCRIPT = String.raw`/* Happy standard component
                 if (hunks.length === 0) {
                     section.appendChild(header(fileTitle(file.path, previousPath, file.status), file.added, file.removed));
                     section.appendChild(node("div", "happy-diff-note", file.binary ? "Binary file" : range === null ? "No changed lines" : "No changes in lines " + range.first + "–" + range.last));
+                    // A range with no changes is almost always lines counted in the old file or a
+                    // hunk header; the quote shows nothing, so the agent hears where it changes.
+                    if (!file.binary && range !== null && file.hunks.length > 0) report(self, "No changes in lines " + range.first + "–" + range.last + " of " + file.path + "; it changes " + changedRanges(file) + ".");
                     return section;
                 }
                 var part = { patch: filePatch(file, hunks), path: file.path, previousPath: previousPath, status: file.status, wrap: wrap };
