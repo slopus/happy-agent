@@ -29,7 +29,7 @@ compacts mid-run; only `compact()` sends the edit with a real trigger and
 The transcript must end with a user turn, a tool result, or that native compaction checkpoint.
 Claude models from 4.6 onward reject a trailing assistant message ("This model does not support
 assistant message prefill"), and the adapter does not add or drop a turn to work around it:
-Opus 5.5, Sonnet 5.5, and Fable 5.1 bind each signed thinking block to the exact messages before
+Opus 5.5, Sonnet 5.5, Fable 5.2, and Fable 5.1 bind each signed thinking block to the exact messages before
 it, so a user turn sent with one request and missing from the next would make every later request
 fail. A caller
 continuing a cut-off response appends a durable system notice instead, which serializes as a
@@ -51,6 +51,7 @@ wins:
 | ----------------- | ------------------------------------------------------------------------- | -------------------------- |
 | Claude Opus 5.5   | Model card lists Mantle; in-region availability not yet documented        | Commercial Bedrock regions |
 | Claude Sonnet 5.5 | `us-gov-west-1` only; Runtime is the default                              | Commercial Bedrock regions |
+| Claude Fable 5.2  | None; AWS serves it on Runtime only                                       | Commercial Bedrock regions |
 | Claude Fable 5.1  | None documented; Runtime is the default                                   | Commercial Bedrock regions |
 | Claude Sonnet 5   | `eu-north-1`, `eu-west-1`, `us-east-1`                                    | Commercial Bedrock regions |
 | Claude Fable 5    | `us-east-1`                                                               | Commercial Bedrock regions |
@@ -70,7 +71,10 @@ to; the SDK alone would sign the hostname without the port.
 Without an endpoint, Runtime in the China partition (`cn-north-1`, `cn-northwest-1`) is reached at
 `bedrock-runtime.<region>.amazonaws.com.cn`.
 Fable 5.1 defaults to Runtime because AWS documents US and global inference profiles but no
-in-region Mantle route. Opus 5.5 launched on both endpoints with the same us, eu, jp, au, and
+in-region Mantle route. Fable 5.2's model card lists only the `bedrock-runtime` endpoint, with
+`us.anthropic.claude-fable-5-2` and `global.anthropic.claude-fable-5-2` and no in-region ID, so it
+resolves like Fable 5.1 and the catalog hides a forced Mantle route. Both Fable models require the
+AWS account to opt in to AWS review (`aws_review` data retention) before Bedrock serves them. Opus 5.5 launched on both endpoints with the same us, eu, jp, au, and
 global Runtime profiles as Opus 5; its Mantle ID is the bare `anthropic.claude-opus-5-5`.
 Sonnet 5.5 also defaults to Runtime. AWS documents only its global profile,
 `global.anthropic.claude-sonnet-5-5`, with no geo profiles, so every region resolves to that

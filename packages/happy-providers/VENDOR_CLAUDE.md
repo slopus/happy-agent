@@ -395,31 +395,40 @@ Fable 5.2 needed every step below. Each one is a separate decision; none follows
    entry (context window, 400k auto-compact for 1M models) and a `CATALOG` row. Offer `off` only if
    a raw request with disabled thinking succeeds. The first row per provider is that provider's
    fallback default as well as the top of its picker; placement is the person's call (they put
-   Fable 5.2 first). Bedrock and other resellers are
-   a separate decision: add the model to `BEDROCK_RESOLD_MODEL_IDS` and the Bedrock resolvers only
-   when AWS documents a model ID and its regions. Anthropic listed no Bedrock ID for Fable 5.2.
-   `happy-agent-base/sources/models.ts` is frozen and is not part of this.
-5. **System prompt.** Capture the CLI's own `claude_code` preset prompt for the wire ID through a
+   Fable 5.2 first). `happy-agent-base/sources/models.ts` is frozen and is not part of this.
+5. **Bedrock.** AWS often ships a Claude model on Bedrock the same day, and Anthropic's own docs do
+   not say so. Check AWS's model card
+   (`docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-<model>.html`) for the
+   model ID, endpoints (Runtime, Mantle, or both), geo and global profiles, and any data-retention
+   opt-in. Then probe a configured Bedrock account live: `aws bedrock list-foundation-models` and
+   `aws bedrock list-inference-profiles` in its region and in `us-east-1`, plus one request on each
+   route. Never conclude "not on Bedrock" without that probe; Fable 5.2 was first left off
+   Bedrock on Anthropic's docs alone and had to ship in a follow-up release. When it is there, add
+   the model to `resolveBedrockModelId.ts`, `resolveAnthropicBedrockModelId.ts`,
+   `BEDROCK_RESOLD_MODEL_IDS`, the transport default and `BEDROCK_MANTLE_REGIONS` in
+   `agentCatalog.ts`, and the table in [VENDOR_ANTHROPIC_BEDROCK.md](VENDOR_ANTHROPIC_BEDROCK.md).
+   A model that needs an account opt-in must not become the Bedrock fallback default.
+6. **System prompt.** Capture the CLI's own `claude_code` preset prompt for the wire ID through a
    loopback server (the API is never contacted), write it to
    `systemPrompt/prompts/claude/claude_<model>_system_prompt.ts`, and map it in
    `systemPrompt/impl/systemPromptForModel.ts`. Follow the porting rules in
    [`systemPrompt/AGENTS.md`](../happy-agent-modules/sources/systemPrompt/AGENTS.md): `{{identity}}`
    first, and no Session-specific guidance, Memory, Environment, hooks, games line, or token-count
    text. A missing mapping silently falls back to the generic prompt.
-6. **Other model lists.** Add the model to `CLAUDE_TOOL_SEARCH_MODELS` in
+7. **Other model lists.** Add the model to `CLAUDE_TOOL_SEARCH_MODELS` in
    `toolDiscovery/ToolDiscoveryModule.ts`. Check `providerScan/ProviderScanModule.ts` (verification
    model), `auto/impl/reviewerModelForAgent.ts` (it matches `anthropic/opus-` and
    `anthropic/fable-` prefixes), and the gym catalog assertion in
    `happy_api_environment_onboarding_usage_matrix.test.ts`.
-7. **Usage meters.** Send a real request and read every `anthropic-ratelimit-unified-*` header and
+8. **Usage meters.** Send a real request and read every `anthropic-ratelimit-unified-*` header and
    the OAuth usage endpoint. A new window name (as `seven_day_fable` once was) needs parsing in
    `claudeUsageFromRateLimitInfo.ts` and `fetchClaudeProviderUsage.ts`; Fable 5.2 added none.
-8. **Tools.** Read the model's "what's new" page for removed tool versions, tool-choice rules, and
+9. **Tools.** Read the model's "what's new" page for removed tool versions, tool-choice rules, and
    beta headers, and the Claude Code changelog for built-in tool changes. Happy runs Claude Code
    with only caller-owned MCP tools and ToolSearch, so most CLI tool changes do not reach it.
-9. **Live test** on at least two existing accounts: a plain answer, a tool round trip, and the raw
-   parameter checks (disabled thinking, each effort, forced tool choice). Never create logins.
-10. **Benchmarks.** The happy.engineering benchmarks page is a separate task with its own evidence
+10. **Live test** on at least two existing accounts: a plain answer, a tool round trip, and the raw
+    parameter checks (disabled thinking, each effort, forced tool choice). Never create logins.
+11. **Benchmarks.** The happy.engineering benchmarks page is a separate task with its own evidence
     rules; adding a model does not update it.
 
 ## Intentional limitations

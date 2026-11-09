@@ -10,6 +10,7 @@ export function resolveAnthropicBedrockModelId(
     const base = `anthropic.claude-${modelName}`;
     if (
         ![
+            "fable-5-2",
             "fable-5-1",
             "fable-5",
             "opus-5-5",
@@ -24,7 +25,8 @@ export function resolveAnthropicBedrockModelId(
         );
     }
     if (transport === "mantle") return base;
-    if (modelName === "fable-5-1") {
+    // AWS offers Fable 5.2 and Fable 5.1 through only the US geo profile and the global one.
+    if (modelName === "fable-5-2" || modelName === "fable-5-1") {
         return region.startsWith("us-") ? `us.${base}` : `global.${base}`;
     }
     // AWS documents only the global profile for Sonnet 5.5; it has no geo profiles.
