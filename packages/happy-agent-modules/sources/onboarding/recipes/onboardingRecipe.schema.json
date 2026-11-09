@@ -118,7 +118,7 @@
             "type": "string"
         },
         "guide": {
-            "description": "The model's instructions while the guided part runs, with `{{name}}` variables as in `say`. Its hidden context entries are described here too. The model asks with chat UI through `show_ui`, never with markup in its text.",
+            "description": "The model's instructions while the guided part runs, with `{{name}}` variables as in `say`. Its hidden context entries are described here too. The model offers answers with `suggest_replies` and controls with `show_ui`, never with markup in its text.",
             "anyOf": [
                 {
                     "minLength": 1,

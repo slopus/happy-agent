@@ -49,6 +49,7 @@ import {
     senderAgentIdOf,
 } from "../impl/messageOrigin.js";
 import { decodeRequestProfile } from "../impl/requestProfile.js";
+import { quickReplyOf } from "../impl/quickReplyOf.js";
 import { storyQuoteOf } from "../impl/storyQuote.js";
 import type { BotSettingsModule } from "../botSettings/index.js";
 import type { DurableFunctionsModule } from "../durableFunctions/index.js";
@@ -776,41 +777,6 @@ export class HistoryModule implements AgentModule {
                     LIMIT 1`,
             );
             return rows[0] === undefined ? undefined : toHistoryRecord(rows[0]).message;
-        });
-    }
-
-    /**
-     * The first person's own message recorded after `messageId` in this conversation: a visible
-     * user-role message, accepted already. Pending messages, and messages generated on the
-     * person's behalf, do not count. A chat UI offer takes a `once` answer only until one exists.
-     */
-    async personMessageAfter(
-        ctx: Context,
-        agentId: string,
-        messageId: string,
-    ): Promise<string | undefined> {
-        if (
-            !Value.Check(historyAgentIdSchema, agentId) ||
-            !Value.Check(historyRecordIdSchema, messageId)
-        ) {
-            throw new Error("The history module received an invalid message lookup.");
-        }
-        return await this.#direct(ctx, async (txCtx) => {
-            const rows = await agentDatabaseRows<{ record_id: string }>(
-                txCtx.db,
-                sql`SELECT later.record_id AS record_id
-                    FROM ${sql.raw(HISTORY_TABLE)} AS later
-                    WHERE later.agent_id = ${agentId}
-                      AND later.role = 'user'
-                      AND COALESCE(json_extract(later.message_json, '$.hideFromUser'), 0) != 1
-                      AND later.position > (
-                          SELECT position FROM ${sql.raw(HISTORY_TABLE)}
-                          WHERE agent_id = ${agentId} AND record_id = ${messageId}
-                      )
-                    ORDER BY later.position ASC
-                    LIMIT 1`,
-            );
-            return rows[0]?.record_id;
         });
     }
 
@@ -2924,6 +2890,7 @@ export class HistoryModule implements AgentModule {
                       ? metadataUserId
                       : undefined;
             const quote = fromUser ? storyQuoteOf(accepted.metadata) : undefined;
+            const quickReply = fromUser ? quickReplyOf(accepted.metadata) : undefined;
             const sender = fromUser ? undefined : senderAgentIdOf(accepted.metadata);
             const senderExplanation =
                 sender === undefined ? undefined : senderAgentExplanationOf(accepted.metadata);
@@ -2934,9 +2901,6 @@ export class HistoryModule implements AgentModule {
                 if (block.type !== "reasoning") return [toHistoryInputBlock(block)];
                 return block.text === undefined ? [] : [{ type: "thinking", thinking: block.text }];
             });
-            // A chat UI action that became the person's words keeps its `action` block, which
-            // only the pending row holds: no provider is ever sent it.
-            blocks.push(...(pending?.blocks.filter((block) => block.type === "action") ?? []));
             await this.#append(ctx, scope.agent.id, {
                 at: acceptedAt,
                 blocks,
@@ -2953,6 +2917,7 @@ export class HistoryModule implements AgentModule {
                           ...(clientMetadata === undefined ? {} : { clientMetadata }),
                           ...(userId === undefined ? {} : { userId }),
                           ...(quote === undefined ? {} : { quote }),
+                          ...(quickReply === undefined ? {} : { quickReply }),
                       }
                     : {}),
                 // Any accepted message may start a run on a request's behalf, such as the hidden

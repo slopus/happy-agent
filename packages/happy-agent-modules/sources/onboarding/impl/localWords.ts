@@ -16,6 +16,7 @@ export const LOCAL_OFFER: OnboardingRuntimeOffer = {
         "create_project",
         "clone_project",
         "show_ui",
+        "suggest_replies",
     ]),
     requirements: new Set(["provider", "profile"]),
 };

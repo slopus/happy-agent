@@ -1,6 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { agentRequestProfileSchema } from "@slopus/happy-agent-base";
-import { userIdSchema } from "@slopus/happy-agent-client";
+import { quickReplySchema, userIdSchema } from "@slopus/happy-agent-client";
 
 import {
     historyAgentIdSchema,
@@ -50,6 +50,8 @@ export const historyPendingMessageSchema = Type.Object(
         clientMetadata: Type.Optional(historyClientMetadataSchema),
         userId: Type.Optional(userIdSchema),
         mutationId: Type.Optional(historyMutationIdSchema),
+        /** The suggested reply this message is, set by the daemon from a checked send. */
+        quickReply: Type.Optional(quickReplySchema),
         runId: Type.Null(),
     },
     { additionalProperties: false },

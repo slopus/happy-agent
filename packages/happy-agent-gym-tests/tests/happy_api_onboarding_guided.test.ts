@@ -8,12 +8,11 @@ import {
     PHONE_TURN,
     RENAME,
     SAVE_PROFILE,
-    choice,
     cue,
     lastMessage,
     reply,
-    showing,
     startGuidedGym,
+    suggesting,
     connectCodex,
 } from "./support/guidedOnboardingGym.js";
 import {
@@ -82,7 +81,7 @@ describe("The model leading onboarding", () => {
                 "Call find_recent_projects to see their recent work, and nothing else",
             );
             expect(begin?.instructions).toContain(
-                "Your onboarding tools are show_ui, save_profile, set_default_model, set_bot_name, find_recent_projects, clone_project, create_project, start_first_task, send_agent_message and finish_onboarding.",
+                "Your onboarding tools are suggest_replies, show_ui, save_profile, set_default_model, set_bot_name, find_recent_projects, clone_project, create_project, start_first_task, send_agent_message and finish_onboarding.",
             );
             const event = JSON.stringify(lastMessage(begin));
             expect(event).toContain('\\"connected\\":[{\\"app\\":\\"ChatGPT\\"');
@@ -136,11 +135,22 @@ describe("The model leading onboarding", () => {
             };
             expect(profile).toMatchObject({ name: "Ada Lovelace", email: "ada@example.com" });
 
-            const pressed = await reply(gym, agentId, firstTaskStep.id, 2);
-            expect(pressed.message.content).toEqual([
-                { type: "text", text: "Skip for now" },
-                expect.objectContaining({ type: "action" }),
-            ]);
+            // A tapped reply is the person's message, naming the suggestion it came from.
+            const tapped = await reply(gym, agentId, firstTaskStep.id, 2);
+            expect(tapped.message.content).toEqual([{ type: "text", text: "Skip for now" }]);
+            const suggestion = firstTaskStep.content.find((block) => block.type === "tool_call");
+            expect(suggestion).toMatchObject({
+                name: "suggest_replies",
+                presentation: {
+                    type: "quick_replies",
+                    options: ["Look at my recent work", "I'll name a folder", "Skip for now"],
+                },
+            });
+            expect(tapped.message.quickReply).toEqual({
+                messageId: firstTaskStep.id,
+                toolCallId: suggestion?.["id"],
+                index: 2,
+            });
             const phoneStep = await waitForSaid(gym, agentId, PHONE_STEP);
             expect(await flowOf(gym)).toMatchObject({ status: "running" });
             await reply(gym, agentId, phoneStep.id, 1);
@@ -299,13 +309,11 @@ describe("The model leading onboarding", () => {
                 saved: () => FIRST_TASK_TURN,
                 // Discovery found nothing, so the model offers starts instead of suggestions.
                 "said:Look at my recent work": () =>
-                    showing(NOTHING_FOUND, [
-                        choice("start", [
-                            "Clone a repo",
-                            "Start a new project",
-                            "I'll name a folder",
-                            "Skip for now",
-                        ]),
+                    suggesting(NOTHING_FOUND, [
+                        "Clone a repo",
+                        "Start a new project",
+                        "I'll name a folder",
+                        "Skip for now",
                     ]),
                 "said:Start a new project": () => ({
                     content: [
@@ -362,11 +370,8 @@ describe("The model leading onboarding", () => {
                 expect(tool?.defer, name).not.toBe(true);
             }
 
-            const pressed = await reply(gym, agentId, nothing.id, 1);
-            expect(pressed.message.content).toEqual([
-                { type: "text", text: "Start a new project" },
-                expect.objectContaining({ type: "action" }),
-            ]);
+            const tapped = await reply(gym, agentId, nothing.id, 1);
+            expect(tapped.message.content).toEqual([{ type: "text", text: "Start a new project" }]);
             await waitForSaid(gym, agentId, "which folder should it go in?");
             await gym.send("A command-line weather app in Python, in ~/weather", {
                 sessionId: agentId,

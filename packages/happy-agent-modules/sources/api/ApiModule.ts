@@ -5675,12 +5675,6 @@ export class ApiModule implements AgentModule {
         }
         sendJson(response, 200, {
             record: messageResource(result.record),
-            message:
-                result.message === null
-                    ? null
-                    : "status" in result.message
-                      ? pendingMessageResource(result.message)
-                      : messageResource(result.message),
             result: result.result,
             cursor,
         });
@@ -5704,6 +5698,14 @@ export class ApiModule implements AgentModule {
             );
             if (existing !== undefined) return { message: existing, cursor };
             const text = body.text;
+            const quickReply = body.quickReply;
+            if (quickReply !== undefined) {
+                const problem =
+                    this.#chatUi === undefined
+                        ? "This server has no quick replies."
+                        : await this.#chatUi.quickReplyProblem(ctx, agentId, quickReply, text);
+                if (problem !== undefined) throw invalidRequest(problem);
+            }
 
             const selected = this.#config.models.find(
                 (model) =>
@@ -5753,6 +5755,7 @@ export class ApiModule implements AgentModule {
                     ...(body.clientMetadata === undefined
                         ? {}
                         : { clientMetadata: body.clientMetadata }),
+                    ...(quickReply === undefined ? {} : { quickReply }),
                 },
             };
             const agents = this.#agentSystem();
@@ -5772,6 +5775,7 @@ export class ApiModule implements AgentModule {
                 ...(body.clientMetadata === undefined
                     ? {}
                     : { clientMetadata: body.clientMetadata }),
+                ...(quickReply === undefined ? {} : { quickReply }),
                 runId: null,
             };
             this.#announcedPendingMessages.add(id);
@@ -12352,6 +12356,7 @@ function pendingMessageResource(pending: HistoryPendingMessage): Record<string, 
             ...(pending.clientMetadata === undefined
                 ? {}
                 : { clientMetadata: pending.clientMetadata }),
+            ...(pending.quickReply === undefined ? {} : { quickReply: pending.quickReply }),
             delivery: pending.delivery,
             mode: pending.mode,
             profile: pending.profile ?? null,

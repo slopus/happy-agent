@@ -28,7 +28,8 @@ A recipe has two parts:
   `failed` is said instead, with the same components, when a connected AI could not be put to
   work. A recipe without an opening hands the conversation to the model at once.
 - **The guide**, the model's instructions once the opening hands off, with the tools the model has
-  while it guides. The model asks with `show_ui`, never with markup in its text.
+  while it guides. The model offers answers with `suggest_replies` and controls with `show_ui`,
+  never with markup in its text.
 
 `{{name}}` in a text is a variable (`botName`, `machine`, `provider`, `reason`,
 `firstProjectRecipe`), HTML-escaped where it is filled.
@@ -67,7 +68,7 @@ settles without an answer opens again with the recipe's `failed` words and why.
 
 While the model guides, the guide is in its instructions and the recipe's tools are at hand:
 `save_profile`, `set_default_model`, `find_recent_projects`, `start_first_task`, and
-`finish_onboarding`, which exist only then, and `show_ui`, `set_bot_name`, `create_project`,
+`finish_onboarding`, which exist only then, and `suggest_replies`, `show_ui`, `set_bot_name`, `create_project`,
 `clone_project`, and `send_agent_message`, which their modules offer deferred everywhere and
 `overrideTools` loads for that time, so the model renames the bot "<First name>'s Chief of Staff" or to a nickname, sets
 up the first task's project, and passes the person's word to the task, without searching.

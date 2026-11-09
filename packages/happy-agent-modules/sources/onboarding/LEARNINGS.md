@@ -23,8 +23,8 @@ presses, `actionChoices`, typed answers, a routes table, a manual-sign-in poll).
 inline actions with chat UI. The opening is now one message: its words, and below them a
 `provider_sign_in` per AI. The widget does the install and sign-in through Provider CLIs, and a
 connection hands over to the model; a failed one says why with the widgets again. Everything after
-the opening is the model's, asking with `show_ui`. History's migration 008 drops the old
-`actionChoices`.
+the opening is the model's: it offers answers with `suggest_replies` and controls with `show_ui`.
+History's migration 008 drops the old `actionChoices`.
 
 ## Only the opening is scripted, and nothing is redrawn
 
@@ -38,8 +38,8 @@ Kirill found the copy flat: steps asked for things without saying why. He wants 
 good storyteller that sells each step without being obnoxious. A design pass then wrote the final
 script for every setup, and `recipes/local.json` holds its local part. Each message opens with one
 or two plain sentences on what the step unlocks, then asks one thing, then shows that step's
-components with `show_ui`, with at most one choice, and writes nothing after. The guide restates every rule, because a model
-drops any rule its guide does not repeat.
+components with `show_ui` and suggests its answers with `suggest_replies`, and writes nothing after.
+The guide restates every rule, because a model drops any rule its guide does not repeat.
 
 There is no separate welcome step with a Start button: the first step introduces the Chief of Staff
 and asks for the AI in the same message, so the person makes a real choice on the first screen.
@@ -51,8 +51,8 @@ filler. The bot speaks in the first person: with the default name it is "your Ch
 never "I'm Chief of Staff". It never calls itself Happy; Happy names only the phone app. Messages
 have no exclamation marks, em dashes, emoji, filler, hype, hedging, or sign-offs, and make no
 pricing or quality claims about an AI: the person's existing subscription is reused, so there is
-nothing new to pay for. The opening offers each AI's sign-in side by side and recommends none; in
-a choice at most one option, the recommended next step, is primary.
+nothing new to pay for. The opening offers each AI's sign-in side by side and recommends none;
+among suggested replies the recommended next step comes first.
 
 Every setback says what happened and offers a way on in the same message.
 `tests/onboarding/localRecipe.test.ts` holds these rules.
@@ -103,8 +103,8 @@ still go at once. The guide allows exactly one sentence after a rewritten summar
 is and how to get it into their folder (open the task, or tell it to merge the change or copy the
 files over). It never says what their folder lacks and never mentions copies, checkouts, commits,
 authors, pushing, publishing or the sandbox, even when the task's summary or messages do. When the
-task says a live check needs access, the message ends with "Run it live" and "Not now", neither
-emphasized, in place of the next suggestion, so it asks one thing. No action merges or applies a
+task says a live check needs access, the message suggests "Run it live" and "Not now" in place of
+the next suggestion, so it asks one thing. No action merges or applies a
 task's work yet; the Chief of Staff passes such a request to the task with `send_agent_message`.
 
 The person's first task must never need to leave its sandbox either. A brief that said "Run it for
@@ -206,7 +206,8 @@ no search keywords. A deferred copy would make the model search for a tool it ne
 The rename after the person's name needs `set_bot_name`, which Bots offers deferred everywhere; a
 recipe's `tools` may name it, and the module's `overrideTools` loads it while the model guides
 instead of offering a second copy, because two tools with one name are refused. `show_ui`,
-`create_project`, `clone_project` and `send_agent_message` are loaded the same way.
+`suggest_replies`, `create_project`, `clone_project` and `send_agent_message` are loaded the same
+way.
 
 ## The Chief of Staff is named after the person
 
@@ -241,3 +242,13 @@ The opening must check each AI before it can offer its sign-in, and on a Mac tho
 seconds; the conversation sat silent until they finished. The scripted message's run now starts,
 and is announced, before its words and components are rendered. The API counts the time spent
 rendering toward the usual 300–500 ms before the first words.
+
+## Answers are quick replies, not buttons
+
+Onboarding used `choice` buttons for its questions and a `text_field` for the nickname, and a press
+became the person's words through `/actions`, with offers that closed once answered. Kirill split
+answers out of chat UI: a suggested answer is a quick reply, sent through the ordinary `send` like
+typing, with `quickReply` naming where it came from. The guide has the model ask in its text and
+call `suggest_replies` for the consent, first-task, empty-machine and nickname steps; `show_ui` is
+left for live controls (sign-in, phone app, pairing, default model). The person can always type
+instead.

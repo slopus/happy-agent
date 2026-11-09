@@ -16,6 +16,14 @@ const uiCallSchema = Type.Object({
     type: Type.Literal("tool_call"),
     presentation: Type.Object({ type: Type.Literal("ui"), ui: uiDocumentSchema }),
 });
+const quickRepliesSchema = Type.Object({
+    type: Type.Literal("quick_replies"),
+    options: Type.Array(Type.String()),
+});
+const quickRepliesCallSchema = Type.Object({
+    type: Type.Literal("tool_call"),
+    presentation: quickRepliesSchema,
+});
 const actionBlockSchema = Type.Object({ type: Type.Literal("action") });
 const messageSchema = Type.Object({ content: Type.Array(Type.Unknown()) });
 const messageEventPayloadSchema = Type.Object({ message: messageSchema });
@@ -33,8 +41,9 @@ export function readsChatUi(request: IncomingMessage): boolean {
 
 /**
  * A public message as a client below protocol 35 reads it: a `ui` block, and a completed
- * `show_ui` call, become a `text` block of the document's fallback text, and `action` blocks are
- * left out. An attempt record, whose content is only `action` blocks, is left out entirely.
+ * `show_ui` call, become a `text` block of the document's fallback text; a `quick_replies` block,
+ * and a completed `suggest_replies` call, become one "Suggested replies" line; and `action` blocks
+ * are left out. An attempt record, whose content is only `action` blocks, is left out entirely.
  */
 export function projectChatUiMessage(
     message: Record<string, unknown>,
@@ -61,6 +70,14 @@ export function projectChatUiMessage(
             changed = true;
             return [{ type: "text", text: uiDocumentFallback(block.presentation.ui) }];
         }
+        if (apiValidator(quickRepliesSchema).Check(block)) {
+            changed = true;
+            return [{ type: "text", text: suggestedRepliesLine(block.options) }];
+        }
+        if (apiValidator(quickRepliesCallSchema).Check(block)) {
+            changed = true;
+            return [{ type: "text", text: suggestedRepliesLine(block.presentation.options) }];
+        }
         return [block];
     });
     return changed ? { ...message, content: projected } : message;
@@ -74,4 +91,8 @@ export function projectChatUiEvent(event: ApiEvent): ApiEvent | undefined {
     if (message === undefined) return undefined;
     if (message === event.payload.message) return event;
     return { ...event, payload: { ...event.payload, message } };
+}
+
+function suggestedRepliesLine(options: readonly string[]): string {
+    return `Suggested replies: ${options.join(" · ")}`;
 }

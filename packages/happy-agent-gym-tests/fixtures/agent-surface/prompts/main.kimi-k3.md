@@ -164,7 +164,8 @@ ReadMediaFile accepts filesystem images only; this Bedrock route does not suppor
 
 Tool capabilities:
 - Read the agent's durable conversation and tool history.
-- Show buttons, checklists, a text field, images, and live controls in the chat.
+- Show images, a file tree, and live controls such as sign-in and phone pairing in the chat.
+- Suggest short replies the person can send with one tap.
 - Read and update the user's presence and availability.
 - Create, inspect, update, and clear persistent long-running goals.
 - Inspect agent token and timing usage.

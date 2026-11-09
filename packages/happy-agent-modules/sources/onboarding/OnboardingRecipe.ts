@@ -8,7 +8,7 @@ import { Type, type Static } from "@sinclair/typebox";
  *
  * A recipe has an optional scripted opening, which the server writes itself before any model is
  * involved, and a guided part, in which the conversation's model follows the recipe's `guide` and
- * shows chat UI with `show_ui`. Each runtime implements the components, variables, tools, and
+ * suggests replies with `suggest_replies` and shows chat UI with `show_ui`. Each runtime implements the components, variables, tools, and
  * requirements it offers, and refuses a recipe that names one it does not have.
  */
 
@@ -104,7 +104,7 @@ export const onboardingRecipeSchema = Type.Object(
             }),
         ),
         guide: textSchema(
-            "The model's instructions while the guided part runs, with `{{name}}` variables as in `say`. Its hidden context entries are described here too. The model asks with chat UI through `show_ui`, never with markup in its text.",
+            "The model's instructions while the guided part runs, with `{{name}}` variables as in `say`. Its hidden context entries are described here too. The model offers answers with `suggest_replies` and controls with `show_ui`, never with markup in its text.",
         ),
         tools: Type.Array(Type.String({ pattern: "^[a-z][a-z0-9_]{0,63}$" }), {
             maxItems: 16,

@@ -137,7 +137,6 @@ describe("Silent chat UI actions", () => {
                     effort: "high",
                 }),
             );
-            expect(set.message).toBeNull();
             expect(set.record).toMatchObject({
                 role: "service",
                 content: [

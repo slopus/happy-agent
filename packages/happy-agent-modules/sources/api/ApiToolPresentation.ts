@@ -146,7 +146,8 @@ export function toolCallResource(
         presentation.type !== "artifact" &&
         presentation.type !== "page" &&
         presentation.type !== "user_input" &&
-        presentation.type !== "ui";
+        presentation.type !== "ui" &&
+        presentation.type !== "quick_replies";
     return {
         type: "tool_call",
         id: call.id,

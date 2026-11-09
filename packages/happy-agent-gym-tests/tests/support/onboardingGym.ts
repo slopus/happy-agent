@@ -2,7 +2,12 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { UiActionResponse, UiDocument } from "@slopus/happy-agent-client";
+import type {
+    QuickReply,
+    SendMessageResponse,
+    UiActionResponse,
+    UiDocument,
+} from "@slopus/happy-agent-client";
 import { createAgentGym, type AgentGym, type AgentGymOptions } from "@slopus/happy-agent-gym";
 import { expect } from "vitest";
 
@@ -48,7 +53,12 @@ export interface OnboardingBlock {
     readonly text?: string;
     readonly name?: string;
     readonly ui?: UiDocument;
-    readonly presentation?: { readonly type: string; readonly ui?: UiDocument };
+    readonly options?: readonly string[];
+    readonly presentation?: {
+        readonly type: string;
+        readonly ui?: UiDocument;
+        readonly options?: readonly string[];
+    };
     readonly [key: string]: unknown;
 }
 
@@ -58,6 +68,7 @@ export interface OnboardingMessage {
     readonly role: string;
     readonly content: readonly OnboardingBlock[];
     readonly metadata?: Record<string, unknown>;
+    readonly quickReply?: Record<string, unknown>;
 }
 
 export class OnboardingGyms {
@@ -199,7 +210,7 @@ export async function act(
     componentId: string,
     name: string,
     payload: Record<string, unknown> = {},
-    extra: { readonly id?: string; readonly mode?: Record<string, unknown> } = {},
+    extra: { readonly id?: string } = {},
 ): Promise<UiActionResponse> {
     const ui = uiOf(message);
     const component = ui?.components.find((candidate) => candidate.id === componentId);
@@ -212,7 +223,54 @@ export async function act(
         uiId: ui.id,
         componentId,
         action: { type: `${component.type}.${name}`, payload },
-        ...(extra.mode === undefined ? {} : { mode: extra.mode as never }),
+    });
+}
+
+/**
+ * The replies a message suggests: its `quick_replies` block, or a completed `suggest_replies`
+ * call's presentation, with the call's ID that `quickReply` names.
+ */
+export function repliesOf(
+    message: OnboardingMessage | undefined,
+): { readonly options: readonly string[]; readonly toolCallId?: string } | undefined {
+    for (const block of message?.content ?? []) {
+        if (block.type === "quick_replies" && block.options !== undefined) {
+            return { options: block.options };
+        }
+        if (block.type === "tool_call" && block.presentation?.type === "quick_replies") {
+            return { options: block.presentation.options ?? [], toolCallId: block["id"] as string };
+        }
+    }
+    return undefined;
+}
+
+/** Tap the reply `message` suggests at `index`: an ordinary send of its text, naming it. */
+export async function tapReply(
+    gym: AgentGym,
+    agentId: string,
+    message: OnboardingMessage,
+    index: number,
+    extra: {
+        readonly id?: string;
+        /** The model it runs on; the gym's own by default. */
+        readonly mode?: { readonly providerId: string; readonly modelId: string };
+    } = {},
+): Promise<SendMessageResponse> {
+    const replies = repliesOf(message);
+    const text = replies?.options[index];
+    if (replies === undefined || text === undefined) {
+        throw new Error(`The message suggests no reply ${index}.`);
+    }
+    const quickReply: QuickReply = {
+        messageId: message.id,
+        index,
+        ...(replies.toolCallId === undefined ? {} : { toolCallId: replies.toolCallId }),
+    };
+    return await gym.client.sendMessage(agentId, {
+        ...(extra.id === undefined ? {} : { id: extra.id }),
+        text,
+        quickReply,
+        mode: { ...gym.selection, ...extra.mode, permissionMode: "auto" },
     });
 }
 

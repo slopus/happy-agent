@@ -10,7 +10,7 @@ import {
     OnboardingGyms,
     act,
     messagesOf,
-    uiOf,
+    tapReply,
     waitForOpening,
     type OnboardingFlow,
 } from "./onboardingGym.js";
@@ -50,44 +50,52 @@ export const FIRST_TASK_ASKED = [
 export const PHONE_STEP =
     "Your agents keep working while you step away. Put Happy on your phone, and you can see them finish and answer their questions from anywhere. Scan a code to get the app, then open it.";
 
-/** A model turn: its words, then the components it shows with `show_ui`. */
+/**
+ * A model turn: its words, then the components it shows with `show_ui`, then the replies it
+ * suggests with `suggest_replies`.
+ */
 export function showing(
     text: string,
     components: readonly { id: string; type: string; props: Record<string, unknown> }[],
+    replies?: readonly string[],
 ) {
     return {
         content: [
             { type: "text" as const, text },
-            { type: "tool_call" as const, name: "show_ui", arguments: { components } },
+            ...(components.length === 0
+                ? []
+                : [{ type: "tool_call" as const, name: "show_ui", arguments: { components } }]),
+            ...(replies === undefined
+                ? []
+                : [
+                      {
+                          type: "tool_call" as const,
+                          name: "suggest_replies",
+                          arguments: { options: replies },
+                      },
+                  ]),
         ],
     };
 }
 
-/** A `choice` component offering `labels`, the first primary. */
-export function choice(id: string, labels: readonly string[]) {
-    return {
-        id,
-        type: "choice",
-        props: {
-            options: labels.map((label, index) => ({
-                id: `o${String(index)}`,
-                label,
-                ...(index === 0 ? { primary: true } : {}),
-            })),
-        },
-    };
+/** A model turn: its words, then the replies it suggests. */
+export function suggesting(text: string, replies: readonly string[]) {
+    return showing(text, [], replies);
 }
 
 /** The first task asked, with its answers. */
-export const FIRST_TASK_TURN = showing(FIRST_TASK_ASKED, [
-    choice("first-task", ["Look at my recent work", "I'll name a folder", "Skip for now"]),
+export const FIRST_TASK_TURN = suggesting(FIRST_TASK_ASKED, [
+    "Look at my recent work",
+    "I'll name a folder",
+    "Skip for now",
 ]);
 
 /** The phone step, with the app's codes and its answers. */
-export const PHONE_TURN = showing(PHONE_STEP, [
-    { id: "app", type: "phone_app", props: {} },
-    choice("phone", ["I've opened Happy", "Later"]),
-]);
+export const PHONE_TURN = showing(
+    PHONE_STEP,
+    [{ id: "app", type: "phone_app", props: {} }],
+    ["I've opened Happy", "Later"],
+);
 
 export const DONE =
     "You're all set, Ada. I stay at the top of your sidebar. Tell me what you want done next, and I'll put agents on it. Ask me for the phone code anytime.";
@@ -166,7 +174,12 @@ export function cue(request: GymInferenceRequest): string {
     if (last?.role === "user") {
         return `said:${last.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("")}`;
     }
-    if (text.includes("Shown to the person in this chat")) return "shown";
+    if (
+        text.includes("Shown to the person in this chat") ||
+        text.includes("Suggested to the person under your message")
+    ) {
+        return "shown";
+    }
     if (text.includes("Saved their name and email")) return "saved";
     if (text.includes("Onboarding is finished")) return "finished";
     if (text.includes("Not finished.")) return "not finished";
@@ -247,7 +260,7 @@ export async function startGuidedGym(
                 if (elsewhere === undefined) throw new Error("Unscripted request elsewhere.");
                 return elsewhere(request);
             }
-            // After show_ui, the model writes nothing more.
+            // After show_ui or suggest_replies, the model writes nothing more.
             if (cue(request) === "shown" && answers["shown"] === undefined) return { content: [] };
             const answer = answers[cue(request)];
             if (answer === undefined) throw new Error(`Unscripted request: ${cue(request)}`);
@@ -270,40 +283,17 @@ export async function connectCodex(gym: AgentGym, agentId: string): Promise<void
     expect(used.record).toMatchObject({ content: [{ outcome: { status: "accepted" } }] });
 }
 
-/** Press option `optionIndex` of the `choice` the agent message `messageId` shows. */
-export async function reply(
-    gym: AgentGym,
-    agentId: string,
-    messageId: string,
-    optionIndex: number,
-) {
+/** Tap reply `index` of the suggestion the agent message `messageId` holds. */
+export async function reply(gym: AgentGym, agentId: string, messageId: string, index: number) {
     const message = (await messagesOf(gym, agentId)).find(
         (candidate) => candidate.id === messageId,
     );
-    const component = uiOf(message)?.components.find((candidate) => candidate.type === "choice");
-    if (message === undefined || component?.type !== "choice") {
-        throw new Error("The message shows no choice.");
-    }
-    const option = component.props.options[optionIndex];
-    if (option === undefined) throw new Error(`The choice has no option ${String(optionIndex)}.`);
-    const response = await act(
-        gym,
-        agentId,
-        message,
-        component.id,
-        "choose",
-        { optionId: option.id },
-        {
-            mode: {
-                ...gym.selection,
-                providerId: "codex",
-                modelId: "gym-codex",
-                permissionMode: "auto",
-            },
-        },
-    );
-    expect(response.record).toMatchObject({ content: [{ outcome: { status: "accepted" } }] });
-    return response as typeof response & {
+    if (message === undefined) throw new Error("No such message.");
+    const sent = await tapReply(gym, agentId, message, index, { mode: CODEX_MODE });
+    return sent as typeof sent & {
         message: { id: string; content: { type: string; text?: string }[] };
     };
 }
+
+/** What a tap sends with: the connected Codex, like anything typed. */
+const CODEX_MODE = { providerId: "codex", modelId: "gym-codex" } as const;

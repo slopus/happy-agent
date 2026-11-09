@@ -45,7 +45,7 @@ describe("Onboarding's scripted opening", () => {
             expect(health.capabilities["chatOnboarding"]).toBe(true);
             expect(health.capabilities["chatUi"]).toMatchObject({
                 version: 1,
-                components: expect.arrayContaining(["choice", "provider_sign_in", "phone_pair"]),
+                components: expect.arrayContaining(["provider_sign_in", "phone_pair"]),
             });
             const before = await flowOf(gym);
             expect(before).toMatchObject({

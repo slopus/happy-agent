@@ -9,6 +9,9 @@ import {
     mediaLayoutSchema,
     messageErrorSchema,
     messageFailureSchema,
+    quickRepliesBlockSchema,
+    quickRepliesPresentationSchema,
+    quickReplySchema,
     serviceNoticeSchema,
     toolCallRequestBlockSchema,
     uiActionBlockSchema,
@@ -423,6 +426,7 @@ export const historyToolPresentationSchema = Type.Union([
     historyArtifactPresentationSchema,
     historyUserInputPresentationSchema,
     historyUiPresentationSchema,
+    quickRepliesPresentationSchema,
 ]);
 
 export type HistoryToolPresentation = Static<typeof historyToolPresentationSchema>;
@@ -521,8 +525,10 @@ export const historyBlockSchema = Type.Union([
     configurationBlockSchema,
     /** A chat UI document the daemon wrote into an agent message; no model reads it. */
     uiBlockSchema,
-    /** A chat UI action: an attempt record's one block, or beside a person's words. */
+    /** A chat UI action: an attempt record's one block. */
     uiActionBlockSchema,
+    /** Replies the daemon suggested in an agent message; no model reads it. */
+    quickRepliesBlockSchema,
 ]);
 
 /** The TypeScript type inferred from {@link historyBlockSchema}. */
@@ -566,6 +572,8 @@ const historyMessageFields = {
     clientMetadata: Type.Optional(historyClientMetadataSchema),
     /** What a person's message replies to, beside what they wrote. */
     quote: Type.Optional(storyQuoteSchema),
+    /** The suggested reply a person's message is, set by the daemon from a checked send. */
+    quickReply: Type.Optional(quickReplySchema),
     /** Keep this operational message out of person-facing transcript projection. */
     hideFromUser: Type.Optional(Type.Boolean()),
     /** Happy's source identity, used to suppress a remote message echo. */

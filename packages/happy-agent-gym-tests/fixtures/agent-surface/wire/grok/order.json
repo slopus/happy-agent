@@ -1,6 +1,7 @@
 [
   "read_agent_history",
   "show_ui",
+  "suggest_replies",
   "get_presence",
   "list_presences",
   "set_presence",

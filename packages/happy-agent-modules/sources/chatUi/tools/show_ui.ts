@@ -30,12 +30,12 @@ export function showUiTool(chatUi: ChatUiModule, agentId: string) {
         name: "show_ui",
         defer: true,
         capabilities: [
-            "Show buttons, checklists, a text field, images, and live controls in the chat.",
+            "Show images, a file tree, and live controls such as sign-in and phone pairing in the chat.",
         ],
-        searchKeywords: ["buttons", "choice", "checklist", "form", "image grid", "ui", "widget"],
+        searchKeywords: ["image grid", "file tree", "controls", "ui", "widget"],
         description: `Show the person interactive UI in this chat: a flat list of 1 to 16 components, drawn top to bottom under your message, with no nesting and no styling. This is the only way to show controls; HTML or JSON in your reply is never drawn.
 
-Write your words in your reply as usual and use show_ui for what the person can press or look at. Each component has an id unique in the call, a type, and the props for that type. Labels and details are plain text, never Markdown or links. A press reaches you as the person's own message, the stored label; live controls report what happened as a hidden note. Ask one thing at a time, and only the newest offer takes an answer once the person writes again.
+Write your words in your reply as usual and use show_ui for what the person can look at or use. Each component has an id unique in the call, a type, and the props for that type. Labels and details are plain text, never Markdown or links. Live controls do their work themselves and report what happened to you as a hidden note. To offer answers the person can send, use suggest_replies instead.
 
 Components:
 ${catalog}`,
@@ -87,7 +87,7 @@ ${catalog}`,
             return [
                 {
                     type: "text",
-                    text: `Shown to the person in this chat, under your message:\n${lines.join("\n")}\nThey see it now, so do not repeat its options in your reply. Their answers reach you as their messages.`,
+                    text: `Shown to the person in this chat, under your message:\n${lines.join("\n")}\nThey see it now, so do not describe it again in your reply. What they do with it reaches you as a hidden note.`,
                 },
             ];
         },

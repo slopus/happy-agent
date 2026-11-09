@@ -47,29 +47,23 @@ describe("the local onboarding recipe", () => {
         );
     });
 
-    it("asks with show_ui, never with markup in its text", () => {
+    it("offers answers with suggest_replies and controls with show_ui, never markup in its text", () => {
         for (const { name, text } of said()) expect(text, name).not.toMatch(/<[a-z]/u);
         const guide = recipeText(recipe.guide);
         expect(guide).not.toMatch(
             /<(?:menu|button|figure|output)\b|data-action|data-text|data-emphasis/u,
         );
         expect(guide).toContain(
-            "Never write HTML, menus or buttons in your text: ask with show_ui.",
+            "Never write HTML, menus or buttons in your text: offer answers with suggest_replies and controls with show_ui.",
         );
         expect(recipe.tools).toContain("show_ui");
+        expect(recipe.tools).toContain("suggest_replies");
         // Every component the guide teaches is one the catalog has.
         const known = new Set<string>(uiComponents.map((component) => component.type));
         const taught = guide
             .split("\n")
             .flatMap((line) => /^ {2}([a-z_]+) {3}\(/u.exec(line)?.[1] ?? []);
-        expect(taught).toEqual([
-            "choice",
-            "text_field",
-            "provider_sign_in",
-            "phone_app",
-            "phone_pair",
-            "default_model",
-        ]);
+        expect(taught).toEqual(["provider_sign_in", "phone_app", "phone_pair", "default_model"]);
         for (const type of taught) expect(known.has(type), type).toBe(true);
     });
 
@@ -123,7 +117,7 @@ describe("the local onboarding recipe", () => {
         expect(guide).toContain(
             'call save_profile with exactly that name and email, then set_bot_name with "<First name>\'s Chief of Staff"',
         );
-        expect(guide).toContain("Their press or reply is their consent; without it, read nothing.");
+        expect(guide).toContain("Their reply is their consent; without it, read nothing.");
         // The consent names what find_recent_projects reads, and what it never does.
         expect(guide).toContain(
             "which folders their coding assistants worked in recently on this {{machine}}, and those projects' Git history, never file contents or conversations",
@@ -185,7 +179,7 @@ describe("the local onboarding recipe", () => {
             "it doesn't commit, push or publish, and in a project without Git history it never runs git init.",
         );
         expect(guide).toContain(
-            'If the task said a live check needs access it doesn\'t have, say so in one sentence and let them choose: end the message with "Run it live" and "Not now", neither primary',
+            'If the task said a live check needs access it doesn\'t have, say so in one sentence and let them choose: suggest "Run it live" and "Not now", in place of the next suggestion',
         );
         // The tool says the same, so a brief written without the guide at hand keeps to it too.
         const tool = startFirstTaskTool(

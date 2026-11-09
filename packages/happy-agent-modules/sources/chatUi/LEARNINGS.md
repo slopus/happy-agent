@@ -34,9 +34,14 @@ A pasted token or sign-in code is a `Secret` field: the hook receives it, and no
 The record, the attempt row, events, logs, and the model see the payload without it, and a hook's
 error is logged by kind only, because an error message can quote the request.
 
-## Message actions might move to `send`
+## Suggested answers are quick replies, sent like typing
 
-Kirill is weighing whether actions that become the person's words (`choice`, `checklist`,
-`text_field`) should be sent through `send` with the text explicit and an action reference the
-server verifies, and whether offers get an audience. `resolveOffer` is kept as one method so either
-route can use it.
+Message actions (`choice`, `checklist`, `text_field`) made a press become the person's words
+through `/actions`: words rebuilt from stored labels, an optimistic bubble, offers that closed once
+answered or once the person typed, and a "Not sent" state. Kirill split answers out of chat UI.
+Every component action is silent now. A suggested answer is a quick reply: the model calls
+`suggest_replies`, and a tap is the ordinary `send` with `text` equal to the option and
+`quickReply` naming it. The daemon checks only that the option exists in a visible agent message
+here and that the text matches it exactly, then sends it like any typed message (mode, delivery,
+steering, pending, retry by ID). Anyone who can send may use any visible suggestion, any number of
+times: it is the same as typing it. `resolveOffer` stays as the one place `/actions` checks an offer.

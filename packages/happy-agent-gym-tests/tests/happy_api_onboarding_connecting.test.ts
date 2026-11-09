@@ -79,7 +79,9 @@ describe("Connecting an AI from the opening", () => {
                 ],
             });
             // A silent action is no one's message.
-            expect(installed.message).toBeNull();
+            expect((await messagesOf(gym, agentId)).map((message) => message.role)).not.toContain(
+                "user",
+            );
 
             // The install the widget started goes on to sign in by itself, and waits for a code.
             await gym.waitUntil(async () => {

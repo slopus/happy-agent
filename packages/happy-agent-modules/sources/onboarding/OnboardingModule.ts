@@ -159,8 +159,8 @@ export type OnboardingScriptedRunListener = (agentId: string, runId: string) => 
  * Onboarding in the Chief of Staff's conversation, run from a recipe: the stored flow and its
  * versioned completion, the scripted opening written before any model is involved, with a
  * `provider_sign_in` component for each AI this computer can connect, and the hand-off to the
- * conversation's model with the recipe's guide once one connects. The model then asks with chat
- * UI through `show_ui`. See "Onboarding in a conversation" in API.md and this module's README.
+ * conversation's model with the recipe's guide once one connects. The model then offers answers
+ * with `suggest_replies` and controls with `show_ui`. See "Onboarding in a conversation" in API.md and this module's README.
  */
 export class OnboardingModule implements AgentModule {
     readonly name = "onboarding";

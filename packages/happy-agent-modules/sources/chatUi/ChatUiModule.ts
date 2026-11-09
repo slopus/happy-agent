@@ -8,15 +8,16 @@ import {
 } from "@slopus/happy-agent-base";
 import {
     messageModeSchema,
+    normalizeQuickReply,
+    quickRepliesProblems,
     redactUiValue,
     uiActionDefinition,
     uiActionPermission,
     uiActionProblem,
-    uiActionText,
     uiComponents,
     uiDocumentProblems,
-    uiOfferState,
     uiPropsProblems,
+    type QuickReply,
     type UiActionBlock,
     type UiActionOutcome,
     type UiActionRequest,
@@ -33,11 +34,10 @@ import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import {
     HistoryModule,
+    type HistoryBlock,
     type HistoryMediaItem,
     type HistoryMessage,
-    type HistoryPendingMessage,
 } from "../history/index.js";
-import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { ChatUiActionError } from "./ChatUiActionError.js";
 import type { ChatUiContribution, ChatUiOutcome } from "./ChatUiContribution.js";
 import { chatUiMigrations } from "./ChatUiMigrations.js";
@@ -46,7 +46,6 @@ import {
     countChatUiAttempts,
     insertChatUiAttempt,
     insertChatUiNote,
-    queryAcceptedOnceAttempt,
     queryChatUiAttempt,
     settleChatUiAttempt,
     takeChatUiNotes,
@@ -55,6 +54,7 @@ import {
 } from "./impl/chatUiAttempts.js";
 import { findOffer } from "./impl/findOffer.js";
 import { showUiTool } from "./tools/show_ui.js";
+import { suggestRepliesTool } from "./tools/suggest_replies.js";
 
 /** How long a hook may take before its attempt fails with `timeout`. */
 const HOOK_TIMEOUT_MS = 15_000;
@@ -95,10 +95,9 @@ export interface ChatUiActionInput {
     };
 }
 
-/** What an action left: its record, the person's message it became, and its result. */
+/** What an action left: its record and its result. */
 export interface ChatUiActionResult {
     readonly record: HistoryMessage;
-    readonly message: HistoryMessage | HistoryPendingMessage | null;
     readonly result: Record<string, unknown> | null;
 }
 
@@ -120,14 +119,14 @@ type AnyOutcome =
  * Chat UI: the components modules contribute, the `show_ui` tool a model shows them with, the
  * documents the daemon writes itself, and every click on them. A click passes the conversation's
  * checks and the action's declared permission, is recorded with its secrets left out, and is
- * handed to the contributing module's hook, whose outcome is applied in one transaction. See
- * "Chat UI" in API.md and this module's README.
+ * handed to the contributing module's hook, whose outcome is applied in one transaction. It also
+ * owns quick replies: the `suggest_replies` tool and the check a `send` naming one passes. See
+ * "Chat UI" and "Quick replies" in API.md and this module's README.
  */
 export class ChatUiModule implements AgentModule {
     readonly name = "chat-ui";
     readonly migrations = chatUiMigrations;
 
-    readonly #config: ConfigModule;
     readonly #history: HistoryModule;
     readonly #durable: DurableFunctionsModule;
     readonly #contributions = new Map<
@@ -146,7 +145,6 @@ export class ChatUiModule implements AgentModule {
         history: HistoryModule,
         durableFunctions: DurableFunctionsModule,
     ) {
-        this.#config = config;
         this.#history = history;
         this.#durable = durableFunctions;
         contributeBasicComponents(this, config);
@@ -232,7 +230,9 @@ export class ChatUiModule implements AgentModule {
         this.#ctx = ctx.lifetime === undefined ? root : withLifetime(root, ctx.lifetime);
         return {
             tools: (_hookCtx, scope) =>
-                this.#contributions.size === 0 ? [] : [showUiTool(this, scope.agent.id)],
+                this.#contributions.size === 0
+                    ? []
+                    : [showUiTool(this, scope.agent.id), suggestRepliesTool(this)],
             // Notes nothing woke the conversation for join its next turn.
             beforeTurn: async (hookCtx, scope) => await this.#takeNotes(hookCtx, scope.agent.id),
         };
@@ -309,9 +309,10 @@ export class ChatUiModule implements AgentModule {
     }
 
     /**
-     * Write a document the daemon composed itself, with no model, as an agent message: `text`
-     * first when given, then the `ui` block. The message joins `runId` when given, as onboarding's
-     * scripted messages do. A document that fails its checks throws: the daemon wrote it wrong.
+     * Write a message the daemon composed itself, with no model, as an agent message: `text` first
+     * when given, then the `ui` block of `components`, then the `quick_replies` block of
+     * `replies`. The message joins `runId` when given, as onboarding's scripted messages do. A
+     * document or replies that fail their checks throw: the daemon wrote them wrong.
      */
     async post(
         ctx: Context,
@@ -320,30 +321,81 @@ export class ChatUiModule implements AgentModule {
             readonly recordId?: string;
             readonly runId?: string;
             readonly text?: string;
-            readonly components: readonly ChatUiComponentInput[];
+            readonly components?: readonly ChatUiComponentInput[];
+            readonly replies?: readonly string[];
         },
     ): Promise<HistoryMessage> {
-        const built = await this.document(ctx, agentId, input.components);
-        if ("problems" in built) {
-            throw new Error(`The daemon wrote an invalid document: ${built.problems.join(" ")}`);
+        const blocks: HistoryBlock[] = [];
+        if (input.text !== undefined && input.text.trim() !== "") {
+            blocks.push({ type: "text", text: input.text });
         }
-        if (built.items.length > 0) throw new Error("A daemon-written document carries no media.");
+        if (input.components !== undefined) {
+            const built = await this.document(ctx, agentId, input.components);
+            if ("problems" in built) {
+                throw new Error(
+                    `The daemon wrote an invalid document: ${built.problems.join(" ")}`,
+                );
+            }
+            if (built.items.length > 0) {
+                throw new Error("A daemon-written document carries no media.");
+            }
+            blocks.push({ type: "ui", ui: built.document });
+        }
+        if (input.replies !== undefined) {
+            const replies = this.replies(input.replies);
+            if ("problems" in replies) {
+                throw new Error(`The daemon wrote invalid replies: ${replies.problems.join(" ")}`);
+            }
+            blocks.push({ type: "quick_replies", options: replies.options });
+        }
+        if (blocks.length === 0) throw new Error("The daemon wrote an empty message.");
         const recordId = input.recordId ?? createId();
         await this.#history.record(ctx, agentId, {
             role: "assistant",
             recordId,
             ...(input.runId === undefined ? {} : { runId: input.runId }),
-            blocks: [
-                ...(input.text === undefined || input.text.trim() === ""
-                    ? []
-                    : [{ type: "text" as const, text: input.text }]),
-                { type: "ui", ui: built.document },
-            ],
+            blocks,
             at: Date.now(),
         });
         const message = await this.#history.message(ctx, agentId, recordId);
         if (message === undefined) throw new Error("The daemon's document was not recorded.");
         return message;
+    }
+
+    /** Suggested replies as they are stored, or the problems a model can act on. */
+    replies(
+        options: readonly string[],
+    ): { readonly options: string[] } | { readonly problems: readonly string[] } {
+        const normalized = options.map(normalizeQuickReply);
+        const problems = quickRepliesProblems(normalized);
+        return problems.length > 0 ? { problems } : { options: normalized };
+    }
+
+    /**
+     * Why a `send` naming a quick reply does not hold, or undefined when it does: the message must
+     * be a visible agent message of this conversation holding the named suggestion, with an option
+     * at `index` that equals `text` exactly. Nothing else is checked; see "Quick replies".
+     */
+    async quickReplyProblem(
+        ctx: Context,
+        agentId: string,
+        quickReply: QuickReply,
+        text: string,
+    ): Promise<string | undefined> {
+        const message = await this.#history.message(ctx, agentId, quickReply.messageId);
+        if (
+            message === undefined ||
+            (message.role !== "assistant" && message.role !== "agent") ||
+            message.hideFromUser === true
+        ) {
+            return "That suggestion isn't in this conversation.";
+        }
+        const options = suggestedOptions(message, quickReply.toolCallId);
+        if (options === undefined) return "That message has no such suggestion.";
+        const option = options[quickReply.index];
+        if (option === undefined) return "That suggestion has no such option.";
+        if (option !== text) return "The text must be the suggested reply exactly.";
+        return undefined;
     }
 
     /**
@@ -360,12 +412,13 @@ export class ChatUiModule implements AgentModule {
 
     /**
      * One click, after the route authenticated the caller and found they can read the
-     * conversation: permission, idempotency, the stored offer, the payload, the open-offer rule,
-     * and the rate limit, then the attempt record, the hook, and its outcome. Throws
-     * {@link ChatUiActionError} for a refusal, which stores nothing.
+     * conversation: permission, idempotency, the stored offer, the payload, and the rate limit,
+     * then the attempt record, the hook, and its outcome. Throws {@link ChatUiActionError} for a
+     * refusal, which stores nothing.
      */
     async act(ctx: Context, input: ChatUiActionInput): Promise<ChatUiActionResult> {
-        // One component's clicks are taken one at a time, so two never both answer a `once` offer.
+        // One component's clicks are taken one at a time, so a retried ID and the rate limit are
+        // read against what the click before it stored.
         const key = [input.agentId, input.request.uiId, input.request.componentId].join("\u0000");
         const previous = this.#queues.get(key) ?? Promise.resolve();
         const run = previous.then(async () => await this.#act(ctx, input));
@@ -383,8 +436,8 @@ export class ChatUiModule implements AgentModule {
 
     /**
      * The stored offer an action names, checked against the click: the component the message
-     * holds, the action's declared permission or a guest's guest-safe limit, the payload, and
-     * whether the offer is still open. Throws {@link ChatUiActionError} for a refusal. A request already stored under its `id` is
+     * holds, the action's declared permission or a guest's guest-safe limit, and the payload.
+     * Throws {@link ChatUiActionError} for a refusal. A request already stored under its `id` is
      * returned as `existing` once the permission check passes, before the offer must still exist.
      */
     async resolveOffer(
@@ -402,12 +455,6 @@ export class ChatUiModule implements AgentModule {
               readonly found: NonNullable<ReturnType<typeof uiActionDefinition>>;
               /** The payload with its secrets left out, as it is stored. */
               readonly payload: Record<string, unknown>;
-              readonly once: boolean;
-              /** The accepted attempt that already answered this `once` offer. */
-              readonly accepted: ChatUiAttempt | undefined;
-              /** The person's message after the offer, when there is one. */
-              readonly answered: string | undefined;
-              readonly state: ReturnType<typeof uiOfferState>;
           }
     > {
         const { agentId, request, person } = input;
@@ -451,36 +498,14 @@ export class ChatUiModule implements AgentModule {
             string,
             unknown
         >;
-        const once = found.definition.once === true;
-        const accepted = once
-            ? await queryAcceptedOnceAttempt(ctx, agentId, request.uiId, request.componentId)
-            : undefined;
-        const answered = await this.#history.personMessageAfter(ctx, agentId, request.messageId);
-        const state = uiOfferState(
-            {
-                once,
-                accepted:
-                    accepted === undefined
-                        ? undefined
-                        : { type: accepted.actionType, payload: accepted.payload },
-                personSpokeAfter: answered !== undefined,
-            },
-            { type: request.action.type, payload },
-        );
-        return { offer, served, found, payload, once, accepted, answered, state };
+        return { offer, served, found, payload };
     }
 
     async #act(ctx: Context, input: ChatUiActionInput): Promise<ChatUiActionResult> {
         const { agentId, request, person } = input;
         const resolved = await this.resolveOffer(ctx, input);
         if (resolved.existing !== undefined) return await this.#replay(ctx, resolved.existing);
-        const { offer, served, found, payload, once, accepted, answered, state } = resolved;
-        const words =
-            found.definition.transcript === "message"
-                ? uiActionText(offer.component, request.action)
-                : undefined;
-        const mode = found.definition.transcript === "message" ? this.#mode(request) : undefined;
-        if (state === "repeat" && accepted !== undefined) return await this.#replay(ctx, accepted);
+        const { offer, served, found, payload } = resolved;
         const recent = await countChatUiAttempts(
             ctx,
             agentId,
@@ -502,27 +527,10 @@ export class ChatUiModule implements AgentModule {
             uiId: request.uiId,
             componentId: request.componentId,
             actionType: request.action.type,
-            once,
             payload,
             status: "pending",
-            personMessageId: null,
             createdAt: Date.now(),
         };
-        if (state === "closed") {
-            const winner = accepted?.personMessageId ?? answered;
-            const record = await ctx.inTx(async (txCtx) => {
-                const record = this.#record(attempt, {
-                    status: "rejected",
-                    code: "offer_closed",
-                    reason: "This was already answered.",
-                    ...(winner == null ? {} : { messageId: winner }),
-                });
-                await insertChatUiAttempt(txCtx, { ...attempt, status: "rejected" });
-                await this.#history.recordStandalone(txCtx, agentId, record, createId());
-                return record;
-            });
-            return { record, message: null, result: null };
-        }
         const key = attemptKey(agentId, request.id);
         let settle!: () => void;
         this.#inFlight.set(key, new Promise<void>((resolve) => (settle = resolve)));
@@ -552,36 +560,22 @@ export class ChatUiModule implements AgentModule {
                 const record = stored ?? pending;
                 if (outcome.status !== "accepted") {
                     return {
-                        record: await this.#settle(txCtx, attempt, record, outcome.status, null, {
+                        record: await this.#settle(txCtx, attempt, record, outcome.status, {
                             status: outcome.status,
                             ...(outcome.code === undefined ? {} : { code: outcome.code }),
                             reason: outcome.reason,
                         }),
-                        message: null,
                         result: null,
                     };
                 }
-                const message =
-                    words === undefined || mode === undefined
-                        ? null
-                        : await this.#say(txCtx, attempt, words, mode, person.userId);
                 if (outcome.note !== undefined) {
                     await insertChatUiNote(txCtx, agentId, createId(), outcome.note, Date.now());
                 }
                 if (outcome.wake === true) await this.#wake(txCtx, agentId);
                 return {
-                    record: await this.#settle(
-                        txCtx,
-                        attempt,
-                        record,
-                        "accepted",
-                        message?.id ?? null,
-                        {
-                            status: "accepted",
-                            ...(message === null ? {} : { messageId: message.id }),
-                        },
-                    ),
-                    message,
+                    record: await this.#settle(txCtx, attempt, record, "accepted", {
+                        status: "accepted",
+                    }),
                     result: outcome.result ?? null,
                 };
             });
@@ -615,14 +609,13 @@ export class ChatUiModule implements AgentModule {
         attempt: ChatUiAttempt,
         stored: HistoryMessage,
         status: ChatUiAttemptStatus,
-        personMessageId: string | null,
         outcome: UiActionOutcome,
     ): Promise<HistoryMessage> {
         const record: HistoryMessage = {
             ...stored,
             blocks: [{ ...this.#record(attempt, outcome).blocks[0]! }],
         };
-        await settleChatUiAttempt(ctx, attempt.agentId, attempt.id, status, personMessageId);
+        await settleChatUiAttempt(ctx, attempt.agentId, attempt.id, status);
         await this.#history.replace(ctx, attempt.agentId, record);
         afterCommit(ctx, () => {
             for (const listener of this.#recordListeners) {
@@ -636,71 +629,11 @@ export class ChatUiModule implements AgentModule {
         return record;
     }
 
-    /**
-     * The person's words for an accepted `"message"` action: a user message holding the words and
-     * the action block, entering the conversation as a sent message does, in this transaction.
-     */
-    async #say(
-        ctx: Context,
-        attempt: ChatUiAttempt,
-        words: string,
-        mode: HistoryPendingMessage["mode"],
-        userId: string | undefined,
-    ): Promise<HistoryPendingMessage> {
-        const agents = this.#agents;
-        if (agents === undefined) throw new Error("The chat UI module has not started.");
-        const id = createId();
-        const pending: HistoryPendingMessage = {
-            id,
-            agentId: attempt.agentId,
-            role: "user",
-            status: "pending",
-            delivery: "queue",
-            createdAt: Date.now(),
-            blocks: [
-                { type: "text", text: words },
-                this.#record(attempt, { status: "accepted" }).blocks[0]!,
-            ],
-            ...(userId === undefined ? {} : { userId }),
-            mode,
-            runId: null,
-        };
-        await this.#history.queuePending(ctx, pending);
-        await agents.send(
-            ctx,
-            attempt.agentId,
-            { role: "user", content: [{ type: "text", text: words }] },
-            {
-                id,
-                provider: mode.providerId,
-                model: mode.modelId,
-                effort: mode.effort as never,
-                serviceTier: mode.serviceTier,
-                permissionMode: mode.permissionMode,
-                metadata: {
-                    ...USER_MESSAGE_ORIGIN_METADATA,
-                    ...(userId === undefined ? {} : { userId }),
-                    mode,
-                },
-            },
-        );
-        return pending;
-    }
-
-    /** A stored attempt as it stands, with the person's message it became. */
+    /** A stored attempt as it stands. */
     async #replay(ctx: Context, attempt: ChatUiAttempt): Promise<ChatUiActionResult> {
         const record = await this.#history.message(ctx, attempt.agentId, attempt.id);
         if (record === undefined) throw new Error("A chat UI attempt lost its record.");
-        const personId = attempt.personMessageId;
-        const message =
-            personId === null
-                ? null
-                : ((await this.#history.message(ctx, attempt.agentId, personId)) ??
-                  (await this.#history.pending(ctx, attempt.agentId)).find(
-                      (pending) => pending.id === personId,
-                  ) ??
-                  null);
-        return { record, message, result: null };
+        return { record, result: null };
     }
 
     /** The hook, bounded to 15 seconds; a throw or a timeout fails the attempt. */
@@ -774,37 +707,6 @@ export class ChatUiModule implements AgentModule {
         }
     }
 
-    /** A `"message"` action's mode, checked against the live model catalog. */
-    #mode(request: UiActionRequest): HistoryPendingMessage["mode"] {
-        const mode = request.mode;
-        if (mode === undefined) {
-            throw new ChatUiActionError(400, "invalid_request", "This action needs a mode.");
-        }
-        const model = this.#config.models.find(
-            (candidate) =>
-                candidate.providerId === mode.providerId && candidate.id === mode.modelId,
-        );
-        if (
-            model === undefined ||
-            !model.effortLevels.some((effort) => effort === mode.effort) ||
-            (mode.serviceTier !== null &&
-                !model.serviceTiers?.some((tier) => tier === mode.serviceTier))
-        ) {
-            throw new ChatUiActionError(
-                400,
-                "invalid_request",
-                "The selected provider, model, effort, or service tier is unavailable.",
-            );
-        }
-        return {
-            providerId: mode.providerId,
-            modelId: mode.modelId,
-            effort: mode.effort,
-            serviceTier: mode.serviceTier,
-            permissionMode: mode.permissionMode,
-        };
-    }
-
     /** Start a turn for every waiting note, on the conversation's last mode, in this transaction. */
     async #wake(ctx: Context, agentId: string): Promise<void> {
         const agents = this.#agents;
@@ -855,7 +757,7 @@ export class ChatUiModule implements AgentModule {
             if (attempt?.status !== "pending") return;
             const stored = await this.#history.message(txCtx, agentId, id);
             if (stored === undefined) return;
-            await this.#settle(txCtx, attempt, stored, "failed", null, {
+            await this.#settle(txCtx, attempt, stored, "failed", {
                 status: "failed",
                 code: "interrupted",
                 reason: "Happy restarted before this finished. Try again.",
@@ -868,6 +770,29 @@ export class ChatUiModule implements AgentModule {
         if (this.#ctx === undefined) throw new Error("The chat UI module has not started.");
         return this.#ctx;
     }
+}
+
+/**
+ * The options of one suggestion in an agent message: the `suggest_replies` call `toolCallId`
+ * names, or the message's own `quick_replies` block when it names none.
+ */
+function suggestedOptions(
+    message: HistoryMessage,
+    toolCallId: string | undefined,
+): readonly string[] | undefined {
+    for (const block of message.blocks) {
+        if (toolCallId === undefined) {
+            if (block.type === "quick_replies") return block.options;
+        } else if (
+            block.type === "tool_result" &&
+            block.callId === toolCallId &&
+            block.isError !== true &&
+            block.presentation?.type === "quick_replies"
+        ) {
+            return block.presentation.options;
+        }
+    }
+    return undefined;
 }
 
 function attemptKey(agentId: string, id: string): string {

@@ -36,6 +36,7 @@ export function historyMessageSearchParts(message: HistoryMessage): readonly str
     for (const block of message.blocks) {
         if (block.type === "text") parts.push(block.text);
         else if (block.type === "ui") parts.push(uiDocumentFallback(block.ui));
+        else if (block.type === "quick_replies") parts.push(...block.options);
         else if (block.type === "image") parts.push(block.mediaType);
         else if (block.type === "thinking") parts.push(block.thinking);
         else if (block.type === "tool_call" || block.type === "tool_call_request") {

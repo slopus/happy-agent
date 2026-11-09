@@ -9,6 +9,7 @@
       "removed": [
         "ToolSearch",
         "show_ui",
+        "suggest_replies",
         "get_presence",
         "list_presences",
         "set_presence",
@@ -534,6 +535,7 @@
         "ToolSearch",
         "read_agent_history",
         "show_ui",
+        "suggest_replies",
         "get_presence",
         "list_presences",
         "set_presence",
@@ -735,6 +737,7 @@
       "removed": [
         "ToolSearch",
         "show_ui",
+        "suggest_replies",
         "get_presence",
         "list_presences",
         "set_presence",
@@ -1073,6 +1076,7 @@
         "ToolSearch",
         "read_agent_history",
         "show_ui",
+        "suggest_replies",
         "get_presence",
         "list_presences",
         "set_presence",
