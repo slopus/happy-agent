@@ -60,12 +60,16 @@ const operationArgumentsSchema = Type.Object(
 type OperationArguments = typeof operationArgumentsSchema.static;
 
 type Listener = (providerCli: ProviderCli, mutationId: string | undefined) => void;
-/** A conversation's `provider_sign_in` widget connected an assistant. */
+/**
+ * A conversation's `provider_sign_in` widget connected an assistant. A listener answers `true`
+ * when it tells that conversation itself, such as onboarding handing the Chief of Staff to its
+ * model, so the widget's note joins that turn instead of starting one of its own.
+ */
 export type ProviderCliConnectedListener = (
     ctx: Context,
     providerCli: ProviderCli,
     agentId: string,
-) => void;
+) => Promise<boolean>;
 
 interface Entry {
     installation: ProviderCliInstallation;
@@ -184,15 +188,20 @@ export class ProviderClisModule implements AgentModule {
         };
     }
 
-    /** Announce that a conversation's widget connected an assistant. */
-    connected(ctx: Context, providerCli: ProviderCli, agentId: string): void {
+    /**
+     * Announce that a conversation's widget connected an assistant. Answers whether a listener
+     * tells that conversation itself.
+     */
+    async connected(ctx: Context, providerCli: ProviderCli, agentId: string): Promise<boolean> {
+        let told = false;
         for (const listener of this.#connectedListeners) {
             try {
-                listener(ctx, providerCli, agentId);
+                if (await listener(ctx, providerCli, agentId)) told = true;
             } catch (error: unknown) {
                 ctx.log.warn("A provider CLI connection listener failed.", {}, error);
             }
         }
+        return told;
     }
 
     /** Every assistant, in display order, after refreshing those not busy with an operation. */

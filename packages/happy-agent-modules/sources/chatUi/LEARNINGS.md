@@ -45,3 +45,9 @@ Every component action is silent now. A suggested answer is a quick reply: the m
 here and that the text matches it exactly, then sends it like any typed message (mode, delivery,
 steering, pending, retry by ID). Anyone who can send may use any visible suggestion, any number of
 times: it is the same as typing it. `resolveOffer` stays as the one place `/actions` checks an offer.
+
+## A note says whether it is worth a turn
+
+A note joins the conversation's next turn. A module passes `wake` when what happened should be
+answered now, such as an AI connected from a sign-in widget; the wake takes every waiting note into
+one hidden message, so several wakes at once start one turn.

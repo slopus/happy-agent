@@ -8,6 +8,7 @@ import { expect } from "vitest";
 
 import {
     OnboardingGyms,
+    STUB_CLAUDE,
     act,
     messagesOf,
     tapReply,
@@ -200,13 +201,17 @@ export async function startGuidedGym(
     gyms: OnboardingGyms,
     answers: Record<string, (request: GymInferenceRequest) => GymTurn>,
     options: {
-        /** Claude Code signed in too, beside Codex. */
-        readonly claude?: boolean;
+        /**
+         * Claude Code beside Codex: `true` signed in all along, `"terminal"` signed out until the
+         * person signs in in their own terminal (`STUB_CLAUDE`'s state file).
+         */
+        readonly claude?: boolean | "terminal";
         /** The kind of device the start names. */
         readonly device?: string;
     } = {},
 ): Promise<{ gym: AgentGym; agentId: string; home: string }> {
     const codex = "Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
+    const claude = options.claude !== undefined && options.claude !== false;
     let onboarding: string | undefined;
     const { gym, home } = await gyms.start({
         machine: {
@@ -220,13 +225,17 @@ export async function startGuidedGym(
                 },
             }),
             "home/.gitconfig": "[user]\n\tname = Ada Lovelace\n\temail = ada@example.com\n",
-            ...(options.claude === true
-                ? { "home/.local/bin/claude": { content: CLAUDE, mode: 0o755 } }
-                : {}),
+            ...(options.claude === undefined || options.claude === false
+                ? {}
+                : {
+                      "home/.local/bin/claude": {
+                          content: options.claude === true ? CLAUDE : STUB_CLAUDE,
+                          mode: 0o755,
+                      },
+                  }),
         },
-        providerIds: options.claude === true ? ["gym", "codex", "claude"] : ["gym", "codex"],
-        providerTypes:
-            options.claude === true ? { codex: "codex", claude: "claude" } : { codex: "codex" },
+        providerIds: claude ? ["gym", "codex", "claude"] : ["gym", "codex"],
+        providerTypes: claude ? { codex: "codex", claude: "claude" } : { codex: "codex" },
         models: [
             ...GYM_MODELS,
             {
@@ -236,7 +245,7 @@ export async function startGuidedGym(
                 name: "Gym Codex",
                 providerId: "codex",
             },
-            ...(options.claude === true
+            ...(claude
                 ? [
                       {
                           defaultEffort: "high" as const,

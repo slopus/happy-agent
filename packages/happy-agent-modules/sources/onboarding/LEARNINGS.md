@@ -177,6 +177,11 @@ polls: a change from signed out to signed in that Provider CLIs observes, such a
 reads its live state, connects as the widget would. An AI found signed in all along is not taken
 on its own; the person presses its "Sign in", which connects it as it is.
 
+While the model guides, the same holds for another AI: a widget's connection (a finished sign-in,
+`sign_in` on an AI already signed in, a token) and a terminal sign-in seen happen each add it and
+wake the Chief of Staff with one `providerAdded`. Onboarding claims the widget's connection through
+Provider CLIs' `onConnected`, so the widget's note rides along instead of starting a second turn.
+
 ## Signed in but unusable is not a failed sign-in
 
 A Claude that signed in but has no provider here must not read "That didn't work" right after a

@@ -14,8 +14,9 @@ const NAMES: Readonly<Record<ProviderCliId, string>> = {
 
 /**
  * Serve `provider_sign_in`: one assistant's install and sign-in, live in the chat. Each action
- * calls this module directly, never its HTTP routes. A sign-in that finishes later, in the browser
- * or the person's own terminal, leaves the conversation a note and is announced as a connection.
+ * calls this module directly, never its HTTP routes. A connection, now or when a sign-in finishes
+ * later in the browser or the person's own terminal, is announced and leaves the conversation a
+ * note that wakes its model, unless a listener such as onboarding tells the conversation itself.
  */
 export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderClisModule): void {
     /** Conversations whose widget started an install or a sign-in that has not finished. */
@@ -29,9 +30,9 @@ export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderCl
         if (!(error instanceof ProviderCliRequestError)) throw error;
         return { status: "rejected" as const, code: error.code, reason: error.message };
     };
-    const connected = (ctx: Context, cli: ProviderCli, agentId: string) => {
-        clis.connected(ctx, cli, agentId);
-        return `${NAMES[cli.id]} is connected and signed in.`;
+    const connected = async (ctx: Context, cli: ProviderCli, agentId: string) => {
+        const told = await clis.connected(ctx, cli, agentId);
+        return { note: `${NAMES[cli.id]} is connected and signed in.`, wake: !told };
     };
 
     clis.onUpdated((cli) => {
@@ -54,14 +55,16 @@ export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderCl
         if (cli.signIn.status !== "signed_in" || operation?.status === "running") return;
         awaiting.delete(cli.id);
         for (const agentId of agents) {
-            void chatUi.note(ctx, agentId, connected(ctx, cli, agentId)).catch((error: unknown) => {
-                ctx.log.warn("A sign-in note could not be left.", {}, error);
-            });
+            void connected(ctx, cli, agentId)
+                .then(async ({ note, wake }) => await chatUi.note(ctx, agentId, note, wake))
+                .catch((error: unknown) => {
+                    ctx.log.warn("A sign-in note could not be left.", {}, error);
+                });
         }
     });
 
     chatUi.contribute(providerSignInComponent, {
-        prompt: "One AI's install and sign-in, live: it installs the AI's program when it is missing, opens its own sign-in, and takes a sign-in code or a pasted setup token or API key. Show one per AI the person may connect. A finished sign-in reaches you as a hidden note.",
+        prompt: "One AI's install and sign-in, live: it installs the AI's program when it is missing, opens its own sign-in, and takes a sign-in code or a pasted setup token or API key. Show one per AI the person may connect. A finished sign-in reaches you as a hidden note, in a turn of its own.",
         fallback: (props) => `Sign in to ${NAMES[props.provider]} in Happy on your computer.`,
         actions: {
             install: async (ctx, offer) => {
@@ -77,7 +80,7 @@ export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderCl
                 const cli = await clis.get(ctx, offer.props.provider);
                 // Signed in already: it connects as it is.
                 if (cli.signIn.status === "signed_in") {
-                    return { status: "accepted", note: connected(ctx, cli, offer.agentId) };
+                    return { status: "accepted", ...(await connected(ctx, cli, offer.agentId)) };
                 }
                 try {
                     await clis.signIn(ctx, offer.props.provider, undefined);
@@ -108,7 +111,7 @@ export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderCl
                     };
                 }
                 const cli = await clis.get(ctx, offer.props.provider);
-                return { status: "accepted", note: connected(ctx, cli, offer.agentId) };
+                return { status: "accepted", ...(await connected(ctx, cli, offer.agentId)) };
             },
             cancel: async (ctx, offer) => {
                 await clis.cancel(ctx, offer.props.provider);

@@ -16,9 +16,11 @@ runs the provider scan so the new assistant's models show up without a restart.
 
 Given Chat UI, the module contributes `provider_sign_in` (`impl/signInComponent.ts`): install,
 sign in, submit a code, submit a token, and cancel, each calling this module directly. The code and
-token are `Secret` fields. When a widget's sign-in finishes, or its `sign_in` finds the assistant
-signed in already, the conversation gets a hidden note and `onConnected` listeners, such as
-onboarding, hear which conversation connected it.
+token are `Secret` fields. When a widget's sign-in finishes, its `sign_in` finds the assistant
+signed in already, or its token connects it, `onConnected` listeners hear which conversation
+connected it, and the conversation gets a hidden note that wakes its model. A listener that tells
+the conversation itself, as onboarding does for the Chief of Staff, answers `true`, and the note
+then joins that turn instead of starting one.
 
 ## The catalog
 
@@ -69,3 +71,12 @@ install that reruns after a restart simply runs the vendor installer again.
 `ApiModule` serves the module under `/v0/provider-clis` and turns each change into a
 `provider_cli.updated` event, plus `config.updated` when an operation succeeds. `packages/happy-agent/API.md`
 is the contract.
+
+## A connection wakes the conversation, once
+
+A sign-in note used to wait for the person's next message, so a model that showed a sign-in sat
+silent after the person connected, and onboarding's guided part never heard about an AI connected
+from a widget it showed or from the person's own terminal. A connection now leaves its note with a
+wake. Onboarding's `onConnected` listener claims the Chief of Staff's conversation and tells it
+with its own `providerAdded` (or the opening's hand-off) instead, so the person's one connection is
+one turn, with the note riding along.

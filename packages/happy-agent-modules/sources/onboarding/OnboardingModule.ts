@@ -276,12 +276,18 @@ export class OnboardingModule implements AgentModule {
                 moduleCtx.log.warn("Onboarding could not follow a provider CLI.", {}, error);
             });
         });
-        // The opening's sign-in widget connected an AI: the model takes over.
-        this.#providerClis.onConnected((_eventCtx, cli, agentId) => {
+        // A sign-in widget in the Chief of Staff's conversation connected an AI: in the opening
+        // the model takes over, and while it guides it hears the AI was added. Onboarding tells
+        // the conversation itself, so the widget's note rides along instead of waking it.
+        this.#providerClis.onConnected(async (_eventCtx, cli, agentId) => {
             const moduleCtx = this.#context();
+            const state = await queryOnboardingState(moduleCtx, OWNER);
+            if (state?.status !== "running") return false;
+            if ((await this.#bots.chiefOfStaff(moduleCtx))?.agentId !== agentId) return false;
             void this.#connected(moduleCtx, cli, agentId).catch((error: unknown) => {
-                moduleCtx.log.warn("Onboarding could not hand off to the model.", {}, error);
+                moduleCtx.log.warn("Onboarding could not follow a connected AI.", {}, error);
             });
+            return true;
         });
         this.#workspaces.onEvent(async (_eventCtx, event) => {
             if (event.type !== "workspace_updated" || event.change !== "mark_ready") return;
@@ -720,12 +726,15 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * The opening's widget connected an AI in the Chief of Staff's conversation: it becomes the one
-     * the model runs on, and the model takes over. One that cannot run says why, with the sign-in
-     * components again.
+     * An AI was connected in the Chief of Staff's conversation. In the opening it becomes the one
+     * the model runs on, and the model takes over; one that cannot run says why, with the sign-in
+     * components again. While the model guides, it joins the others and the model hears so.
      */
     async #connected(ctx: Context, cli: ProviderCli, agentId: string): Promise<void> {
-        if ((await this.#bootstrapIn(ctx, agentId)) === undefined) return;
+        if ((await this.#bootstrapIn(ctx, agentId)) === undefined) {
+            await this.#providerAdded(ctx, cli);
+            return;
+        }
         const used = await this.#useCli(ctx, cli);
         await ctx.inTx(async (txCtx) => {
             const state = await this.#bootstrapIn(txCtx, agentId);
@@ -746,44 +755,49 @@ export class OnboardingModule implements AgentModule {
     }
 
     /**
-     * Follow one provider CLI. While the opening waits, a sign-in that finished outside the
-     * widget, such as in the person's own terminal, connects it as the widget would. In the
-     * guided part, an assistant that finishes signing in joins the others and the model hears it.
+     * Follow one provider CLI. A sign-in that finished outside the widget, such as in the person's
+     * own terminal, connects it as the widget would: in the opening the model takes over, and
+     * while it guides the assistant joins the others and the model hears it. So does a sign-in a
+     * widget started and the provider finished.
      */
     async #cliChanged(ctx: Context, cli: ProviderCli): Promise<void> {
         const state = await queryOnboardingState(ctx, OWNER);
         if (state?.status !== "running") return;
-        if (state.step === null) {
-            await this.#providerAdded(ctx, state, cli);
-            return;
-        }
         // Only a change seen happen counts: an AI found signed in already waits for its widget.
         if (cli.signIn.status !== "signed_in") {
             if (cli.signIn.status === "signed_out") this.#signedOut.add(cli.id);
             return;
         }
-        if (!this.#signedOut.delete(cli.id) || cli.operation?.status === "running") return;
+        const operation = cli.operation;
+        const seen = this.#signedOut.delete(cli.id);
+        if (operation?.status === "running") return;
+        const finished = operation?.kind === "sign_in" && operation.status === "succeeded";
+        if (state.step === null) {
+            if (seen || finished) await this.#providerAdded(ctx, cli);
+            return;
+        }
+        if (!seen) return;
         const bot = await this.#bots.chiefOfStaff(ctx);
         if (bot !== undefined) await this.#connected(ctx, cli, bot.agentId);
     }
 
-    /** In the guided part, a sign-in that just finished adds that assistant and tells the model. */
-    async #providerAdded(ctx: Context, state: OnboardingState, cli: ProviderCli): Promise<void> {
-        const operation = cli.operation;
-        if (
-            cli.signIn.status !== "signed_in" ||
-            cli.providerId === null ||
-            operation?.kind !== "sign_in" ||
-            operation.status !== "succeeded" ||
-            state.connections.some((connection) => connection.providerId === cli.providerId)
-        ) {
-            return;
-        }
+    /**
+     * While the model guides, an assistant that was just connected joins the others and the model
+     * hears it, once: a widget's connection and the provider's own report of the same sign-in are
+     * one addition.
+     */
+    async #providerAdded(ctx: Context, cli: ProviderCli): Promise<void> {
+        const added = (state: OnboardingState) =>
+            state.status !== "running" ||
+            state.step !== null ||
+            state.connections.some((connection) => connection.providerId === cli.providerId);
+        if (cli.signIn.status !== "signed_in" || cli.providerId === null) return;
+        if (added(await this.#state(ctx))) return;
         const result = await this.#useCli(ctx, cli);
         if ("reason" in result) return;
         await ctx.inTx(async (txCtx) => {
             const current = await this.#state(txCtx);
-            if (current.status !== "running" || current.step !== null) return;
+            if (added(current)) return;
             await this.#write(txCtx, {
                 ...current,
                 connections: [...current.connections, result.connection],
