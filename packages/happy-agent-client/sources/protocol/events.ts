@@ -42,6 +42,10 @@ import type { StoryChangedPayload, StoryRemovedPayload } from "./stories.js";
 import type { ProviderCliUpdatedPayload } from "./providerClis.js";
 import type { OnboardingFlowUpdatedPayload } from "./onboarding.js";
 import type {
+    ComputeUpdatedPayload,
+    GitCredentialCreatedPayload,
+    GitCredentialDeletedPayload,
+    GitCredentialUpdatedPayload,
     InviteCreatedPayload,
     InviteRemovedPayload,
     MemberRemovedPayload,
@@ -841,7 +845,12 @@ export type HappyAgentEvent =
     | EventEnvelope<"member.updated", MemberUpdatedPayload>
     | EventEnvelope<"member.removed", MemberRemovedPayload>
     | EventEnvelope<"invite.created", InviteCreatedPayload>
-    | EventEnvelope<"invite.removed", InviteRemovedPayload>;
+    | EventEnvelope<"invite.removed", InviteRemovedPayload>
+    | EventEnvelope<"compute.nodes.updated", ComputeUpdatedPayload>
+    | EventEnvelope<"compute.pools.updated", ComputeUpdatedPayload>
+    | EventEnvelope<"gitCredential.created", GitCredentialCreatedPayload>
+    | EventEnvelope<"gitCredential.updated", GitCredentialUpdatedPayload>
+    | EventEnvelope<"gitCredential.deleted", GitCredentialDeletedPayload>;
 
 /** The name of an event this client build knows. */
 export type HappyAgentEventType = HappyAgentEvent["type"];

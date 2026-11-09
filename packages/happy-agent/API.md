@@ -15529,6 +15529,35 @@ live. The standalone daemon never sends them.
 - `invite.removed` — an invite was revoked.
     - `inviteId` — the revoked invite's ID.
 
+**Team compute and Git credentials**
+
+Team servers send these so live chat UI, such as `compute_join` and `github_connect`, and the
+settings that list the same state stay current. The standalone daemon never sends them.
+
+- `compute.nodes.updated` — the team's compute nodes or pools changed. The payload is `{}`: a
+  notice to read them again. Every member receives it.
+- `compute.pools.updated` — the team's pools changed. The payload is `{}`. It always follows a
+  `compute.nodes.updated` from the same change. Every member receives it.
+- `gitCredential.created` — a Git credential was added, by request or when a device sign-in
+  finished. A personal credential's event reaches only its owner; a team credential's reaches
+  every member.
+    - `credential` — the credential exactly as `GET /v0/git/credentials` lists it: `id`,
+      `version`, `name`, `kind` (`https_token`, `github_app`, `oauth`, or `ssh_key`),
+      `transport` (`https` or `ssh`), `shared`, `ownerUserId` (null for a team credential),
+      `hosts`, `repos`, `operations` (`read`, `write`, `sign`), optional `ports`, `createdBy`,
+      `createdAt`, `updatedAt`, `lastUsedAt` (Unix milliseconds, or null), and the optional public
+      metadata `username`, `scheme`, `appId`, `installationId`, `provider` (`github` for a device
+      sign-in), `publicKey`, `fingerprint`, and `knownHosts`. It never carries token or key
+      material.
+    - `mutationId` — echoed when the API request that created it supplied one.
+- `gitCredential.updated` — a Git credential changed. Delivered as `gitCredential.created` is.
+    - `credentialId`, `previousVersion`, and `version`.
+    - `changes` — the whole credential after the change, shaped as `credential` above, not a
+      difference.
+- `gitCredential.deleted` — a Git credential was removed. Delivered as `gitCredential.created`
+  is.
+    - `credentialId` — the removed credential's ID.
+
 **Provider-account usage**
 
 - `provider.usage.updated` — protocol 29 or newer. One provider account's usage entry changed: a
