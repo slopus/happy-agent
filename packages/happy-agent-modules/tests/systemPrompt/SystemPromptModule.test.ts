@@ -156,6 +156,7 @@ describe("SystemPromptModule", () => {
     it("mentions no vendor feature Happy Agent does not have", () => {
         const selections = [
             ...[
+                "anthropic/fable-5-2",
                 "anthropic/fable-5-1",
                 "anthropic/fable-5",
                 "anthropic/opus-4-8",
@@ -466,6 +467,14 @@ describe("SystemPromptModule", () => {
         expect(sonnet55).toBe(opus55);
         expect(sonnet55).not.toBe(systemPromptForModel({ model: "anthropic/sonnet-5" }));
         expect(sonnet55).not.toContain("# Doing tasks");
+        // Fable 5.2 gets Claude Code 2.1.321's lean prompt with its own identity and training note.
+        const fable52 = systemPromptForModel({ model: "anthropic/fable-5-2" });
+        expect(fable52).toContain("This iteration of Claude is Claude Fable 5.2");
+        expect(fable52).toContain("The training of Fable 5.2 and Mythos 5.2 included measures");
+        expect(fable52).toContain("# Finishing work");
+        expect(fable52).not.toContain("Fable 5.1");
+        expect(fable52).not.toContain("# Memory");
+        expect(fable52).not.toContain("Hooks may intercept");
         // GPT-6.1 Sol has Codex's own GPT-6 instructions; the other Codex models keep the GPT-5.6
         // prompt they share.
         const gpt61Sol = systemPromptForModel({ model: "openai/gpt-6.1-sol" });

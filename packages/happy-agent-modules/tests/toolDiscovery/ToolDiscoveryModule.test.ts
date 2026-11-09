@@ -10,6 +10,7 @@ import {
 import { testConfig } from "../support/computeModule.js";
 
 const CLAUDE_MODELS = [
+    "anthropic/fable-5-2",
     "anthropic/opus-5-5",
     "anthropic/opus-5",
     "anthropic/sonnet-5-5",

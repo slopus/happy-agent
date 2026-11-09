@@ -366,6 +366,7 @@ describe("Happy Agent onboarding and usage matrix", () => {
             const regularAndFastTiers = [...regularTier, { id: "priority", label: "Fast" }];
             expect(claude?.models).toEqual(
                 [
+                    { id: "anthropic/fable-5-2", enabled: false },
                     { id: "anthropic/opus-5-5", enabled: false },
                     { id: "anthropic/sonnet-5-5", enabled: false },
                     { id: "anthropic/haiku-5-5", enabled: false },

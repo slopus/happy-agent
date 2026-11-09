@@ -108,6 +108,10 @@ const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freez
         contextWindow: 1_000_000,
         autoCompactWindow: 850_000,
     }),
+    "anthropic/fable-5-2": Object.freeze({
+        contextWindow: CLAUDE_CONTEXT_WINDOW,
+        autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
+    }),
     "anthropic/fable-5-1": Object.freeze({
         contextWindow: CLAUDE_CONTEXT_WINDOW,
         autoCompactWindow: CLAUDE_AUTO_COMPACT_WINDOW,
@@ -219,8 +223,9 @@ const CATALOG: readonly CuratedAgentModel[] = [
     // GPT-6.1 Sol replaces it.
     optIn(model("codex", "openai/gpt-6-sol", "GPT-6 Sol", ALL_BUT_OFF, "high", ["priority"])),
     model("codex", "openai/gpt-6-luna", "GPT-6 Luna", ALL_BUT_OFF, "medium", ["priority"]),
-    // Opus 5.5 and Sonnet 5.5 always think: the API rejects disabled thinking, so "off" is not
-    // offered.
+    // Fable 5.2, Opus 5.5, and Sonnet 5.5 always think: the API rejects disabled thinking, so "off"
+    // is not offered.
+    model("claude", "anthropic/fable-5-2", "Fable 5.2", ALL_BUT_OFF),
     model("claude", "anthropic/opus-5-5", "Opus 5.5 1M", ALL_BUT_OFF),
     model("claude", "anthropic/sonnet-5-5", "Sonnet 5.5", ALL_BUT_OFF),
     model("claude", "anthropic/haiku-5-5", "Haiku 5.5", ALL_BUT_OFF),

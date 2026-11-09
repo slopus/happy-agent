@@ -35,6 +35,7 @@ const CODEX_TOOL_SEARCH_DESCRIPTION =
     "Search the deferred Happy Agent tool catalog with BM25 and make the best matching tools callable. Use this when the capability summary says an appropriate tool exists but its definition is not currently loaded.";
 
 const CLAUDE_TOOL_SEARCH_MODELS = [
+    "anthropic/fable-5-2",
     "anthropic/opus-5-5",
     "anthropic/opus-5",
     "anthropic/sonnet-5-5",

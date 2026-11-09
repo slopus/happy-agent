@@ -314,9 +314,11 @@ model definition carries it so clients count down to the point where compaction 
 
 ## Always-on thinking models do not offer the off effort
 
-The Claude provider turns effort `off` into a disabled-thinking request. Opus 5.5 and Sonnet 5.5
-reject that with a 400, so their catalog entries use the ladder without `off`; offering it would
-turn a picker choice into a failed turn. Their Claude Code SDK wire IDs carry the `[1m]` suffix
+The Claude provider turns effort `off` into a disabled-thinking request. Fable 5.2, Opus 5.5, and
+Sonnet 5.5 reject that with a 400, so their catalog entries use the ladder without `off`; offering
+it would turn a picker choice into a failed turn. Fable 5.2 is Claude-only: Anthropic documents no
+Amazon Bedrock ID for it, so Bedrock does not resell it. The person asked for Fable 5.2 at the top of
+the Claude picker, above Opus 5.5, which also makes it the Claude fallback when nothing names a model. Their Claude Code SDK wire IDs carry the `[1m]` suffix
 for the same reason Fable 5.1 does: an SDK that accepts a model without knowing its window lets
 its continuation guard assume 200k. Bedrock serves Opus 5.5 on both endpoints through the same
 us, eu, jp, au, and global profiles as Opus 5.

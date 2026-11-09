@@ -522,6 +522,42 @@ describe("ConfigModule", () => {
         ).toEqual(["gym/model", "gym/model-2"]);
     });
 
+    it("offers Fable 5.2 through Claude only, without the off effort it rejects", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-fable-5-2-catalog-"));
+        temporaryDirectories.push(root);
+        const configDirectory = process.platform === "darwin" ? "Happy/Config" : "happy/config";
+        await mkdir(join(root, configDirectory), { recursive: true });
+        await writeFile(
+            join(root, configDirectory, "happy.toml"),
+            "[providers.claude]\nenabled = true\n\n[providers.bedrock]\nenabled = true\n",
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
+        expect(
+            module.catalog.find(
+                (model) => model.providerId === "claude" && model.id === "anthropic/fable-5-2",
+            ),
+        ).toMatchObject({
+            autoCompactWindow: 400_000,
+            contextWindow: 1_000_000,
+            defaultEffort: "medium",
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            name: "Fable 5.2",
+        });
+        // The person asked for Fable 5.2 at the top of the Claude picker.
+        expect(module.catalog.filter((model) => model.providerId === "claude")[0]?.id).toBe(
+            "anthropic/fable-5-2",
+        );
+        // Anthropic lists no Amazon Bedrock ID for Fable 5.2.
+        expect(
+            module.catalog.some(
+                (model) => model.providerId === "bedrock" && model.id === "anthropic/fable-5-2",
+            ),
+        ).toBe(false);
+    });
+
     it("offers Fable 5.1 through Claude and Bedrock", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-fable-5-1-catalog-"));
         temporaryDirectories.push(root);
@@ -580,8 +616,11 @@ describe("ConfigModule", () => {
 
         const module = await ConfigModule.load(join(root, ".happy"));
 
-        const claudeModels = module.catalog.filter((model) => model.providerId === "claude");
-        expect(claudeModels[0]).toMatchObject({
+        expect(
+            module.catalog.find(
+                (model) => model.providerId === "claude" && model.id === "anthropic/opus-5-5",
+            ),
+        ).toMatchObject({
             autoCompactWindow: 400_000,
             contextWindow: 1_000_000,
             defaultEffort: "medium",
@@ -686,6 +725,7 @@ describe("ConfigModule", () => {
         // the cost and quality sweet spot at 300k to 400k, well below Claude Code's own default.
         const recommendedThreshold = 400_000;
         for (const modelId of [
+            "anthropic/fable-5-2",
             "anthropic/fable-5-1",
             "anthropic/fable-5",
             "anthropic/opus-4-8",
