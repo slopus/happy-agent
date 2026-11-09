@@ -522,7 +522,7 @@ describe("ConfigModule", () => {
         ).toEqual(["gym/model", "gym/model-2"]);
     });
 
-    it("offers Fable 5.2 through Claude only, without the off effort it rejects", async () => {
+    it("offers Fable 5.2 through Claude and Bedrock, without the off effort it rejects", async () => {
         const root = await mkdtemp(join(tmpdir(), "happy-agent-fable-5-2-catalog-"));
         temporaryDirectories.push(root);
         const configDirectory = process.platform === "darwin" ? "Happy/Config" : "happy/config";
@@ -550,7 +550,43 @@ describe("ConfigModule", () => {
         expect(module.catalog.filter((model) => model.providerId === "claude")[0]?.id).toBe(
             "anthropic/fable-5-2",
         );
-        // Anthropic lists no Amazon Bedrock ID for Fable 5.2.
+        // AWS serves Fable 5.2 on Bedrock Runtime only.
+        expect(
+            module.catalog.find(
+                (model) => model.providerId === "bedrock" && model.id === "anthropic/fable-5-2",
+            ),
+        ).toMatchObject({
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            enabled: true,
+            name: "Fable 5.2",
+        });
+        expect(module.anthropicBedrockTransport("bedrock", "anthropic/fable-5-2")).toBe("runtime");
+        // Bedrock serves Fable only after an account opts in to AWS review, so Fable 5.2 leads the
+        // Claude rows there without becoming the model a Bedrock session gets when it names none.
+        expect(module.catalog.filter((model) => model.providerId === "bedrock")[0]?.id).not.toBe(
+            "anthropic/fable-5-2",
+        );
+    });
+
+    it("hides Fable 5.2 on Bedrock when Mantle is forced, since AWS serves it on Runtime only", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-fable-5-2-mantle-"));
+        temporaryDirectories.push(root);
+        const configDirectory = process.platform === "darwin" ? "Happy/Config" : "happy/config";
+        await mkdir(join(root, configDirectory), { recursive: true });
+        await writeFile(
+            join(root, configDirectory, "happy.toml"),
+            [
+                "[providers.bedrock]",
+                "enabled = true",
+                "",
+                '[providers.bedrock.model_overrides."anthropic/fable-5-2"]',
+                'transport = "mantle"',
+                "",
+            ].join("\n"),
+        );
+
+        const module = await ConfigModule.load(join(root, ".happy"));
+
         expect(
             module.catalog.some(
                 (model) => model.providerId === "bedrock" && model.id === "anthropic/fable-5-2",
@@ -922,6 +958,7 @@ describe("ConfigModule", () => {
             "openai/gpt-6-astra",
             "openai/gpt-6-sol",
             "openai/gpt-6-luna",
+            "anthropic/fable-5-2",
             "anthropic/opus-5-5",
             "anthropic/sonnet-5-5",
             "anthropic/fable-5-1",

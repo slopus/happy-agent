@@ -1411,6 +1411,9 @@ describe("ConfigModule edge coverage", () => {
             expect(config.anthropicBedrockTransport("mantle", "anthropic/fable-5-1")).toBe(
                 "runtime",
             );
+            expect(config.anthropicBedrockTransport("mantle", "anthropic/fable-5-2")).toBe(
+                "runtime",
+            );
             expect(config.anthropicBedrockTransport("runtime-router", "anthropic/sonnet-5")).toBe(
                 "runtime",
             );

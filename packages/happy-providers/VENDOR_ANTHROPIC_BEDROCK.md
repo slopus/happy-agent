@@ -74,7 +74,9 @@ Fable 5.1 defaults to Runtime because AWS documents US and global inference prof
 in-region Mantle route. Fable 5.2's model card lists only the `bedrock-runtime` endpoint, with
 `us.anthropic.claude-fable-5-2` and `global.anthropic.claude-fable-5-2` and no in-region ID, so it
 resolves like Fable 5.1 and the catalog hides a forced Mantle route. Both Fable models require the
-AWS account to opt in to AWS review (`aws_review` data retention) before Bedrock serves them. Opus 5.5 launched on both endpoints with the same us, eu, jp, au, and
+AWS account to opt in to AWS review (`aws_review` data retention) before Bedrock serves them.
+Fable 5.2's Bedrock mapping follows AWS's model card and the Fable 5.1 precedent; it shipped
+without a live Bedrock request. Opus 5.5 launched on both endpoints with the same us, eu, jp, au, and
 global Runtime profiles as Opus 5; its Mantle ID is the bare `anthropic.claude-opus-5-5`.
 Sonnet 5.5 also defaults to Runtime. AWS documents only its global profile,
 `global.anthropic.claude-sonnet-5-5`, with no geo profiles, so every region resolves to that

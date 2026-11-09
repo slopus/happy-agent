@@ -253,6 +253,7 @@ const BEDROCK_RESOLD_MODEL_IDS: ReadonlySet<string> = new Set([
     "anthropic/opus-5",
     "anthropic/sonnet-5-5",
     "anthropic/sonnet-5",
+    "anthropic/fable-5-2",
     "anthropic/fable-5-1",
     "anthropic/fable-5",
     "anthropic/opus-4-8",
@@ -735,11 +736,14 @@ function concreteAgentModelCatalog(
 }
 
 /**
- * The only regions where AWS's model cards list Mantle in-region support for these models.
+ * The only regions where AWS's model cards list Mantle in-region support for these models. Fable
+ * 5.2 is served on Runtime only.
  * https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5.html
  * https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-sonnet-5-5.html
+ * https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-fable-5-2.html
  */
 const BEDROCK_MANTLE_REGIONS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+    "anthropic/fable-5-2": [],
     "anthropic/sonnet-5-5": ["us-gov-west-1"],
     "anthropic/sonnet-5": [
         "us-east-1",
@@ -1280,16 +1284,22 @@ async function createProvider(
           });
 }
 
+const RUNTIME_DEFAULT_BEDROCK_MODEL_IDS: ReadonlySet<string> = new Set([
+    "anthropic/fable-5-2",
+    "anthropic/fable-5-1",
+    "anthropic/sonnet-5-5",
+]);
+
 function resolveAnthropicBedrockTransport(
     provider: Extract<ConcreteConfiguredProvider, { readonly type: "bedrock" }>,
     model: string | undefined,
 ): AnthropicBedrockTransport | undefined {
     if (model?.startsWith("anthropic/") !== true) return undefined;
-    // AWS documents no commercial Mantle route for Fable 5.1 or Sonnet 5.5, so both default to
-    // Runtime; the others prefer Mantle.
+    // AWS documents no commercial Mantle route for Fable 5.2, Fable 5.1, or Sonnet 5.5, so they
+    // default to Runtime; the others prefer Mantle.
     return (
         provider.modelOverrides?.[model]?.transport ??
-        (model === "anthropic/fable-5-1" || model === "anthropic/sonnet-5-5" ? "runtime" : "mantle")
+        (RUNTIME_DEFAULT_BEDROCK_MODEL_IDS.has(model) ? "runtime" : "mantle")
     );
 }
 

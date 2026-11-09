@@ -316,9 +316,14 @@ model definition carries it so clients count down to the point where compaction 
 
 The Claude provider turns effort `off` into a disabled-thinking request. Fable 5.2, Opus 5.5, and
 Sonnet 5.5 reject that with a 400, so their catalog entries use the ladder without `off`; offering
-it would turn a picker choice into a failed turn. Fable 5.2 is Claude-only: Anthropic documents no
-Amazon Bedrock ID for it, so Bedrock does not resell it. The person asked for Fable 5.2 at the top of
-the Claude picker, above Opus 5.5, which also makes it the Claude fallback when nothing names a model. Their Claude Code SDK wire IDs carry the `[1m]` suffix
+it would turn a picker choice into a failed turn. The person asked for Fable 5.2 at the top of the
+Claude picker, above Opus 5.5, which also makes it the Claude fallback when nothing names a model.
+Fable 5.2 first shipped Claude-only because Anthropic's docs list no Bedrock ID, but AWS's own
+model card had launched it the same day; the Bedrock picker missed it until a follow-up release.
+Check AWS's model card, not only Anthropic's docs. Bedrock serves Fable 5.2 on Runtime only and,
+like Fable 5.1, only to accounts that opted in to `aws_review` data retention. It leads the Claude
+rows on Bedrock but is not the Bedrock fallback, which is a GPT-6 row. Its Bedrock mapping shipped without a live Bedrock request. Their Claude Code
+SDK wire IDs carry the `[1m]` suffix
 for the same reason Fable 5.1 does: an SDK that accepts a model without knowing its window lets
 its continuation guard assume 200k. Bedrock serves Opus 5.5 on both endpoints through the same
 us, eu, jp, au, and global profiles as Opus 5.
