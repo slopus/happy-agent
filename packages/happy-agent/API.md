@@ -8322,6 +8322,11 @@ exactly as in the `media` presentation, 0–24 of them; a `media` component name
 their bytes are `GET /v0/agents/:agentId/tool-calls/:toolCallId/media/:index`. A `ui` block carries
 no media, so only `show_ui` can show the `media` component.
 
+A `show_ui` call that completes is announced as completed, with its presentation, before its run's
+`run.finished`, whether it is its message's only call or one of several made together. A client
+that ends the calls still running when their run finishes never ends one that was about to show a
+document.
+
 Every label, detail, and path in a component is plain text, shown as written: never Markdown, never
 linkified, never HTML, never a URL. A component carries no URL or route; a client draws a live
 component from the server's own state, through the read and the event its row below names.
@@ -8492,7 +8497,9 @@ sends remembers where its text came from. There are two carriers:
   know the field, or an entry's `type`, shows the bare option. Whatever it holds, a tap sends the
   option's text.
 
-The presentation is the same object, `{ "type": "quick_replies", "options": [ … ] }`.
+The presentation is the same object, `{ "type": "quick_replies", "options": [ … ] }`. A
+`suggest_replies` call that completes is announced as completed, with its presentation, before its
+run's `run.finished`, as a `show_ui` call is.
 
 **`suggest_replies`.** The tool a model suggests replies with. Its arguments are
 `{ "options": ["…", …] }`. The daemon normalizes the options and checks them as above; any problem
