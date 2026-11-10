@@ -10,6 +10,8 @@
             "First, the AI your agents think with. They use the subscription you already have, so there's nothing new to sign up for. Connect the one you use on this {{machine}}."
         ],
         "offer": ["provider_sign_in"],
+        "replies": ["provider"],
+        "answer": ["Here's {{provider}}. Once it's signed in, I'll take it from here."],
         "failed": [
             "I couldn't put {{provider}} to work yet. {{reason}} Sign in again, or connect another AI, and we'll keep going."
         ],
@@ -59,7 +61,7 @@
         "The steps, in order:",
         "",
         "1. begin → One message.",
-        "   - Say what is connected, by app and account as the event names them, with the default model in the same sentence: \"Connected to Claude as ada@example.com. Your agents think with it from now on, on Opus 5.5 · High unless you pick another model.\"",
+        "   - Say what is connected, by app and account as the event names them, with the default model in the same sentence: \"Connected to Claude Code as ada@example.com. Your agents think with it from now on, on Opus 5.5 · High unless you pick another model.\"",
         "   - With a profile in the event, from Git or from their Happy Cloud account: call save_profile with exactly that name and email, then set_bot_name with \"<First name>'s Chief of Staff\". Say both in one sentence with the reason, then a way to change them: \"I've put **Ada Lovelace** · ada@example.com on your profile, from your Git settings, so your agents know who they work for, and I'll go by Ada's Chief of Staff. Change either anytime.\" Then ask about more AIs, as below, in the same message.",
         "   - With no profile: ask for their name and email in one sentence, with the reason (their agents put them on commits and messages), and no components or replies. When they answer, call save_profile with exactly what they wrote; if either is missing, ask for it instead of guessing. Then call set_bot_name, and say \"Thanks, <first name>. I'll go by <First name>'s Chief of Staff.\" before asking about more AIs.",
         "   If they ask to change their profile or the default model at any step, call save_profile or set_default_model, say in one sentence what is set now, and ask the pending step again.",

@@ -12,6 +12,7 @@ import {
     act,
     messagesOf,
     tapReply,
+    signInRow,
     waitForOpening,
     type OnboardingFlow,
 } from "./onboardingGym.js";
@@ -41,7 +42,7 @@ esac
 
 /** The model's first message: what is connected, the profile it saved, and the first task asked. */
 export const FIRST_TASK_ASKED = [
-    "Connected to ChatGPT as ada@example.com. Your agents think with it from now on, on Gym Codex · Medium unless you pick another model.",
+    "Connected to Codex as ada@example.com. Your agents think with it from now on, on Gym Codex · Medium unless you pick another model.",
     "",
     "I've put **Ada Lovelace** · ada@example.com on your profile, from your Git settings, so your agents know who they work for, and I'll go by Ada's Chief of Staff. Change either anytime.",
     "",
@@ -288,7 +289,8 @@ export async function startGuidedGym(
 /** Use Codex from the opening: signed in already, it connects, and the model takes over. */
 export async function connectCodex(gym: AgentGym, agentId: string): Promise<void> {
     const opening = await waitForOpening(gym, agentId);
-    const used = await act(gym, agentId, opening, "codex", "sign_in");
+    const row = await signInRow(gym, agentId, opening, "codex");
+    const used = await act(gym, agentId, row, "codex", "sign_in");
     expect(used.record).toMatchObject({ content: [{ outcome: { status: "accepted" } }] });
 }
 

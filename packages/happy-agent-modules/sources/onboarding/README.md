@@ -23,10 +23,11 @@ package, and `tests/onboarding/onboardingRecipeSchemaFile.test.ts` fails while i
 A recipe has two parts:
 
 - **The opening** (`bootstrap`, optional): one message the server writes itself, its `say` words
-  and below them the chat UI components its `offer` names, filled from the runtime's own state.
-  The `local` recipe offers `provider_sign_in`, one per AI that is installed or has an installer.
-  `failed` is said instead, with the same components, when a connected AI could not be put to
-  work. A recipe without an opening hands the conversation to the model at once.
+  and below them the chat UI components its `offer` names, filled from the runtime's own state, or,
+  with `replies`, quick replies instead. The `local` recipe suggests one `provider` reply per AI
+  that is installed or has an installer ("Set up Codex", "Sign in to Codex", "Connect Codex"), and
+  a tap is answered with `answer` and that AI's `provider_sign_in` alone. `failed` is said instead,
+  with the same replies, when a connected AI could not be put to work. A recipe without an opening hands the conversation to the model at once.
 - **The guide**, the model's instructions once the opening hands off, with the tools the model has
   while it guides. The model offers answers with `suggest_replies` and controls with `show_ui`,
   never with markup in its text.
@@ -50,6 +51,12 @@ signed out to signed in; an AI that was signed in all along waits for its widget
 enables that AI's provider and hands over, or opens again with `failed` and the reason. While the
 recipe disables typing, a typed message to the conversation is refused with `409` before anything
 else about it is checked.
+
+A tap on one of the opening's replies is not typing. `ApiModule` reads a send with `quickReply`
+before the full send schema, since no model or mode exists yet, and hands it to `tapped`. That
+checks the reply like any quick reply, and records the person's message and the scripted answer
+(the `answer` words and the tapped AI's row) in one finished maintenance run; the answer is paced
+like the opening. A retry by `id` returns the stored message. Each tap posts its own row.
 
 A start may name the kind of device the person is on. The first start's is kept as `startedOn`,
 holds the `onPhone` condition, and reaches the model in `begin`.

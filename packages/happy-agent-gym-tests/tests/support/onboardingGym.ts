@@ -188,10 +188,41 @@ export async function waitForOpening(
     return await gym.waitUntil(async () => {
         if ((await flowOf(gym)).step !== "opening") return undefined;
         const last = (await messagesOf(gym, agentId)).at(-1);
-        return last?.role === "agent" && uiOf(last) !== undefined && !earlier.includes(last.id)
+        return last?.role === "agent" && repliesOf(last) !== undefined && !earlier.includes(last.id)
             ? last
             : undefined;
-    }, "the opening to show its components");
+    }, "the opening to suggest its replies");
+}
+
+/** The AI each of the opening's replies names, by its `provider` reply component. */
+export function replyProviders(message: OnboardingMessage): (string | undefined)[] {
+    const block = message.content.find((candidate) => candidate.type === "quick_replies");
+    const ui = (block?.["ui"] ?? []) as ({ props?: { provider?: string } } | null)[];
+    return (block?.options ?? []).map((_option, index) => ui[index]?.props?.provider);
+}
+
+/**
+ * Tap the opening's reply for `provider` and wait for the daemon's answer: the message with that
+ * AI's `provider_sign_in` row alone.
+ */
+export async function signInRow(
+    gym: AgentGym,
+    agentId: string,
+    opening: OnboardingMessage,
+    provider: string,
+): Promise<OnboardingMessage> {
+    const index = replyProviders(opening).indexOf(provider);
+    if (index < 0) throw new Error(`The opening offers no reply for ${provider}.`);
+    const tapped = await tapReply(gym, agentId, opening, index);
+    return await gym.waitUntil(async () => {
+        const all = await messagesOf(gym, agentId);
+        const after = all.slice(all.findIndex((message) => message.id === tapped.message.id) + 1);
+        return after.find(
+            (message) =>
+                message.role === "agent" &&
+                uiOf(message)?.components.some((component) => component.id === provider),
+        );
+    }, `the ${provider} sign-in row`);
 }
 
 let actions = 0;

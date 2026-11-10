@@ -8,6 +8,7 @@ import {
     OnboardingGyms,
     act,
     flowOf,
+    signInRow,
     startOnboarding,
     waitForOpening,
 } from "./support/onboardingGym.js";
@@ -58,6 +59,7 @@ describe("A sign-in Happy can no longer confirm", () => {
             const { gym, home } = await gyms.start({ stubs: { claude: FLAKY_CLAUDE } });
             const agentId = await startOnboarding(gym);
             const opening = await waitForOpening(gym, agentId);
+            const row = await signInRow(gym, agentId, opening, "claude");
             expect((await claudeCli(gym)).signIn.status).toBe("signed_in");
 
             await writeFile(join(home, ".unreadable"), "");
@@ -75,7 +77,7 @@ describe("A sign-in Happy can no longer confirm", () => {
             });
 
             // "Sign in" from the widget runs the sign-in, and its end still can't be confirmed.
-            const used = await act(gym, agentId, opening, "claude", "sign_in");
+            const used = await act(gym, agentId, row, "claude", "sign_in");
             expect(used.record).toMatchObject({ content: [{ outcome: { status: "accepted" } }] });
             const settled = await gym.waitUntil(async () => {
                 const cli = await claudeCli(gym);

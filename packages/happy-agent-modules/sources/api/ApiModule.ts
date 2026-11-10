@@ -423,6 +423,7 @@ import {
     gitWatchBodySchema,
     invokeSlashCommandRequestSchema,
     messageSendBodySchema,
+    openingTapBodySchema,
     profilePatchBodySchema,
     projectCloneBodySchema,
     projectRegisterBodySchema,
@@ -5626,12 +5627,63 @@ export class ApiModule implements AgentModule {
         agentId: string,
     ): Promise<void> {
         await this.#assertUserControlledAgent(ctx, agentId);
+        const value = await readJson(request, MAX_JSON_BODY_BYTES);
+        // A tap on one of the opening's replies is answered by onboarding itself, with no model.
+        if (Value.Check(openingTapBodySchema, value)) {
+            const answered = await this.#answerOpeningTap(ctx, agentId, value);
+            if (answered !== undefined) {
+                sendJson(response, 202, answered);
+                return;
+            }
+        }
         // While the opening takes no typing, a typed message is refused whatever it holds.
         await this.#onboardingFlow?.refuseTyping(ctx, agentId).catch((error: unknown) => {
             throw onboardingApiError(error);
         });
-        const body = await bodyAs(request, messageSendBodySchema, "agent message");
-        sendJson(response, 202, await this.#sendUserMessage(ctx, agentId, body));
+        if (!Value.Check(messageSendBodySchema, value)) {
+            throw invalidRequest("The agent message is invalid.");
+        }
+        sendJson(response, 202, await this.#sendUserMessage(ctx, agentId, value));
+    }
+
+    /**
+     * A quick-reply tap while onboarding's opening runs in this conversation, which no model can
+     * answer yet: stored and answered by onboarding, retried by `id` like any send. Undefined when
+     * the opening is not running here.
+     */
+    async #answerOpeningTap(
+        ctx: Context,
+        agentId: string,
+        body: Static<typeof openingTapBodySchema>,
+    ): Promise<{ readonly message: unknown; readonly cursor: string | null } | undefined> {
+        const onboarding = this.#onboardingFlow;
+        if (onboarding === undefined) return undefined;
+        const id = body.id ?? createId();
+        return await this.#serializeMessageSend(id, async () => {
+            const cursor = this.#journal.cursor();
+            const userId = this.#team.enabled ? teamUser(ctx)?.id : undefined;
+            const existing = await ctx.inTx(
+                async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
+            );
+            if (existing !== undefined) return { message: existing, cursor };
+            const message = await onboarding
+                .tapped(ctx, agentId, {
+                    id,
+                    text: body.text,
+                    quickReply: body.quickReply,
+                    ...(userId === undefined ? {} : { userId }),
+                })
+                .catch((error: unknown) => {
+                    throw onboardingApiError(error);
+                });
+            if (message === undefined) return undefined;
+            this.#journal.append("message.created", {
+                agentId,
+                runId: message.runId ?? null,
+                message: messageResource(message),
+            });
+            return { message: messageResource(message), cursor };
+        });
     }
 
     /**

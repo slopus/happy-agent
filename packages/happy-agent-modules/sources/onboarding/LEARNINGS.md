@@ -258,11 +258,17 @@ call `suggest_replies` for the consent, first-task, empty-machine and nickname s
 left for live controls (sign-in, phone app, pairing, default model). The person can always type
 instead.
 
-## More AIs are offered one at a time, worded by their live state
+## AIs are offered one at a time, worded by their live state
 
-Showing a `provider_sign_in` for every AI at once made a long list of controls. Kirill chose the
-gradual flow: after the profile, the model suggests one `provider` reply per AI ("Set up Grok",
-"Sign in to ChatGPT", "Connect Claude", "Add another Claude account") and "That's all for now", and a
-tap shows one sign-in row for that AI alone. The wording follows each AI's state, which `begin` and
-`providerAdded` carry as `ais`, because the model cannot see the provider CLIs itself. The opening
-still shows every sign-in row: before an AI is connected there is no model to answer a tap.
+Showing a `provider_sign_in` for every AI at once made a long list of controls, which Kirill
+rejected. Now every AI is offered as a `provider` quick reply worded by its state ("Set up Grok",
+"Sign in to Codex", "Connect Claude Code", "Add another Claude Code account"), and a tap shows one
+sign-in row for that AI alone. Names are the provider CLIs' own, the ones the sign-in row shows, so
+a reply and the row it leads to read as the same thing.
+
+- The opening does it with no model: the recipe's `replies` puts the stack under its words, and a
+  tap, sent like any reply, is stored and answered by onboarding itself with the recipe's `answer`
+  and that AI's row. There is no "That's all for now" there, because nothing works without one AI.
+- Once the model guides, it offers the same stack after the profile, plus "That's all for now",
+  wording it from the `ais` that `begin` and `providerAdded` carry, because it cannot see the
+  provider CLIs itself.

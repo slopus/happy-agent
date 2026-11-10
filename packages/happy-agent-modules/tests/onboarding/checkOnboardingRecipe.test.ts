@@ -10,6 +10,7 @@ import { fillRecipeText } from "../../sources/onboarding/impl/fillRecipeText.js"
 const OFFER: OnboardingRuntimeOffer = {
     variables: new Set(["provider", "reason"]),
     components: new Set(["provider_sign_in"]),
+    replies: new Set(["provider"]),
     tools: new Set(["save_profile", "show_ui"]),
     requirements: new Set(["provider"]),
 };

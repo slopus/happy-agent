@@ -7,7 +7,11 @@ import {
     OnboardingGyms,
     flowOf,
     messagesOf,
+    replyProviders,
+    repliesOf,
+    signInRow,
     startOnboarding,
+    tapReply,
     textOf,
     uiOf,
     waitForOpening,
@@ -16,7 +20,8 @@ import {
 
 /**
  * Onboarding's scripted opening in the Chief of Staff's conversation, on an empty home: the
- * daemon writes it itself, with a sign-in for each AI below its words, and no model is asked.
+ * daemon writes it itself, with a reply for each AI below its words, answers a tap on one with
+ * that AI's sign-in alone, and no model is asked.
  */
 
 const gyms = new OnboardingGyms();
@@ -35,7 +40,7 @@ afterEach(async () => {
 
 describe("Onboarding's scripted opening", () => {
     it(
-        "begins once, with a sign-in for each AI it can connect, typed out before it shows whole",
+        "begins once, with a reply for each AI it can connect, typed out before it shows whole",
         async () => {
             const { gym } = await gyms.start();
             const health = (await gym.http.ok("GET", "/v0/health")) as {
@@ -73,15 +78,14 @@ describe("Onboarding's scripted opening", () => {
             const opening = await waitForOpening(gym, agentId);
             expect(opening.role).toBe("agent");
             expect(textOf(opening)).toBe(INTRODUCTION);
-            // Claude Code and Codex have installers on Linux; each is offered, none recommended.
-            const ui = uiOf(opening)!;
-            expect(ui.components.map(({ id, type, props }) => ({ id, type, props }))).toEqual(
-                expect.arrayContaining([
-                    { id: "claude", type: "provider_sign_in", props: { provider: "claude" } },
-                    { id: "codex", type: "provider_sign_in", props: { provider: "codex" } },
-                ]),
-            );
-            expect(ui.components.every((component) => component.fallback.length > 0)).toBe(true);
+            // Claude Code and Codex have installers on Linux; each is offered by the name its
+            // sign-in row shows, worded by its state, with no "That's all for now".
+            expect(uiOf(opening)).toBeUndefined();
+            const providers = replyProviders(opening);
+            const options = repliesOf(opening)!.options;
+            expect(options[providers.indexOf("claude")]).toBe("Set up Claude Code");
+            expect(options[providers.indexOf("codex")]).toBe("Set up Codex");
+            expect(providers.every((provider) => provider !== undefined)).toBe(true);
 
             // Stored whole, announced at reading speed: the run starts, the words arrive in small
             // deltas, then the whole message with its components, then the run ends.
@@ -121,7 +125,8 @@ describe("Onboarding's scripted opening", () => {
             };
             const oldContent = old.runs.flatMap((run) => run.messages)[0]!.content;
             expect(oldContent.map((block) => block.type)).toEqual(["text", "text"]);
-            expect(oldContent[1]!.text).toContain("Sign in to Claude in Happy on your computer.");
+            expect(oldContent[1]!.text).toContain("Suggested replies: ");
+            expect(oldContent[1]!.text).toContain("Set up Claude Code");
 
             // Starting again, or after a restart, says nothing more.
             const again = (await gym.http.ok("POST", "/v0/onboarding/flow/start", {})) as {
@@ -134,6 +139,51 @@ describe("Onboarding's scripted opening", () => {
                 version: started.flow.version,
             });
             expect(await messagesOf(gym, agentId)).toHaveLength(1);
+            expect(gym.inference.requests).toEqual([]);
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "answers a tap itself with that AI's sign-in alone, with no model",
+        async () => {
+            const { gym } = await gyms.start();
+            const agentId = await startOnboarding(gym);
+            const opening = await waitForOpening(gym, agentId);
+            const codex = await signInRow(gym, agentId, opening, "codex");
+            expect(textOf(codex)).toBe(
+                "Here's Codex. Once it's signed in, I'll take it from here.",
+            );
+            expect(
+                uiOf(codex)?.components.map(({ id, type, props }) => ({ id, type, props })),
+            ).toEqual([{ id: "codex", type: "provider_sign_in", props: { provider: "codex" } }]);
+            // The tap is the person's own message, naming the reply, in the answer's run.
+            const index = replyProviders(opening).indexOf("codex");
+            const all = await messagesOf(gym, agentId);
+            const tap = all.find((message) => message.role === "user")!;
+            expect(tap).toMatchObject({
+                runId: codex.runId,
+                content: [{ type: "text", text: "Set up Codex" }],
+                quickReply: { messageId: opening.id, index },
+            });
+            // Retrying the same send stores nothing new.
+            const again = await tapReply(gym, agentId, opening, index, { id: tap.id });
+            expect(again.message.id).toBe(tap.id);
+            expect(await messagesOf(gym, agentId)).toHaveLength(3);
+
+            // Another tap posts that AI's row the same way, and the opening keeps waiting.
+            const claude = await signInRow(gym, agentId, opening, "claude");
+            expect(uiOf(claude)?.components.map((component) => component.id)).toEqual(["claude"]);
+            expect(await flowOf(gym)).toMatchObject({ step: "opening", composer: "disabled" });
+            // A reply text that is not the stored option is refused.
+            const wrong = await gym.http.request("POST", `/v0/agents/${agentId}/send`, {
+                text: "Set up something",
+                quickReply: { messageId: opening.id, index },
+            });
+            expect(wrong.status, wrong.text).toBe(400);
+            await gym.restart();
+            expect(await messagesOf(gym, agentId)).toHaveLength(5);
             expect(gym.inference.requests).toEqual([]);
             expect(gym.errors).toEqual([]);
         },

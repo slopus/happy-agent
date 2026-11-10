@@ -16,7 +16,10 @@ import {
 import {
     formatHappyMarkdownLink,
     messageModeSchema,
+    providerReply,
     type OnboardingFlow,
+    type QuickReply,
+    type QuickReplyInput,
 } from "@slopus/happy-agent-client";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -42,12 +45,12 @@ import { describeNamedFolder, describeRecentProjects } from "./impl/describeRece
 import { fillRecipeText } from "./impl/fillRecipeText.js";
 import { findRecentFolders } from "./impl/findRecentFolders.js";
 import {
-    APP_OF,
     LOCAL_OFFER,
     cliAccount,
     effortLabel,
     listOf,
     machineWord,
+    providerReplyText,
     sentence,
 } from "./impl/localWords.js";
 import { readGitIdentity } from "./impl/readGitIdentity.js";
@@ -734,7 +737,7 @@ export class OnboardingModule implements AgentModule {
         const account = cliAccount(cli);
         return {
             connection: {
-                app: APP_OF[cli.id],
+                app: cli.name,
                 ...(account === undefined ? {} : { account }),
                 providerId: cli.providerId,
             },
@@ -757,7 +760,7 @@ export class OnboardingModule implements AgentModule {
             if (state === undefined) return;
             if ("reason" in used) {
                 await this.#open(txCtx, state, {
-                    provider: APP_OF[cli.id],
+                    provider: cli.name,
                     reason: sentence(used.reason),
                 });
                 return;
@@ -820,7 +823,7 @@ export class OnboardingModule implements AgentModule {
                 ...current,
                 connections: [...current.connections, result.connection],
             });
-            await this.#tell(txCtx, current, { kind: "providerAdded", app: APP_OF[cli.id], ais });
+            await this.#tell(txCtx, current, { kind: "providerAdded", app: cli.name, ais });
         });
     }
 
@@ -1278,7 +1281,8 @@ export class OnboardingModule implements AgentModule {
         if ((await this.#history.message(ctx, bot.agentId, messageId)) !== undefined) return;
         const run = await this.#beginSaying(ctx, bot.agentId, runId);
         let text: string;
-        let components: { id: string; type: string; props: unknown }[];
+        let components: { id: string; type: string; props: unknown }[] = [];
+        let replies: QuickReplyInput[] | undefined;
         try {
             text = fillRecipeText(
                 state.vars["reason"] !== undefined && bootstrap.failed !== undefined
@@ -1291,7 +1295,11 @@ export class OnboardingModule implements AgentModule {
                     reason: state.vars["reason"] ?? "",
                 },
             );
-            components = await this.#offer(ctx, bootstrap.offer);
+            if (bootstrap.replies === undefined) {
+                components = await this.#offer(ctx, bootstrap.offer);
+            } else {
+                replies = await this.#replies(ctx, bootstrap.replies);
+            }
         } catch (error: unknown) {
             await ctx.inTx(async (txCtx) => {
                 await this.#history.finishMaintenanceRun(
@@ -1316,7 +1324,8 @@ export class OnboardingModule implements AgentModule {
                 recordId: messageId,
                 runId: run,
                 text,
-                components,
+                ...(components.length === 0 ? {} : { components }),
+                ...(replies === undefined ? {} : { replies }),
             });
             await this.#history.finishMaintenanceRun(
                 txCtx,
@@ -1338,6 +1347,113 @@ export class OnboardingModule implements AgentModule {
         });
     }
 
+    /**
+     * The replies the opening suggests, by type, filled from this computer's state: `provider` is
+     * one per AI it can install or has installed, worded by its state.
+     */
+    async #replies(ctx: Context, types: readonly string[]): Promise<QuickReplyInput[]> {
+        const replies: QuickReplyInput[] = [];
+        for (const type of types) {
+            if (type !== "provider") continue;
+            for (const cli of await this.#providerClis.list(ctx)) {
+                if (cli.installation.status !== "installed" && cli.installer === null) continue;
+                replies.push({
+                    text: providerReplyText(cli),
+                    ui: { type: "provider", props: { provider: cli.id } },
+                });
+            }
+        }
+        return replies;
+    }
+
+    /**
+     * A tap on one of the opening's replies, sent like any reply but answered here, with no model:
+     * the person's message and, below it, the recipe's answer with the opening's components for
+     * that reply's AI alone, in a finished run of their own. Undefined when the opening is not
+     * running in `agentId`'s conversation, so the send goes on as usual. A reply that names no AI
+     * is refused.
+     */
+    async tapped(
+        ctx: Context,
+        agentId: string,
+        tap: {
+            readonly id: string;
+            readonly text: string;
+            readonly quickReply: QuickReply;
+            readonly userId?: string;
+        },
+    ): Promise<HistoryMessage | undefined> {
+        const bootstrap = this.#recipe.bootstrap;
+        if (bootstrap?.answer === undefined) return undefined;
+        const state = await this.#bootstrapIn(ctx, agentId);
+        if (state === undefined) return undefined;
+        const problem = await this.#chatUi.quickReplyProblem(
+            ctx,
+            agentId,
+            tap.quickReply,
+            tap.text,
+        );
+        if (problem !== undefined) throw new OnboardingRequestError("invalid", problem);
+        const suggestion = await this.#history.message(ctx, agentId, tap.quickReply.messageId);
+        const provider = tappedProvider(suggestion, tap.quickReply.index);
+        if (provider === undefined) {
+            throw new OnboardingRequestError("invalid", "That reply doesn't name an AI.");
+        }
+        const cli = await this.#providerClis.get(ctx, provider);
+        const bot = await this.#bots.chiefOfStaff(ctx);
+        const text = fillRecipeText(bootstrap.answer, {
+            botName: bot?.name ?? "",
+            machine: machineWord(process.platform),
+            provider: cli.name,
+            reason: "",
+        });
+        const components = (await this.#offer(ctx, bootstrap.offer)).filter(
+            (component) => component.id === provider,
+        );
+        // One run holds the person's message and the answer; the answer is announced paced,
+        // and the run with it.
+        const run = createId();
+        const answerId = createId();
+        const message = await ctx.inTx(async (txCtx) => {
+            const at = Date.now();
+            await this.#history.beginMaintenanceRun(txCtx, agentId, run, at);
+            await this.#history.record(txCtx, agentId, {
+                role: "user",
+                recordId: tap.id,
+                runId: run,
+                blocks: [{ type: "text", text: tap.text }],
+                quickReply: tap.quickReply,
+                ...(tap.userId === undefined ? {} : { userId: tap.userId }),
+                at,
+            });
+            // Marked before it is recorded, so the API never announces it whole.
+            this.#paced.add(answerId);
+            if (this.#paced.size > MAX_PACED) {
+                this.#paced.delete(this.#paced.values().next().value!);
+            }
+            const answer = await this.#chatUi.post(txCtx, agentId, {
+                recordId: answerId,
+                runId: run,
+                text,
+                ...(components.length === 0 ? {} : { components }),
+            });
+            await this.#history.finishMaintenanceRun(txCtx, agentId, run, "completed", Date.now());
+            const prose = text.trimEnd().length;
+            afterCommit(txCtx, () => {
+                for (const listener of this.#speechListeners) {
+                    try {
+                        listener(agentId, structuredClone(answer), prose);
+                    } catch (error: unknown) {
+                        txCtx.log.warn("An onboarding speech listener failed.", {}, error);
+                    }
+                }
+            });
+            return await this.#history.message(txCtx, agentId, tap.id);
+        });
+        if (message === undefined) throw new Error("The tapped reply was not recorded.");
+        return message;
+    }
+
     /** Every AI this computer has or can install, with its live state for the model's replies. */
     async #ais(
         ctx: Context,
@@ -1351,7 +1467,7 @@ export class OnboardingModule implements AgentModule {
                 connections.some((connection) => connection.providerId === cli.providerId);
             ais.push({
                 provider: cli.id,
-                app: APP_OF[cli.id],
+                app: cli.name,
                 state: connected
                     ? "connected"
                     : cli.installation.status !== "installed"
@@ -1559,4 +1675,20 @@ function briefly(text: string): string | undefined {
 
 function errorText(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+/** The AI the opening's reply at `index` names, from its stored `provider` reply component. */
+function tappedProvider(
+    message: HistoryMessage | undefined,
+    index: number,
+): ProviderCliId | undefined {
+    for (const block of message?.blocks ?? []) {
+        if (block.type !== "quick_replies") continue;
+        const ui = block.ui?.[index];
+        if (ui === undefined || ui === null || !Value.Check(providerReply.schema, ui)) {
+            return undefined;
+        }
+        return ui.props.provider;
+    }
+    return undefined;
 }

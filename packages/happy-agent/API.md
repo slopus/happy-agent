@@ -3220,13 +3220,16 @@ for the caller, such as the standalone daemon's `local`, or a team server's `tea
 
 - **The opening**, optional. Before any model is involved, the server writes one agent message
   itself, in a finished run of its own with no provider or model, and it is never model input: the
-  recipe's words, then a `ui` block with the components the recipe offers, such as one
-  `provider_sign_in` for each AI the server can connect. Their actions are silent: installing,
-  signing in, pasting a sign-in code, a setup token, or an API key. When one of them connects an AI,
-  the server hands the conversation to the model. While the opening waits, the composer is disabled
-  unless the recipe lets typing hand the conversation to the model at once. While `composer` is
-  `"disabled"`, a typed message sent to that conversation is refused with `409 conflict` and
-  changes nothing. Where typing hands off, the typed message ends the opening and the model answers
+  recipe's words, then either a `ui` block with the components the recipe offers, such as one
+  `provider_sign_in` for each AI the server can connect, or a `quick_replies` block, such as one
+  `provider` reply for each AI. A tap on one of those replies is a `send` the server answers itself,
+  with no model: the person's message and one message with that reply's components alone, both in
+  a finished run of their own. The components' actions are silent: installing, signing in, pasting
+  a sign-in code, a setup token, or an API key. When one of them connects an AI, the server hands
+  the conversation to the model. While the opening waits, the composer is disabled unless the
+  recipe lets typing hand the conversation to the model at once. While `composer` is `"disabled"`,
+  a typed message sent to that conversation is refused with `409 conflict` and changes nothing; a
+  tap on one of the opening's replies is not typing. Where typing hands off, the typed message ends the opening and the model answers
   it with the guide. A recipe without an opening, such as Happy Cloud's team recipes, hands the
   conversation to the model at once.
 - **The guided part.** Once the recipe hands off, the conversation's own model writes every
@@ -3269,8 +3272,13 @@ a client that turns chat onboarding on later returns an existing user to onboard
 
 The standalone daemon's `local` recipe:
 
-1. The opening introduces the Chief of Staff and shows one `provider_sign_in` for each AI the
-   daemon can connect. A click installs the assistant's program, starts its own sign-in, hands it a
+1. The opening introduces the Chief of Staff and suggests one quick reply for each AI the daemon
+   can connect, with the `provider` reply component, worded by its state: "Set up Grok" when it is
+   missing, "Sign in to Codex" when it is signed out, "Connect Claude Code" when it is signed in
+   already. A tap is an ordinary `send` with `quickReply`, taken whatever its `mode` while no AI is
+   connected. The daemon stores it and answers it itself, with no model: one sentence and a single
+   `provider_sign_in` for that AI, in a finished run of their own; another tap posts that AI's row
+   the same way. Typing is still refused. A click on a row installs the assistant's program, starts its own sign-in, hands it a
    sign-in code, or saves a pasted setup token or API key through the same credential path the
    assistant's settings use; a token the provider refuses is rejected with `token_rejected`. On an
    AI that is already signed in, `sign_in` connects it as it is. When an install started from the
@@ -3279,14 +3287,14 @@ The standalone daemon's `local` recipe:
 2. When an AI is connected, its first model becomes the bot's model and the default for new
    conversations, and the guided part begins with a hidden context entry naming what is connected.
    The model's first answer is the real request onboarding requires. If the bot's turn settles
-   without an answer, the server writes the recipe's failure words with the sign-in components
-   again, and the next connection hands off again.
+   without an answer, the server writes the recipe's failure words with the replies again, and the
+   next connection hands off again.
 3. The model saves the name and email it was given from the person's Git settings with
    `save_profile` and says so, or asks for them when there are none, and renames the bot "<First
    name>'s Chief of Staff" with `set_bot_name`, or to the nickname the person gives it, suggesting a
    few with `suggest_replies`. Next it offers to connect more AIs, one at a time: `suggest_replies`
    options with the `provider` reply component, worded by each AI's live state ("Set up Grok",
-   "Sign in to ChatGPT", "Add another Claude account"), and "That's all for now". A tap shows one
+   "Sign in to Codex", "Add another Claude Code account"), and "That's all for now". A tap shows one
    `provider_sign_in` for that AI, with `account: "new"` for another account of a connected one, and
    the hidden entry for its connection lists every AI's state again. With the person's consent,
    asked for with `suggest_replies`, it calls
@@ -8744,7 +8752,7 @@ option for any other.
 ```json
 {
     "type": "quick_replies",
-    "options": ["Set up Claude", "Set up ChatGPT", "Skip for now"],
+    "options": ["Set up Claude Code", "Set up Codex", "Skip for now"],
     "ui": [
         { "type": "provider", "props": { "provider": "claude" } },
         { "type": "provider", "props": { "provider": "codex" } },

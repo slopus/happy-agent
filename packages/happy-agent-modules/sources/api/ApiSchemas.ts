@@ -247,6 +247,16 @@ export const messageSendBodySchema = Type.Object(
     { additionalProperties: false },
 );
 
+/**
+ * A send that taps a quick reply, read before the full send schema: while onboarding's opening
+ * runs, no model or mode exists yet, so a tap there is taken with whatever else the send holds.
+ */
+export const openingTapBodySchema = Type.Object({
+    id: Type.Optional(apiIdSchema),
+    quickReply: quickReplySchema,
+    text: Type.String({ minLength: 1, maxLength: 1_000_000 }),
+});
+
 /** `POST /v0/agents/:agentId/messages/:messageId/switch`: one of the failure's fallbacks. */
 export const failureSwitchBodySchema = Type.Object(
     {

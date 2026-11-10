@@ -51,8 +51,25 @@ const bootstrapSchema = Type.Object(
                 maxItems: 8,
                 uniqueItems: true,
                 description:
-                    "Chat UI components the runtime puts below the opening's words, by type, each filled from the runtime's own state: `provider_sign_in` is one per AI the runtime can connect. A runtime refuses a type it cannot fill. The opening hands the conversation to the model once one of them connects an AI.",
+                    "Chat UI components the runtime puts below the opening's words, by type, each filled from the runtime's own state: `provider_sign_in` is one per AI the runtime can connect. With `replies`, they come one at a time instead: a tap on a reply answers with `answer` and the components for that reply's AI alone. A runtime refuses a type it cannot fill. The opening hands the conversation to the model once one of them connects an AI.",
             },
+        ),
+        replies: Type.Optional(
+            Type.Array(
+                Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_]{0,63}$" }),
+                {
+                    minItems: 1,
+                    maxItems: 4,
+                    uniqueItems: true,
+                    description:
+                        'Quick replies the runtime suggests below the opening\'s words in place of its components, by reply component type, each filled from the runtime\'s own state: `provider` is one reply per AI the runtime can connect, worded by its state ("Set up …", "Sign in to …", "Connect …"). The runtime answers a tap on one itself, with no model.',
+                },
+            ),
+        ),
+        answer: Type.Optional(
+            textSchema(
+                "Said when the person taps one of the opening's replies, with `{{provider}}` naming that reply's AI; the `offer` components for it alone follow.",
+            ),
         ),
         failed: Type.Optional(
             textSchema(

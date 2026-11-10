@@ -12,6 +12,8 @@ export interface OnboardingRuntimeOffer {
     readonly variables: ReadonlySet<string>;
     /** Chat UI component types the runtime can fill below the opening's words. */
     readonly components: ReadonlySet<string>;
+    /** Reply component types the runtime can suggest and answer in the opening. */
+    readonly replies: ReadonlySet<string>;
     readonly tools: ReadonlySet<string>;
     readonly requirements: ReadonlySet<string>;
 }
@@ -36,6 +38,17 @@ export function checkOnboardingRecipe(
         problems.push(...unknownVariables(bootstrap.say, offer, "The opening"));
         if (bootstrap.failed !== undefined) {
             problems.push(...unknownVariables(bootstrap.failed, offer, "The failure text"));
+        }
+        if (bootstrap.answer !== undefined) {
+            problems.push(...unknownVariables(bootstrap.answer, offer, "The answer text"));
+        }
+        if ((bootstrap.replies === undefined) !== (bootstrap.answer === undefined)) {
+            problems.push("The opening's replies and its answer come together.");
+        }
+        for (const type of bootstrap.replies ?? []) {
+            if (!offer.replies.has(type)) {
+                problems.push(`The opening suggests a reply this runtime can't fill: "${type}".`);
+            }
         }
         for (const type of bootstrap.offer) {
             if (!offer.components.has(type)) {

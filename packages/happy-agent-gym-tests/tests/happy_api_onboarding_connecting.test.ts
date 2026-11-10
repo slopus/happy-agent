@@ -11,6 +11,8 @@ import {
     act,
     flowOf,
     messagesOf,
+    replyProviders,
+    signInRow,
     startOnboarding,
     textOf,
     uiOf,
@@ -18,17 +20,17 @@ import {
 } from "./support/onboardingGym.js";
 
 /**
- * Connecting an AI from the opening's `provider_sign_in` components, against stand-ins for the
- * vendor's program and installer: nothing leaves this machine and no real sign-in opens. The gym
- * serves no Claude account, so a Claude that signs in still cannot be used, and the opening says
- * so with its sign-ins again.
+ * Connecting an AI from the `provider_sign_in` row a tap on the opening's reply shows, against
+ * stand-ins for the vendor's program and installer: nothing leaves this machine and no real
+ * sign-in opens. The gym serves no Claude account, so a Claude that signs in still cannot be used,
+ * and the opening says so with its replies again.
  */
 
 const gyms = new OnboardingGyms();
 const TEST_TIMEOUT_MS = 60_000;
 
 const NO_CONNECTION =
-    "I couldn't put Claude to work yet. My settings on this computer have no connection for it. Sign in again, or connect another AI, and we'll keep going.";
+    "I couldn't put Claude Code to work yet. My settings on this computer have no connection for it. Sign in again, or connect another AI, and we'll keep going.";
 
 afterEach(async () => {
     await gyms.dispose();
@@ -64,24 +66,25 @@ describe("Connecting an AI from the opening", () => {
             const { gym } = await gyms.start({ stubs: { curl: STUB_CURL } });
             const agentId = await startOnboarding(gym);
             const opening = await waitForOpening(gym, agentId);
+            const row = await signInRow(gym, agentId, opening, "claude");
 
-            const installed = await act(gym, agentId, opening, "claude", "install");
+            const installed = await act(gym, agentId, row, "claude", "install");
             expect(installed.record).toMatchObject({
                 role: "service",
                 content: [
                     {
                         type: "action",
-                        messageId: opening.id,
+                        messageId: row.id,
                         componentId: "claude",
                         action: { type: "provider_sign_in.install", payload: {} },
                         outcome: { status: "accepted" },
                     },
                 ],
             });
-            // A silent action is no one's message.
-            expect((await messagesOf(gym, agentId)).map((message) => message.role)).not.toContain(
-                "user",
-            );
+            // A silent action is no one's message: the only person's message is the tap.
+            expect(
+                (await messagesOf(gym, agentId)).filter((message) => message.role === "user"),
+            ).toHaveLength(1);
 
             // The install the widget started goes on to sign in by itself, and waits for a code.
             await gym.waitUntil(async () => {
@@ -92,7 +95,7 @@ describe("Connecting an AI from the opening", () => {
                     ? true
                     : undefined;
             }, "the sign-in to wait for its code");
-            const submitted = await act(gym, agentId, opening, "claude", "submit_code", {
+            const submitted = await act(gym, agentId, row, "claude", "submit_code", {
                 code: "good-code",
             });
             expect(submitted.record).toMatchObject({
@@ -107,9 +110,7 @@ describe("Connecting an AI from the opening", () => {
             // Signed in, it connects, and the gym has no Claude account to run it on.
             const failed = await waitForOpening(gym, agentId, [opening.id]);
             expect(textOf(failed)).toBe(NO_CONNECTION);
-            expect(uiOf(failed)?.components.map((component) => component.id)).toEqual(
-                expect.arrayContaining(["claude", "codex"]),
-            );
+            expect(replyProviders(failed)).toEqual(expect.arrayContaining(["claude", "codex"]));
             expect((await claudeCli(gym)).signIn.status).toBe("signed_in");
 
             // The attempt records are history, each in a finished run of its own.
@@ -133,9 +134,10 @@ describe("Connecting an AI from the opening", () => {
             const { gym } = await gyms.start({ stubs: { claude: STUB_CLAUDE } });
             const agentId = await startOnboarding(gym);
             const opening = await waitForOpening(gym, agentId);
+            const row = await signInRow(gym, agentId, opening, "claude");
             const token = "pasted-SECRET-7f3a9c-not-a-claude-token";
 
-            const refused = await act(gym, agentId, opening, "claude", "submit_token", { token });
+            const refused = await act(gym, agentId, row, "claude", "submit_token", { token });
             expect(refused.record).toMatchObject({
                 content: [
                     {
@@ -153,8 +155,8 @@ describe("Connecting an AI from the opening", () => {
             ] as const) {
                 const valid = {
                     id: `bad${String(status)}${Math.random().toString(36).slice(2, 10)}`,
-                    messageId: opening.id,
-                    uiId: uiOf(opening)!.id,
+                    messageId: row.id,
+                    uiId: uiOf(row)!.id,
                     componentId: "claude",
                     action: { type: "provider_sign_in.submit_token", payload: { token } },
                 };
@@ -181,15 +183,16 @@ describe("Connecting an AI from the opening", () => {
             const { gym } = await gyms.start({ stubs: { claude: STUB_CLAUDE } });
             const agentId = await startOnboarding(gym);
             const opening = await waitForOpening(gym, agentId);
+            const row = await signInRow(gym, agentId, opening, "claude");
             const id = "samesignin0000000000000a";
-            const first = await act(gym, agentId, opening, "claude", "sign_in", {}, { id });
-            const again = await act(gym, agentId, opening, "claude", "sign_in", {}, { id });
+            const first = await act(gym, agentId, row, "claude", "sign_in", {}, { id });
+            const again = await act(gym, agentId, row, "claude", "sign_in", {}, { id });
             expect(again.record).toEqual(first.record);
             const records = (await messagesOf(gym, agentId)).filter(
                 (message) => message.role === "service",
             );
             expect(records.map((record) => record.id)).toEqual([id]);
-            await act(gym, agentId, opening, "claude", "cancel");
+            await act(gym, agentId, row, "claude", "cancel");
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

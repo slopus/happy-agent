@@ -19,6 +19,7 @@ import {
     OnboardingGyms,
     flowOf,
     messagesOf,
+    replyProviders,
     textOf,
     waitForSaid,
     uiOf,
@@ -84,7 +85,7 @@ describe("The model leading onboarding", () => {
                 "Your onboarding tools are suggest_replies, show_ui, save_profile, set_default_model, set_bot_name, find_recent_projects, clone_project, create_project, start_first_task, send_agent_message and finish_onboarding.",
             );
             const event = JSON.stringify(lastMessage(begin));
-            expect(event).toContain('\\"connected\\":[{\\"app\\":\\"ChatGPT\\"');
+            expect(event).toContain('\\"connected\\":[{\\"app\\":\\"Codex\\"');
             expect(event).toContain(
                 '\\"model\\":{\\"name\\":\\"Gym Codex\\",\\"effort\\":\\"Medium\\"}',
             );
@@ -202,9 +203,9 @@ describe("The model leading onboarding", () => {
             await connectCodex(gym, agentId);
 
             const failed = await waitForOpening(gym, agentId, [opening.id]);
-            expect(textOf(failed)).toMatch(/^I couldn't put ChatGPT to work yet\. /u);
+            expect(textOf(failed)).toMatch(/^I couldn't put Codex to work yet\. /u);
             expect(textOf(failed)).toContain("out of credit");
-            expect(uiOf(failed)?.components.map((component) => component.id)).toContain("codex");
+            expect(replyProviders(failed)).toContain("codex");
             // Back in the opening with no AI that answers, so there is nothing to skip to.
             expect(await flowOf(gym)).toMatchObject({
                 status: "running",
