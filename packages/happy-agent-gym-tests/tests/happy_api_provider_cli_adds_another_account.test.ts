@@ -4,7 +4,22 @@ import { join } from "node:path";
 import type { AgentGym, GymInferenceRequest, GymTurn } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { OnboardingGyms, act, messagesOf, textOf, uiOf } from "./support/onboardingGym.js";
+import {
+    connectCodex,
+    jwt,
+    reply,
+    showing,
+    startGuidedGym,
+    suggesting,
+} from "./support/guidedOnboardingGym.js";
+import {
+    OnboardingGyms,
+    act,
+    messagesOf,
+    textOf,
+    uiOf,
+    waitForSaid,
+} from "./support/onboardingGym.js";
 
 /**
  * Adding another Claude Code account: the vendor's own sign-in runs in a fresh
@@ -248,6 +263,77 @@ describe("Adding another provider account", () => {
             const events = JSON.stringify((await gym.client.getEvents({ limit: 1000 })).events);
             expect(events).not.toContain("good-code");
             expect(JSON.stringify(gym.inference.requests)).not.toContain("good-code");
+            expect(gym.errors).toEqual([]);
+        },
+        TEST_TIMEOUT_MS,
+    );
+});
+
+/**
+ * A stand-in Codex that keeps each account in `CODEX_HOME`, signing the browser sign-in in as Grace
+ * a moment after it prints its page, as a person finishing in the browser would.
+ */
+function slowCodex(): string {
+    const token = jwt({ email: "grace@example.com" });
+    return `#!/bin/sh
+dir="\${CODEX_HOME:-$HOME/.codex}"
+case "$*" in
+  "--version") echo "codex-cli 0.164.0" ;;
+  "login status")
+    if [ -f "$dir/auth.json" ]; then echo "Logged in using ChatGPT"; else echo "Not logged in"; exit 1; fi ;;
+  "login")
+    echo "If your browser did not open, navigate to this URL to authenticate: https://auth.openai.com/oauth/authorize?state=stub"
+    sleep 2
+    printf '{"tokens":{"id_token":"${token}"}}' > "$dir/auth.json"
+    echo "Successfully logged in" ;;
+  *) exit 2 ;;
+esac
+`;
+}
+
+describe("Adding another account during onboarding", () => {
+    it(
+        "wakes the model once the added Codex account signs in",
+        async () => {
+            const READY = "Your second Codex account is ready.";
+            const { gym, agentId } = await startGuidedGym(
+                gyms,
+                {
+                    "event:begin": () =>
+                        suggesting("Codex is connected.", ["Add another Codex account"]),
+                    "said:Add another Codex account": () =>
+                        showing("Here's Codex, ready for another account:", [
+                            {
+                                id: "codex-new",
+                                type: "provider_sign_in",
+                                props: { provider: "codex", account: "new" },
+                            },
+                        ]),
+                    shown: (request) =>
+                        JSON.stringify(request.messages.at(-1)).includes(
+                            "Another Codex account is connected",
+                        )
+                            ? { content: [{ type: "text", text: READY }] }
+                            : { content: [] },
+                },
+                { codex: slowCodex() },
+            );
+            await connectCodex(gym, agentId);
+            const offer = await waitForSaid(gym, agentId, "Codex is connected.");
+            await reply(gym, agentId, offer.id, 0);
+            const row = await gym.waitUntil(
+                async () =>
+                    (await messagesOf(gym, agentId)).find((message) =>
+                        uiOf(message)?.components.some((component) => component.id === "codex-new"),
+                    ),
+                "the add-account row",
+            );
+            const used = await act(gym, agentId, row, "codex-new", "sign_in");
+            expect(used.result).toEqual({ accountId: "codex_2" });
+            await gym.waitUntil(async () => {
+                const all = await messagesOf(gym, agentId);
+                return all.some((message) => textOf(message) === READY) ? true : undefined;
+            }, "the model to answer the added account's note");
             expect(gym.errors).toEqual([]);
         },
         TEST_TIMEOUT_MS,

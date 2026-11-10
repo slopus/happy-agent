@@ -112,7 +112,7 @@ export const SAVE_PROFILE = {
     ],
 };
 
-function jwt(claims: object): string {
+export function jwt(claims: object): string {
     const part = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
     return `${part({ alg: "none" })}.${part(claims)}.signature`;
 }
@@ -209,6 +209,8 @@ export async function startGuidedGym(
         readonly claude?: boolean | "terminal";
         /** The kind of device the start names. */
         readonly device?: string;
+        /** Another stand-in Codex in place of the signed-in one that cannot sign in again. */
+        readonly codex?: string;
     } = {},
 ): Promise<{ gym: AgentGym; agentId: string; home: string }> {
     const codex = "Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex";
@@ -216,7 +218,7 @@ export async function startGuidedGym(
     let onboarding: string | undefined;
     const { gym, home } = await gyms.start({
         machine: {
-            [codex]: { content: CODEX, mode: 0o755 },
+            [codex]: { content: options.codex ?? CODEX, mode: 0o755 },
             "home/.codex/auth.json": JSON.stringify({
                 tokens: {
                     id_token: jwt({
