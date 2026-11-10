@@ -102,6 +102,9 @@ export function messageResource(
         ...(role === "user" && message.quote !== undefined
             ? { quote: publicQuote(message.quote) }
             : {}),
+        ...(role === "user" && message.quickReply !== undefined
+            ? { quickReply: structuredClone(message.quickReply) }
+            : {}),
         ...(role === "user"
             ? {
                   status: "accepted",
@@ -195,6 +198,9 @@ function historyBlocks(
         .map((block): Record<string, unknown> => {
             if (block.type === "configuration") return structuredClone(block);
             if (block.type === "tool_call_request") return structuredClone(block);
+            if (block.type === "ui" || block.type === "action" || block.type === "quick_replies") {
+                return structuredClone(block);
+            }
             if (block.type === "text") return { type: "text", text: block.text };
             if (block.type === "thinking") {
                 return { type: "reasoning", text: block.thinking };

@@ -4,6 +4,7 @@ import {
     artifactPresentationSchema,
     mediaPresentationSchema,
     pagePresentationSchema,
+    uiPresentationSchema,
     type AgentSpawnPresentation,
 } from "@slopus/happy-agent-client";
 
@@ -64,6 +65,7 @@ const toolPresentationSchema = Type.Union([
     artifactPresentationSchema,
     pagePresentationSchema,
     historyUserInputPresentationSchema,
+    uiPresentationSchema,
     Type.Object(
         {
             type: Type.Literal("search"),
@@ -143,7 +145,9 @@ export function toolCallResource(
         presentation.type !== "media" &&
         presentation.type !== "artifact" &&
         presentation.type !== "page" &&
-        presentation.type !== "user_input";
+        presentation.type !== "user_input" &&
+        presentation.type !== "ui" &&
+        presentation.type !== "quick_replies";
     return {
         type: "tool_call",
         id: call.id,
@@ -225,6 +229,13 @@ function presentationForToolCall(call: ToolCallProjection): ToolPresentation | u
 
 /** Media digests name private snapshots; the public item is served by its position instead. */
 function publicPresentation(presentation: HistoryToolPresentation): ToolPresentation {
+    if (presentation.type === "ui") {
+        return {
+            type: "ui",
+            ui: presentation.ui,
+            items: presentation.items.map(({ sha256: _sha256, ...item }) => item),
+        };
+    }
     if (presentation.type !== "media") return presentation;
     return {
         type: "media",

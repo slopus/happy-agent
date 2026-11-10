@@ -7,10 +7,17 @@ import {
     configurationBlockSchema,
     mediaItemSourceSchema,
     mediaLayoutSchema,
+    MAX_UI_MEDIA,
     messageErrorSchema,
     messageFailureSchema,
+    quickRepliesBlockSchema,
+    quickRepliesPresentationSchema,
+    quickReplySchema,
     serviceNoticeSchema,
     toolCallRequestBlockSchema,
+    uiActionBlockSchema,
+    uiBlockSchema,
+    uiDocumentSchema,
     userIdSchema,
     type ClientMetadata,
 } from "@slopus/happy-agent-client";
@@ -402,6 +409,17 @@ export const historyUserInputPresentationSchema = Type.Object(
     { additionalProperties: false },
 );
 
+/** The chat UI document a `show_ui` call showed, with the media its components name by index. */
+export const historyUiPresentationSchema = Type.Object(
+    {
+        type: Type.Literal("ui"),
+        ui: uiDocumentSchema,
+        items: Type.Array(historyMediaItemSchema, { maxItems: MAX_UI_MEDIA }),
+    },
+    { additionalProperties: false },
+);
+export type HistoryUiPresentation = Static<typeof historyUiPresentationSchema>;
+
 /** A bounded result-derived presentation retained with durable tool history. */
 export const historyToolPresentationSchema = Type.Union([
     historyFileDiffPresentationSchema,
@@ -409,6 +427,8 @@ export const historyToolPresentationSchema = Type.Union([
     historyPagePresentationSchema,
     historyArtifactPresentationSchema,
     historyUserInputPresentationSchema,
+    historyUiPresentationSchema,
+    quickRepliesPresentationSchema,
 ]);
 
 export type HistoryToolPresentation = Static<typeof historyToolPresentationSchema>;
@@ -505,6 +525,12 @@ export const historyBlockSchema = Type.Union([
     historyToolResultBlockSchema,
     historyCompactionBlockSchema,
     configurationBlockSchema,
+    /** A chat UI document the daemon wrote into an agent message; no model reads it. */
+    uiBlockSchema,
+    /** A chat UI action: the one block of an attempt record. */
+    uiActionBlockSchema,
+    /** Replies the daemon suggested in an agent message; no model reads it. */
+    quickRepliesBlockSchema,
 ]);
 
 /** The TypeScript type inferred from {@link historyBlockSchema}. */
@@ -548,6 +574,8 @@ const historyMessageFields = {
     clientMetadata: Type.Optional(historyClientMetadataSchema),
     /** What a person's message replies to, beside what they wrote. */
     quote: Type.Optional(storyQuoteSchema),
+    /** The suggested reply a person's message is, set by the daemon from a checked send. */
+    quickReply: Type.Optional(quickReplySchema),
     /** Keep this operational message out of person-facing transcript projection. */
     hideFromUser: Type.Optional(Type.Boolean()),
     /** Happy's source identity, used to suppress a remote message echo. */

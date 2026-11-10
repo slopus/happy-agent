@@ -44,7 +44,9 @@ records with the successful call. The API removes `sha256` from the public prese
 through `storedItem(ctx, agentId, callId, index)`, which reads the recorded presentation through
 History and returns the snapshot path only when the snapshot is still present.
 `storedItems(ctx, agentId, callId)` returns every item of one call whose snapshot is still
-present; the exported bots module sends those with an exported bot's reply.
+present; the exported bots module sends those with an exported bot's reply. Both read a `media`
+presentation and the `ui` presentation of a `show_ui` call alike: a `ui` presentation carries its
+`media` components' items in one list of at most 24, served by the same route.
 
 ## Layouts
 

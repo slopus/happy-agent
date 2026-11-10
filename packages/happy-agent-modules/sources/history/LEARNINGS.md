@@ -285,6 +285,15 @@ already being fixed. The reset's own transaction records the "Context reset" ser
 `kind: "context_too_long"`. Only an overflow later in the same run becomes the `context_too_long`
 failure.
 
+## A message outside a turn gets a finished run of its own
+
+Chat UI records a click as a service message while the agent may be idle or in the middle of a
+turn. Joining the open run would put a person's click inside a model's turn, and a message with no
+run is in no history page, because pages are read by run. `recordStandalone` inserts a run row
+that is already `completed`, with equal start and end, and appends the message to it in the
+caller's transaction. It never touches the open run, so lifecycle readers still see exactly one
+running run.
+
 ## A transactional tool's presentation outlives its commit
 
 An image the agent read never reached the chat: `Read`, `view_image`, and `ReadMediaFile` are

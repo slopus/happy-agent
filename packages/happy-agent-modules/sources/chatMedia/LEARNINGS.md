@@ -101,3 +101,9 @@ An image without explicit sizing shows at its natural size and only shrinks to f
 fills. Screenshots from Retina displays have twice the pixels of their natural size, so items carry
 `scale` from the file's recorded density, and clients use it in every layout, automatic ones
 included.
+
+## A chat UI document's media is served like any call's
+
+`show_ui` records a `ui` presentation whose `items` are the same snapshots a `media` presentation
+holds, up to 24 of them. `storedItem` and `storedItems` read either presentation, so the existing
+media route serves a document's pictures and clients reuse their media decoding.

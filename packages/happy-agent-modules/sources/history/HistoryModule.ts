@@ -49,6 +49,7 @@ import {
     senderAgentIdOf,
 } from "../impl/messageOrigin.js";
 import { decodeRequestProfile } from "../impl/requestProfile.js";
+import { quickReplyOf } from "../impl/quickReplyOf.js";
 import { storyQuoteOf } from "../impl/storyQuote.js";
 import type { BotSettingsModule } from "../botSettings/index.js";
 import type { DurableFunctionsModule } from "../durableFunctions/index.js";
@@ -564,6 +565,46 @@ export class HistoryModule implements AgentModule {
             );
             await indexHistoryToolCalls(txCtx.db, agentId, message);
             await indexHistoryWords(txCtx, agentId, message);
+        });
+    }
+
+    /**
+     * Record one message in a run of its own that is already finished when it appears, whatever
+     * run is open: no open run is closed or joined, and no model turn starts. Chat UI attempt
+     * records are stored this way. Joins the caller's transaction.
+     */
+    async recordStandalone(
+        ctx: Context,
+        agentId: string,
+        message: HistoryMessage,
+        runId: string,
+    ): Promise<void> {
+        const at = message.at ?? Date.now();
+        const stored: HistoryMessage = { ...message, at, runId };
+        if (
+            !Value.Check(historyAgentIdSchema, agentId) ||
+            !Value.Check(historyRecordIdSchema, runId) ||
+            !historyMessageWithinPersistenceBounds(stored)
+        ) {
+            throw new Error("The history module received an invalid standalone message.");
+        }
+        await this.#direct(ctx, async (txCtx) => {
+            const sequenceRows = await agentDatabaseRows<{ sequence: number | string }>(
+                txCtx.db,
+                sql`SELECT COALESCE(MAX(sequence), -1) + 1 AS sequence
+                    FROM ${sql.raw(HISTORY_RUNS_TABLE)}
+                    WHERE agent_id = ${agentId}`,
+            );
+            const sequence = toSafeInteger(sequenceRows[0]?.sequence, "history run sequence");
+            await agentDatabaseRun(
+                txCtx.db,
+                sql`INSERT INTO ${sql.raw(HISTORY_RUNS_TABLE)} (
+                        agent_id, sequence, run_id, status, reason, started_at, ended_at
+                    ) VALUES (
+                        ${agentId}, ${sequence}, ${runId}, 'completed', 'completed', ${at}, ${at}
+                    )`,
+            );
+            await this.#append(txCtx, agentId, stored);
         });
     }
 
@@ -2823,6 +2864,7 @@ export class HistoryModule implements AgentModule {
                       ? metadataUserId
                       : undefined;
             const quote = fromUser ? storyQuoteOf(accepted.metadata) : undefined;
+            const quickReply = fromUser ? quickReplyOf(accepted.metadata) : undefined;
             const sender = fromUser ? undefined : senderAgentIdOf(accepted.metadata);
             const senderExplanation =
                 sender === undefined ? undefined : senderAgentExplanationOf(accepted.metadata);
@@ -2849,6 +2891,7 @@ export class HistoryModule implements AgentModule {
                           ...(clientMetadata === undefined ? {} : { clientMetadata }),
                           ...(userId === undefined ? {} : { userId }),
                           ...(quote === undefined ? {} : { quote }),
+                          ...(quickReply === undefined ? {} : { quickReply }),
                       }
                     : {}),
                 // Any accepted message may start a run on a request's behalf, such as the hidden

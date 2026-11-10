@@ -90,6 +90,11 @@ tool calls, and tool results), let the model size what it did and did not see wi
 - `record(ctx, agentId, message: HistoryMessageInput): Promise<void>` — append one message a
   caller observed, for anything the module itself did not. The module allocates `recordId`
   and `at` when the input omits them.
+- `recordStandalone(ctx, agentId, message, runId): Promise<void>` — store one message in a run of
+  its own that is already finished when it appears, whatever run is open. No open run is closed or
+  joined and no model turn starts. Chat UI stores its attempt records this way, and a message the
+  daemon wrote while no run was open, because history pages are read by run and a message without
+  one is in no page.
 - `read(ctx, agentId, query?: HistoryQuery): Promise<HistoryPage>` — one page, filtered and paged
   exactly the way the tool sees it. This is what `read_agent_history` calls internally.
 - `messages(ctx, agentId, { from?, limit? }): Promise<HistoryRecord[]>` — the raw records for a
