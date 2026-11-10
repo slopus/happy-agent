@@ -379,7 +379,7 @@ mobile credentials with separate authority, as specified under "Credentials on t
 
 All routes are prefixed with `/v0`. Independently of the path version, every daemon advertises
 its identity through the health endpoint as a single `version` object: a numeric `protocol`
-(integer, currently 34) and the `daemon` product version string. Protocol versions from 22 onward
+(integer, currently 35) and the `daemon` product version string. Protocol versions from 22 onward
 are backward-compatible and additive. Clients support that compatibility range for existing
 capabilities instead of requiring equality with their own protocol number. A client may require
 a newer protocol for a capability it needs and must explain that an upgrade is required when the
@@ -456,6 +456,26 @@ and the removal events that announce it: `project.removed`, `workspace.removed`,
 it sees one. An older client ignores these event types as it does every type it does not recognize,
 keeps showing the deleted resource as archived, and finds it gone with `404` on its next read or
 resync. No request or response schema changes.
+
+Protocol 35 adds chat UI, described under [Chat UI](#chat-ui): the `ui` block on agent messages,
+the `ui` presentation of `show_ui` calls, the `action` block on attempt records,
+`POST /v0/agents/:agentId/actions`, and `capabilities.chatUi` in health. It also adds quick
+replies, described under [Quick replies](#quick-replies): the `quick_replies` block on agent
+messages, the `quick_replies` presentation of `suggest_replies` calls, and `quickReply` on `send`
+and on a person's messages. A client that reads chat UI sends the request header `Happy-Protocol`
+with its protocol number, 35 or greater, on every request, event streams included. For a request
+without that header, or with a smaller number, the daemon projects chat UI in every message it
+returns or streams: a `ui` block becomes a `text` block holding the document's fallback text, its
+components' fallback lines with a blank line between them; a completed `show_ui` tool call becomes
+a `text` block holding its document's fallback text; a `quick_replies` block, and a completed
+`suggest_replies` tool call, become one `text` block such as `Suggested replies: Yes · Not now`,
+the options joined by a spaced middle dot; and an attempt record, a service message whose content
+is only an `action` block, is left out of history pages with the run it alone is in, and its
+`message.created` and `message.updated` events are not delivered. An older client therefore reads
+every document as its fallback lines and every suggestion as one line it can answer by typing, and
+never meets the new blocks. `quickReply` on a person's message is additive and left as it is. A
+daemon without chat UI omits the capability and answers `/actions` with `404`; clients then draw no
+components.
 
 Account provenance, configuration history blocks, and structured error details are additive output
 and do not increment the protocol version. Clients tolerate their absence and older clients keep
@@ -1577,7 +1597,9 @@ Fields:
   `artifactCovers: true` advertises artifact `cover` and `summary`, described under Artifacts.
   `search: true` advertises `POST /v0/search`, described under Search.
   `feedSubjectFilter: true` advertises `subjects` on `GET /v0/feed` and
-  `POST /v0/feed/read-all`, described under Feed.
+  `POST /v0/feed/read-all`, described under Feed. `chatUi` advertises chat UI, described under
+  Chat UI: `{ "version": 1, "components": ["file_tree", "default_model", "media"] }`, the catalog
+  version the daemon speaks and exactly the component types it serves.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
   It is a CUID2 of exactly 24 characters matching `^[a-z][a-z0-9]{23}$`, generated once and
   persisted with the installation's data, so it survives restarts and upgrades. It is reported
@@ -6947,6 +6969,9 @@ placeholder, served by `GET /v0/agents/:agentId/messages/:messageId/story-frame`
 own image, or for a video, a still taken when the agent posted it. Clients ignore a quote kind
 they do not recognize. The field is additive and does not increment the protocol version.
 
+A user message may also carry `quickReply`, `{ messageId, toolCallId?, index }`: the suggested
+reply its text is, set by the daemon from a checked `send`, as described under Quick replies.
+
 `profile` is separate from both mode and metadata. On the wire it is `null` or an opaque string of
 at most 512 characters. An internal request-profile codec decides which strings are currently
 meaningful; it accepts only `null` today. A string that does not match the current codec is
@@ -8241,6 +8266,272 @@ Media layouts in text are additive and do not increment the protocol version. Re
 schemas are unchanged apart from the optional `source`. A client that does not render them shows
 the HTML as its Markdown renderer does.
 
+#### Chat UI
+
+A conversation may show chat UI: a **document**, a flat, ordered list of 1–16 typed components
+drawn top to bottom, with no nesting and no styling. There are two carriers and one renderer:
+
+- a `ui` block in an agent message the daemon wrote itself, with no model involved;
+- a `ui` presentation on a completed `show_ui` tool call, when a model shows UI.
+
+A model shows UI only through `show_ui`. HTML or JSON written into a reply's text is never drawn as
+controls. Every click on a component goes through `POST /v0/agents/:agentId/actions`, so the
+conversation's own checks apply to every one of them. Every action is silent: it changes server
+state and never becomes the person's words. Suggested answers the person can send are not
+components; they are quick replies, described under [Quick replies](#quick-replies), and sending
+one is an ordinary `send`.
+
+```json
+{
+    "type": "ui",
+    "ui": {
+        "id": "u1x8k2m9r4t8w1y5z3a6b0c2",
+        "components": [
+            {
+                "id": "layout",
+                "type": "file_tree",
+                "fallback": "src/app.ts, src/ui/row.tsx",
+                "props": { "paths": ["src/app.ts", "src/ui/row.tsx"] }
+            },
+            {
+                "id": "model",
+                "type": "default_model",
+                "fallback": "The default model is in Settings.",
+                "props": {}
+            }
+        ]
+    }
+}
+```
+
+- `ui.id` — the document's CUID2, unique in the conversation.
+- `components` — 1–16 components, each `{ id, type, fallback, props }`:
+    - `id` — a lowercase slug of 1–64 (`^[a-z0-9][a-z0-9_-]{0,63}$`), unique in the document.
+    - `type` — the component's type, a lowercase slug of 1–64 (`^[a-z][a-z0-9_]{0,63}$`).
+    - `fallback` — one line of at most 500 characters the daemon computes.
+    - `props` — an object: the type's props.
+
+**Unknown types.** The types are open on the wire: a document may hold a type a client does not
+know, from a newer server. A client draws the types it knows and shows `fallback` for any other,
+and for a known type whose props it cannot read; it never rejects a document for a component in
+it. A server is strict the other way: it writes a document only when every component is a type it
+serves and its props match that type's schema exactly.
+
+The `ui` presentation is `{ "type": "ui", "ui": { … }, "items": [ … ] }`. `items` are media items
+exactly as in the `media` presentation, 0–24 of them; a `media` component names them by index, and
+their bytes are `GET /v0/agents/:agentId/tool-calls/:toolCallId/media/:index`. A `ui` block carries
+no media, so only `show_ui` can show the `media` component.
+
+Every label, detail, and path in a component is plain text, shown as written: never Markdown, never
+linkified, never HTML, never a URL. A component carries no URL or route; a client draws a live
+component from the server's own state, through the read and the event its row below names.
+
+**The catalog.** Version 1. The version advances when a component or an action is added or
+changed. A server lists exactly the types it serves in `capabilities.chatUi.components`; its
+`show_ui` accepts only those types and `/actions` serves only their actions.
+
+| Component       | Props                                  | Actions · payload → result            | Drawn live from                                  |
+| --------------- | -------------------------------------- | ------------------------------------- | ------------------------------------------------ |
+| `media`         | `items: [{ mediaIndex, label? }]` 1–24 | none                                  | the presentation's `items`                       |
+| `file_tree`     | `paths: string[]` 1–200                | none                                  | nothing                                          |
+| `default_model` | none                                   | `set { providerId, modelId, effort }` | `GET /v0/config` `defaults` and `config.updated` |
+
+No action shows a bubble in the transcript. A component shows its own pending and error state, from
+its attempt records, on every device.
+
+**Media layout.** `media` shows pictures, videos, and other files alike, each with an optional
+`label`: one line of plain text, at most 80 characters. It has no layout of its own. Every client
+places the items with one rule, from the `width` and `height` the presentation's items record, so
+all clients agree and every height is known before any bytes load. The rule is `layoutMedia` in
+`@slopus/happy-agent-client`, with frames in whole pixels (points on iOS, density-independent
+pixels on Android):
+
+- Justified rows at a target row height H, 220 on desktop and 160 on phones, 6 apart.
+- A row takes the next item while the row still fits the width at H, and also when the row,
+  scaled to fill the width, comes nearer H with that item than without it.
+- A row after which another item waits is scaled to fill the width exactly, never taller than
+  1.5 × H. The last row stays at H, left-aligned, shrinking only when it would overflow.
+- A single item is min(width, 2 × H × aspect) wide, left-aligned.
+- Aspect ratios are clamped to 0.4–3 for layout only; the picture covers its box. An item with no
+  recorded size lays out as 16:9 when it is a video and 4:3 otherwise.
+- A label is one line, 18 high, 4 under its picture, ellipsized; a row with any label is that much
+  taller for every item in it.
+
+Its fallback is "N images" when every item is a picture, otherwise "N files", followed by a colon
+and the labels joined by a spaced middle dot when any item has one.
+
+**One implementation.** Each component's bundle — its props, and each action's strict payload,
+optional result, and permission — lives in `@slopus/happy-agent-client` under `sources/ui/`.
+`uiComponents` is the only list of them; everything else is derived from it. The package exports:
+
+- for drawing: `knownUiComponent(component)`, which types a wire component of a known type and
+  answers nothing for any other, `uiDocumentFallback(document)`,
+  `layoutMedia(items, width, rowHeight)`, and `mediaFallback(items)`;
+- for clicking: `uiActionRequest(bundle, action, payload, target)`, which builds a request typed
+  by the bundle, `uiActionResult(bundle, action, response)`, which reads a result checked against
+  the bundle's schema, `redactUiAction(action)`, which leaves an action's secrets out so a client
+  can keep an attempt in flight in its state, and `uiActionAllowed(definition, props, granted)`;
+- for servers: `uiBundle(type)`, `uiActionDefinition(actionType)`,
+  `uiActionPermission(definition, props)`, `uiActionProblem(component, action)`,
+  `uiDocumentProblems(components)`, `redactUiValue(schema, value)`, `normalizeQuickReply(option)`,
+  and `quickRepliesProblems(options)`.
+
+For implementations in other languages it ships `fixtures/ui/ui.schema.json`, every schema with
+each action's permission, the quick-reply schemas, and the media layout constants, and
+`fixtures/ui/actions.fixtures.json`, conformance vectors for payload validation, offer fit,
+permission resolution, secret redaction, results, document checks (including which components a
+client draws and which it shows as fallback), quick-reply checks, and media frames at widths 320,
+546, and 786 for both row heights, all computed by those functions.
+
+The package's catalog also defines `provider_sign_in`. No server serves it yet and its contract is
+not final, so a document never carries it and a client that meets it shows its fallback.
+
+**Secrets.** A bundle may mark a payload or result field secret: a token or a code. In
+`ui.schema.json` such a field carries `"x-happy-secret": true`. A secret is never stored, put in an
+event, logged, or given to a model; it lives only in the request, the hook that handles it, the
+result returned to the caller, and the store its module owns. Records are built from the schema's
+declared, non-secret fields only, a whitelist, so a field a schema does not name is left out too. A
+client keeps a secret result in the widget's memory and drops it when the widget goes away, and
+keeps an attempt in flight only with its secrets left out.
+
+**Permissions.** Every action declares what the clicking person must hold, as one permission ID:
+`content.write`, `providers.manage`, `providers.own`, or `config.manage` (Happy Cloud's IDs). An
+action that declares nothing needs `content.write`. `default_model.set` needs `config.manage`.
+
+Authority is always the clicking person's, at click time, against the offer's stored props; never
+that of whoever wrote the offer. A standalone daemon's person holds every permission. In team mode
+the owner holds every permission and members hold `content.write` and `providers.own`. Clients
+disable what the viewer cannot do with `uiActionAllowed`; that is for display only, and the server
+decides.
+
+**`show_ui`.** The tool a model shows UI with. Its arguments are
+`{ "components": [{ "id", "type", "props" }, …] }`, 1–16 components, where `props` are the type's
+input: its props, except that `media` takes `items: [{ path, label? }]`, 1–24 files on the
+agent's machine that the daemon snapshots into the presentation's `items` under the ordinary
+file-read boundary. The daemon checks every component against the types it serves, the bundle's
+schema, and the contributing module's own checks (a missing file). Any problem fails the call with
+the problems in its result, so the model can correct itself, and nothing is shown. The tool's
+description lists only the components this server serves. A successful call's result tells the
+model the document is shown, with each component's fallback line; what the person does there
+reaches it as hidden notes. An agent whose conversation a person cannot act in, one managed by
+another agent, has neither `show_ui` nor `suggest_replies`.
+
+**Attempt records.** Every action that passes the route's checks is recorded first, as a `service`
+message whose content is exactly one `action` block:
+
+```json
+{
+    "type": "action",
+    "messageId": "tz4a98xxat96iws9zmbrgj3a",
+    "uiId": "u1x8k2m9r4t8w1y5z3a6b0c2",
+    "componentId": "model",
+    "action": {
+        "type": "default_model.set",
+        "payload": { "providerId": "codex", "modelId": "gpt-5.5", "effort": "high" }
+    },
+    "outcome": {
+        "status": "rejected",
+        "code": "unavailable",
+        "reason": "That model is not offered by an enabled account on this computer."
+    }
+}
+```
+
+- `messageId`, `uiId`, `componentId` — the offer: the agent message holding the document, the
+  document, and the component.
+- `action` — the action's type and its payload with every secret left out.
+- `outcome.status` — `pending` while the module's hook runs, then `accepted`, `rejected` (with
+  `code` and `reason`), or `failed` (with `reason`, and `code: "interrupted"` when the daemon
+  restarted mid-hook, or `code: "timeout"` when the hook did not answer in 15 seconds). `code` is
+  at most 64 characters and `reason` at most 500. A record never stays `pending`: when the outcome
+  cannot be stored, the attempt is `failed`.
+
+A record's ID is the request's `id`. It is stored in a run of its own that is already finished
+when it appears, whether the agent is idle or in the middle of a run: it is announced with
+`run.finished` and then `message.created`, never `run.started`, and it never starts or joins a
+model turn. Its outcome is changed in place and announced with `message.updated`. No model ever reads a
+record. A client does not draw records as messages; a component reads its own pending, accepted,
+and error state from the records naming it.
+
+**What a hook does.** The module that contributes a component handles each of its actions. Its
+outcome is applied in one transaction with the record's:
+
+- a hidden note: a sentence the module writes about server state, which the model reads with its
+  next turn and no client shows;
+- a wake: a turn starts for the waiting notes now, on the conversation's last mode;
+- a result: returned in the response alone, never stored.
+
+Text the model receives is written by the server; request strings never reach it. An action stays
+usable for as long as its message is visible.
+
+**Older clients.** Clients below protocol 35 meet chat UI only as fallback text, as described under
+Versioning.
+
+#### Quick replies
+
+A conversation may suggest replies: up to six short answers the person can send with one tap. They
+are not chat UI components and not actions. Sending one is the same as typing it, and the message it
+sends remembers where its text came from. There are two carriers:
+
+- a `quick_replies` block in an agent message the daemon wrote itself, with no model involved;
+- a `quick_replies` presentation on a completed `suggest_replies` tool call, when a model suggests
+  replies.
+
+```json
+{
+    "type": "quick_replies",
+    "options": ["Merge it", "Show me the diff", "Not now"]
+}
+```
+
+- `options` — 1–6 unique options. Each is plain text on one line, 1–200 characters, with no control
+  or bidirectional formatting character, shown as written: never Markdown, never linkified. The
+  daemon stores each with runs of whitespace collapsed to one space and trimmed.
+- `ui` — reserved, and absent today: a list with one entry per option, each `null` or
+  `{ "type", "props" }`, for a small display-only drawing beside an option. A client that does not
+  know the field, or an entry's `type`, shows the bare option. Whatever it holds, a tap sends the
+  option's text.
+
+The presentation is the same object, `{ "type": "quick_replies", "options": [ … ] }`.
+
+**`suggest_replies`.** The tool a model suggests replies with. Its arguments are
+`{ "options": ["…", …] }`. The daemon normalizes the options and checks them as above; any problem
+fails the call with the problems in its result, so the model can correct itself, and nothing is
+suggested. The tool is available wherever `show_ui` is. A model asks its question in its reply's
+text and suggests the likely answers; the person may always type something else.
+
+**Drawing them.** Clients decide how to show the options. The recommended rule: a vertical stack
+under the newest suggestion only, left-aligned at the agent text's leading edge, because it is the
+agent's output. Every option in a stack is as wide as the widest one's natural width plus room for
+a checkmark, capped at the person's bubble width, past which text ellipsizes. The stack stays after
+a tap, every option kept, with the option a later person's message sent (read from its
+`quickReply`) marked. A tap sends the option at once, with nothing to edit first.
+
+**Sending one.** A tap is an ordinary `POST /v0/agents/:agentId/send` whose `text` is the option,
+exactly, with `quickReply` naming it:
+
+```json
+{ "messageId": "tz4a98xxat96iws9zmbrgj3a", "toolCallId": "c7m2k9q4r8t1w5y3z6a0b2d4", "index": 0 }
+```
+
+- `messageId` — the agent message in this conversation that holds the suggestion: for a
+  `suggest_replies` call, the agent message whose content holds that tool call.
+- `toolCallId` — the `suggest_replies` call whose presentation holds the options. Required when the
+  options come from a presentation; absent when they are the message's own `quick_replies` block.
+- `index` — the option's position, from 0.
+
+Before it stores anything, the daemon checks that `messageId` is a visible agent message of this
+conversation, that it holds the named suggestion with an option at `index`, and that `text` equals
+that stored option exactly. Otherwise the send is `400 invalid_request` and nothing is stored. There
+is no other check: any suggestion still visible may be sent, any number of times, by anyone who can
+send in the conversation, and everything else is a normal send (`mode`, `delivery`, retry by `id`,
+pending and acceptance, and team-mode sender handling).
+
+The stored person's message carries `quickReply`, `{ messageId, toolCallId?, index }` as sent, set
+by the daemon after that check and never otherwise from the request. Its `content` holds only the
+text, and the model reads only the text. Clients show where it came from, such as "suggested by" the
+agent.
+
 #### File links
 
 A bare `path:line` is read against the workspace of the conversation that shows it. That is the
@@ -8402,6 +8693,10 @@ Request:
 - `clientMetadata` — optional freeform JSON object owned by the sending client. It is persisted
   and echoed unchanged on every complete representation of this message, but is not interpreted
   by the daemon or sent to the model.
+- `quickReply` — optional `{ messageId, toolCallId?, index }`: the suggested reply `text` is. The
+  daemon checks that the agent message holds that option and that `text` equals it exactly, and
+  answers `400 invalid_request` otherwise; the stored message carries it as provenance. See
+  "Quick replies".
 - `content` — optional rich blocks accompanying the text: text, inline images, and at most one
   `tool_call_request`. Image bytes travel **inline**, base64 in the block, exactly as they later
   appear in history — there is no separate upload step or attachment store. A tool-call request
@@ -8440,6 +8735,106 @@ Request:
   non-null `serviceTier` must be one of its `serviceTiers`. Any failure is `400 invalid_request`.
 
 The request body accepts only the fields above; an unknown field is `400 invalid_request`.
+
+### `POST /v0/agents/:agentId/actions`
+
+One click on a chat UI component (see "Chat UI"). Every action of every component goes through this
+route, so the conversation's own checks apply to each one.
+
+Request:
+
+```json
+{
+    "id": "k3c9q2m7p0a4b8c1d5e6f7g2",
+    "messageId": "tz4a98xxat96iws9zmbrgj3a",
+    "uiId": "u1x8k2m9r4t8w1y5z3a6b0c2",
+    "componentId": "model",
+    "action": {
+        "type": "default_model.set",
+        "payload": { "providerId": "codex", "modelId": "gpt-5.5", "effort": "high" }
+    }
+}
+```
+
+- `id` — required: the idempotency key and the ID of the attempt record, matching
+  `^[a-z][a-z0-9]+$`, 2–96 characters. A retry of the same click sends the same `id`.
+- `messageId` — the agent message in this conversation holding the document: one whose content has
+  a `ui` block, or a completed `show_ui` call with a `ui` presentation.
+- `uiId`, `componentId` — the document and the component in it.
+- `action` — `{ "type": "<component>.<action>", "payload": { … } }`.
+
+The request body accepts only these fields. The daemon never logs the request body, and no error
+echoes a payload.
+
+The daemon checks, in this order:
+
+1. The caller is authenticated, as on every route.
+2. The caller can read the conversation, by the same rule as reading its history, and the agent
+   accepts messages; otherwise as `send` answers, including `409 conflict` for an agent managed by
+   another agent or archived.
+3. The caller holds the action's declared permission against the offer's stored props, under
+   their own authority. Otherwise `403 forbidden`.
+4. An `id` already known as an attempt returns its stored record as it now stands, with
+   `result: null`. An `id` that is any other message of this conversation, accepted or still
+   pending, is `409 conflict`, as it is on `send`.
+5. The offer is in the daemon's own stored copy: a visible agent message of this conversation with
+   `messageId`, holding document `uiId` with component `componentId`, in a `ui` block or in the
+   `ui` presentation of a completed `show_ui` call. No other tool's result is an offer. Otherwise
+   `404 not_found`.
+6. The action's type belongs to the component's type, the bundle has it, and the payload matches
+   its schema exactly. Otherwise `400 invalid_request`.
+7. At most 20 actions a minute per conversation and component; beyond that `429 rate_limited`.
+
+Nothing is stored for any refusal above. Then the daemon records the attempt as `pending`, runs the
+contributing module's hook with the whole payload, secrets included, in memory only, for at most
+15 seconds, and applies its outcome in one transaction (see "What a hook does"). One component's
+actions are taken one at a time.
+
+Response — `200`:
+
+```json
+{
+    "record": {
+        "id": "k3c9q2m7p0a4b8c1d5e6f7g2",
+        "role": "service",
+        "createdAt": 1755400000000,
+        "content": [
+            {
+                "type": "action",
+                "messageId": "tz4a98xxat96iws9zmbrgj3a",
+                "uiId": "u1x8k2m9r4t8w1y5z3a6b0c2",
+                "componentId": "model",
+                "action": {
+                    "type": "default_model.set",
+                    "payload": { "providerId": "codex", "modelId": "gpt-5.5", "effort": "high" }
+                },
+                "outcome": { "status": "accepted" }
+            }
+        ],
+        "metadata": {}
+    },
+    "result": null,
+    "cursor": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e"
+}
+```
+
+- `record` — the attempt record with its final outcome: `accepted`, `rejected`, or `failed`. A
+  module's refusal is a `200` whose outcome is `rejected`; the person reads its `reason`.
+- `result` — what the action returned, typed by its bundle, or `null`. It is the only place a
+  secret result appears, and it is returned once: a replay by `id` answers `null`.
+- `cursor` — the event cursor before the action; streaming from it replays everything it caused.
+
+The record is announced with `run.finished` and then `message.created` when it is stored, and
+with `message.updated` when its outcome changes.
+
+When the daemon starts, every record still `pending` becomes `failed` with
+`code: "interrupted"`, so an attempt is never silently lost.
+
+Errors: `400 invalid_request` for a malformed body, an action of another component type, or a
+payload that fails its schema; `403 forbidden` without the action's permission; `404 not_found`
+for an unknown agent, a conversation the caller cannot read, or no such offer; `409 conflict` for
+an agent that takes no messages, or an `id` that is already another message; `429 rate_limited`. A
+daemon without chat UI answers `404`.
 
 ### `GET /v0/agents/:agentId/messages`
 
@@ -14864,9 +15259,9 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
     - `message` (full message object) — role, content blocks, client metadata when supplied,
       everything.
 - `message.updated` — a message changed structurally after it entered a run: a block was added,
-  a tool call or compaction changed `status`, a compaction gained `tokensAfter`, or a result or
-  presentation arrived. Pending acceptance is carried by `run.started` or `run.boundary`, not
-  duplicated here.
+  a tool call or compaction changed `status`, a compaction gained `tokensAfter`, a result or
+  presentation arrived, or a chat UI attempt record's outcome changed. Pending acceptance is
+  carried by `run.started` or `run.boundary`, not duplicated here.
     - `agentId` (ID string).
     - `runId` (ID string).
     - `message` (full message object) — the whole message as of now; not a diff.
