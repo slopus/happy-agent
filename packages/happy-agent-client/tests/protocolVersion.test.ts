@@ -6,8 +6,8 @@ import {
 } from "../sources/protocol/daemon.js";
 
 describe("Happy Agent protocol version", () => {
-    it("advances to protocol 30 for typed failures", () => {
-        expect(HAPPY_AGENT_PROTOCOL_VERSION).toBe(30);
+    it("advances to protocol 35 for chat UI", () => {
+        expect(HAPPY_AGENT_PROTOCOL_VERSION).toBe(35);
     });
 
     it("keeps the additive compatibility range rooted at protocol 22", () => {

@@ -119,6 +119,39 @@ describe("HappyAgentClient", () => {
         expect(request?.method).toBe("GET");
     });
 
+    it("sends a chat UI action to its own route with the protocol header", async () => {
+        const { fetch, requests } = stubFetch(() =>
+            json({ cursor: "c1", record: {}, result: null }),
+        );
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+        const request = {
+            id: "attempt1",
+            messageId: "message1",
+            uiId: "ui1",
+            componentId: "claude",
+            action: { type: "provider_sign_in.sign_in", payload: {} },
+        };
+
+        await client.sendUiAction("agent1", request);
+
+        expect(requests[0]?.url).toBe("http://agent.local/v0/agents/agent1/actions");
+        expect(requests[0]?.body).toBe(JSON.stringify(request));
+        expect(requests[0]?.headers.get("happy-protocol")).toBe("35");
+    });
+
+    it("reads the provider CLIs a sign-in component is drawn from", async () => {
+        const { fetch, requests } = stubFetch(() => json({ providerClis: [] }));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await client.listProviderClis();
+        await client.getProviderCli("claude");
+
+        expect(requests.map((request) => [request.method, request.url])).toEqual([
+            ["GET", "http://agent.local/v0/provider-clis"],
+            ["GET", "http://agent.local/v0/provider-clis/claude"],
+        ]);
+    });
+
     it("enters daemon draining through its dedicated lifecycle route", async () => {
         const response = { draining: true as const, pid: 12345 };
         const { fetch, requests } = stubFetch(() => json(response, 202));

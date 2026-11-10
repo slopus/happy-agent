@@ -200,6 +200,7 @@ import type {
     ProviderRouteUseResponse,
     ProviderRoutesResponse,
 } from "./protocol/providerRoutes.js";
+import type { ProviderCliResponse, ProviderClisResponse } from "./protocol/providerClis.js";
 import type {
     EventPageQuery,
     EventPageResponse,
@@ -231,6 +232,12 @@ import type {
     SendMessageRequest,
     SendMessageResponse,
 } from "./protocol/messages.js";
+import {
+    CHAT_UI_PROTOCOL_VERSION,
+    HAPPY_PROTOCOL_HEADER,
+    type UiActionRequest,
+    type UiActionResponse,
+} from "./protocol/ui.js";
 import type { BackgroundProcessResponse } from "./protocol/processes.js";
 import type { ProfileResponse, ProfileUpdateRequest } from "./protocol/profile.js";
 import { userIdsSchema, type UsersResponse } from "./protocol/users.js";
@@ -591,6 +598,30 @@ export class HappyAgentClient {
             method: "POST",
             path: `v0/providers/${encodeURIComponent(providerId)}/verify`,
             json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `GET /v0/provider-clis` — every supported assistant's program, refreshed: the live state a
+     * `provider_sign_in` chat UI component is drawn from, kept current by `provider_cli.updated`.
+     */
+    async listProviderClis(options: RequestOptions = {}): Promise<ProviderClisResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/provider-clis",
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/provider-clis/:cliId` — one assistant's program, refreshed. */
+    async getProviderCli(
+        cliId: string,
+        options: RequestOptions = {},
+    ): Promise<ProviderCliResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/provider-clis/${encodeURIComponent(cliId)}`,
             signal: options.signal,
         });
     }
@@ -3831,6 +3862,29 @@ export class HappyAgentClient {
     }
 
     /**
+     * `POST /v0/agents/:agentId/actions` — one click on a chat UI component. Build the request
+     * with `uiActionRequest` and read a typed result with `uiActionResult`. The daemon checks the
+     * conversation and the action's permission, records the attempt with secrets left out, and
+     * runs the owning module's hook. A rejection is `200` with outcome `"rejected"`; `400`,
+     * `403`, `404`, `409`, and `429` throw {@link HappyAgentApiError} with codes
+     * `invalid_request`, `forbidden`, `not_found`, `conflict`, and `rate_limited`, and nothing
+     * was stored. Reusing `id` returns the stored outcome. `result` is the only place a secret
+     * result appears: keep it in memory and drop it with the widget.
+     */
+    async sendUiAction(
+        agentId: Cuid2,
+        request: UiActionRequest,
+        options: RequestOptions = {},
+    ): Promise<UiActionResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/agents/${encodeURIComponent(agentId)}/actions`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
      * `GET /v0/agents/:agentId/messages` — history, grouped by run.
      *
      * `limit` is a lower bound: a page always contains whole runs and may
@@ -4300,6 +4354,8 @@ export class HappyAgentClient {
     async #send(request: HttpRequest): Promise<Response> {
         const headers: Record<string, string> = {
             accept: request.accept ?? "application/json",
+            // This client reads chat UI, so the daemon sends it rather than fallback text.
+            [HAPPY_PROTOCOL_HEADER]: String(CHAT_UI_PROTOCOL_VERSION),
         };
         const token = typeof this.#token === "function" ? await this.#token() : this.#token;
         if (token !== undefined) headers.authorization = `Bearer ${token}`;
