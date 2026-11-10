@@ -75,7 +75,7 @@ tiny example in the instructions. The `present_files` layout argument stays as i
 ## Models arrange images with `show_ui`, not HTML
 
 Chat UI replaced the HTML layouts as what models are taught: CHAT_MEDIA_INSTRUCTIONS now point at
-the `images` component of `show_ui`, and `present_files` no longer teaches layout HTML. Clients
+the `media` component of `show_ui` (first named `images`), and `present_files` no longer teaches layout HTML. Clients
 still draw the layouts already in conversations, and `present_files` still accepts its layout
 argument, so older history keeps rendering. A `show_ui` result's media are stored through the same
 snapshot path as `present_files` (`storedItems` accepts the `ui` presentation), so exported bots

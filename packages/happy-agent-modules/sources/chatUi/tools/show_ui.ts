@@ -30,9 +30,9 @@ export function showUiTool(chatUi: ChatUiModule, agentId: string) {
         name: "show_ui",
         defer: true,
         capabilities: [
-            "Show images, a file tree, and live controls such as sign-in and phone pairing in the chat.",
+            "Show images and files, a file tree, and live controls such as sign-in and phone pairing in the chat.",
         ],
-        searchKeywords: ["image grid", "file tree", "controls", "ui", "widget"],
+        searchKeywords: ["image grid", "media", "file tree", "controls", "ui", "widget"],
         description: `Show the person interactive UI in this chat: a flat list of 1 to 16 components, drawn top to bottom under your message, with no nesting and no styling. This is the only way to show controls; HTML or JSON in your reply is never drawn.
 
 Write your words in your reply as usual and use show_ui for what the person can look at or use. Each component has an id unique in the call, a type, and the props for that type. Labels and details are plain text, never Markdown or links. Live controls do their work themselves and report what happened to you as a hidden note. To offer answers the person can send, use suggest_replies instead.
@@ -64,7 +64,7 @@ ${catalog}`,
         shouldRunInFullAccessInAutoMode: ({ components }, ctx) =>
             chatUi.shouldReview(ctx, agentId, components),
         describeAutoPermissionAction: ({ components }) =>
-            `showing chat UI (${components.map((component) => component.type).join(", ")}) to the person in this chat. Access: images components read local files (outside-workspace or symlink targets require full access) and copy them into this installation's private chat media`,
+            `showing chat UI (${components.map((component) => component.type).join(", ")}) to the person in this chat. Access: media components read local files (outside-workspace or symlink targets require full access) and copy them into this installation's private chat media`,
         execute: async (ctx, { components }) => {
             const built = await chatUi.document(ctx, agentId, components);
             if ("problems" in built) {
@@ -95,7 +95,7 @@ ${catalog}`,
 }
 
 /** A props schema as compact JSON, without the character patterns every string carries. */
-function describeProps(schema: unknown): string {
+export function describeProps(schema: unknown): string {
     return JSON.stringify(schema, (key, value: unknown) =>
         key === "pattern" || key === "additionalProperties" ? undefined : value,
     );

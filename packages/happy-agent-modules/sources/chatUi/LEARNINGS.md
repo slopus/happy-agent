@@ -46,6 +46,23 @@ here and that the text matches it exactly, then sends it like any typed message 
 steering, pending, retry by ID). Anyone who can send may use any visible suggestion, any number of
 times: it is the same as typing it. `resolveOffer` stays as the one place `/actions` checks an offer.
 
+## Media has no layout; clients lay it out from real sizes with one rule
+
+The first `images` component took `columns` and captions, so the model chose a grid it could not
+see. Kirill renamed it `media` (pictures, videos, and files alike), removed `columns`, and kept one
+optional label per item. Clients place items from the sizes the presentation already records, with
+the justified-row rule in the client's `layoutMedia`, so every platform agrees and every height is
+known before bytes load.
+
+## Rich quick replies are a separate, display-only catalog
+
+Kirill wanted a little UI on quick replies, such as an AI's mark and sign-in state on "Set up
+Claude", without turning them back into actions. Reply components live in their own client catalog
+(`sources/replies/`), are contributed with `contributeReply` like components are, carry no actions
+or secrets, and sit in a `ui` list parallel to `options`. The options stay plain strings, so a tap
+still sends only the text and the `quickReply` check is unchanged. Live notes such as "1 account"
+come from server state on the client, never from the model.
+
 ## A note says whether it is worth a turn
 
 A note joins the conversation's next turn. A module passes `wake` when what happened should be

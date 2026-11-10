@@ -15,10 +15,29 @@ import {
     quickRepliesBlockSchema,
     quickRepliesPresentationSchema,
     quickRepliesProblems,
+    quickReplyInputSchema,
     quickReplySchema,
+    quickReplyUiProblems,
+    splitQuickReplies,
+    type QuickReplyInput,
 } from "../sources/protocol/quickReplies.js";
+import { replyComponents, replyUiSchema } from "../sources/replies/catalog.js";
 import { UI_CATALOG_VERSION, uiActionDefinition, uiComponents } from "../sources/ui/catalog.js";
 import { uiActionProblem, uiDocumentProblems } from "../sources/ui/checks.js";
+import { mediaFallback } from "../sources/ui/components/media.js";
+import {
+    layoutMedia,
+    MEDIA_GAP,
+    MEDIA_LABEL_GAP,
+    MEDIA_LABEL_LINE,
+    MEDIA_MAX_ASPECT,
+    MEDIA_MAX_ROW_SCALE,
+    MEDIA_MIN_ASPECT,
+    MEDIA_ROW_HEIGHT_DESKTOP,
+    MEDIA_ROW_HEIGHT_PHONE,
+    MEDIA_SINGLE_HEIGHT_SCALE,
+    type MediaArrangementItem,
+} from "../sources/ui/layoutMedia.js";
 import {
     UI_MEMBER_PERMISSIONS,
     UI_PERMISSION_IDS,
@@ -96,6 +115,50 @@ const RESULTS: Record<string, unknown> = {
     },
 };
 
+/** Media sets every client lays out the same way, at each width and both row heights. */
+const MEDIA_SETS: Record<string, MediaArrangementItem[]> = {
+    "one landscape": [{ kind: "image", width: 1600, height: 900 }],
+    "one portrait": [{ kind: "image", width: 900, height: 1600 }],
+    "one panorama, clamped to 3": [{ kind: "image", width: 4000, height: 500 }],
+    "one small square": [{ kind: "image", width: 64, height: 64, label: "Icon" }],
+    "two 16:9 screenshots share a row": [
+        { kind: "image", width: 1920, height: 1080 },
+        { kind: "image", width: 1920, height: 1080 },
+    ],
+    "two mixed": [
+        { kind: "image", width: 1600, height: 900 },
+        { kind: "image", width: 900, height: 1600 },
+    ],
+    "three labelled": [
+        { kind: "image", width: 1200, height: 800, label: "Login" },
+        { kind: "image", width: 800, height: 1200 },
+        { kind: "image", width: 1000, height: 1000, label: "Home" },
+    ],
+    "five mixed": [
+        { kind: "image", width: 1600, height: 900 },
+        { kind: "image", width: 1200, height: 1200 },
+        { kind: "image", width: 900, height: 1600 },
+        { kind: "image", width: 2000, height: 1000 },
+        { kind: "image", width: 1080, height: 1920 },
+    ],
+    "seven squares": Array.from({ length: 7 }, () => ({
+        kind: "image",
+        width: 1000,
+        height: 1000,
+    })),
+    "three tall, clamped to 0.4": Array.from({ length: 3 }, () => ({
+        kind: "image",
+        width: 300,
+        height: 2000,
+    })),
+    "unmeasured video and file": [
+        { kind: "video" },
+        { kind: "document", label: "Report.pdf" },
+        { kind: "image", width: 1200, height: 900 },
+    ],
+};
+const MEDIA_WIDTHS = [320, 546, 786];
+
 /** Who holds what: a standalone daemon's user, a team member, a viewer, nobody. */
 const GRANTS: Record<string, readonly string[]> = {
     owner: UI_PERMISSION_IDS,
@@ -123,6 +186,20 @@ export function buildUiSchemaFile(): unknown {
             block: quickRepliesBlockSchema,
             presentation: quickRepliesPresentationSchema,
             quickReply: quickReplySchema,
+            input: quickReplyInputSchema,
+            ui: replyUiSchema,
+        },
+        replies: Object.fromEntries(replyComponents.map((bundle) => [bundle.type, bundle.props])),
+        mediaLayout: {
+            rowHeightDesktop: MEDIA_ROW_HEIGHT_DESKTOP,
+            rowHeightPhone: MEDIA_ROW_HEIGHT_PHONE,
+            gap: MEDIA_GAP,
+            labelGap: MEDIA_LABEL_GAP,
+            labelLine: MEDIA_LABEL_LINE,
+            maxRowScale: MEDIA_MAX_ROW_SCALE,
+            singleHeightScale: MEDIA_SINGLE_HEIGHT_SCALE,
+            minAspect: MEDIA_MIN_ASPECT,
+            maxAspect: MEDIA_MAX_ASPECT,
         },
         components: Object.fromEntries(
             uiComponents.map((bundle) => [
@@ -188,6 +265,7 @@ export function buildUiActionFixtures(): unknown {
             { provider: "claude" },
             { provider: "claude", target: "team" },
             { provider: "claude", target: "private" },
+            { provider: "claude", account: "new" },
         ],
     };
     const permission = uiComponents.flatMap((bundle) =>
@@ -218,6 +296,46 @@ export function buildUiActionFixtures(): unknown {
         const normalized = options.map(normalizeQuickReply);
         return { options, normalized, problems: quickRepliesProblems(normalized) };
     });
+    const replyInputs: QuickReplyInput[][] = [
+        ["Yes", "No"],
+        [
+            { text: "Claude", ui: { type: "provider", props: { provider: "claude" } } },
+            { text: "ChatGPT", ui: { type: "provider", props: { provider: "codex" } } },
+            "Skip for now",
+        ],
+        [
+            {
+                text: "  Add   another account ",
+                ui: { type: "provider", props: { provider: "claude" } },
+            },
+        ],
+        [{ text: "Gemini", ui: { type: "provider", props: { provider: "gemini" } } }],
+        [{ text: "Claude", ui: { type: "provider", props: {} } }],
+        [{ text: "Claude", ui: { type: "slideshow", props: {} } }],
+    ];
+    const replies = replyInputs.map((input) => {
+        const split = splitQuickReplies(input);
+        return {
+            input,
+            stored: split,
+            problems: [
+                ...quickRepliesProblems(split.options),
+                ...(split.ui === undefined ? [] : quickReplyUiProblems(split.options, split.ui)),
+            ],
+        };
+    });
+    const mediaLayout = Object.entries(MEDIA_SETS).map(([name, items]) => ({
+        name,
+        items,
+        fallback: mediaFallback(items),
+        layouts: [MEDIA_ROW_HEIGHT_DESKTOP, MEDIA_ROW_HEIGHT_PHONE].flatMap((rowHeight) =>
+            MEDIA_WIDTHS.map((width) => ({
+                width,
+                rowHeight,
+                ...layoutMedia(items, width, rowHeight),
+            })),
+        ),
+    }));
     const result = Object.entries(RESULTS).map(([type, value]) => ({
         type,
         result: value,
@@ -245,6 +363,22 @@ export function buildUiActionFixtures(): unknown {
         ],
         [{ id: "pair", fallback: "", type: "phone_pair", props: { device: "ios" } }],
         [{ id: "x", fallback: "", type: "slideshow", props: {} }],
+        [
+            {
+                id: "shots",
+                fallback: "2 images: Login",
+                type: "media",
+                props: { items: [{ mediaIndex: 0, label: "Login" }, { mediaIndex: 1 }] },
+            },
+        ],
+        [
+            {
+                id: "grid",
+                fallback: "1 image",
+                type: "media",
+                props: { items: [{ mediaIndex: 0 }], columns: 2 },
+            },
+        ],
     ].map((components) => ({
         document: { id: "u1", components },
         problems: uiDocumentProblems(components),
@@ -258,6 +392,8 @@ export function buildUiActionFixtures(): unknown {
         offer,
         permission,
         quickReplies,
+        replies,
+        mediaLayout,
         result,
         documents,
     };

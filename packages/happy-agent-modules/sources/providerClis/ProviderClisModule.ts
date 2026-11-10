@@ -12,6 +12,7 @@ import { createProviderCliVersion } from "./impl/createProviderCliVersion.js";
 import { discoverProviderCli } from "./impl/discoverProviderCli.js";
 import { installerProcess } from "./impl/installerProcess.js";
 import { runProviderCliCommand } from "./impl/runProviderCliCommand.js";
+import { contributeProviderReply } from "./impl/providerReply.js";
 import { contributeSignInComponent } from "./impl/signInComponent.js";
 import {
     PROVIDER_CLI_DEFINITIONS,
@@ -108,8 +109,8 @@ export class ProviderClisModule implements AgentModule {
     readonly #connectedListeners = new Set<ProviderCliConnectedListener>();
 
     /**
-     * @param chatUi Where the `provider_sign_in` component is served. With it, a chat can install
-     * and sign in an assistant from its own widget.
+     * @param chatUi Where the `provider_sign_in` component and the `provider` reply component are
+     * served. With it, a chat can install and sign in an assistant from its own widget.
      */
     constructor(
         config: ConfigModule,
@@ -120,7 +121,10 @@ export class ProviderClisModule implements AgentModule {
         this.#config = config;
         this.#providerScan = providerScan;
         this.#durable = durable;
-        if (chatUi !== undefined) contributeSignInComponent(chatUi, this);
+        if (chatUi !== undefined) {
+            contributeSignInComponent(chatUi, this);
+            contributeProviderReply(chatUi);
+        }
         const now = Date.now();
         for (const id of PROVIDER_CLI_IDS) {
             this.#entries.set(id, {

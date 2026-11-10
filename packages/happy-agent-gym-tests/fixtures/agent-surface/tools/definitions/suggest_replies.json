@@ -3,7 +3,7 @@
     "Suggest short replies the person can send with one tap."
   ],
   "defer": true,
-  "description": "Suggest up to 6 replies the person can send with one tap. Clients show the options as a vertical stack of equal-width buttons under your reply. The stack stays on screen after the person taps one, with the chosen one highlighted. Tapping an option sends it as the person's message immediately, steering whatever you are doing, exactly as written.\n\nSo write each option as a short, self-contained answer in the person's own voice: capitalize the first word, keep it to one line (aim for under 40 characters so it fits the button), make the options parallel, and add no trailing period. Options are plain text, never Markdown or links, and unique, at most 200 characters.\n\nAsk your question in your reply's text, then call this with the likely answers. The person can always type something else instead; never write the options in your text as well.",
+  "description": "Suggest up to 6 replies the person can send with one tap. Clients show the options as a vertical stack of equal-width buttons under your reply. The stack stays on screen after the person taps one, with the chosen one highlighted. Tapping an option sends it as the person's message immediately, steering whatever you are doing, exactly as written.\n\nSo write each option as a short, self-contained answer in the person's own voice: capitalize the first word, keep it to one line (aim for under 40 characters so it fits the button), make the options parallel, and add no trailing period. Options are plain text, never Markdown or links, and unique, at most 200 characters.\n\nAsk your question in your reply's text, then call this with the likely answers. The person can always type something else instead; never write the options in your text as well.\n\nAn option may also carry a small drawing beside its text: write it as { \"text\": \"…\", \"ui\": { \"type\": \"…\", \"props\": { … } } } instead of a plain string. The drawing is display only; a tap still sends just the text. The types:\n- provider: The AI's mark before the text and its live state after it: \"Not installed\", \"Not signed in\", or how many accounts it has. Put it on options that choose an AI to set up or to add an account to, and write the text as what the tap does, such as \"Set up Claude\".\n  props: {\"type\":\"object\",\"required\":[\"provider\"],\"properties\":{\"provider\":{\"anyOf\":[{\"const\":\"claude\",\"type\":\"string\"},{\"const\":\"codex\",\"type\":\"string\"},{\"const\":\"grok\",\"type\":\"string\"},{\"const\":\"antigravity\",\"type\":\"string\"}]}}}",
   "durable": true,
   "inputSchema": {
     "additionalProperties": false,
@@ -11,9 +11,43 @@
       "options": {
         "description": "The replies, in the order shown.",
         "items": {
-          "maxLength": 200,
-          "minLength": 1,
-          "type": "string"
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "text": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "ui": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "props": {},
+                    "type": {
+                      "maxLength": 64,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "props"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "type": "object"
+            }
+          ]
         },
         "maxItems": 6,
         "minItems": 1,
@@ -1513,7 +1547,7 @@
                     }
                   ]
                 },
-                "maxItems": 12,
+                "maxItems": 24,
                 "type": "array"
               },
               "type": {
@@ -1542,40 +1576,18 @@
                             "props": {
                               "additionalProperties": false,
                               "properties": {
-                                "columns": {
-                                  "anyOf": [
-                                    {
-                                      "const": 1,
-                                      "type": "number"
-                                    },
-                                    {
-                                      "const": 2,
-                                      "type": "number"
-                                    },
-                                    {
-                                      "const": 3,
-                                      "type": "number"
-                                    }
-                                  ]
-                                },
-                                "images": {
+                                "items": {
                                   "items": {
                                     "additionalProperties": false,
                                     "properties": {
-                                      "alt": {
-                                        "maxLength": 200,
-                                        "minLength": 1,
-                                        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
-                                        "type": "string"
-                                      },
-                                      "caption": {
-                                        "maxLength": 200,
+                                      "label": {
+                                        "maxLength": 80,
                                         "minLength": 1,
                                         "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u061c\\u200e\\u200f\\u202a-\\u202e\\u2066-\\u2069]*$",
                                         "type": "string"
                                       },
                                       "mediaIndex": {
-                                        "maximum": 11,
+                                        "maximum": 23,
                                         "minimum": 0,
                                         "type": "integer"
                                       }
@@ -1585,18 +1597,18 @@
                                     ],
                                     "type": "object"
                                   },
-                                  "maxItems": 12,
+                                  "maxItems": 24,
                                   "minItems": 1,
                                   "type": "array"
                                 }
                               },
                               "required": [
-                                "images"
+                                "items"
                               ],
                               "type": "object"
                             },
                             "type": {
-                              "const": "images",
+                              "const": "media",
                               "type": "string"
                             }
                           },
@@ -1672,6 +1684,10 @@
                             "props": {
                               "additionalProperties": false,
                               "properties": {
+                                "account": {
+                                  "const": "new",
+                                  "type": "string"
+                                },
                                 "provider": {
                                   "anyOf": [
                                     {
@@ -2033,6 +2049,40 @@
               "type": {
                 "const": "quick_replies",
                 "type": "string"
+              },
+              "ui": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "props": {
+                          "patternProperties": {
+                            "^(.*)$": {}
+                          },
+                          "type": "object"
+                        },
+                        "type": {
+                          "maxLength": 64,
+                          "minLength": 1,
+                          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "props"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "maxItems": 6,
+                "minItems": 1,
+                "type": "array"
               }
             },
             "required": [

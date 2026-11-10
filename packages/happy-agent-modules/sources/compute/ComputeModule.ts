@@ -70,7 +70,7 @@ import { shouldReviewComputePath } from "./impl/shouldReviewComputePath.js";
 import { withConfiguredNetwork } from "./impl/withConfiguredNetwork.js";
 import { assembleComputeTools } from "./tools/assembleComputeTools.js";
 import { presentFilesTool } from "./tools/present_files.js";
-import { contributeImagesComponent } from "./impl/imagesComponent.js";
+import { contributeMediaComponent } from "./impl/mediaComponent.js";
 import { assembleReviewerTools } from "./tools/assembleReviewerTools.js";
 
 /**
@@ -313,8 +313,8 @@ export class ComputeModule implements AgentModule {
      * @param chatMedia Where files the agent shows the user are kept. With it, every agent gets
      * `present_files`, and an image the agent reads is shown to the user as well. Without it,
      * nothing on the machine is shown in the chat.
-     * @param chatUi Where the `images` component is served. With it and chat media, `show_ui`
-     * can lay out images from the agent's machine.
+     * @param chatUi Where the `media` component is served. With it and chat media, `show_ui`
+     * can show files from the agent's machine together.
      */
     constructor(
         config: ConfigModule,
@@ -325,7 +325,7 @@ export class ComputeModule implements AgentModule {
         chatUi?: ChatUiModule,
     ) {
         if (chatUi !== undefined && chatMedia !== undefined) {
-            contributeImagesComponent(chatUi, this, chatMedia);
+            contributeMediaComponent(chatUi, this, chatMedia);
         }
         this.#config = config;
         this.#secrets = secrets;

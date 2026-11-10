@@ -49,6 +49,26 @@ export const providerCliSchema = Type.Object({
         /** `browser`, `device`, or newer, in the order the daemon prefers them. */
         methods: Type.Array(Type.String()),
     }),
+    /**
+     * Every configured provider account of this assistant, each with its own sign-in; absent on
+     * older daemons, where `signIn` is the only one.
+     */
+    accounts: Type.Optional(
+        Type.Array(
+            Type.Object({
+                /** The provider account's ID, as in `GET /v0/config`. */
+                id: Type.String({ minLength: 1 }),
+                label: Type.String({ minLength: 1 }),
+                email: Type.Optional(Type.String()),
+                plan: Type.Optional(Type.String()),
+                signIn: Type.Union([
+                    Type.Literal("signed_in"),
+                    Type.Literal("signed_out"),
+                    Type.Literal("unknown"),
+                ]),
+            }),
+        ),
+    ),
     operation: Type.Union([
         Type.Object({
             id: Type.String({ minLength: 1 }),
@@ -95,7 +115,11 @@ export const providerClisResponseSchema = Type.Object({
 export type ProviderClisResponse = Static<typeof providerClisResponseSchema>;
 
 /** Every `/v0/provider-clis/:cliId` route's response. */
-export const providerCliResponseSchema = Type.Object({ providerCli: providerCliSchema });
+export const providerCliResponseSchema = Type.Object({
+    providerCli: providerCliSchema,
+    /** A sign-in with `account: "new"`: the provider account it signs in. */
+    accountId: Type.Optional(Type.String({ minLength: 1 })),
+});
 export type ProviderCliResponse = Static<typeof providerCliResponseSchema>;
 
 /**
@@ -117,6 +141,8 @@ export const providerCliSignInRequestSchema = Type.Object({
     method: Type.Optional(Type.String()),
     /** Without one, a team server signs in privately. */
     target: Type.Optional(providerCliSignInTargetSchema),
+    /** `new` signs in another account in its own configuration instead of the default one. */
+    account: Type.Optional(Type.Literal("new")),
     mutationId: Type.Optional(mutationIdSchema),
 });
 export type ProviderCliSignInRequest = Static<typeof providerCliSignInRequestSchema>;

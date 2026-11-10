@@ -66,6 +66,8 @@ export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderCl
     chatUi.contribute(providerSignInComponent, {
         prompt: "One AI's install and sign-in, live: it installs the AI's program when it is missing, opens its own sign-in, and takes a sign-in code or a pasted setup token or API key. Show one per AI the person may connect. A finished sign-in reaches you as a hidden note, in a turn of its own.",
         fallback: (props) => `Sign in to ${NAMES[props.provider]} in Happy on your computer.`,
+        check: async (_ctx, props) =>
+            props.account === "new" ? ["Adding another account isn't available here yet."] : [],
         actions: {
             install: async (ctx, offer) => {
                 try {
@@ -80,7 +82,11 @@ export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderCl
                 const cli = await clis.get(ctx, offer.props.provider);
                 // Signed in already: it connects as it is.
                 if (cli.signIn.status === "signed_in") {
-                    return { status: "accepted", ...(await connected(ctx, cli, offer.agentId)) };
+                    return {
+                        status: "accepted",
+                        ...(await connected(ctx, cli, offer.agentId)),
+                        result: {},
+                    };
                 }
                 try {
                     await clis.signIn(ctx, offer.props.provider, undefined);
@@ -88,7 +94,7 @@ export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderCl
                     return refused(error);
                 }
                 follow(offer.props.provider, offer.agentId);
-                return { status: "accepted" };
+                return { status: "accepted", result: {} };
             },
             submit_code: async (ctx, offer, { code }) => {
                 try {

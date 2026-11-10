@@ -476,7 +476,7 @@ lines and every suggestion as one line it can answer by typing, and never meets 
 the capability and
 answers `/actions` with `404`; clients then draw no components. From protocol 35, `present_files`'
 `layout` and media layouts in text are legacy: daemons still store, return, and serve them, and
-clients still draw them, but models are no longer taught to write them; `images` in `show_ui`
+clients still draw them, but models are no longer taught to write them; `media` in `show_ui`
 replaces them.
 
 Account provenance, configuration history blocks, and structured error details are additive output
@@ -1602,8 +1602,10 @@ Fields:
   `search: true` advertises `POST /v0/search`, described under Search.
   `feedSubjectFilter: true` advertises `subjects` on `GET /v0/feed` and
   `POST /v0/feed/read-all`, described under Feed. `chatUi` advertises chat UI, described under
-  Chat UI: `{ "version": 1, "components": ["provider_sign_in", "default_model", …] }`, the catalog
-  version the daemon speaks and exactly the component types it serves. `chatOnboarding: true`
+  Chat UI: `{ "version": 1, "components": ["provider_sign_in", "default_model", …],
+"replies": ["provider"] }`, the catalog version the daemon speaks, exactly the component types it
+  serves, and exactly the reply component types its quick replies may carry (described under Quick
+  replies; absent when it serves none). `chatOnboarding: true`
   advertises onboarding in a conversation, described under "Onboarding in a conversation"; it is
   absent in team mode.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
@@ -3479,6 +3481,13 @@ instructions they showed before.
     - `methods` — the sign-in methods the program supports, in the order the daemon prefers them:
       `"browser"` (a web page on this computer completes the sign-in by itself) and `"device"` (a
       web page on any device, confirmed with a short code). Empty when the program is missing.
+- `accounts` — optional; every configured provider account of this assistant, in configuration
+  order, each with its own sign-in. Absent on older daemons, where `signIn` describes the only one.
+  Each is `{ "id", "label", "email"?, "plan"?, "signIn" }`:
+    - `id` — the provider account's ID, as it appears in `GET /v0/config`.
+    - `label` — its human-readable name.
+    - `email`, `plan` — present while signed in, when the vendor's program reveals them.
+    - `signIn` — `"signed_in"`, `"signed_out"`, or `"unknown"`, as for `signIn.status`.
 - `operation` — the current or most recent install or sign-in, or `null` when there has been
   none. It is described below.
 - `version` — a UUIDv7 minted whenever any field changes. Events carry the complete object, so
@@ -3607,6 +3616,11 @@ Starts the vendor's own sign-in with the installed program. Request body, every 
 ```
 
 - `method` — one of the object's `signIn.methods`. Omitted, the daemon uses the first.
+- `account` — `"new"` to add another account of this assistant instead of signing in the default
+  one. The sign-in runs in a fresh configuration directory of its own (`CLAUDE_CONFIG_DIR` for
+  Claude Code, `CODEX_HOME` for Codex), and the daemon registers it as a new provider account
+  without a restart, joining the vendor's pool when there is one. The response's `accountId` names
+  that account, which appears in `accounts`.
 - `target` — on a team server, whose connection the sign-in makes: `{ "providerId": "…" }` for one
   of this assistant's team providers the caller can see, or `{ "scope": "private" }` for the
   caller's own. A team server may also take `{ "name": "…", "scope": "team" | "private" }`, a
@@ -3620,7 +3634,8 @@ Starts the vendor's own sign-in with the installed program. Request body, every 
   reach the same sign-in through `/actions`. The standalone
   daemon serves one user and ignores `target`.
 
-Response — `200`: `{ "providerCli": { ... } }` with the new `"running"` sign-in operation. It
+Response — `200`: `{ "providerCli": { ... }, "accountId"?: "…" }` with the new `"running"` sign-in
+operation; `accountId` is present for `account: "new"`. It
 becomes `"waiting"` with its `authorization` as soon as the vendor's program provides the page to
 open, normally within seconds, and then `"succeeded"`, `"failed"`, or `"cancelled"`. Success is
 decided by the program's own sign-in check, not by its exit alone. The successful object reports
@@ -7964,7 +7979,7 @@ version.
 
 `present_files` is a tool every agent with a machine has, whichever model it runs. Its `layout`
 argument is legacy from protocol 35: it still works and clients still draw stored trees, but models
-are no longer taught to use it, and `show_ui`'s `images` component replaces it. It takes
+are no longer taught to use it, and `show_ui`'s `media` component replaces it. It takes
 `{ "filepaths": ["…"], "layout"? }` — one to ten paths on the agent's machine, absolute or
 relative to its working directory — and presents those files exactly as above. A path outside the
 agent's workspace follows the ordinary permission boundary for reading files. An image may be at
@@ -8410,7 +8425,7 @@ scheme.
 #### Media layouts in text
 
 Legacy from protocol 35: daemons still store and return these blocks and clients still draw them,
-but models are no longer taught to write them. A model shows images with `show_ui`'s `images`
+but models are no longer taught to write them. A model shows images with `show_ui`'s `media`
 component instead (see "Chat UI").
 
 An agent may arrange media it already showed in the conversation by writing plain HTML in its
@@ -8523,9 +8538,9 @@ one is an ordinary `send`.
   exactly.
 
 The `ui` presentation is `{ "type": "ui", "ui": { … }, "items": [ … ] }`. `items` are media items
-as in the `media` presentation, at most 12; an `images` component names them by index, and their
+as in the `media` presentation, at most 24; a `media` component names them by index, and their
 bytes are `GET /v0/agents/:agentId/tool-calls/:toolCallId/media/:index`. A `ui` block carries no
-media, so only `show_ui` can show `images`.
+media, so only `show_ui` can show the `media` component.
 
 Every label, detail, placeholder, and path in a component is plain text, shown as written: never
 Markdown, never linkified, never HTML, never a URL. A component carries no URL or route; a client
@@ -8535,43 +8550,70 @@ draws live components from the server's own state through the routes named below
 `capabilities.chatUi.components`; its `show_ui` accepts only those types and `/actions` serves only
 their actions.
 
-| Component          | Props                                                                                      | Actions · payload → result                                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `images`           | `images: [{ mediaIndex, alt?, caption? }]` 1–12, `columns?: 1 \| 2 \| 3`                   | none                                                                                                                                    |
-| `file_tree`        | `paths: string[]` 1–200                                                                    | none                                                                                                                                    |
-| `provider_sign_in` | `provider: "claude" \| "codex" \| "grok" \| "antigravity"`, `target?: "team" \| "private"` | `install {}` · `sign_in {}` · `submit_code { code: secret }` · `submit_token { token: secret }` · `cancel {}`                           |
-| `default_model`    | none                                                                                       | `set { providerId, modelId, effort }`                                                                                                   |
-| `phone_app`        | none                                                                                       | none                                                                                                                                    |
-| `phone_pair`       | none                                                                                       | `start {}` → `{ pairingId, pairing: secret, expiresAt }` · `confirm { pairingId }` · `cancel { pairingId }`                             |
-| `invite`           | `role?`                                                                                    | `create { role }` → `{ inviteId, code: secret, expiresAt, serverName }` · `revoke { inviteId }`                                         |
-| `github_connect`   | none                                                                                       | `install {}` → `{ installUrl }` · `device_start {}` → `{ userCode: secret, verificationUri, expiresAt }` · `connect { installationId }` |
-| `compute_join`     | `pool?`                                                                                    | `create {}` → `{ commands: secret[], expiresAt }`                                                                                       |
-| `server_link`      | none                                                                                       | none                                                                                                                                    |
-| `notifications`    | none                                                                                       | none                                                                                                                                    |
+| Component          | Props                                                                                                         | Actions · payload → result                                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `media`            | `items: [{ mediaIndex, label? }]` 1–24                                                                        | none                                                                                                                                    |
+| `file_tree`        | `paths: string[]` 1–200                                                                                       | none                                                                                                                                    |
+| `provider_sign_in` | `provider: "claude" \| "codex" \| "grok" \| "antigravity"`, `target?: "team" \| "private"`, `account?: "new"` | `install {}` · `sign_in {}` → `{ accountId? }` · `submit_code { code: secret }` · `submit_token { token: secret }` · `cancel {}`        |
+| `default_model`    | none                                                                                                          | `set { providerId, modelId, effort }`                                                                                                   |
+| `phone_app`        | none                                                                                                          | none                                                                                                                                    |
+| `phone_pair`       | none                                                                                                          | `start {}` → `{ pairingId, pairing: secret, expiresAt }` · `confirm { pairingId }` · `cancel { pairingId }`                             |
+| `invite`           | `role?`                                                                                                       | `create { role }` → `{ inviteId, code: secret, expiresAt, serverName }` · `revoke { inviteId }`                                         |
+| `github_connect`   | none                                                                                                          | `install {}` → `{ installUrl }` · `device_start {}` → `{ userCode: secret, verificationUri, expiresAt }` · `connect { installationId }` |
+| `compute_join`     | `pool?`                                                                                                       | `create {}` → `{ commands: secret[], expiresAt }`                                                                                       |
+| `server_link`      | none                                                                                                          | none                                                                                                                                    |
+| `notifications`    | none                                                                                                          | none                                                                                                                                    |
 
 The last five are Happy Cloud team components; a standalone daemon never serves them. Live
 components draw from the server's state: `provider_sign_in` from `GET /v0/provider-clis/:cliId`
 and `provider_cli.updated` (with the states listed under Provider CLIs), `default_model` from
 `GET /v0/config` `defaults` and `config.updated`, `phone_pair` from `GET /v0/mobile-connector` and
 `mobile_connector.updated`, `phone_app` from the client's own download codes. On a signed-in AI,
-`provider_sign_in`'s `sign_in` connects it as it is. After `github_connect.device_start` the server
+`provider_sign_in`'s `sign_in` connects it as it is. With `account: "new"`, `provider_sign_in` adds
+another account of that AI instead: `sign_in` signs into a fresh configuration of its own, the
+daemon registers it as a provider account without a restart, and the result's `accountId` names
+that account; the widget follows it in the provider CLI's `accounts`. After `github_connect.device_start` the server
 polls the device flow itself, and the widget follows the Git credential state and its event; there
 is no poll action. Asking for a notification permission happens in the client.
 
 No action shows a bubble in the transcript. A component shows its own pending and error state, from
 its attempt records, on every device.
 
+**Media layout.** `media` shows pictures, videos, and other files alike, each with an optional
+`label`: one line of plain text, at most 80 characters. It has no layout of its own. Every client
+places the items with one rule, from the `width` and `height` the presentation's items record, so
+all clients agree and every height is known before any bytes load. The rule is `layoutMedia` in
+`@slopus/happy-agent-client`, with frames in whole pixels (points on iOS, density-independent
+pixels on Android):
+
+- Justified rows at a target row height H, 220 on desktop and 160 on phones, 6 apart.
+- A row takes the next item while the row still fits the width at H, and also when the row,
+  scaled to fill the width, comes nearer H with that item than without it.
+- A row after which another item waits is scaled to fill the width exactly, never taller than
+  1.5 × H. The last row stays at H, left-aligned, shrinking only when it would overflow.
+- A single item is min(width, 2 × H × aspect) wide, left-aligned.
+- Aspect ratios are clamped to 0.4–3 for layout only; the picture covers its box. An item with no
+  recorded size lays out as 16:9 when it is a video and 4:3 otherwise.
+- A label is one line, 18 high, 4 under its picture, ellipsized; a row with any label is that much
+  taller for every item in it.
+
+Its fallback is "N images" when every item is a picture, otherwise "N files", followed by the
+labels joined by a spaced middle dot.
+
 **One implementation.** Each component's bundle — its props, and each action's strict payload,
 optional result, and permission — lives in `@slopus/happy-agent-client` under `sources/ui/`. The
 package exports `uiComponents`, `uiBundle(type)`, `uiActionDefinition(actionType)`,
 `uiActionPermission(definition, props)`, `uiActionAllowed(definition, props, granted)`,
 `uiActionProblem(component, action)`, `uiDocumentProblems(components)`,
-`redactUiValue(schema, value)`, and `uiDocumentFallback(document)`, and for quick replies
-`normalizeQuickReply(option)` and `quickRepliesProblems(options)`. For implementations in other
-languages it ships `fixtures/ui/ui.schema.json`, every schema with each action's permission and the
-quick-reply schemas, and `fixtures/ui/actions.fixtures.json`, conformance vectors for payload
-validation, offer fit, permission resolution, secret redaction, document checks, and quick-reply
-checks, all computed by those functions.
+`redactUiValue(schema, value)`, `uiDocumentFallback(document)`, `layoutMedia(items, width,
+rowHeight)`, and `mediaFallback(items)`, and for quick replies `normalizeQuickReply(option)`,
+`quickRepliesProblems(options)`, `splitQuickReplies(inputs)`, `quickReplyUiProblems(options, ui)`,
+`replyComponents`, and `replyUiProblems(ui)`. For implementations in other languages it ships
+`fixtures/ui/ui.schema.json`, every schema with each action's permission, the quick-reply and
+reply component schemas, and the media layout constants, and `fixtures/ui/actions.fixtures.json`,
+conformance vectors for payload validation, offer fit, permission resolution, secret redaction,
+document checks, quick-reply and reply component checks, and media frames at widths 320, 546, and
+786 for both row heights, all computed by those functions.
 
 **Secrets.** A payload or result field marked secret is a token, a code, or a pairing payload. In
 `ui.schema.json` it carries `"x-happy-secret": true`. A secret is never stored, put in an event,
@@ -8604,7 +8646,7 @@ decides.
 
 **`show_ui`.** The tool a model shows UI with. Its arguments are
 `{ "components": [{ "id", "type", "props" }, …] }`, 1–16 components, where `props` are the type's
-input: its props, except that `images` takes `images: [{ path, alt?, caption? }]`, files on the
+input: its props, except that `media` takes `items: [{ path, label? }]`, 1–24 files on the
 agent's machine that the daemon snapshots into `items` under the ordinary file-read boundary. The
 daemon checks every component against the catalog, the bundle's schema, and the contributing
 module's own checks (an unknown provider, a missing file). Any problem fails the call with the
@@ -8682,18 +8724,57 @@ sends remembers where its text came from. There are two carriers:
 - `options` — 1–6 unique options. Each is plain text on one line, 1–200 characters, with no control
   or bidirectional formatting character, shown as written: never Markdown, never linkified. The
   daemon stores each with runs of whitespace collapsed to one space and trimmed.
+- `ui` — optional; each option's reply component, or `null` for a bare option, in option order and
+  exactly as many as there are options. Absent when no option has one. Clients that do not read it
+  ignore it.
 
-The presentation is the same object, `{ "type": "quick_replies", "options": [ … ] }`.
+The presentation is the same object, `{ "type": "quick_replies", "options": [ … ], "ui"?: [ … ] }`.
+
+**Reply components.** A reply component is a small drawing beside one option, `{ "type", "props" }`,
+from a catalog of its own, separate from chat UI components: display-only, with no actions and no
+secrets, on the option's one line. A tap always sends the option's text. A server lists the types it
+serves in `capabilities.chatUi.replies`. A client draws the types it knows and shows the bare
+option for any other.
+
+```json
+{
+    "type": "quick_replies",
+    "options": ["Set up Claude", "Set up ChatGPT", "Skip for now"],
+    "ui": [
+        { "type": "provider", "props": { "provider": "claude" } },
+        { "type": "provider", "props": { "provider": "codex" } },
+        null
+    ]
+}
+```
+
+| Reply component | Props                                                      | Drawn as                                                                                                                                                                                    |
+| --------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider`      | `provider: "claude" \| "codex" \| "grok" \| "antigravity"` | The AI's mark before the text, and a quiet note at the trailing end from the live provider CLI state, never from the model: "Not installed", "Not signed in", "1 account", or "N accounts". |
+
+The `provider` note reads the provider CLI object (see Provider CLIs): "Not installed" while the
+program is missing; otherwise, when `accounts` is present, the number of its signed-in accounts,
+"1 account" or "N accounts", or "Not signed in" when there are none; without `accounts`, "1 account"
+when `signIn.status` is `"signed_in"`, "Not signed in" when it is `"signed_out"`, and no note when it
+is `"unknown"`. A note may change its text, never the option's size: clients reserve the widest
+note.
 
 **`suggest_replies`.** The tool a model suggests replies with. Its arguments are
-`{ "options": ["…", …] }`. The daemon normalizes the options and checks them as above; any problem
+`{ "options": [ … ] }`, each option either its text, `"…"`, or
+`{ "text": "…", "ui"?: { "type", "props" } }` to draw a reply component beside it. The daemon
+normalizes the options and checks them as above, and checks each `ui` against the catalog, the
+types it serves, and the serving module's own checks, such as an unknown provider; any problem
 fails the call with the problems in its result, so the model can correct itself, and nothing is
-suggested. The tool is available wherever `show_ui` is. A model asks its question in its reply's
+suggested. Its description teaches the reply component types this server serves. The tool is available wherever `show_ui` is. A model asks its question in its reply's
 text and suggests the likely answers; the person may always type something else.
 
-**Drawing them.** Clients decide when to show the options, as pills. The recommended rule: under the
-latest agent message only, and hidden once any later person's message exists. A tap sends the
-option at once, with nothing to edit first.
+**Drawing them.** Clients decide how to show the options. The recommended rule: a vertical stack
+under the newest suggestion only, left-aligned at the agent text's leading edge, because it is the
+agent's output. Every option in a stack is as wide as the widest one's natural width (mark, text,
+reserved note, and padding) plus room for a checkmark, capped at the person's bubble width, past
+which text ellipsizes. The stack stays after a tap, every option kept, with the option a later
+person's message sent (read from its `quickReply`) marked. A tap sends the option at once, with
+nothing to edit first.
 
 **Sending one.** A tap is an ordinary `POST /v0/agents/:agentId/send` whose `text` is the option,
 exactly, with `quickReply` naming it:

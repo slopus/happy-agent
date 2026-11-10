@@ -15,7 +15,8 @@ const byTarget: UiPermission = {
 /**
  * One AI's install and sign-in, drawn live from the server's provider CLI state: install, sign in
  * in the browser, paste a sign-in code, or paste a setup token or API key. On a signed-in AI,
- * `sign_in` connects it as it is.
+ * `sign_in` connects it as it is. With `account: "new"`, it signs in another account of the same
+ * AI and returns that account's ID.
  */
 export const providerSignInComponent = defineUiComponent({
     type: "provider_sign_in",
@@ -26,6 +27,8 @@ export const providerSignInComponent = defineUiComponent({
             provider: uiProviderSchema,
             /** Whose connection a sign-in makes, on a team server; absent means `private`. */
             target: Type.Optional(Type.Union([Type.Literal("team"), Type.Literal("private")])),
+            /** `new` signs in another account of this AI instead of the default one. */
+            account: Type.Optional(Type.Literal("new")),
         },
         { additionalProperties: false },
     ),
@@ -36,6 +39,11 @@ export const providerSignInComponent = defineUiComponent({
         },
         sign_in: {
             payload: Type.Object({}, { additionalProperties: false }),
+            /** With `account: "new"`, the account the sign-in makes. */
+            result: Type.Object(
+                { accountId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })) },
+                { additionalProperties: false },
+            ),
             permission: byTarget,
         },
         submit_code: {

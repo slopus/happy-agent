@@ -1,5 +1,5 @@
 import { defineAgentTool } from "@slopus/happy-agent-base";
-import { MAX_QUICK_REPLIES } from "@slopus/happy-agent-client";
+import { MAX_QUICK_REPLIES, quickReplyInputSchema } from "@slopus/happy-agent-client";
 import { Type } from "@sinclair/typebox";
 
 import {
@@ -7,6 +7,7 @@ import {
     type HistoryToolPresentation,
 } from "../../history/index.js";
 import type { ChatUiModule } from "../ChatUiModule.js";
+import { describeProps } from "./show_ui.js";
 
 const suggestRepliesResultSchema = Type.Object(
     { presentation: historyToolPresentationSchema },
@@ -14,11 +15,20 @@ const suggestRepliesResultSchema = Type.Object(
 );
 
 /**
- * Suggest replies the person can send with one tap. The options are normalized and checked; any
- * problem fails the call with every problem listed, and nothing is suggested. A tapped option is an
- * ordinary message from the person, so it reaches the model like typing.
+ * Suggest replies the person can send with one tap, each optionally with a reply component drawn
+ * beside it. The options are normalized and checked; any problem fails the call with every problem
+ * listed, and nothing is suggested. A tapped option is an ordinary message from the person, so it
+ * reaches the model like typing. The description teaches only the reply components served here.
  */
 export function suggestRepliesTool(chatUi: ChatUiModule) {
+    const replyUi = chatUi.replyPrompts();
+    const replyUiText =
+        replyUi.length === 0
+            ? ""
+            : `
+
+An option may also carry a small drawing beside its text: write it as { "text": "…", "ui": { "type": "…", "props": { … } } } instead of a plain string. The drawing is display only; a tap still sends just the text. The types:
+${replyUi.map(({ bundle, prompt }) => `- ${bundle.type}: ${prompt}\n  props: ${describeProps(bundle.props)}`).join("\n")}`;
     return defineAgentTool({
         name: "suggest_replies",
         defer: true,
@@ -28,10 +38,10 @@ export function suggestRepliesTool(chatUi: ChatUiModule) {
 
 So write each option as a short, self-contained answer in the person's own voice: capitalize the first word, keep it to one line (aim for under 40 characters so it fits the button), make the options parallel, and add no trailing period. Options are plain text, never Markdown or links, and unique, at most 200 characters.
 
-Ask your question in your reply's text, then call this with the likely answers. The person can always type something else instead; never write the options in your text as well.`,
+Ask your question in your reply's text, then call this with the likely answers. The person can always type something else instead; never write the options in your text as well.${replyUiText}`,
         parameters: Type.Object(
             {
-                options: Type.Array(Type.String({ minLength: 1, maxLength: 200 }), {
+                options: Type.Array(quickReplyInputSchema, {
                     minItems: 1,
                     maxItems: MAX_QUICK_REPLIES,
                     description: "The replies, in the order shown.",
@@ -42,8 +52,8 @@ Ask your question in your reply's text, then call this with the likely answers. 
         returnType: suggestRepliesResultSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
-        execute: async (_ctx, { options }) => {
-            const replies = chatUi.replies(options);
+        execute: async (ctx, { options }) => {
+            const replies = await chatUi.replies(ctx, options);
             if ("problems" in replies) {
                 throw new Error(
                     `Nothing was suggested. Fix these and call suggest_replies again:\n- ${replies.problems.join("\n- ")}`,
@@ -51,7 +61,7 @@ Ask your question in your reply's text, then call this with the likely answers. 
             }
             const presentation: HistoryToolPresentation = {
                 type: "quick_replies",
-                options: replies.options,
+                ...replies.stored,
             };
             return { presentation };
         },

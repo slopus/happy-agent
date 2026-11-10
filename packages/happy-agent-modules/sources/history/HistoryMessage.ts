@@ -7,6 +7,7 @@ import {
     configurationBlockSchema,
     mediaItemSourceSchema,
     mediaLayoutSchema,
+    MAX_UI_MEDIA,
     messageErrorSchema,
     messageFailureSchema,
     quickRepliesBlockSchema,
@@ -408,12 +409,12 @@ export const historyUserInputPresentationSchema = Type.Object(
     { additionalProperties: false },
 );
 
-/** The chat UI document a `show_ui` call showed, with the media its `images` name by index. */
+/** The chat UI document a `show_ui` call showed, with the media its `media` components name by index. */
 export const historyUiPresentationSchema = Type.Object(
     {
         type: Type.Literal("ui"),
         ui: uiDocumentSchema,
-        items: Type.Array(historyMediaItemSchema, { maxItems: 12 }),
+        items: Type.Array(historyMediaItemSchema, { maxItems: MAX_UI_MEDIA }),
     },
     { additionalProperties: false },
 );

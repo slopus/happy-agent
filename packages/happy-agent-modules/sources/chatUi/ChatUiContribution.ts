@@ -3,6 +3,8 @@ import type {
     InputOf,
     PayloadOf,
     PropsOf,
+    ReplyBundle,
+    ReplyPropsOf,
     ResultOf,
     UiBundle,
 } from "@slopus/happy-agent-client";
@@ -51,11 +53,14 @@ export type ChatUiPrepared<B extends UiBundle> =
 export interface ChatUiContribution<B extends UiBundle> {
     /** One or two sentences for `show_ui`'s description: when to use it and what a press does. */
     readonly prompt: string;
-    /** The one line a client that cannot draw the component shows instead, at most 500 characters. */
-    readonly fallback: (props: PropsOf<B>) => string;
+    /**
+     * The one line a client that cannot draw the component shows instead, at most 500 characters.
+     * `items` are the media its props name, in order, empty for a component without any.
+     */
+    readonly fallback: (props: PropsOf<B>, items: readonly HistoryMediaItem[]) => string;
     /**
      * Turn a model's input into stored props, for a component whose input differs from its props
-     * (`images` snapshots files). Runs in the `show_ui` call's context. Absent means the input is
+     * (`media` snapshots files). Runs in the `show_ui` call's context. Absent means the input is
      * the props.
      */
     readonly prepare?: (
@@ -76,4 +81,15 @@ export interface ChatUiContribution<B extends UiBundle> {
             payload: PayloadOf<B, K>,
         ) => Promise<ChatUiOutcome<B, K>>;
     };
+}
+
+/**
+ * How a module serves one reply component: what `suggest_replies` teaches about it, and its own
+ * checks. A reply component has no actions; tapping the option sends its text.
+ */
+export interface ChatUiReplyContribution<B extends ReplyBundle> {
+    /** One or two sentences for `suggest_replies`' description: when to put it on an option. */
+    readonly prompt: string;
+    /** Problems the model must fix beyond the schema, such as an unknown provider. */
+    readonly check?: (ctx: Context, props: ReplyPropsOf<B>) => Promise<readonly string[]>;
 }

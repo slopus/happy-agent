@@ -58,7 +58,7 @@ Use it when the user should see or receive a file you made or found, such as a c
 
 The files are copied when you call this, so later changes to them do not change what the user sees. An image may be at most 32 MiB, a video 256 MiB, and a document or other file 64 MiB, with at most 256 MiB per call.
 
-To show several images together, in a grid or with captions, use the images component of show_ui instead.`;
+To show several images or files together, with labels, use the media component of show_ui instead.`;
 
 /** Show files from the agent's machine to the user, inline in this chat. */
 export function presentFilesTool(compute: Compute, chatMedia: ChatMediaModule) {

@@ -158,9 +158,10 @@ media to check it before any file is read. `showReadImage` is the shared step th
 reading tool read. Both record each item's `source`, the path as the agent wrote it and as it
 resolved, so a layout block in the agent's reply can place the item later.
 
-Given Chat UI, Compute also contributes the `images` component of `show_ui`: its `prepare` resolves
-each path the way `present_files` does and snapshots the images into chat media, and a file that is
-not an image is a problem the model is told about.
+Given Chat UI, Compute also contributes the `media` component of `show_ui`: its `prepare` resolves
+each path the way `present_files` does and snapshots the files, pictures, videos, and anything else,
+into chat media. Clients lay them out from their recorded sizes, so the component has no layout of
+its own, only an optional label per item.
 
 A vendor tool's own `impl/` directory holds only what is genuinely that vendor's: parsing Claude's
 shell IDs, Codex's patch format, Grok's task IDs. Nothing there is shared across vendors.

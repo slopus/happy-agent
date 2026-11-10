@@ -3,7 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import type { UiActionDefinition, UiBundle } from "./defineUiComponent.js";
 import { defaultModelComponent } from "./components/defaultModel.js";
 import { fileTreeComponent } from "./components/fileTree.js";
-import { imagesComponent } from "./components/images.js";
+import { mediaComponent } from "./components/media.js";
 import { phoneAppComponent, phonePairComponent } from "./components/phone.js";
 import { providerSignInComponent } from "./components/providerSignIn.js";
 import {
@@ -25,7 +25,7 @@ export const UI_CATALOG_VERSION = 1;
  * lists exactly that subset in `capabilities.chatUi.components`.
  */
 export const uiComponents = [
-    imagesComponent,
+    mediaComponent,
     fileTreeComponent,
     providerSignInComponent,
     defaultModelComponent,
@@ -49,7 +49,7 @@ export const TEAM_UI_COMPONENT_TYPES: readonly UiComponentType[] = [
 
 /** One wire component of any known type: `{ id, fallback, type, props }`. */
 export const uiComponentSchema = Type.Union([
-    imagesComponent.componentSchema,
+    mediaComponent.componentSchema,
     fileTreeComponent.componentSchema,
     providerSignInComponent.componentSchema,
     defaultModelComponent.componentSchema,

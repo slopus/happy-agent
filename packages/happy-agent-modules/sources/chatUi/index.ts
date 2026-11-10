@@ -4,6 +4,7 @@ export type {
     ChatUiOffer,
     ChatUiOutcome,
     ChatUiPrepared,
+    ChatUiReplyContribution,
 } from "./ChatUiContribution.js";
 export {
     ChatUiModule,

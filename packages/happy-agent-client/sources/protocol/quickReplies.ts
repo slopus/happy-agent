@@ -1,8 +1,9 @@
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
+import { replyUiProblems, replyUiSchema } from "../replies/catalog.js";
 import { uiDetailSchema } from "../ui/uiValues.js";
-import { cuid2Schema } from "./common.js";
+import { cuid2Schema, Nullable } from "./common.js";
 
 /**
  * Quick replies on the wire; see "Quick replies" in API.md. They are suggested responses, not chat
@@ -27,10 +28,20 @@ export const quickReplyOptionsSchema = Type.Array(quickReplyOptionSchema, {
     maxItems: MAX_QUICK_REPLIES,
 });
 
+/**
+ * Each option's reply component, or null for a bare option, in option order and as many as there
+ * are options. Absent when no option has one; clients that do not know it ignore it.
+ */
+export const quickReplyUiListSchema = Type.Array(Nullable(replyUiSchema), {
+    minItems: 1,
+    maxItems: MAX_QUICK_REPLIES,
+});
+
 /** Replies the daemon suggested itself, in an agent message, with no model involved. */
 export const quickRepliesBlockSchema = Type.Object({
     type: Type.Literal("quick_replies"),
     options: quickReplyOptionsSchema,
+    ui: Type.Optional(quickReplyUiListSchema),
 });
 export type QuickRepliesBlock = Static<typeof quickRepliesBlockSchema>;
 
@@ -38,6 +49,7 @@ export type QuickRepliesBlock = Static<typeof quickRepliesBlockSchema>;
 export const quickRepliesPresentationSchema = Type.Object({
     type: Type.Literal("quick_replies"),
     options: quickReplyOptionsSchema,
+    ui: Type.Optional(quickReplyUiListSchema),
 });
 export type QuickRepliesPresentation = Static<typeof quickRepliesPresentationSchema>;
 
@@ -62,6 +74,42 @@ export const quickReplySchema = Type.Object(
 );
 export type QuickReply = Static<typeof quickReplySchema>;
 
+/**
+ * One option as a model writes it to `suggest_replies`: the text alone, or the text with a reply
+ * component drawn beside it.
+ */
+export const quickReplyInputSchema = Type.Union([
+    Type.String({ minLength: 1, maxLength: 200 }),
+    Type.Object(
+        {
+            text: Type.String({ minLength: 1, maxLength: 200 }),
+            ui: Type.Optional(
+                Type.Object(
+                    { type: Type.String({ minLength: 1, maxLength: 64 }), props: Type.Unknown() },
+                    { additionalProperties: false },
+                ),
+            ),
+        },
+        { additionalProperties: false },
+    ),
+]);
+export type QuickReplyInput = Static<typeof quickReplyInputSchema>;
+
+/**
+ * Options as written split into the stored form: each text through {@link normalizeQuickReply},
+ * and `ui` in option order, null for a bare option, left out when no option has one.
+ */
+export function splitQuickReplies(inputs: readonly QuickReplyInput[]): {
+    readonly options: string[];
+    readonly ui?: ({ readonly type: string; readonly props: unknown } | null)[];
+} {
+    const options = inputs.map((input) =>
+        normalizeQuickReply(typeof input === "string" ? input : input.text),
+    );
+    const ui = inputs.map((input) => (typeof input === "string" ? null : (input.ui ?? null)));
+    return ui.some((item) => item !== null) ? { options, ui } : { options };
+}
+
 /** An option as the daemon stores it: whitespace runs collapsed to one space and trimmed. */
 export function normalizeQuickReply(option: string): string {
     return option.replace(/\s+/gu, " ").trim();
@@ -85,5 +133,23 @@ export function quickRepliesProblems(options: readonly string[]): string[] {
     }
     const repeated = options.filter((option, index) => options.indexOf(option) !== index);
     if (repeated.length > 0) problems.push(`Replies must be unique; "${repeated[0]}" repeats.`);
+    return problems;
+}
+
+/**
+ * Problems with the options' reply components against this package's catalog, as English
+ * sentences a model can act on: one per option, null for none, each a known type with valid props.
+ * A server may refuse more, such as a type it does not serve or an unknown provider.
+ */
+export function quickReplyUiProblems(
+    options: readonly string[],
+    ui: readonly ({ readonly type: string; readonly props: unknown } | null)[],
+): string[] {
+    const problems: string[] = [];
+    if (ui.length !== options.length) problems.push("Give every reply its own ui, or null.");
+    for (const [index, item] of ui.entries()) {
+        if (item === null) continue;
+        problems.push(...replyUiProblems(item).map((line) => `Reply ${index + 1}: ${line}`));
+    }
     return problems;
 }

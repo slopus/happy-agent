@@ -7,10 +7,13 @@ import {
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import {
+    MAX_UI_MEDIA,
     messageModeSchema,
-    normalizeQuickReply,
     quickRepliesProblems,
     redactUiValue,
+    replyComponents,
+    replyUiProblems,
+    splitQuickReplies,
     uiActionDefinition,
     uiActionPermission,
     uiActionProblem,
@@ -18,6 +21,9 @@ import {
     uiDocumentProblems,
     uiPropsProblems,
     type QuickReply,
+    type QuickReplyInput,
+    type ReplyBundle,
+    type ReplyUi,
     type UiActionBlock,
     type UiActionOutcome,
     type UiActionRequest,
@@ -39,7 +45,11 @@ import {
     type HistoryMessage,
 } from "../history/index.js";
 import { ChatUiActionError } from "./ChatUiActionError.js";
-import type { ChatUiContribution, ChatUiOutcome } from "./ChatUiContribution.js";
+import type {
+    ChatUiContribution,
+    ChatUiOutcome,
+    ChatUiReplyContribution,
+} from "./ChatUiContribution.js";
 import { chatUiMigrations } from "./ChatUiMigrations.js";
 import { contributeBasicComponents } from "./impl/basicComponents.js";
 import {
@@ -133,6 +143,13 @@ export class ChatUiModule implements AgentModule {
         string,
         { readonly bundle: UiBundle; readonly contribution: AnyContribution }
     >();
+    readonly #replyContributions = new Map<
+        string,
+        {
+            readonly bundle: ReplyBundle;
+            readonly contribution: ChatUiReplyContribution<ReplyBundle>;
+        }
+    >();
     /** Attempts whose hook runs in this process, so the follow-up call leaves them alone. */
     readonly #inFlight = new Map<string, Promise<unknown>>();
     readonly #recordListeners = new Set<ChatUiRecordListener>();
@@ -184,6 +201,41 @@ export class ChatUiModule implements AgentModule {
         this.#contributions.set(bundle.type, {
             bundle,
             contribution: contribution as unknown as AnyContribution,
+        });
+    }
+
+    /**
+     * Serve one reply component: `suggest_replies` accepts it on an option and teaches it, and
+     * `capabilities.chatUi.replies` lists it. Called once per type, at construction.
+     */
+    contributeReply<B extends ReplyBundle>(
+        bundle: B,
+        contribution: ChatUiReplyContribution<B>,
+    ): void {
+        if (this.#replyContributions.has(bundle.type)) {
+            throw new Error(`The "${bundle.type}" reply component is already contributed.`);
+        }
+        if (!replyComponents.some((known) => known.type === bundle.type)) {
+            throw new Error(`"${bundle.type}" is not in the reply catalog.`);
+        }
+        this.#replyContributions.set(bundle.type, {
+            bundle,
+            contribution: contribution as unknown as ChatUiReplyContribution<ReplyBundle>,
+        });
+    }
+
+    /** The contributed reply component types, in catalog order. */
+    get replyComponents(): readonly string[] {
+        return replyComponents
+            .map((bundle) => bundle.type)
+            .filter((type) => this.#replyContributions.has(type));
+    }
+
+    /** What `suggest_replies` teaches about each contributed reply component. */
+    replyPrompts(): readonly { readonly bundle: ReplyBundle; readonly prompt: string }[] {
+        return this.replyComponents.map((type) => {
+            const { bundle, contribution } = this.#replyContributions.get(type)!;
+            return { bundle, prompt: contribution.prompt };
         });
     }
 
@@ -274,6 +326,7 @@ export class ChatUiModule implements AgentModule {
                 continue;
             }
             let props: unknown = component.props;
+            let own: readonly HistoryMediaItem[] = [];
             if (contribution.prepare !== undefined) {
                 const prepared = await contribution.prepare(ctx, agentId, component.props as never);
                 if ("problems" in prepared) {
@@ -283,11 +336,12 @@ export class ChatUiModule implements AgentModule {
                 // Media indexes count across the whole document, in the order shown.
                 const offset = items.length;
                 props = shiftMediaIndexes(prepared.props, offset);
-                items.push(...(prepared.items ?? []));
+                own = prepared.items ?? [];
+                items.push(...own);
             }
-            const own = uiPropsProblems({ type: component.type, props });
-            if (own.length > 0) {
-                problems.push(...own.map((line) => `${component.id}: ${line}`));
+            const invalid = uiPropsProblems({ type: component.type, props });
+            if (invalid.length > 0) {
+                problems.push(...invalid.map((line) => `${component.id}: ${line}`));
                 continue;
             }
             const checked = (await contribution.check?.(ctx, props as never)) ?? [];
@@ -298,12 +352,14 @@ export class ChatUiModule implements AgentModule {
             built.push({
                 id: component.id,
                 type: component.type,
-                fallback: clip(oneLine(contribution.fallback(props as never)), MAX_FALLBACK),
+                fallback: clip(oneLine(contribution.fallback(props as never, own)), MAX_FALLBACK),
                 props,
             } as UiComponent);
         }
         if (problems.length === 0) problems.push(...uiDocumentProblems(built));
-        if (items.length > 12) problems.push("A document shows at most 12 images.");
+        if (items.length > MAX_UI_MEDIA) {
+            problems.push(`A document shows at most ${String(MAX_UI_MEDIA)} media items.`);
+        }
         if (problems.length > 0) return { problems };
         return { document: { id: createId(), components: built }, items };
     }
@@ -322,7 +378,7 @@ export class ChatUiModule implements AgentModule {
             readonly runId?: string;
             readonly text?: string;
             readonly components?: readonly ChatUiComponentInput[];
-            readonly replies?: readonly string[];
+            readonly replies?: readonly QuickReplyInput[];
         },
     ): Promise<HistoryMessage> {
         const blocks: HistoryBlock[] = [];
@@ -342,11 +398,11 @@ export class ChatUiModule implements AgentModule {
             blocks.push({ type: "ui", ui: built.document });
         }
         if (input.replies !== undefined) {
-            const replies = this.replies(input.replies);
+            const replies = await this.replies(ctx, input.replies);
             if ("problems" in replies) {
                 throw new Error(`The daemon wrote invalid replies: ${replies.problems.join(" ")}`);
             }
-            blocks.push({ type: "quick_replies", options: replies.options });
+            blocks.push({ type: "quick_replies", ...replies.stored });
         }
         if (blocks.length === 0) throw new Error("The daemon wrote an empty message.");
         const recordId = input.recordId ?? createId();
@@ -362,13 +418,42 @@ export class ChatUiModule implements AgentModule {
         return message;
     }
 
-    /** Suggested replies as they are stored, or the problems a model can act on. */
-    replies(
-        options: readonly string[],
-    ): { readonly options: string[] } | { readonly problems: readonly string[] } {
-        const normalized = options.map(normalizeQuickReply);
-        const problems = quickRepliesProblems(normalized);
-        return problems.length > 0 ? { problems } : { options: normalized };
+    /**
+     * Suggested replies as they are stored, or the problems a model can act on: the options
+     * normalized and checked, and each option's reply component checked against the catalog, this
+     * server's contributions, and the contributing module's own checks.
+     */
+    async replies(
+        ctx: Context,
+        inputs: readonly QuickReplyInput[],
+    ): Promise<
+        | { readonly stored: { readonly options: string[]; readonly ui?: (ReplyUi | null)[] } }
+        | { readonly problems: readonly string[] }
+    > {
+        const { options, ui } = splitQuickReplies(inputs);
+        const problems = quickRepliesProblems(options);
+        if (ui === undefined) return problems.length > 0 ? { problems } : { stored: { options } };
+        for (const [index, item] of ui.entries()) {
+            if (item === null) continue;
+            const served = this.#replyContributions.get(item.type);
+            if (served === undefined) {
+                problems.push(
+                    this.replyComponents.length === 0
+                        ? `Reply ${index + 1}: options take no ui here.`
+                        : `Reply ${index + 1}: there is no "${item.type}" reply ui here. Use one of ${this.replyComponents.join(", ")}.`,
+                );
+                continue;
+            }
+            const invalid = replyUiProblems(item);
+            if (invalid.length > 0) {
+                problems.push(...invalid.map((line) => `Reply ${index + 1}: ${line}`));
+                continue;
+            }
+            const checked = (await served.contribution.check?.(ctx, item.props as never)) ?? [];
+            problems.push(...checked.map((line) => `Reply ${index + 1}: ${line}`));
+        }
+        if (problems.length > 0) return { problems };
+        return { stored: { options, ui: ui as (ReplyUi | null)[] } };
     }
 
     /**
@@ -815,16 +900,16 @@ function clip(text: string, max: number): string {
     return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
-/** `images` props name media by index; a document's later components count after earlier ones. */
+/** `media` props name items by index; a document's later components count after earlier ones. */
 function shiftMediaIndexes(props: unknown, offset: number): unknown {
     if (offset === 0 || typeof props !== "object" || props === null) return props;
     const record = props as Record<string, unknown>;
-    if (!Array.isArray(record["images"])) return props;
+    if (!Array.isArray(record["items"])) return props;
     return {
         ...record,
-        images: (record["images"] as Record<string, unknown>[]).map((image) => ({
-            ...image,
-            mediaIndex: (image["mediaIndex"] as number) + offset,
+        items: (record["items"] as Record<string, unknown>[]).map((item) => ({
+            ...item,
+            mediaIndex: (item["mediaIndex"] as number) + offset,
         })),
     };
 }

@@ -89,12 +89,13 @@ describe("an agent's reply lays out media it already showed", () => {
 
         await gym.send("Compare the shots.", { permissionMode: "auto" });
 
-        // The agent is told how, once, in its instructions.
+        // Layouts in text are legacy: the agent is taught show_ui's media component instead, and
+        // a layout it still writes keeps rendering.
         const conversation = gym.inference.requests.filter(
             (request) => request.sessionId === agentId,
         );
         expect(conversation[0]?.instructions).toContain(
-            "To arrange images already shown in this chat, write plain HTML in your reply",
+            "use the media component of show_ui instead of HTML in your reply",
         );
 
         const page = await gym.client.getMessages(gym.defaultSessionId);

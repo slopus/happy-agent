@@ -1,7 +1,7 @@
 import { Type, type Static } from "@sinclair/typebox";
 
 import { uiComponentSchema } from "../ui/catalog.js";
-import { MAX_UI_IMAGES } from "../ui/components/images.js";
+import { MAX_UI_MEDIA } from "../ui/components/media.js";
 import { cuid2Schema, eventCursorSchema, Nullable } from "./common.js";
 import { mediaItemSchema, type ServiceMessage } from "./messages.js";
 
@@ -40,13 +40,13 @@ export const uiBlockSchema = Type.Object({
 export type UiBlock = Static<typeof uiBlockSchema>;
 
 /**
- * The document a completed `show_ui` call showed. `images` components name their media by index
+ * The document a completed `show_ui` call showed. `media` components name their items by index
  * into `items`, whose bytes are `GET /v0/agents/:agentId/tool-calls/:toolCallId/media/:index`.
  */
 export const uiPresentationSchema = Type.Object({
     type: Type.Literal("ui"),
     ui: uiDocumentSchema,
-    items: Type.Array(mediaItemSchema, { maxItems: MAX_UI_IMAGES }),
+    items: Type.Array(mediaItemSchema, { maxItems: MAX_UI_MEDIA }),
 });
 export type UiPresentation = Static<typeof uiPresentationSchema>;
 
@@ -121,10 +121,14 @@ export const uiActionResponseSchema = Type.Object({
 });
 export type UiActionResponse = Static<typeof uiActionResponseSchema>;
 
-/** `capabilities.chatUi` in health: the catalog version and the components this server serves. */
+/**
+ * `capabilities.chatUi` in health: the catalog version, the components this server serves, and the
+ * reply components its quick replies may carry (absent on servers without any).
+ */
 export const chatUiCapabilitySchema = Type.Object({
     version: Type.Integer({ minimum: 1 }),
     components: Type.Array(Type.String({ minLength: 1, maxLength: 64 })),
+    replies: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 64 }))),
 });
 export type ChatUiCapability = Static<typeof chatUiCapabilitySchema>;
 

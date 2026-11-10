@@ -20,7 +20,12 @@ token are `Secret` fields. When a widget's sign-in finishes, its `sign_in` finds
 signed in already, or its token connects it, `onConnected` listeners hear which conversation
 connected it, and the conversation gets a hidden note that wakes its model. A listener that tells
 the conversation itself, as onboarding does for the Chief of Staff, answers `true`, and the note
-then joins that turn instead of starting one.
+then joins that turn instead of starting one. Its `account: "new"` prop, adding another account,
+is refused by `check` until the daemon can sign into a fresh configuration.
+
+It also contributes the `provider` reply component (`impl/providerReply.ts`), which puts an AI's
+mark and live state beside a quick reply. Clients read that state from this module's objects; its
+`check` refuses an AI that has no provider CLI here.
 
 ## The catalog
 

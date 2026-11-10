@@ -11003,6 +11003,9 @@ export class ApiModule implements AgentModule {
                           chatUi: {
                               version: UI_CATALOG_VERSION,
                               components: [...this.#chatUi.components],
+                              ...(this.#chatUi.replyComponents.length === 0
+                                  ? {}
+                                  : { replies: [...this.#chatUi.replyComponents] }),
                           },
                       }),
                 ...(this.#onboardingFlow === undefined || this.#team.enabled

@@ -1,7 +1,7 @@
 # Chat UI
 
-Chat UI is the components a conversation shows, such as a sign-in, a phone pairing code, or a grid
-of images, and every click on them. Every action is silent: it changes server state and never
+Chat UI is the components a conversation shows, such as a sign-in, a phone pairing code, or a row
+of pictures, and every click on them. Every action is silent: it changes server state and never
 becomes the person's words. The module also owns quick replies, the answers a person can send with
 one tap. `packages/happy-agent/API.md` ("Chat UI" and "Quick replies") is the contract, and
 `@slopus/happy-agent-client` holds the catalog: each component's props, actions, payloads, results,
@@ -14,12 +14,12 @@ permissions, and `Secret` fields, plus the checks both sides run.
 | ------------------------- | ---------------- |
 | `file_tree`               | Chat UI itself   |
 | `default_model`           | Chat UI (Config) |
-| `images`                  | Compute          |
+| `media`                   | Compute          |
 | `provider_sign_in`        | Provider CLIs    |
 | `phone_app`, `phone_pair` | Mobile Connector |
 
 A contribution (`ChatUiContribution.ts`) has the model-facing `prompt`, the `fallback` line older
-clients read instead, an optional `prepare` (such as `images` snapshotting files into chat media)
+clients read instead, an optional `prepare` (such as `media` snapshotting files into chat media)
 and `check`, an optional Auto `shouldReview`, `guestSafe` for exported bots' guests, and one hook
 per action. A hook returns `accepted` (with an optional hidden `note`, `wake`, and typed
 `result`) or `rejected` with a code and a reason; a throw or 15 seconds fails the attempt.
@@ -44,6 +44,20 @@ agent message here holding that suggestion (the named `suggest_replies` result, 
 `quick_replies` block when no call is named), with an option at `index` equal to `text` exactly;
 otherwise `400`. There is no liveness, once, or audience check. The pending row and the message
 metadata carry `quickReply`, and History copies it onto the accepted message.
+
+### Reply components
+
+An option may carry a reply component, a small display-only drawing beside its text, such as an
+AI's mark and live sign-in state. The catalog lives in the client under `sources/replies/`. Modules
+serve a type with `contributeReply(bundle, { prompt, check? })`: `suggest_replies` teaches each
+served type's prompt and props, `capabilities.chatUi.replies` lists them, and `replies` checks each
+option's `ui` against the catalog, the served types, and the module's `check`. The stored form keeps
+`options` as strings and adds `ui`, one entry per option, null for a bare one, left out when no
+option has one, so older clients and the `quickReply` check never see a difference.
+
+| Reply component | Contributed by |
+| --------------- | -------------- |
+| `provider`      | Provider CLIs  |
 
 ## Notes
 

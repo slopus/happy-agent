@@ -29,7 +29,7 @@ export interface UiComponentDefinition<
     /** The props stored on the wire and drawn by clients. */
     readonly props: Props;
     /**
-     * What the model or the daemon writes, when it differs from `props`: `images` takes file paths
+     * What the model or the daemon writes, when it differs from `props`: `media` takes file paths
      * that become media indexes. Absent means `props`.
      */
     readonly input?: Input;
