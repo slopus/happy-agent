@@ -801,6 +801,11 @@ export class ApiModule implements AgentModule {
     /** Created agents awaiting their announcement, each with the mutation its creator answered. */
     readonly #pendingAgentCreations = new Map<string, string | undefined>();
     readonly #announcedTerminalRuns = new Set<string>();
+    /**
+     * Runs the agent loop started, which its settlement announces as finished. The durable
+     * fallback for service messages never does: their events may still wait in the queue.
+     */
+    readonly #loopRuns = new Set<string>();
     readonly #acceptedMessageBatches = new Map<string, AcceptedMessageBatch>();
     readonly #pendingMessageAnnouncements = new Map<
         string,
@@ -1092,6 +1097,7 @@ export class ApiModule implements AgentModule {
         this.#announcedPendingMessages.clear();
         this.#apiPendingMessageIds.clear();
         this.#announcedExecutionConfigurations.clear();
+        this.#loopRuns.clear();
         this.#announcedAgentCreations.clear();
         this.#pendingAgentCreations.clear();
         this.#acceptedMessageBatches.clear();
@@ -3247,9 +3253,13 @@ export class ApiModule implements AgentModule {
                         for (const message of eligible) {
                             // Service notes have a durable maintenance run but no provider event.
                             // Announce its terminal snapshot so an open chat can attach the note.
+                            // A loop run is announced finished by its settlement alone, after
+                            // its last event: one that ended while this queue lagged behind it
+                            // must not be announced before the tool events still waiting here.
                             if (
                                 message.runId !== undefined &&
-                                !this.#announcedTerminalRuns.has(message.runId)
+                                !this.#announcedTerminalRuns.has(message.runId) &&
+                                !this.#loopRuns.has(message.runId)
                             ) {
                                 const run = await this.#history.run(ctx, agentId, message.runId);
                                 if (run !== undefined && run.status !== "running") {
@@ -4745,6 +4755,7 @@ export class ApiModule implements AgentModule {
             }
         };
         const startedRun = startedRunResource({ id: batch.runId, startedAt: batch.startedAt });
+        boundedAdd(this.#loopRuns, batch.runId, MAX_ANNOUNCED_TERMINAL_RUNS);
         const acceptedMessageIds = batch.messages.flatMap((message) =>
             message.hidden ? [] : [message.id],
         );

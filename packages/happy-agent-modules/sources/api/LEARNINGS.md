@@ -514,3 +514,17 @@ When a model called `show_ui` and `suggest_replies` in one message, the first ca
 `running` in every streamed `message.updated` and clients ended it as stopped when the run
 finished. A provider partial carries only the block streaming now and every result so far, so the
 earlier blocks the API holds are now settled from those results (`settledToolCalls`).
+
+## Only its settlement announces a loop run finished
+
+The fallback that announces a service message's finished run, so an open chat can attach the note,
+also fired for a run the agent loop started: when the conversation's event queue lagged behind the
+loop, the fallback met an execution configuration message of a run that had already ended in
+history and announced `run.finished` ahead of the run's tool events still waiting in the same
+queue. Clients end every call still running when its run finishes, so a `show_ui` call that
+completed a moment later was shown as stopped. The API now remembers the runs the loop started
+(`#loopRuns`) and leaves their end to their settlement, which is queued after their last event.
+The fallback still announces runs the loop never started: maintenance runs and standalone runs.
+A runtime test holds the queue at the turn's first event until the loop has settled, which is the
+lag at its worst, and the gym scenario for `show_ui` with `suggest_replies` asserts the same
+order through the daemon.
