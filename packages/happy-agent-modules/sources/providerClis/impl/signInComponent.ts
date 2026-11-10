@@ -5,8 +5,9 @@ import type { ChatUiModule } from "../../chatUi/index.js";
 import type { ProviderClisModule } from "../ProviderClisModule.js";
 import { ProviderCliRequestError, type ProviderCli, type ProviderCliId } from "../ProviderCli.js";
 
+/** Each AI by its provider CLI name, as the sign-in row and onboarding name it. */
 const NAMES: Readonly<Record<ProviderCliId, string>> = {
-    claude: "Claude",
+    claude: "Claude Code",
     codex: "Codex",
     grok: "Grok",
     antigravity: "Antigravity",

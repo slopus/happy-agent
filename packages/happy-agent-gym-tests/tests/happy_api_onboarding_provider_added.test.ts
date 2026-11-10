@@ -69,7 +69,7 @@ describe("Another AI connected while the model guides", () => {
             );
             expect(added).toHaveLength(1);
             expect(JSON.stringify(added[0]!.messages)).toContain(
-                "Claude is connected and signed in.",
+                "Claude Code is connected and signed in.",
             );
             // Each event lists every AI with its live state, so the model words its replies:
             // "Connect Claude Code" before, "Add another Claude Code account" after.

@@ -8535,7 +8535,7 @@ one is an ordinary `send`.
             {
                 "id": "claude",
                 "type": "provider_sign_in",
-                "fallback": "Sign in to Claude in Happy on your computer",
+                "fallback": "Sign in to Claude Code in Happy on your computer",
                 "props": { "provider": "claude" }
             }
         ]

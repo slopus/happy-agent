@@ -76,7 +76,7 @@ describe("A sign-in widget outside onboarding", () => {
             );
             expect(woken).toHaveLength(1);
             expect(JSON.stringify(woken[0]!.messages.at(-1))).toContain(
-                "Claude is connected and signed in.",
+                "Claude Code is connected and signed in.",
             );
             // The note is hidden: no one's message in the conversation.
             for (const message of await messagesOf(gym, agentId)) {
