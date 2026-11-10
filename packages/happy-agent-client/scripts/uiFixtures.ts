@@ -340,6 +340,56 @@ export function buildUiActionFixtures(): unknown {
                 props: { items: [{ mediaIndex: 0 }], columns: 2 },
             },
         ],
+        // Known types whose props do not fit: legal on the wire, shown as their fallback line,
+        // and refused by a server. A key the type does not take:
+        [
+            {
+                id: "tree",
+                fallback: "src/app.ts",
+                type: "file_tree",
+                props: { paths: ["src/app.ts"], collapsed: true },
+            },
+        ],
+        // No paths, and no `paths` at all:
+        [{ id: "tree", fallback: "A file tree", type: "file_tree", props: { paths: [] } }],
+        [{ id: "tree", fallback: "A file tree", type: "file_tree", props: {} }],
+        // A path holding a control character, an empty path, and a path that is not text:
+        [
+            {
+                id: "tree",
+                fallback: "src/app.ts",
+                type: "file_tree",
+                props: { paths: ["src/\u0007app.ts"] },
+            },
+        ],
+        [{ id: "tree", fallback: "src", type: "file_tree", props: { paths: ["src", ""] } }],
+        [{ id: "tree", fallback: "src", type: "file_tree", props: { paths: ["src", 7] } }],
+        // `paths` that is not a list:
+        [{ id: "tree", fallback: "src", type: "file_tree", props: { paths: "src" } }],
+        // A prop `default_model` does not take:
+        [
+            {
+                id: "model",
+                fallback: "Choose your default model",
+                type: "default_model",
+                props: { modelId: "gpt-5.5" },
+            },
+        ],
+        // One component that does not fit beside one that does: each is judged alone.
+        [
+            {
+                id: "tree",
+                fallback: "src/app.ts",
+                type: "file_tree",
+                props: { paths: ["src/app.ts"] },
+            },
+            {
+                id: "model",
+                fallback: "Choose your default model",
+                type: "default_model",
+                props: { providerId: "codex", modelId: "gpt-5.5", effort: "high" },
+            },
+        ],
     ].map((components) => ({
         document: { id: "u1x8k2m9r4t8w1y5z3a6b0c2", components },
         // Whether a client may read it at all, and which components it draws rather than
