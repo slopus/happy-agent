@@ -573,3 +573,9 @@ periodic poll cannot read every account, such as a Codex API key behind a gatewa
 `x-codex-*` headers. Claude Code and Codex report the account's limits while they work. A foreign
 agent provider now passes those readings to the same account-usage listeners as native providers,
 renamed for the account the agent ran on.
+
+## The default model tells its listeners when it changes
+
+A chat UI action sets the default model through `setDefaultModel`, not through the API's route, so
+nothing told clients it changed. Config now calls `onDefaultModelChanged` listeners after the
+write, and the API announces `config.updated` from there for every caller.

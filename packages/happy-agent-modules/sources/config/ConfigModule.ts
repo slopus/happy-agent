@@ -1882,6 +1882,7 @@ export class ConfigModule implements AgentModule {
     readonly #providerLifetime = new AbortController();
     #credentialRefreshStarted = false;
     readonly #serviceTierListeners = new Set<() => void>();
+    readonly #defaultModelListeners = new Set<() => void>();
     readonly #serviceTiers = new ProviderServiceTiers(() => {
         for (const listener of this.#serviceTierListeners) {
             try {
@@ -2377,6 +2378,21 @@ export class ConfigModule implements AgentModule {
             this.#runtimeValues = next;
             this.#liveDefault = { providerId: update.providerId, modelId: update.modelId, effort };
         });
+        for (const listener of [...this.#defaultModelListeners]) {
+            try {
+                listener();
+            } catch (error: unknown) {
+                ctx.log.warn("A default model listener failed.", {}, error);
+            }
+        }
+    }
+
+    /** Hear the default model change, whoever changed it, after it was written. */
+    onDefaultModelChanged(listener: () => void): () => void {
+        this.#defaultModelListeners.add(listener);
+        return () => {
+            this.#defaultModelListeners.delete(listener);
+        };
     }
 
     /** A model's own default effort, not the one a default-model choice gave it. */

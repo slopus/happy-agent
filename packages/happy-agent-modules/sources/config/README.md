@@ -323,6 +323,9 @@ settles. A module asks for the answer instead of being handed the path it would 
   unless set), and `bots`, each bot ID's own user. Undefined when work runs as the daemon's user.
   User names are strict Linux names and never `root`, and the table is refused beside
   `[runners]` and on Windows.
+- `onDefaultModelChanged(listener)` — hear the default model change after `setDefaultModel` wrote
+  it, whoever asked: the API's own route or a chat UI action. The API announces `config.updated`
+  from it, so every client redraws the default.
 - `workspaceSettings` — what a workspace folder does when it says nothing itself: what to sync,
   what to protect, what to run on setup, and what archiving leaves on disk.
 
