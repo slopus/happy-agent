@@ -257,3 +257,12 @@ typing, with `quickReply` naming where it came from. The guide has the model ask
 call `suggest_replies` for the consent, first-task, empty-machine and nickname steps; `show_ui` is
 left for live controls (sign-in, phone app, pairing, default model). The person can always type
 instead.
+
+## More AIs are offered one at a time, worded by their live state
+
+Showing a `provider_sign_in` for every AI at once made a long list of controls. Kirill chose the
+gradual flow: after the profile, the model suggests one `provider` reply per AI ("Set up Grok",
+"Sign in to ChatGPT", "Connect Claude", "Add another Claude account") and "That's all for now", and a
+tap shows one sign-in row for that AI alone. The wording follows each AI's state, which `begin` and
+`providerAdded` carry as `ais`, because the model cannot see the provider CLIs itself. The opening
+still shows every sign-in row: before an AI is connected there is no model to answer a tap.

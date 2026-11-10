@@ -110,11 +110,23 @@ const useModelArgumentsSchema = Type.Object(
     { additionalProperties: false },
 );
 
+/**
+ * Each AI this computer has or can install, by provider CLI ID, with its live state, so the model
+ * words its replies to match: connected here, signed in but not connected, signed out, or not
+ * installed.
+ */
+type OnboardingAi = {
+    readonly provider: string;
+    readonly app: string;
+    readonly state: "connected" | "signed_in" | "signed_out" | "not_installed";
+};
+
 /** What happened that the person did not do themselves, told to the model as hidden context. */
 type OnboardingEvent =
     | {
           readonly kind: "begin";
           readonly connected: readonly { readonly app: string; readonly account?: string }[];
+          readonly ais: readonly OnboardingAi[];
           readonly model: { readonly name: string; readonly effort: string };
           /** The kind of device onboarding began on, when the start named one. */
           readonly device?: OnboardingDevice;
@@ -124,7 +136,11 @@ type OnboardingEvent =
               readonly source: "git" | "profile";
           };
       }
-    | { readonly kind: "providerAdded"; readonly app: string }
+    | {
+          readonly kind: "providerAdded";
+          readonly app: string;
+          readonly ais: readonly OnboardingAi[];
+      }
     | { readonly kind: "phonePaired"; readonly device?: string }
     | ({ readonly kind: "taskUpdated"; readonly name: string; readonly link: string } & TaskUpdate);
 
@@ -795,6 +811,8 @@ export class OnboardingModule implements AgentModule {
         if (added(await this.#state(ctx))) return;
         const result = await this.#useCli(ctx, cli);
         if ("reason" in result) return;
+        const before = await this.#state(ctx);
+        const ais = await this.#ais(ctx, [...before.connections, result.connection]);
         await ctx.inTx(async (txCtx) => {
             const current = await this.#state(txCtx);
             if (added(current)) return;
@@ -802,7 +820,7 @@ export class OnboardingModule implements AgentModule {
                 ...current,
                 connections: [...current.connections, result.connection],
             });
-            await this.#tell(txCtx, current, { kind: "providerAdded", app: APP_OF[cli.id] });
+            await this.#tell(txCtx, current, { kind: "providerAdded", app: APP_OF[cli.id], ais });
         });
     }
 
@@ -1020,12 +1038,14 @@ export class OnboardingModule implements AgentModule {
             mutationId,
         );
         const prefill = await this.#prefill(ctx);
+        const ais = await this.#ais(ctx, next.connections);
         await this.#tell(ctx, next, {
             kind: "begin",
             connected: next.connections.map(({ app, account }) => ({
                 app,
                 ...(account === undefined ? {} : { account }),
             })),
+            ais,
             model: { name: model.name, effort: effortLabel(model.defaultEffort) },
             ...(next.startedOn === undefined ? {} : { device: next.startedOn }),
             ...(prefill === undefined ? {} : { profile: prefill }),
@@ -1316,6 +1336,32 @@ export class OnboardingModule implements AgentModule {
                 }
             });
         });
+    }
+
+    /** Every AI this computer has or can install, with its live state for the model's replies. */
+    async #ais(
+        ctx: Context,
+        connections: readonly { readonly providerId: string }[],
+    ): Promise<OnboardingAi[]> {
+        const ais: OnboardingAi[] = [];
+        for (const cli of await this.#providerClis.list(ctx)) {
+            if (cli.installation.status !== "installed" && cli.installer === null) continue;
+            const connected =
+                cli.providerId !== null &&
+                connections.some((connection) => connection.providerId === cli.providerId);
+            ais.push({
+                provider: cli.id,
+                app: APP_OF[cli.id],
+                state: connected
+                    ? "connected"
+                    : cli.installation.status !== "installed"
+                      ? "not_installed"
+                      : cli.signIn.status === "signed_in"
+                        ? "signed_in"
+                        : "signed_out",
+            });
+        }
+        return ais;
     }
 
     /**

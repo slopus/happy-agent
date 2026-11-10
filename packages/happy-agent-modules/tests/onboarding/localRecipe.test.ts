@@ -1,4 +1,4 @@
-import { uiComponents } from "@slopus/happy-agent-client";
+import { replyComponents, uiComponents } from "@slopus/happy-agent-client";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -65,6 +65,23 @@ describe("the local onboarding recipe", () => {
             .flatMap((line) => /^ {2}([a-z_]+) {3}\(/u.exec(line)?.[1] ?? []);
         expect(taught).toEqual(["provider_sign_in", "phone_app", "phone_pair", "default_model"]);
         for (const type of taught) expect(known.has(type), type).toBe(true);
+    });
+
+    it("offers more AIs one at a time, as provider replies worded by their live state", () => {
+        const guide = recipeText(recipe.guide);
+        expect(guide).toContain("Then ask about more AIs, as below, in the same message.");
+        expect(guide).toContain('{"type": "provider", "props": {"provider": "<provider>"}}');
+        expect(replyComponents.map((reply) => reply.type)).toContain("provider");
+        for (const wording of [
+            '  connected   "Add another <app> account"',
+            '  signed_in   "Connect <app>"',
+            '  signed_out   "Sign in to <app>"',
+            '  not_installed   "Set up <app>"',
+        ]) {
+            expect(guide.split("\n")).toContain(wording);
+        }
+        expect(guide).toContain("Show one provider_sign_in for that AI alone");
+        expect(guide).toContain('"That\'s all for now" → ask step 2');
     });
 
     it("speaks in the first person, never as Happy, and without em dashes or exclamation marks", () => {

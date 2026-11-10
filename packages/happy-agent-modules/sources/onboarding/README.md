@@ -80,7 +80,8 @@ Staff's own tool call reaches its composer through the `onboarding.useModel` dur
 because an agent's metadata cannot be written from inside its own loop.
 
 What the person did not do themselves reaches the model as hidden events: `providerAdded` when
-another AI finishes signing in, `phonePaired`, and `taskUpdated` for each task `start_first_task`
+another AI finishes signing in (it and `begin` list `ais`, each AI's live state, so the model words
+its "More AIs" replies as "Set up", "Sign in to", "Connect", or "Add another … account"), `phonePaired`, and `taskUpdated` for each task `start_first_task`
 started. Those tasks are kept as the flow's `firstTasks`, and each is followed until its run first
 finishes or fails, also after onboarding finished:
 

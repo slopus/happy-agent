@@ -71,6 +71,18 @@ describe("Another AI connected while the model guides", () => {
             expect(JSON.stringify(added[0]!.messages)).toContain(
                 "Claude is connected and signed in.",
             );
+            // Each event lists every AI with its live state, so the model words its replies:
+            // "Connect Claude" before, "Add another Claude account" after.
+            const begin = gym.inference.requests.find((request) => cue(request) === "event:begin");
+            expect(JSON.stringify(begin!.messages)).toContain(
+                '{\\"provider\\":\\"claude\\",\\"app\\":\\"Claude\\",\\"state\\":\\"signed_in\\"}',
+            );
+            expect(JSON.stringify(begin!.messages)).toContain(
+                '{\\"provider\\":\\"codex\\",\\"app\\":\\"ChatGPT\\",\\"state\\":\\"connected\\"}',
+            );
+            expect(JSON.stringify(added[0]!.messages)).toContain(
+                '{\\"provider\\":\\"claude\\",\\"app\\":\\"Claude\\",\\"state\\":\\"connected\\"}',
+            );
             // The note was no turn of its own: the only turn after show_ui is the event's.
             expect(
                 gym.inference.requests.filter((request) => cue(request) === "shown"),

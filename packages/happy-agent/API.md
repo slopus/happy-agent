@@ -3284,7 +3284,12 @@ The standalone daemon's `local` recipe:
 3. The model saves the name and email it was given from the person's Git settings with
    `save_profile` and says so, or asks for them when there are none, and renames the bot "<First
    name>'s Chief of Staff" with `set_bot_name`, or to the nickname the person gives it, suggesting a
-   few with `suggest_replies`. With the person's consent, asked for with `suggest_replies`, it calls
+   few with `suggest_replies`. Next it offers to connect more AIs, one at a time: `suggest_replies`
+   options with the `provider` reply component, worded by each AI's live state ("Set up Grok",
+   "Sign in to ChatGPT", "Add another Claude account"), and "That's all for now". A tap shows one
+   `provider_sign_in` for that AI, with `account: "new"` for another account of a connected one, and
+   the hidden entry for its connection lists every AI's state again. With the person's consent,
+   asked for with `suggest_replies`, it calls
    `find_recent_projects`, which the daemon runs itself, read-only and within a few seconds, never
    through the bot's shell or an automatic review. It reads the folders Claude Code and Codex last
    worked in, at most five, or one folder the person names, with their Git metadata, and returns
