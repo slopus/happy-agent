@@ -123,7 +123,7 @@ export function presentFilesTool(compute: Compute, chatMedia: ChatMediaModule) {
  * is measured before it is read, so a directory, an empty file, or one over its limit is refused
  * without reading it.
  */
-async function presentComputeFiles(
+export async function presentComputeFiles(
     ctx: Context,
     compute: Compute,
     chatMedia: ChatMediaModule,
@@ -176,7 +176,7 @@ async function presentComputeFiles(
 }
 
 /** Whether reading any of these files crosses the agent's filesystem boundary. */
-async function shouldReviewPaths(
+export async function shouldReviewPaths(
     ctx: Context,
     compute: Compute,
     paths: readonly string[],

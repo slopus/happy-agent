@@ -36,6 +36,7 @@ import type { Duplex } from "node:stream";
 
 import type { BotSettingsModule } from "../botSettings/index.js";
 import type { ChatMediaModule } from "../chatMedia/index.js";
+import type { ChatUiModule } from "../chatUi/index.js";
 import type { ConfigModule } from "../config/index.js";
 import type { RunnerProductFiles, RunnersModule } from "../runners/index.js";
 import { FileReadLog } from "../impl/FileReadLog.js";
@@ -69,6 +70,7 @@ import { shouldReviewComputePath } from "./impl/shouldReviewComputePath.js";
 import { withConfiguredNetwork } from "./impl/withConfiguredNetwork.js";
 import { assembleComputeTools } from "./tools/assembleComputeTools.js";
 import { presentFilesTool } from "./tools/present_files.js";
+import { contributeMediaComponent } from "./impl/mediaComponent.js";
 import { assembleReviewerTools } from "./tools/assembleReviewerTools.js";
 
 /**
@@ -311,6 +313,8 @@ export class ComputeModule implements AgentModule {
      * @param chatMedia Where files the agent shows the user are kept. With it, every agent gets
      * `present_files`, and an image the agent reads is shown to the user as well. Without it,
      * nothing on the machine is shown in the chat.
+     * @param chatUi Where the `media` component is served. With it and chat media, `show_ui` can
+     * show files from the agent's machine together.
      */
     constructor(
         config: ConfigModule,
@@ -318,7 +322,11 @@ export class ComputeModule implements AgentModule {
         runners?: RunnersModule,
         botSettings?: BotSettingsModule,
         chatMedia?: ChatMediaModule,
+        chatUi?: ChatUiModule,
     ) {
+        if (chatUi !== undefined && chatMedia !== undefined) {
+            contributeMediaComponent(chatUi, this, chatMedia);
+        }
         this.#config = config;
         this.#secrets = secrets;
         this.#runners = runners;
@@ -342,12 +350,13 @@ export class ComputeModule implements AgentModule {
         runners?: RunnersModule,
         botSettings?: BotSettingsModule,
         chatMedia?: ChatMediaModule,
+        chatUi?: ChatUiModule,
     ): ComputeModule {
         const candidate = { id: provider.id, create: provider.create };
         if (!Value.Check(hostComputeProviderSchema, candidate)) {
             throw new Error("The host compute provider is invalid.");
         }
-        const module = new ComputeModule(config, secrets, runners, botSettings, chatMedia);
+        const module = new ComputeModule(config, secrets, runners, botSettings, chatMedia, chatUi);
         module.#provider = provider;
         return module;
     }
