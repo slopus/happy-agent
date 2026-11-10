@@ -1767,6 +1767,7 @@ describe("Foreign harness live transcript visibility", () => {
         const api = new ApiModule(
             passive as never,
             {
+                onDefaultModelChanged: subscribe,
                 onProviderServiceTiersChanged: subscribe,
                 configuration: {
                     paths: { tokenPath: join(directory, "token"), agentHome: directory },

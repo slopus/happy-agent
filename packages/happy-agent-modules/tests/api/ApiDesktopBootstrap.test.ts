@@ -518,6 +518,7 @@ async function createFixture(tracing = false) {
     const api = new ApiModule(
         passive as never,
         {
+            onDefaultModelChanged: () => () => undefined,
             onProviderServiceTiersChanged: (listener: () => void) => {
                 serviceTierListeners.add(listener);
                 return () => {

@@ -493,3 +493,24 @@ project holding it, so the refresh threw and rolled the archival back. Any agent
 and no project now skips the refresh, as shared-filesystem subtasks already did; parentless roots
 without an owner still fail. Collaboration's unit tests replace the agent collection, so the
 regression test runs archival through the real runtime.
+
+## Chat UI reaches older clients as text
+
+Protocol 35 adds blocks and a presentation no earlier client can read. A client that reads chat UI
+says so with the `Happy-Protocol` request header; for any other request the API projects every
+message it returns or streams, so a document reads as its fallback lines, a suggestion as one
+line, and an attempt record is left out with the run it alone is in. The projection sits at the
+API boundary only: History and the journal always hold the real blocks.
+
+## A changed default model is announced whoever changed it
+
+`config.updated` was sent only by `PATCH /v0/config`, so a default model set from a chat UI action
+left every other client showing the old one. The API now announces it from Config's own
+default-model listener, and the route no longer announces a default change itself.
+
+## Two tool calls in one message both finish in the stream
+
+When a model called `show_ui` and `suggest_replies` in one message, the first call stayed
+`running` in every streamed `message.updated` and clients ended it as stopped when the run
+finished. A provider partial carries only the block streaming now and every result so far, so the
+earlier blocks the API holds are now settled from those results (`settledToolCalls`).

@@ -128,6 +128,10 @@ import {
     networkIdSchema,
     skillPageQuerySchema,
     updateGlobalSkillRequestSchema,
+    uiActionRequestSchema,
+    UI_CATALOG_VERSION,
+    UI_MEMBER_PERMISSIONS,
+    UI_PERMISSION_IDS,
     type ArtifactFileInput as ArtifactRequestFile,
     type ArtifactSourceInput as ArtifactRequestSource,
     type AuthenticationChallenge,
@@ -215,6 +219,7 @@ import {
     type TaskRecord,
 } from "../tasks/index.js";
 import type { TeammatesModule } from "../teammates/index.js";
+import { ChatUiActionError, type ChatUiModule } from "../chatUi/index.js";
 import {
     CompactionAgentBusyError,
     CompactionAlreadyRunningError,
@@ -376,6 +381,7 @@ import {
     messageResource,
     providerMessageContent,
     reviewedToolCalls,
+    settledToolCalls,
     toolResultPresentations,
 } from "./ApiMessageProjection.js";
 import { prepareLocalApiToken } from "./prepareLocalApiToken.js";
@@ -442,9 +448,10 @@ import {
     projectEventDiagnostics,
     projectMessageDiagnostics,
 } from "./projectCredentialDiagnostics.js";
+import { projectChatUiEvent, projectChatUiMessage, readsChatUi } from "./projectChatUi.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 
-const API_PROTOCOL_VERSION = 34;
+const API_PROTOCOL_VERSION = 35;
 
 const addServerConnectionRequestSchema = Type.Object(
     {
@@ -692,6 +699,7 @@ export class ApiModule implements AgentModule {
     readonly #feed: FeedModule | undefined;
     readonly #nodeSearch: NodeSearchModule | undefined;
     readonly #teammates: TeammatesModule | undefined;
+    readonly #chatUi: ChatUiModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
     readonly #mobileClosers = new WeakMap<MobileConnection, () => void>();
@@ -867,8 +875,10 @@ export class ApiModule implements AgentModule {
         feed?: FeedModule,
         nodeSearch?: NodeSearchModule,
         teammates?: TeammatesModule,
+        chatUi?: ChatUiModule,
     ) {
         this.#teammates = teammates;
+        this.#chatUi = chatUi;
         this.#abort = abort;
         this.#config = config;
         this.#events = events;
@@ -1611,10 +1621,10 @@ export class ApiModule implements AgentModule {
                     await this.#node.setName(txCtx, body.node.name);
                     return previous.name !== body.node.name;
                 });
+                // A changed default model and a changed name have each announced themselves.
                 if (
-                    (body.providers !== undefined ||
-                        body.defaults !== undefined ||
-                        endpointChanged) &&
+                    (endpointChanged ||
+                        (body.providers !== undefined && body.defaults === undefined)) &&
                     !nameChanged
                 )
                     this.#journal.append("config.updated", {});
@@ -2137,7 +2147,7 @@ export class ApiModule implements AgentModule {
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/events") {
-                this.#handleEventPull(ctx, url, response);
+                this.#handleEventPull(ctx, request, url, response);
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/events/stream") {
@@ -3067,6 +3077,10 @@ export class ApiModule implements AgentModule {
             this.#config.onProviderServiceTiersChanged(() => {
                 this.#journal.appendOutsideMutation("config.updated", {});
             }),
+            // The default model changes through `PATCH /v0/config` and through chat UI.
+            this.#config.onDefaultModelChanged(() => {
+                this.#journal.append("config.updated", {});
+            }),
             this.#node.onUpdated(() => {
                 this.#journal.append("config.updated", {});
             }),
@@ -3184,6 +3198,24 @@ export class ApiModule implements AgentModule {
                 );
                 boundedAdd(this.#apiPendingMessageIds, pending.id, MAX_ANNOUNCED_PENDING_MESSAGES);
             }),
+            ...(this.#chatUi === undefined
+                ? []
+                : [
+                      // An attempt record's outcome changed in place.
+                      this.#chatUi.onRecordUpdated((agentId, record) => {
+                          void this.#queueAgentWork(ctx, agentId, undefined, async () => {
+                              this.#journal.append("message.updated", {
+                                  agentId,
+                                  runId: record.runId ?? null,
+                                  message: messageResource(record),
+                              });
+                          }).catch(() => {
+                              ctx.log.warn("The API could not announce a chat UI outcome.", {
+                                  agentId,
+                              });
+                          });
+                      }),
+                  ]),
             this.#history.onToolSpawn((_ctx, agentId, message) => {
                 if (messageHiddenFromUser(message)) return;
                 this.#appendForAgent(agentId, "message.updated", {
@@ -4404,7 +4436,14 @@ export class ApiModule implements AgentModule {
             toolResultPresentations(historical),
         );
         if (content === undefined) return;
+        const earlier = settledToolCalls(
+            committed,
+            partial?.["content"],
+            reviewedToolCalls(historical),
+            toolResultPresentations(historical),
+        );
         if (streaming !== undefined && streaming.messageId === messageId) {
+            streaming.committed = earlier;
             streaming.current = [...content];
             const offsets = this.#streamingDeltaOffsets.get(agentId) ?? [];
             for (const [index, block] of content.entries()) {
@@ -4426,7 +4465,7 @@ export class ApiModule implements AgentModule {
                     id: messageId,
                     role: "agent",
                     createdAt: event.occurredAt,
-                    content: [...committed, ...content],
+                    content: [...earlier, ...content],
                     metadata,
                 },
             },
@@ -4981,7 +5020,7 @@ export class ApiModule implements AgentModule {
             return true;
         }
         const action =
-            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity)$/.exec(
+            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|actions|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity)$/.exec(
                 url.pathname,
             );
         if (action !== null) {
@@ -4991,8 +5030,12 @@ export class ApiModule implements AgentModule {
                 await this.#handleAgentSend(ctx, request, response, agentId);
                 return true;
             }
+            if (operation === "actions" && request.method === "POST") {
+                await this.#handleAgentAction(ctx, request, response, agentId);
+                return true;
+            }
             if (operation === "messages" && request.method === "GET") {
-                await this.#handleAgentMessages(ctx, response, url, agentId);
+                await this.#handleAgentMessages(ctx, request, response, url, agentId);
                 return true;
             }
             if (operation === "question" && request.method === "GET") {
@@ -5533,6 +5576,52 @@ export class ApiModule implements AgentModule {
     }
 
     /**
+     * One click on a chat UI component. The route checks that the caller can reach the
+     * conversation and that it takes messages, and says what the caller holds; chat UI does the
+     * rest. See `POST /v0/agents/:agentId/actions` in API.md. The body is never logged.
+     */
+    async #handleAgentAction(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        agentId: string,
+    ): Promise<void> {
+        const chatUi = this.#chatUi;
+        if (chatUi === undefined) throw notFound("This server has no chat UI.");
+        await this.#requireAgent(ctx, agentId);
+        await this.#assertUserControlledAgent(ctx, agentId);
+        const body = await bodyAs(request, uiActionRequestSchema, "chat UI action");
+        const user = teamUser(ctx);
+        // A standalone daemon's one person holds everything; in team mode the owner does.
+        const granted = !this.#team.enabled
+            ? UI_PERMISSION_IDS
+            : user === undefined || isTeamGuest(user)
+              ? []
+              : user.isOwner
+                ? UI_PERMISSION_IDS
+                : UI_MEMBER_PERMISSIONS;
+        const cursor = this.#journal.cursor();
+        let result;
+        try {
+            result = await chatUi.act(ctx, {
+                agentId,
+                request: body,
+                person: { userId: user?.id, granted: new Set(granted) },
+            });
+        } catch (error: unknown) {
+            if (error instanceof ChatUiActionError) {
+                throw new ApiError(error.status, error.code, error.message);
+            }
+            throw error;
+        }
+        sendJson(response, 200, {
+            record: messageResource(result.record),
+            result: result.result,
+            cursor,
+        });
+    }
+
+    /**
      * Send a person's message to an agent, as `send` does: a repeated `id` sends nothing new and
      * answers with the message as it stands.
      */
@@ -5549,6 +5638,14 @@ export class ApiModule implements AgentModule {
                 async (txCtx) => await this.#sentUserMessage(txCtx, agentId, id),
             );
             if (existing !== undefined) return { message: existing, cursor };
+            const quickReply = body.quickReply;
+            if (quickReply !== undefined) {
+                const problem =
+                    this.#chatUi === undefined
+                        ? "This server has no quick replies."
+                        : await this.#chatUi.quickReplyProblem(ctx, agentId, quickReply, body.text);
+                if (problem !== undefined) throw invalidRequest(problem);
+            }
 
             const selected = this.#config.models.find(
                 (model) =>
@@ -5598,6 +5695,7 @@ export class ApiModule implements AgentModule {
                     ...(body.clientMetadata === undefined
                         ? {}
                         : { clientMetadata: body.clientMetadata }),
+                    ...(quickReply === undefined ? {} : { quickReply }),
                 },
             };
             const agents = this.#agentSystem();
@@ -5617,6 +5715,7 @@ export class ApiModule implements AgentModule {
                 ...(body.clientMetadata === undefined
                     ? {}
                     : { clientMetadata: body.clientMetadata }),
+                ...(quickReply === undefined ? {} : { quickReply }),
                 runId: null,
             };
             this.#announcedPendingMessages.add(id);
@@ -5831,6 +5930,7 @@ export class ApiModule implements AgentModule {
 
     async #handleAgentMessages(
         ctx: Context,
+        request: IncomingMessage,
         response: ServerResponse,
         url: URL,
         agentId: string,
@@ -5863,9 +5963,23 @@ export class ApiModule implements AgentModule {
                     page.runs.map((run) => run.id),
                 ),
             );
+            const chatUi = readsChatUi(request);
             const runs = ctx.span("api.messages.project", () =>
-                page.runs.map((run, index) => {
+                page.runs.flatMap((run, index) => {
                     const usage = runUsage[index] as UsageRunSummary;
+                    const messages = run.messages
+                        .filter((message) => !messageHiddenFromUser(message))
+                        .flatMap((message) => {
+                            const projected = projectMessageDiagnostics(
+                                messageResource(message, { omitToolData }),
+                                this.#canDiscloseCredentialSource(ctx),
+                            );
+                            // Below protocol 35, chat UI reads as fallback text and attempt
+                            // records are left out, with the runs they leave empty.
+                            const read = chatUi ? projected : projectChatUiMessage(projected);
+                            return read === undefined ? [] : [read];
+                        });
+                    if (messages.length === 0 && run.messages.length > 0 && !chatUi) return [];
                     return {
                         id: run.id,
                         status: run.status,
@@ -5874,14 +5988,7 @@ export class ApiModule implements AgentModule {
                         endedAt: run.endedAt,
                         usage: usage.usage,
                         costUsd: usage.costUsd,
-                        messages: run.messages
-                            .filter((message) => !messageHiddenFromUser(message))
-                            .map((message) =>
-                                projectMessageDiagnostics(
-                                    messageResource(message, { omitToolData }),
-                                    this.#canDiscloseCredentialSource(ctx),
-                                ),
-                            ),
+                        messages,
                     };
                 }),
             );
@@ -6344,7 +6451,13 @@ export class ApiModule implements AgentModule {
         void task.finally(() => this.#backgroundMetadataUpdates.delete(task));
     }
 
-    #handleEventPull(ctx: Context, url: URL, response: ServerResponse): void {
+    #handleEventPull(
+        ctx: Context,
+        request: IncomingMessage,
+        url: URL,
+        response: ServerResponse,
+    ): void {
+        const chatUi = readsChatUi(request);
         const after = optionalCursor(url.searchParams.get("after"));
         const until = optionalCursor(url.searchParams.get("until"));
         const limit = integerParameter(url.searchParams.get("limit"), 100, 1, 10_000);
@@ -6358,9 +6471,12 @@ export class ApiModule implements AgentModule {
             ...replay,
             events: replay.events
                 .filter((event) => this.#journal.visibleTo(event, teamUser(ctx)?.id))
-                .map((event) =>
-                    projectEventDiagnostics(event, this.#canDiscloseCredentialSource(ctx)),
-                ),
+                .flatMap((event) => {
+                    const read = chatUi ? event : projectChatUiEvent(event);
+                    return read === undefined
+                        ? []
+                        : [projectEventDiagnostics(read, this.#canDiscloseCredentialSource(ctx))];
+                }),
         });
     }
 
@@ -6388,6 +6504,17 @@ export class ApiModule implements AgentModule {
             maxWritableBytes: MAX_SSE_BUFFER_BYTES,
         });
         this.#streams.add(writer);
+        const chatUi = readsChatUi(request);
+        // One event as this stream's client reads it; below protocol 35 some are left out.
+        const send = (event: ApiEvent): boolean => {
+            const read = chatUi ? event : projectChatUiEvent(event);
+            if (read === undefined) return true;
+            return writer.write(
+                sseEventFrame(
+                    projectEventDiagnostics(read, this.#canDiscloseCredentialSource(ctx)),
+                ),
+            );
+        };
         // Live document frames address a stream by this name; journal events never use it.
         const streamId = this.#surfaces === undefined ? undefined : createId();
         if (streamId !== undefined)
@@ -6410,11 +6537,7 @@ export class ApiModule implements AgentModule {
                 pending.push(event);
                 return;
             }
-            writer.write(
-                sseEventFrame(
-                    projectEventDiagnostics(event, this.#canDiscloseCredentialSource(ctx)),
-                ),
-            );
+            send(event);
         });
         const current = this.#journal.cursor();
         const gap = after !== undefined && !this.#journal.hasCursor(after);
@@ -6441,26 +6564,11 @@ export class ApiModule implements AgentModule {
         }
         for (const event of replay) {
             if (!this.#journal.visibleTo(event, teamUser(ctx)?.id)) continue;
-            if (
-                !writer.write(
-                    sseEventFrame(
-                        projectEventDiagnostics(event, this.#canDiscloseCredentialSource(ctx)),
-                    ),
-                )
-            )
-                return;
+            if (!send(event)) return;
         }
         replaying = false;
         for (const event of pending) {
-            if (
-                event.cursor > current &&
-                !writer.write(
-                    sseEventFrame(
-                        projectEventDiagnostics(event, this.#canDiscloseCredentialSource(ctx)),
-                    ),
-                )
-            )
-                return;
+            if (event.cursor > current && !send(event)) return;
         }
         pending.splice(0);
         heartbeat = setInterval(() => {
@@ -10685,6 +10793,14 @@ export class ApiModule implements AgentModule {
                 ...(this.#providerRoutes === undefined || this.#team.enabled
                     ? {}
                     : { providerRoutes: true }),
+                ...(this.#chatUi === undefined
+                    ? {}
+                    : {
+                          chatUi: {
+                              version: UI_CATALOG_VERSION,
+                              components: [...this.#chatUi.components],
+                          },
+                      }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#stories === undefined ? {} : { storyFeed: true }),
                 ...(this.#feed === undefined ? {} : { feed: true, feedSubjectFilter: true }),
@@ -12017,6 +12133,7 @@ function pendingMessageResource(pending: HistoryPendingMessage): Record<string, 
             ...(pending.clientMetadata === undefined
                 ? {}
                 : { clientMetadata: pending.clientMetadata }),
+            ...(pending.quickReply === undefined ? {} : { quickReply: pending.quickReply }),
             delivery: pending.delivery,
             mode: pending.mode,
             profile: pending.profile ?? null,

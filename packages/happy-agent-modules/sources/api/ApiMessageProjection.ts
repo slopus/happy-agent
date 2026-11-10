@@ -56,6 +56,38 @@ const providerToolResultBlockSchema = Type.Object(
 const providerContentSchema = Type.Array(Type.Unknown());
 
 /**
+ * Earlier blocks of a streamed assistant message, with each tool call still running settled by
+ * its result in `value`, a provider partial's content. A partial carries only the block streaming
+ * now and every result so far, so a call made in an earlier block, such as the first of two the
+ * model made together, finishes here or not at all.
+ */
+export function settledToolCalls(
+    blocks: readonly Record<string, unknown>[],
+    value: unknown,
+    reviewedCalls: ReadonlyMap<string, ReviewedHistoryToolCall> = new Map(),
+    resultPresentations: ReadonlyMap<
+        string,
+        HistoryToolPresentation | AgentSpawnPresentation
+    > = new Map(),
+): Record<string, unknown>[] {
+    if (!apiValidator(providerContentSchema).Check(value)) return [...blocks];
+    const results = new Map<string, Static<typeof providerToolResultBlockSchema>>();
+    for (const candidate of value) {
+        const result = checked(providerToolResultBlockSchema, candidate);
+        if (result !== undefined) results.set(result.toolCallId, result);
+    }
+    return blocks.map((block) => {
+        const id = block["id"];
+        const result = typeof id === "string" ? results.get(id) : undefined;
+        if (block["type"] !== "tool_call" || block["status"] !== "running" || result === undefined)
+            return block;
+        const call = { type: "toolCall", id, name: block["name"], arguments: block["arguments"] };
+        const settled = providerMessageContent([call, result], reviewedCalls, resultPresentations);
+        return settled?.[0] ?? block;
+    });
+}
+
+/**
  * Whether a durable message was injected for the model alone and must stay out of the public API.
  *
  * The message remains in durable history — history reads, Auto review evidence, and the model's

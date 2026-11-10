@@ -68,6 +68,7 @@ async function harness(mode: "standalone" | "jwt"): Promise<Harness> {
               }
             : { authentication: "workos", enabled: false, host: "127.0.0.1", port: 0 };
     const config = {
+        onDefaultModelChanged: () => () => undefined,
         onProviderServiceTiersChanged: () => () => undefined,
         configuration: {
             paths: { tokenPath: join(directory, "token") },
@@ -226,7 +227,7 @@ describe("GET /v0/health", () => {
         const { call, token } = await harness("standalone");
 
         expect((await call("/v0/health", `Bearer ${token!}`)).body).toMatchObject({
-            version: { protocol: 34 },
+            version: { protocol: 35 },
         });
     });
 });
