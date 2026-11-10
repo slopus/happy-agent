@@ -41,6 +41,7 @@ import {
     type ClaudeSessionReplay,
 } from "@/vendors/claude/impl/createClaudeSessionReplay.js";
 import { claudeMessageIdentity } from "@/vendors/claude/impl/claudeMessageIdentity.js";
+import { fitClaudeImages } from "@/vendors/claude/impl/fitClaudeImages.js";
 import { resolveClaudeLiveDelta } from "@/vendors/claude/impl/resolveClaudeLiveDelta.js";
 import {
     claudeSdkBuiltInToolNames,
@@ -515,7 +516,10 @@ export class ClaudeSession extends BaseSession {
                 // escaping the stream before it reports an outcome.
                 const replay = createClaudeSessionReplay({
                     ...(options.compaction ? { compaction: true } : {}),
-                    context: configuredContext,
+                    context: {
+                        ...configuredContext,
+                        messages: await fitClaudeImages(configuredContext.messages),
+                    },
                     // The replayed environment must name the directory the live query runs in.
                     ...(cwd === undefined ? {} : { cwd }),
                     env: this.env,
@@ -564,7 +568,9 @@ export class ClaudeSession extends BaseSession {
                 }
             } else {
                 this.activePromptQueue?.enqueue(
-                    createClaudeLivePromptMessage(configuredContext.messages),
+                    createClaudeLivePromptMessage(
+                        await fitClaudeImages(configuredContext.messages),
+                    ),
                 );
             }
             // Only once the turn has actually been handed over does the query hold it.

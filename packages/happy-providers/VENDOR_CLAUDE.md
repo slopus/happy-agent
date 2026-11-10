@@ -154,10 +154,16 @@ Claude transcript to disk.
 
 User messages and tool results may contain ordered text and base64 image blocks. Replay
 maps them to Claude-native `text` and `image` content blocks. Claude Code refuses a whole
-request before sending it when any image carries more than 5 MB of base64 data, and every query
-replays the full history, so one such image once failed every later turn at once. Replay and the
-live prompt send that image as a short text note naming its size instead; the caller's history
-keeps the image. Live MCP tool results stay untouched, since Claude Code downsizes those itself.
+request before sending it when any image carries more than 5 MiB of base64 data ("Image base64
+size (5.5MB) exceeds API limit (5MB)"). It shrinks a new prompt image itself but never one it
+resumes from the transcript, and every rebuilt query replays the full history, so one such image
+once failed every later turn at once. `impl/fitClaudeImages.ts` therefore projects every image
+over 4.5 MiB of base64, in replay and in the live prompt, onto a copy bounded to 2000 pixels and
+re-encoded, smaller and at lower quality in turn, until it fits. Copies are cached by content so
+a rebuilt query sends the same bytes. Shrinking needs Bun's native image codec; an image that
+cannot be decoded, or any image on another runtime, is sent as a short text note naming its size
+once it exceeds the 5 MiB limit. The caller's history always keeps the original image. Live MCP
+tool results stay untouched, since Claude Code downsizes those itself.
 Assistant history includes every faithfully representable signed thinking block, followed by
 text and tool-use blocks.
 Each assistant content block is stored as a separate transcript entry with one shared API

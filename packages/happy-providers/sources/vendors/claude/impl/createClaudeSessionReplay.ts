@@ -25,6 +25,7 @@ import type {
 import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotificationMessage.js";
 import { toSessionReminderMessage } from "@/core/toSessionReminderMessage.js";
 import { claudeSessionAttachments } from "@/vendors/claude/impl/claudeSessionAttachments.js";
+import { CLAUDE_IMAGE_BASE64_LIMIT } from "@/vendors/claude/impl/fitClaudeImages.js";
 
 /** A message Claude can replay, once system notices have been projected onto the user role. */
 type ReplayMessage = Exclude<SessionMessage, SessionSystemMessage | SessionAgentMessage>;
@@ -477,13 +478,10 @@ function toContentBlock(block: SessionInputBlock) {
 type ClaudeImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
 /**
- * Claude Code refuses a whole request, before sending it, when any image in it carries more base64
- * data than this. Every query replays the complete history, so one such image would fail every
- * later turn at once. The image is projected to a note in this request only; the caller's history
- * keeps it. Live MCP tool results are left alone, because Claude Code resizes those itself.
+ * `fitClaudeImages` shrinks an oversized image before replay. One it could not shrink is projected
+ * to a note in this request only, since Claude Code would refuse the whole request; the caller's
+ * history keeps it.
  */
-const CLAUDE_IMAGE_BASE64_LIMIT = 5 * 1024 * 1024;
-
 function omittedImageText(length: number): string {
     const megabytes = (Math.ceil((length / (1024 * 1024)) * 10) / 10).toFixed(1);
     return `[Image omitted: its base64 data is ${megabytes} MB, over Claude's 5 MB limit for one image.]`;
