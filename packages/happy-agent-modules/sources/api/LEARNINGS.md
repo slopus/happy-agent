@@ -493,3 +493,16 @@ project holding it, so the refresh threw and rolled the archival back. Any agent
 and no project now skips the refresh, as shared-filesystem subtasks already did; parentless roots
 without an owner still fail. Collaboration's unit tests replace the agent collection, so the
 regression test runs archival through the real runtime.
+
+## A run is announced finished after its last block, and every block finishes
+
+Clients draw a `show_ui` row only from a finished call, and end every call still running when its
+run finishes, so the desktop showed "Stopped" and no row when a model turn called `show_ui` and
+`suggest_replies`. There were two causes. The durable fallback that announces a service message's
+maintenance run as finished also fired for loop runs whose execution configuration message it saw
+after the run had already ended, which happens whenever the conversation's event queue lags, such
+as behind onboarding's paced opening; `run.finished` then preceded the run's remaining tool
+events. The fallback now skips runs the agent loop started, whose settlement announces them. And a
+provider partial carries only the block streaming now plus every result, so a call made in an
+earlier block, such as the first of two the model made together, never finished in the message;
+each conversion now settles earlier running calls from the results the partial carries.
