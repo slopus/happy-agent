@@ -60,6 +60,7 @@ export const harnessInputSchema = Type.Object(
         name: Type.Optional(nameSchema),
         providers: Type.Optional(stringArraySchema),
         subagent_harnesses: Type.Optional(stringArraySchema),
+        telemetry: Type.Optional(Type.Boolean()),
         type: Type.Optional(typeSchema),
     },
     { additionalProperties: false },
@@ -79,6 +80,7 @@ export const harnessSchema = Type.Object(
         name: Type.Optional(nameSchema),
         providers: Type.Optional(stringArraySchema),
         subagentHarnesses: Type.Optional(stringArraySchema),
+        telemetry: Type.Optional(Type.Boolean()),
         type: typeSchema,
     },
     { additionalProperties: false },
@@ -151,6 +153,7 @@ export function mergeHarnesses(
             ...(input.subagent_harnesses === undefined
                 ? {}
                 : { subagentHarnesses: input.subagent_harnesses }),
+            ...(input.telemetry === undefined ? {} : { telemetry: input.telemetry }),
             // Writing a harness table turns it on; `enabled = false` keeps it configured but off.
             enabled: input.enabled ?? previous?.enabled ?? true,
             type,
@@ -181,6 +184,9 @@ export function validateHarnesses(
         }
         if (harness.type === "acp" && harness.command === undefined) {
             throw new Error(`Harness "${id}" is an ACP agent and must set command.`);
+        }
+        if (harness.telemetry !== undefined && harness.type !== "claude-code") {
+            throw new Error(`Harness "${id}" cannot set telemetry; only Claude Code takes it.`);
         }
         if (isOwnLoginHarness(harness)) {
             if (harness.providers !== undefined) {

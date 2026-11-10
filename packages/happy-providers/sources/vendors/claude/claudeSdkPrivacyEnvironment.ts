@@ -29,3 +29,16 @@ export const CLAUDE_SDK_PRIVACY_ENVIRONMENT = {
     OTEL_SDK_DISABLED: "true",
     OTEL_TRACES_EXPORTER: "none",
 } as const satisfies NodeJS.ProcessEnv;
+
+/**
+ * The privacy environment for unmodified Claude Code whose harness allows its telemetry. Either
+ * of the two switches it lifts makes Claude Code offer only its built-in aliases, hiding every
+ * model the signed-in account is granted. Error reporting, surveys, updates and OpenTelemetry stay
+ * off through their own switches.
+ */
+const {
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: _nonessential,
+    DISABLE_TELEMETRY: _telemetry,
+    ...claudeCodeTelemetry
+} = CLAUDE_SDK_PRIVACY_ENVIRONMENT;
+export const CLAUDE_CODE_TELEMETRY_ENVIRONMENT = claudeCodeTelemetry satisfies NodeJS.ProcessEnv;

@@ -49,6 +49,8 @@ export interface ForeignAgentStart {
     readonly env: NodeJS.ProcessEnv;
     /** Told the account limits the agent reports while it works, under its vendor's provider key. */
     readonly onAccountUsage?: (usage: ProviderUsage) => void;
+    /** The harness lets its agent send the agent's own telemetry. */
+    readonly telemetry?: boolean;
 }
 
 /** Everything that differs between foreign agents, around one shared session implementation. */

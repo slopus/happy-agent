@@ -167,10 +167,14 @@ export function foreignAgentStart(route: ForeignAgentRoute): ForeignAgentStart {
                     ? {}
                     : { apiKey: provider.apiKey }
                 : {};
+    // A Claude account's own Claude Code build, unless the harness names a program itself.
+    const command =
+        harness.command ?? (provider.type === "claude" ? provider.executable : undefined);
     return {
-        ...(harness.command === undefined ? {} : { command: harness.command }),
+        ...(command === undefined ? {} : { command }),
         ...(harness.args === undefined ? {} : { args: harness.args }),
         env: { ...agent.credentialEnvironment(credentials), ...harness.env },
+        ...(harness.telemetry === true ? { telemetry: true } : {}),
     };
 }
 
