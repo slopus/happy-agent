@@ -636,6 +636,14 @@ always includes `userSettings` in desktop bootstrap and never answers `GET /v0/u
 `404`. Older compatible daemons omit the bootstrap field, answer the user-settings routes with
 `404`, and never emit `user_settings.updated`; clients then keep those preferences on the device.
 
+User environments are additive and do not increment the protocol version. A daemon that serves
+them reports `capabilities.userEnvironment: true` from health, accepts `PUT /v0/environment`,
+accepts `deviceId` on `POST /v0/agents/:agentId/send`, and emits `user_environment.updated`.
+Older compatible daemons omit the capability, answer `PUT /v0/environment` with `404`, and refuse a
+send carrying `deviceId` with `400 invalid_request`, because the send body is closed. A client
+sends `deviceId` only to a daemon that reports the capability or has answered one of its reports
+with `200`.
+
 Secret requests are additive and do not increment the protocol version. Older daemons never send a
 question prompt's optional `secretRequest`. A client that does not recognize it renders the prompt
 as an ordinary free-text question; the daemon rejects any answer to it that is not the ID of an
@@ -1602,6 +1610,8 @@ Fields:
   `POST /v0/feed/read-all`, described under Feed. `chatUi` advertises chat UI, described under
   Chat UI: `{ "version": 1, "components": ["file_tree", "default_model", "media"] }`, the catalog
   version the daemon speaks and exactly the component types it serves.
+  `userEnvironment: true` advertises `PUT /v0/environment`, `deviceId` on agent sends, and the
+  `user_environment.updated` event, described under User environment.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
   It is a CUID2 of exactly 24 characters matching `^[a-z][a-z0-9]{23}$`, generated once and
   persisted with the installation's data, so it survives restarts and upgrades. It is reported
@@ -3133,6 +3143,110 @@ A malformed key or body, or a value nested too deeply, is `400 invalid_request`.
 64 KiB is `413 too_large`. An applied write that would add a key beyond 1,000, or grow the person's
 total past 1 MiB, is `409 settings_full`, and the message names the limit; nothing changes. Clears,
 writes that do not grow the total, and writes ignored as stale are never refused as full.
+
+## User environment
+
+A person's devices report their environment so the person's agents know the time zone, language,
+clock, week, and calendar the person is working in. Each device keeps its own record, so two
+devices set up differently never overwrite each other. The environment never reaches tools or
+user-visible history; agents receive it only as system notices, described below.
+
+**Owner.** As with user settings: in team mode the authenticated member's installation-local
+Happy user ID, standalone the installation's one person. Clients never choose an owner. A team
+member without a saved profile receives `401` as on every route outside onboarding.
+
+**Devices.** A client names its device with `deviceId`, an opaque ID matching
+`^[A-Za-z0-9._:-]{1,64}$` that it generates once, such as a UUID, and keeps for as long as it is
+installed. The ID is scoped to its owner and carries no authority; the same ID from two people
+names two devices. A daemon forgets a person's devices that have not reported for 30 days, and
+any beyond their 32 most recently reported, when that person next reports.
+
+### The device environment object
+
+```json
+{
+    "deviceId": "6f1c2a8e-3b7d-4e0a-9c55-1d2e3f4a5b6c",
+    "deviceKind": "phone",
+    "timeZone": "Europe/Berlin",
+    "locale": "de-DE",
+    "languages": ["de-DE", "en-US"],
+    "hourCycle": "h23",
+    "firstDayOfWeek": 1,
+    "calendar": "gregory",
+    "updatedAt": 1755400000000,
+    "reportedAt": 1755400000000
+}
+```
+
+- `deviceId` — the device's ID.
+- `deviceKind` — `"phone"`, `"tablet"`, `"desktop"`, or `"web"`; omitted while never reported.
+- `timeZone`, `locale`, `languages`, `hourCycle`, `firstDayOfWeek`, `calendar` — as described
+  for the request; each is omitted while the device has never reported it.
+- `updatedAt` — when this device's environment or kind last changed.
+- `reportedAt` — when this device last reported, whether or not anything changed.
+
+### `PUT /v0/environment`
+
+Reports the calling device's environment. Every field but `deviceId` is optional; a field left
+out was not reported and keeps its stored value. Nothing can be cleared, and `null` is refused.
+
+```json
+{
+    "mutationId": "...",
+    "deviceId": "6f1c2a8e-3b7d-4e0a-9c55-1d2e3f4a5b6c",
+    "deviceKind": "phone",
+    "timeZone": "Europe/Berlin",
+    "utcOffsetMinutes": 60,
+    "locale": "de-DE",
+    "languages": ["de-DE", "en-US"],
+    "hourCycle": "h23",
+    "firstDayOfWeek": 1,
+    "calendar": "gregory"
+}
+```
+
+- `deviceId` — required, as described above.
+- `deviceKind` — optional, one of `"phone"`, `"tablet"`, `"desktop"`, `"web"`.
+- `timeZone` — an IANA time zone the daemon recognizes, 1–64 characters without control
+  characters. Stored in its canonical spelling (`europe/berlin` becomes `Europe/Berlin`). A name
+  for the stored zone by a tzdb link, such as `Asia/Calcutta` for `Asia/Kolkata`, is the same zone
+  and keeps the stored name.
+- `utcOffsetMinutes` — optional integer from −720 through 840. Advisory: validated, never stored.
+  Offsets agents see are computed from `timeZone` when they are told.
+- `locale` — the formatting locale, a well-formed BCP 47 tag of 1–64 characters, stored in
+  canonical form (`de-de` becomes `de-DE`).
+- `languages` — 1–16 preferred languages, most preferred first, each such a tag, stored in
+  canonical form and in the order given.
+- `hourCycle` — `"h11"`, `"h12"`, `"h23"`, or `"h24"`, as `Intl.Locale` names them.
+- `firstDayOfWeek` — integer 1 (Monday) through 7 (Sunday), ISO numbering as `Intl.Locale` week
+  information.
+- `calendar` — one of the BCP 47 calendar identifiers `buddhist`, `chinese`, `coptic`, `dangi`,
+  `ethioaa`, `ethiopic`, `gregory`, `hebrew`, `indian`, `islamic`, `islamic-civil`,
+  `islamic-rgsa`, `islamic-tbla`, `islamic-umalqura`, `iso8601`, `japanese`, `persian`, `roc`.
+- `mutationId` — optional, echo-only as everywhere.
+
+Response — `200`: `{ "environment": { ... } }`, the device environment object as now stored.
+Every accepted report moves `reportedAt`, emits one `user_environment.updated` after commit, and
+echoes `mutationId`. A missing or malformed `deviceId`, an unknown field, a `null`, an unknown time
+zone, a malformed language tag, or any value outside the ranges above is `400 invalid_request`;
+nothing changes.
+
+Clients report at launch, on returning to the foreground, and whenever the system's time zone,
+languages, or region settings change.
+
+### What agents are told
+
+A message names the device it was sent from with `deviceId` on `POST /v0/agents/:agentId/send`.
+Just before an accepted message joins the conversation of one of the person's agents, the daemon
+picks that device's environment, or, when the message names no device the person has reported
+from, the device that reported most recently in the last 30 days. It compares five aspects with
+what that agent was last told: time zone, primary language (the first of `languages`, else
+`locale`), hour cycle, first day of the week, and calendar. An agent never told receives the whole
+environment once; an agent told something different receives one system notice naming what
+changed, and which kind of device the person is now on when that changed too. Several changes
+before the agent's next accepted message produce one notice, a committed notice is never repeated,
+idle agents are never woken, and moving between devices that agree says nothing. In team mode an
+agent belongs to the owner of the task at the root of its tree; bots are told nothing.
 
 ## Onboarding
 
@@ -8718,6 +8832,11 @@ Request:
   daemon checks that the agent message holds that option and that `text` equals it exactly, and
   answers `400 invalid_request` otherwise; the stored message carries it as provenance. See
   "Quick replies".
+- `deviceId` — optional, matching `^[A-Za-z0-9._:-]{1,64}$`: the sending device, as reported to
+  `PUT /v0/environment`. Kept with the message's internal metadata and used only to choose which
+  environment the agent is told; it is not part of the public `metadata` object. An ID the person
+  has not reported from is accepted and treated as no device. Send it only to a daemon that
+  supports user environments, as described under Versioning.
 - `content` — optional rich blocks accompanying the text: text, inline images, and at most one
   `tool_call_request`. Image bytes travel **inline**, base64 in the block, exactly as they later
   appear in history — there is no separate upload step or attachment store. A tool-call request
@@ -15408,6 +15527,14 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
   owner. A write ignored as stale emits nothing.
     - `setting` (the complete setting object; `value` is `null` for a clear).
     - `mutationId` — echoed when the write supplied one.
+
+**User environment**
+
+- `user_environment.updated` — one of the person's devices reported. In team mode only that
+  person receives it, in journal pulls, replay, and live delivery; the payload never names the
+  person.
+    - `environment` (the complete device environment object).
+    - `mutationId` — echoed when the report supplied one.
 
 **Stories**
 

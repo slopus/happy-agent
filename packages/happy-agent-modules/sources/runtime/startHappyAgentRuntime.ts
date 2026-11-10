@@ -850,6 +850,7 @@ export async function startHappyAgentRuntime(
             nodeSearch,
             teammates,
             chatUi,
+            userEnvironment,
         );
         api = apiModule;
 

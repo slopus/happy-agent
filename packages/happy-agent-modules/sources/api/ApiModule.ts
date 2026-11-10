@@ -352,6 +352,12 @@ import {
     type UserInputEvent,
 } from "../userInput/index.js";
 import {
+    STANDALONE_USER_ENVIRONMENT_OWNER,
+    UserEnvironmentError,
+    UserEnvironmentModule,
+    type StoredUserEnvironment,
+} from "../userEnvironment/index.js";
+import {
     STANDALONE_USER_SETTINGS_OWNER,
     UserSettingsError,
     UserSettingsModule,
@@ -433,6 +439,7 @@ import {
     startCloudAuthorizationRequestSchema,
     terminalCreateBodySchema,
     terminalResizeBodySchema,
+    environmentReportBodySchema,
     userSettingBodySchema,
     mobilePairingBodySchema,
     workspaceCreateBodySchema,
@@ -691,6 +698,7 @@ export class ApiModule implements AgentModule {
     readonly #chatMedia: ChatMediaModule | undefined;
     readonly #exportedBots: ExportedBotsModule | undefined;
     readonly #userSettings: UserSettingsModule | undefined;
+    readonly #userEnvironment: UserEnvironmentModule | undefined;
     readonly #surfaces: SurfacesModule | undefined;
     readonly #mobileConnector: MobileConnectorModule | undefined;
     readonly #providerClis: ProviderClisModule | undefined;
@@ -881,9 +889,11 @@ export class ApiModule implements AgentModule {
         nodeSearch?: NodeSearchModule,
         teammates?: TeammatesModule,
         chatUi?: ChatUiModule,
+        userEnvironment?: UserEnvironmentModule,
     ) {
         this.#teammates = teammates;
         this.#chatUi = chatUi;
+        this.#userEnvironment = userEnvironment;
         this.#abort = abort;
         this.#config = config;
         this.#events = events;
@@ -1920,6 +1930,14 @@ export class ApiModule implements AgentModule {
                     this.#mobileConnector,
                 ))
             ) {
+                return;
+            }
+            if (
+                this.#userEnvironment !== undefined &&
+                request.method === "PUT" &&
+                url.pathname === "/v0/environment"
+            ) {
+                await this.#handleEnvironmentReport(ctx, request, response, this.#userEnvironment);
                 return;
             }
             if (
@@ -3411,6 +3429,18 @@ export class ApiModule implements AgentModule {
                     const append = () => this.#journal.append(type, payload, Date.now(), readerId);
                     if (background) this.#mutationIds.exit(append);
                     else append();
+                }),
+            );
+        if (this.#userEnvironment !== undefined)
+            this.#unsubscribe.push(
+                this.#userEnvironment.onEvent((_eventCtx, event) => {
+                    // The payload never names the owner; the journal keeps it to filter readers.
+                    this.#journal.append(
+                        "user_environment.updated",
+                        { environment: deviceEnvironmentResource(event.device) },
+                        Date.now(),
+                        event.owner === STANDALONE_USER_ENVIRONMENT_OWNER ? undefined : event.owner,
+                    );
                 }),
             );
         if (this.#userSettings !== undefined)
@@ -5708,6 +5738,7 @@ export class ApiModule implements AgentModule {
                         ? {}
                         : { clientMetadata: body.clientMetadata }),
                     ...(quickReply === undefined ? {} : { quickReply }),
+                    ...(body.deviceId === undefined ? {} : { deviceId: body.deviceId }),
                 },
             };
             const agents = this.#agentSystem();
@@ -10020,6 +10051,30 @@ export class ApiModule implements AgentModule {
         throw mobileUnauthorized();
     }
 
+    /** Merge one of the caller's devices' report into that device's stored environment. */
+    async #handleEnvironmentReport(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        userEnvironment: UserEnvironmentModule,
+    ): Promise<void> {
+        const { mutationId, ...report } = await bodyAs(
+            request,
+            environmentReportBodySchema,
+            "environment report",
+        );
+        try {
+            const stored = await this.#withMutationId(
+                mutationId,
+                async () => await userEnvironment.report(ctx, report),
+            );
+            sendJson(response, 200, { environment: deviceEnvironmentResource(stored) });
+        } catch (error: unknown) {
+            if (!(error instanceof UserEnvironmentError)) throw error;
+            throw new ApiError(400, error.code, error.message);
+        }
+    }
+
     /** Read one of the caller's settings, or set or clear it last-write-wins. */
     async #handleUserSettingRoute(
         ctx: Context,
@@ -10818,6 +10873,7 @@ export class ApiModule implements AgentModule {
                 ...(this.#stories === undefined ? {} : { storyFeed: true }),
                 ...(this.#feed === undefined ? {} : { feed: true, feedSubjectFilter: true }),
                 ...(this.#artifacts === undefined ? {} : { artifactCovers: true }),
+                ...(this.#userEnvironment === undefined ? {} : { userEnvironment: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),
@@ -12336,4 +12392,15 @@ function storedWorkspaceCompute(
         );
     }
     return { type: "docker", image: requested.image };
+}
+
+/** One device's stored environment as the wire object: flat, with unreported fields left out. */
+function deviceEnvironmentResource(stored: StoredUserEnvironment) {
+    return {
+        deviceId: stored.deviceId,
+        ...(stored.deviceKind === undefined ? {} : { deviceKind: stored.deviceKind }),
+        ...stored.environment,
+        updatedAt: stored.updatedAt,
+        reportedAt: stored.reportedAt,
+    };
 }

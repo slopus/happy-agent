@@ -1071,6 +1071,11 @@ export interface SendMessageRequest {
     text: string;
     /** Opaque JSON to persist and return with this user message. */
     clientMetadata?: ClientMetadata;
+    /**
+     * The sending device, as reported to `reportEnvironment`. Send it only to a daemon whose health
+     * reports `capabilities.userEnvironment`: older daemons refuse the whole send.
+     */
+    deviceId?: string;
     /** Optional rich blocks accompanying the text; image bytes travel inline. */
     content?: MessageBlock[];
     /**

@@ -1,5 +1,6 @@
 import { cuid2Schema } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
+import type { Context } from "@steve.kite/stdlib";
 
 /** The one person of a standalone installation, who has no team user ID. */
 export const STANDALONE_USER_ENVIRONMENT_OWNER = "standalone";
@@ -135,6 +136,17 @@ export type UserEnvironmentAspect =
     | "hourCycle"
     | "firstDayOfWeek"
     | "calendar";
+
+/** One accepted report, delivered after its transaction commits. */
+export interface UserEnvironmentReportedEvent {
+    readonly owner: UserEnvironmentOwner;
+    readonly device: StoredUserEnvironment;
+}
+
+export type UserEnvironmentListener = (
+    ctx: Context,
+    event: UserEnvironmentReportedEvent,
+) => void | Promise<void>;
 
 /**
  * What one report did: the device's environment now stored, and which of its aspects changed. A

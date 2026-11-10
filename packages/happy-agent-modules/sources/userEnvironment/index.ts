@@ -18,7 +18,9 @@ export {
     type UserEnvironment,
     type UserEnvironmentAspect,
     type UserEnvironmentOwner,
+    type UserEnvironmentListener,
     type UserEnvironmentReport,
+    type UserEnvironmentReportedEvent,
     type UserEnvironmentReportResult,
     type UserHourCycle,
 } from "./UserEnvironment.js";

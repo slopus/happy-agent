@@ -182,6 +182,11 @@ export const healthResponseSchema = Type.Object({
              * Absent on daemons without chat UI.
              */
             chatUi: Type.Optional(chatUiCapabilitySchema),
+            /**
+             * True when the daemon serves `PUT /v0/environment`, accepts `deviceId` on sends, and
+             * emits `user_environment.updated`, under User environment.
+             */
+            userEnvironment: Type.Optional(Type.Boolean()),
         }),
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */

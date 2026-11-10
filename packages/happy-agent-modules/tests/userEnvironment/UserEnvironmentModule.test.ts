@@ -250,7 +250,7 @@ describe("User environment reports", () => {
         await environment.report(ctx, BERLIN);
 
         vi.setSystemTime(NOW + 1_000);
-        // Another spelling or alias of the stored zone keeps the stored name and changes nothing.
+        // Another letter case or link of the stored zone keeps the stored name and changes nothing.
         expect(
             await environment.report(ctx, { ...LAPTOP, timeZone: "europe/berlin" }),
         ).toMatchObject({
@@ -304,6 +304,23 @@ describe("User environment reports", () => {
             environment: { timeZone: current },
             changed: [],
         });
+    });
+
+    it("stores a time zone in its canonical letter case, never swapped for a legacy name", async () => {
+        const { environment, database } = await setup(false);
+        const ctx = database.context;
+        for (const [index, [sent, stored]] of [
+            ["europe/berlin", "Europe/Berlin"],
+            ["AMERICA/ARGENTINA/BUENOS_AIRES", "America/Argentina/Buenos_Aires"],
+            ["asia/kolkata", "Asia/Kolkata"],
+            ["asia/calcutta", "Asia/Calcutta"],
+            ["etc/utc", "Etc/UTC"],
+        ].entries() as Iterable<[number, [string, string]]>) {
+            await environment.report(ctx, { deviceId: `device-${index}`, timeZone: sent });
+            expect((await environment.environment(ctx, `device-${index}`))?.environment).toEqual({
+                timeZone: stored,
+            });
+        }
     });
 
     it("takes the formatting locale as the language while no languages are known", async () => {
@@ -379,6 +396,67 @@ describe("User environment reports", () => {
         await expect(
             environment.report(database.context, { ...LAPTOP, timeZone: "Asia/Tokyo" }),
         ).rejects.toThrow(TeamAuthenticationError);
+    });
+});
+
+describe("User environment events", () => {
+    it("announces every accepted report after it commits, and nothing refused or rolled back", async () => {
+        const { environment, database } = await setup(true);
+        const alice = member(database.context, ALICE);
+        const events: unknown[] = [];
+        const stop = environment.onEvent((_ctx, event) => {
+            events.push(event);
+        });
+
+        await environment.report(alice, { ...LAPTOP, timeZone: "Europe/Berlin" });
+        // A report that changes nothing still says the device was seen.
+        vi.setSystemTime(NOW + 1_000);
+        await environment.report(alice, LAPTOP);
+        await expect(
+            environment.report(alice, { ...LAPTOP, hourCycle: "h13" } as never),
+        ).rejects.toThrow(UserEnvironmentError);
+        await expect(
+            alice.inTx(async (txCtx) => {
+                await environment.report(txCtx, { ...LAPTOP, timeZone: "Asia/Tokyo" });
+                throw new Error("The caller's change failed.");
+            }),
+        ).rejects.toThrow("caller's change failed");
+
+        expect(events).toEqual([
+            {
+                owner: ALICE,
+                device: {
+                    deviceId: "laptop",
+                    environment: { timeZone: "Europe/Berlin" },
+                    updatedAt: NOW,
+                    reportedAt: NOW,
+                },
+            },
+            {
+                owner: ALICE,
+                device: {
+                    deviceId: "laptop",
+                    environment: { timeZone: "Europe/Berlin" },
+                    updatedAt: NOW,
+                    reportedAt: NOW + 1_000,
+                },
+            },
+        ]);
+        expect((await environment.environment(alice))?.environment).toEqual({
+            timeZone: "Europe/Berlin",
+        });
+        stop();
+        await environment.report(alice, LAPTOP);
+        expect(events).toHaveLength(2);
+    });
+
+    it("counts a new device kind as a change", async () => {
+        const { environment, database } = await setup(false);
+        await environment.report(database.context, { ...LAPTOP, timeZone: "Europe/Berlin" });
+        vi.setSystemTime(NOW + 1_000);
+        expect(
+            await environment.report(database.context, { ...LAPTOP, deviceKind: "desktop" }),
+        ).toMatchObject({ deviceKind: "desktop", updatedAt: NOW + 1_000, changed: [] });
     });
 });
 

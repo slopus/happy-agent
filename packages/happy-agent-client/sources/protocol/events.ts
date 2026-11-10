@@ -88,6 +88,7 @@ import { vaultRetentionSchema } from "./vaultRetention.js";
 import type { Terminal } from "./terminals.js";
 import { providerAccountUsageSnapshotSchema, type AgentContextUsage } from "./usage.js";
 import type { Workspace } from "./workspaces.js";
+import { userDeviceEnvironmentSchema } from "./userEnvironment.js";
 import { storedUserSettingSchema } from "./userSettings.js";
 import { mobileConnectorSchema } from "./mobileConnector.js";
 import type { SlashCommand } from "./slashCommands.js";
@@ -712,6 +713,13 @@ export const userSettingsUpdatedPayloadSchema = Type.Object({
 });
 export type UserSettingsUpdatedPayload = Static<typeof userSettingsUpdatedPayloadSchema>;
 
+/** One of the person's devices reported; delivered only to that person in team mode. */
+export const userEnvironmentUpdatedPayloadSchema = Type.Object({
+    environment: userDeviceEnvironmentSchema,
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type UserEnvironmentUpdatedPayload = Static<typeof userEnvironmentUpdatedPayloadSchema>;
+
 /**
  * The caller's mobile connector changed: its socket, pairing, or paired phones. A complete
  * replacement delivered only to its owner; keep the snapshot with the greater `version`.
@@ -822,6 +830,7 @@ export type HappyAgentEvent =
     | EventEnvelope<"cloud.updated", CloudUpdatedPayload>
     | EventEnvelope<"happy.integration.updated", HappyIntegrationUpdatedPayload>
     | EventEnvelope<"user_settings.updated", UserSettingsUpdatedPayload>
+    | EventEnvelope<"user_environment.updated", UserEnvironmentUpdatedPayload>
     | EventEnvelope<"mobile_connector.updated", MobileConnectorUpdatedPayload>
     | EventEnvelope<"story.changed", StoryChangedPayload>
     | EventEnvelope<"story.removed", StoryRemovedPayload>
