@@ -461,6 +461,9 @@ function toContentBlock(block: SessionInputBlock) {
         throw new Error("Tool requests must be executed by the agent before inference.");
     }
     if (block.type === "text") return { type: "text" as const, text: block.text };
+    if (block.data.length > CLAUDE_IMAGE_BASE64_LIMIT) {
+        return { type: "text" as const, text: omittedImageText(block.data.length) };
+    }
     return {
         type: "image" as const,
         source: {
@@ -472,6 +475,19 @@ function toContentBlock(block: SessionInputBlock) {
 }
 
 type ClaudeImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+
+/**
+ * Claude Code refuses a whole request, before sending it, when any image in it carries more base64
+ * data than this. Every query replays the complete history, so one such image would fail every
+ * later turn at once. The image is projected to a note in this request only; the caller's history
+ * keeps it. Live MCP tool results are left alone, because Claude Code resizes those itself.
+ */
+const CLAUDE_IMAGE_BASE64_LIMIT = 5 * 1024 * 1024;
+
+function omittedImageText(length: number): string {
+    const megabytes = (Math.ceil((length / (1024 * 1024)) * 10) / 10).toFixed(1);
+    return `[Image omitted: its base64 data is ${megabytes} MB, over Claude's 5 MB limit for one image.]`;
+}
 
 function parseArguments(argumentsJson: string): Record<string, unknown> {
     try {

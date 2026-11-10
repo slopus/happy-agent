@@ -153,8 +153,13 @@ of a first turn. Stable UUIDs preserve parent ordering across a replay without w
 Claude transcript to disk.
 
 User messages and tool results may contain ordered text and base64 image blocks. Replay
-maps them to Claude-native `text` and `image` content blocks. Assistant history includes
-every faithfully representable signed thinking block, followed by text and tool-use blocks.
+maps them to Claude-native `text` and `image` content blocks. Claude Code refuses a whole
+request before sending it when any image carries more than 5 MB of base64 data, and every query
+replays the full history, so one such image once failed every later turn at once. Replay and the
+live prompt send that image as a short text note naming its size instead; the caller's history
+keeps the image. Live MCP tool results stay untouched, since Claude Code downsizes those itself.
+Assistant history includes every faithfully representable signed thinking block, followed by
+text and tool-use blocks.
 Each assistant content block is stored as a separate transcript entry with one shared API
 message ID and an unbroken parent chain, matching Claude Code's native transcript shape.
 This preserves thinking and parallel tool-use siblings when the SDK reconstructs a request.
