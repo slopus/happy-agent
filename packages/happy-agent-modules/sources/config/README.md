@@ -142,6 +142,13 @@ while `offeredModels` is the stable complete set the agent systems can accept af
 Happy Agent never asks a vendor which models exist — the list is source, and a configured provider
 entry decides which of them its own key serves.
 
+Providers are otherwise fixed at startup: `addRuntimeProvider` writes a new one to `runtime.toml`
+for the next start. `addProviderNow` is the exception, for an account the person just signed in: it
+writes the same table, replaces the frozen `configuration` with one that includes it, registers it
+in the provider source and the live registry, and joins the first smart provider that pools its
+type, whose member list `runtime.toml` then keeps. A pool rebuilt this way starts its rotation
+afresh.
+
 ## Harnesses
 
 `[harnesses]` says who runs the agent loop on those accounts (`impl/harnesses.ts`). `happy` is

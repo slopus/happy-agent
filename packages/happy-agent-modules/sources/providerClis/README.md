@@ -20,8 +20,9 @@ token are `Secret` fields. When a widget's sign-in finishes, its `sign_in` finds
 signed in already, or its token connects it, `onConnected` listeners hear which conversation
 connected it, and the conversation gets a hidden note that wakes its model. A listener that tells
 the conversation itself, as onboarding does for the Chief of Staff, answers `true`, and the note
-then joins that turn instead of starting one. Its `account: "new"` prop, adding another account,
-is refused by `check` until the daemon can sign into a fresh configuration.
+then joins that turn instead of starting one. With its `account: "new"` prop, `sign_in` adds another
+account instead (below), returns `{ accountId }`, and the note waits until that account reads signed
+in.
 
 It also contributes the `provider` reply component (`impl/providerReply.ts`), which puts an AI's
 mark and live state beside a quick reply. Clients read that state from this module's objects; its
@@ -55,6 +56,23 @@ On macOS, the keychain is only readable from the person's desktop session. Claud
 sign-in in the keychain, so from a daemon started outside that session it reports itself signed
 out even when it is not. The module checks `launchctl managername` and reports `unknown` in that
 case instead of claiming the person is signed out.
+
+## Accounts
+
+Each object lists `accounts`: every configured provider of the assistant's type, in configuration
+order, with its own sign-in. An account whose configuration names a home folder (`config_dir` for
+Claude, the folder of `auth_file` for Codex and Grok) is checked there, with `CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`, or `GROK_HOME` pointing the vendor's own check at it. One carrying its own key or
+token is signed in. Any other uses the program's default sign-in, the one `signIn` describes.
+
+`addAccount` signs in another Claude Code or Codex account (`impl/providerAccounts.ts`). It takes
+the lowest free `claude_N` or `codex_N` (N from 2) whose folder `~/.claude-N` or `~/.codex-N` is
+missing or empty, makes that folder, and runs the ordinary sign-in operation with the home variable
+pointing at it. The default sign-in is never touched. Once the vendor's check confirms the new
+folder, the config module adds the provider (`addProviderNow`): written to `runtime.toml`, used at
+once without a restart, and added to the vendor's smart pool when there is one. The folders follow
+the vendors' own multi-account convention, so the provider-routes module recognizes them as
+configured. Grok and Antigravity keep no account folders and refuse `addAccount`.
 
 ## Operations
 

@@ -62,6 +62,19 @@ export const providerCliSignInSchema = Type.Object(
 );
 export type ProviderCliSignIn = Static<typeof providerCliSignInSchema>;
 
+/** One configured provider account of an assistant, with its own sign-in. */
+export const providerCliAccountSchema = Type.Object(
+    {
+        id: Type.String({ minLength: 1 }),
+        label: Type.String({ minLength: 1 }),
+        email: Type.Optional(Type.String()),
+        plan: Type.Optional(Type.String()),
+        signIn: providerCliSignInSchema.properties.status,
+    },
+    { additionalProperties: false },
+);
+export type ProviderCliAccount = Static<typeof providerCliAccountSchema>;
+
 export const providerCliAuthorizationSchema = Type.Object(
     {
         method: providerCliSignInMethodSchema,
@@ -120,6 +133,7 @@ export const providerCliSchema = Type.Object(
             { additionalProperties: false },
         ),
         signIn: providerCliSignInSchema,
+        accounts: Type.Optional(Type.Array(providerCliAccountSchema)),
         operation: Type.Union([providerCliOperationSchema, Type.Null()]),
         version: Type.String({ minLength: 1 }),
         updatedAt: Type.Integer({ minimum: 0 }),
@@ -138,6 +152,7 @@ export const providerCliMutationRequestSchema = Type.Object(
 export const providerCliSignInRequestSchema = Type.Object(
     {
         method: Type.Optional(providerCliSignInMethodSchema),
+        account: Type.Optional(Type.Literal("new")),
         mutationId: Type.Optional(mutationIdSchema),
     },
     { additionalProperties: false },

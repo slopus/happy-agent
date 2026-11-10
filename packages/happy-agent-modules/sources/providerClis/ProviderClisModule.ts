@@ -11,11 +11,20 @@ import { KEYCHAIN_UNREADABLE, checkProviderCliSignIn } from "./impl/checkProvide
 import { createProviderCliVersion } from "./impl/createProviderCliVersion.js";
 import { discoverProviderCli } from "./impl/discoverProviderCli.js";
 import { installerProcess } from "./impl/installerProcess.js";
+import {
+    accountEnvironment,
+    accountHome,
+    accountProviderTable,
+    addsAccountHomes,
+    allocateAccountHome,
+    hasOwnCredential,
+} from "./impl/providerAccounts.js";
 import { runProviderCliCommand } from "./impl/runProviderCliCommand.js";
 import { contributeProviderReply } from "./impl/providerReply.js";
 import { contributeSignInComponent } from "./impl/signInComponent.js";
 import {
     PROVIDER_CLI_DEFINITIONS,
+    homeOf,
     type ProviderCliDefinition,
     type ProviderCliMachine,
 } from "./impl/providerCliCatalog.js";
@@ -30,6 +39,7 @@ import {
     providerCliIdSchema,
     providerCliSignInMethodSchema,
     type ProviderCli,
+    type ProviderCliAccount,
     type ProviderCliId,
     type ProviderCliInstallation,
     type ProviderCliOperation,
@@ -55,6 +65,16 @@ const operationArgumentsSchema = Type.Object(
         operationId: Type.String({ minLength: 1 }),
         method: Type.Optional(providerCliSignInMethodSchema),
         mutationId: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+        /** Another account this sign-in adds, in a home folder of its own. */
+        account: Type.Optional(
+            Type.Object(
+                {
+                    providerId: Type.String({ minLength: 1, maxLength: 128 }),
+                    home: Type.String({ minLength: 1 }),
+                },
+                { additionalProperties: false },
+            ),
+        ),
     },
     { additionalProperties: false },
 );
@@ -77,7 +97,15 @@ interface Entry {
     signIn: Pick<ProviderCliSignIn, "status" | "account">;
     /** Why the last check could not say whether it is signed in, while `signIn` is `unknown`. */
     unchecked: string | null;
+    /** Every configured account of this assistant, each with its own sign-in. */
+    accounts: ProviderCliAccount[];
     operation: ProviderCliOperation | null;
+    /** The account the current or most recent sign-in adds, and who it signed in as. */
+    adding: {
+        readonly providerId: string;
+        readonly home: string;
+        account: ProviderCliSignIn["account"];
+    } | null;
     /** The request that started or last changed the operation, echoed by its events. */
     mutationId: string | undefined;
     version: string;
@@ -137,7 +165,9 @@ export class ProviderClisModule implements AgentModule {
                 },
                 signIn: { status: "unknown", account: null },
                 unchecked: null,
+                accounts: [],
                 operation: null,
+                adding: null,
                 mutationId: undefined,
                 version: createProviderCliVersion(now),
                 updatedAt: now,
@@ -257,13 +287,58 @@ export class ProviderClisModule implements AgentModule {
         method: ProviderCliSignInMethod | undefined,
         mutationId?: string,
     ): Promise<ProviderCli> {
+        return (await this.#beginSignIn(ctx, id, method, mutationId, false)).providerCli;
+    }
+
+    /**
+     * Start, or join, signing in another account of the assistant. The vendor's own sign-in runs
+     * in a fresh home folder (`CLAUDE_CONFIG_DIR` for Claude Code, `CODEX_HOME` for Codex), and once
+     * it succeeds that folder becomes a new provider account, used without a restart and joining
+     * the assistant's pool when there is one. The default account's sign-in is left as it is.
+     * `accountId` names the account it adds; it is absent when the sign-in failed at once.
+     */
+    async addAccount(
+        ctx: Context,
+        id: ProviderCliId,
+        method: ProviderCliSignInMethod | undefined,
+        mutationId?: string,
+    ): Promise<{ readonly providerCli: ProviderCli; readonly accountId: string | undefined }> {
+        return await this.#beginSignIn(ctx, id, method, mutationId, true);
+    }
+
+    async #beginSignIn(
+        ctx: Context,
+        id: ProviderCliId,
+        method: ProviderCliSignInMethod | undefined,
+        mutationId: string | undefined,
+        adding: boolean,
+    ): Promise<{ readonly providerCli: ProviderCli; readonly accountId: string | undefined }> {
+        if (adding && !addsAccountHomes(id)) {
+            throw this.#refusal(
+                "invalid_request",
+                id,
+                `${definition(id).name} can't add another account here.`,
+            );
+        }
         await this.#refresh(ctx, id);
         return await this.#lock.runInLock(ctx, async () => {
             const entry = this.#entry(id);
             const active = activeOperation(entry);
-            if (active?.kind === "sign_in") return this.#project(id);
+            // A default sign-in joins any running sign-in; adding an account joins only another add.
+            if (active?.kind === "sign_in" && (!adding || entry.adding !== null)) {
+                return {
+                    providerCli: this.#project(id),
+                    accountId: adding ? entry.adding?.providerId : undefined,
+                };
+            }
             if (active !== undefined) {
-                throw this.#refusal("busy", id, "Wait until installing finishes, or cancel it.");
+                throw this.#refusal(
+                    "busy",
+                    id,
+                    active.kind === "install"
+                        ? "Wait until installing finishes, or cancel it."
+                        : "Wait until signing in finishes, or cancel it.",
+                );
             }
             if (entry.installation.status !== "installed") {
                 throw this.#refusal(
@@ -276,7 +351,7 @@ export class ProviderClisModule implements AgentModule {
             // desktop session reads, would not be seen even once it finished: say so instead.
             if (entry.signIn.status === "unknown" && entry.unchecked === KEYCHAIN_UNREADABLE) {
                 this.#failNow(id, "sign_in", { code: "sign_in_failed", message: entry.unchecked });
-                return this.#project(id);
+                return { providerCli: this.#project(id), accountId: undefined };
             }
             const chosen = method ?? definition(id).methods[0];
             if (chosen === undefined || !definition(id).methods.includes(chosen)) {
@@ -286,7 +361,22 @@ export class ProviderClisModule implements AgentModule {
                     `${definition(id).name} can't sign in that way.`,
                 );
             }
-            return await this.#start(ctx, id, "sign_in", SIGN_IN_FUNCTION, chosen, mutationId);
+            const account =
+                adding && addsAccountHomes(id)
+                    ? await allocateAccountHome(id, homeOf(this.#machine()), (providerId) =>
+                          this.#config.hasProvider(providerId),
+                      )
+                    : undefined;
+            const providerCli = await this.#start(
+                ctx,
+                id,
+                "sign_in",
+                SIGN_IN_FUNCTION,
+                chosen,
+                mutationId,
+                account,
+            );
+            return { providerCli, accountId: entry.adding?.providerId };
         });
     }
 
@@ -406,25 +496,25 @@ export class ProviderClisModule implements AgentModule {
         functionName: string,
         method: ProviderCliSignInMethod | undefined,
         mutationId: string | undefined,
+        account?: OperationArguments["account"],
     ): Promise<ProviderCli> {
         const operationId = createId();
+        const args: OperationArguments = {
+            cliId: id,
+            operationId,
+            ...(method === undefined ? {} : { method }),
+            ...(mutationId === undefined ? {} : { mutationId }),
+            ...(account === undefined ? {} : { account }),
+        };
         const result = await this.#durable.invoke(ctx, {
             function: functionName,
             operationId: durableOperationId(id),
             lockKeys: [durableOperationId(id)],
-            arguments: {
-                cliId: id,
-                operationId,
-                ...(method === undefined ? {} : { method }),
-                ...(mutationId === undefined ? {} : { mutationId }),
-            },
+            arguments: args,
         });
         // A call still pending from before a restart owns this assistant; it reports itself.
         if (result.status === "duplicate") return this.#project(id);
-        this.#adopt(
-            { cliId: id, operationId, ...(mutationId === undefined ? {} : { mutationId }) },
-            kind,
-        );
+        this.#adopt(args, kind);
         return this.#project(id);
     }
 
@@ -433,6 +523,7 @@ export class ProviderClisModule implements AgentModule {
         const entry = this.#entry(args.cliId);
         if (entry.operation?.id === args.operationId) return;
         entry.mutationId = args.mutationId;
+        entry.adding = args.account === undefined ? null : { ...args.account, account: null };
         entry.operation = {
             id: args.operationId,
             kind,
@@ -473,6 +564,7 @@ export class ProviderClisModule implements AgentModule {
             args.operationId,
             launch.command,
             launch.args,
+            this.#machine().env,
             INSTALL_TIMEOUT_MS,
         );
         if (!this.#isCurrent(id, args.operationId)) return;
@@ -546,12 +638,18 @@ export class ProviderClisModule implements AgentModule {
                 },
             });
         };
+        const adding = this.#entry(id).adding;
+        const env =
+            adding === null
+                ? this.#machine().env
+                : accountEnvironment(id, adding.home, this.#machine().env);
         const code = await this.#runProcess(
             ctx,
             id,
             args.operationId,
             executable,
             flow.args,
+            env,
             timeoutMs,
             watchForPage,
         );
@@ -561,13 +659,37 @@ export class ProviderClisModule implements AgentModule {
             authorization: null,
             message: "Checking the sign-in…",
         });
-        await this.#checkSignIn(id);
-        if (this.#entry(id).signIn.status === "signed_in") {
-            await this.#scanProviders(ctx);
-            this.#finish(ctx, id, args.operationId, "succeeded", null);
-            return;
+        let unchecked: string | null;
+        if (adding === null) {
+            await this.#checkSignIn(id);
+            if (this.#entry(id).signIn.status === "signed_in") {
+                await this.#scanProviders(ctx);
+                this.#finish(ctx, id, args.operationId, "succeeded", null);
+                return;
+            }
+            unchecked = this.#entry(id).unchecked;
+        } else {
+            // Another account is checked in its own folder; the default account stays as it is.
+            const check = await checkProviderCliSignIn(id, executable, {
+                ...this.#machine(),
+                env,
+            });
+            if (check.status === "signed_in" && addsAccountHomes(id)) {
+                if (!(await this.#register(ctx, id, adding))) {
+                    this.#finish(ctx, id, args.operationId, "failed", {
+                        code: "sign_in_failed",
+                        message: `${cli.name} signed in, but Happy couldn't add the account.`,
+                    });
+                    return;
+                }
+                adding.account = check.account;
+                await this.#checkAccounts(id);
+                await this.#scanProviders(ctx);
+                this.#finish(ctx, id, args.operationId, "succeeded", null);
+                return;
+            }
+            unchecked = check.unchecked ?? null;
         }
-        const unchecked = this.#entry(id).unchecked;
         this.#finish(ctx, id, args.operationId, "failed", {
             code: code === "timeout" ? "expired" : code === null ? "unavailable" : "sign_in_failed",
             message:
@@ -581,6 +703,26 @@ export class ProviderClisModule implements AgentModule {
         });
     }
 
+    /** Make a signed-in account's folder a provider account now. Answers whether it was added. */
+    async #register(
+        ctx: Context,
+        id: "claude" | "codex",
+        adding: NonNullable<Entry["adding"]>,
+    ): Promise<boolean> {
+        const suffix = adding.providerId.slice(id.length + 1);
+        try {
+            await this.#config.addProviderNow(
+                ctx,
+                adding.providerId,
+                accountProviderTable(id, `${definition(id).name} ${suffix}`, adding.home),
+            );
+            return true;
+        } catch (error: unknown) {
+            ctx.log.warn("A signed-in account could not be added.", {}, error);
+            return false;
+        }
+    }
+
     /**
      * Run one vendor program until it exits, the operation is cancelled, or time runs out. Its
      * lifetime belongs to the durable call's context, never to the request that started it.
@@ -591,10 +733,11 @@ export class ProviderClisModule implements AgentModule {
         operationId: string,
         command: string,
         args: readonly string[],
+        env: Readonly<NodeJS.ProcessEnv>,
         timeoutMs: number,
         onText?: (text: string) => void,
     ): Promise<number | null | "timeout"> {
-        const child = startProviderCliProcess(command, args, this.#machine().env, (line) => {
+        const child = startProviderCliProcess(command, args, env, (line) => {
             const entry = this.#entry(id);
             if (entry.operation?.id !== operationId) return;
             entry.operation = {
@@ -637,10 +780,15 @@ export class ProviderClisModule implements AgentModule {
         const running = this.#refreshes.get(id);
         if (running !== undefined) return await running;
         const refresh = (async () => {
-            const before = JSON.stringify([this.#entry(id).installation, this.#entry(id).signIn]);
+            const before = JSON.stringify([
+                this.#entry(id).installation,
+                this.#entry(id).signIn,
+                this.#entry(id).accounts,
+            ]);
             const wasSignedIn = this.#entry(id).signIn.status === "signed_in";
             await this.#discover(id);
             await this.#checkSignIn(id);
+            await this.#checkAccounts(id);
             const entry = this.#entry(id);
             // A sign-in seen before that a check can no longer confirm says why, as a failed
             // sign-in, rather than dropping silently to "not checked".
@@ -655,7 +803,7 @@ export class ProviderClisModule implements AgentModule {
                     message: `Happy can no longer confirm ${definition(id).name}'s sign-in. ${entry.unchecked}`,
                 });
             }
-            const after = JSON.stringify([entry.installation, entry.signIn]);
+            const after = JSON.stringify([entry.installation, entry.signIn, entry.accounts]);
             const first = !entry.discovered;
             entry.discovered = true;
             if (before !== after || first) {
@@ -687,6 +835,40 @@ export class ProviderClisModule implements AgentModule {
             entry.signIn = { status: "unknown", account: null };
             entry.unchecked = null;
         }
+    }
+
+    /**
+     * Each configured account of this assistant and its own sign-in: one with a home folder is
+     * checked there, one with its own key or token is signed in, and any other uses the
+     * program's default sign-in.
+     */
+    async #checkAccounts(id: ProviderCliId): Promise<void> {
+        const entry = this.#entry(id);
+        const machine = this.#machine();
+        const configured = Object.entries(this.#config.configuration.values.providers).filter(
+            ([, provider]) => provider.type === id,
+        );
+        entry.accounts = await Promise.all(
+            configured.map(async ([providerId, provider]): Promise<ProviderCliAccount> => {
+                const home = accountHome(provider);
+                const state =
+                    home !== undefined
+                        ? await checkProviderCliSignIn(id, entry.installation.path, {
+                              ...machine,
+                              env: accountEnvironment(id, home, machine.env),
+                          })
+                        : hasOwnCredential(provider)
+                          ? { status: "signed_in" as const, account: null }
+                          : entry.signIn;
+                return {
+                    id: providerId,
+                    label: this.#config.providerName(providerId),
+                    ...(state.account?.email == null ? {} : { email: state.account.email }),
+                    ...(state.account?.plan == null ? {} : { plan: state.account.plan }),
+                    signIn: state.status,
+                };
+            }),
+        );
     }
 
     /**
@@ -757,7 +939,7 @@ export class ProviderClisModule implements AgentModule {
                     : `Signing in to ${name} was cancelled.`
                 : operation.kind === "install"
                   ? `${name} is installed.`
-                  : signedInMessage(name, entry.signIn.account));
+                  : signedInMessage(name, (entry.adding ?? entry.signIn).account));
         entry.operation = {
             ...operation,
             status,
@@ -842,6 +1024,7 @@ export class ProviderClisModule implements AgentModule {
             installer: cli.installer(process.platform),
             commands: cli.commands,
             signIn: { ...entry.signIn, methods: installed ? cli.methods.slice() : [] },
+            accounts: entry.accounts,
             operation: entry.operation,
             version: entry.version,
             updatedAt: entry.updatedAt,

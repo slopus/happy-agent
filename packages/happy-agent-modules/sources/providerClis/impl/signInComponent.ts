@@ -18,13 +18,18 @@ const NAMES: Readonly<Record<ProviderCliId, string>> = {
  * calls this module directly, never its HTTP routes. A connection, now or when a sign-in finishes
  * later in the browser or the person's own terminal, is announced and leaves the conversation a
  * note that wakes its model, unless a listener such as onboarding tells the conversation itself.
+ * With `account: "new"`, the widget signs in another account instead, and its note follows that
+ * account until it is signed in.
  */
 export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderClisModule): void {
-    /** Conversations whose widget started an install or a sign-in that has not finished. */
-    const awaiting = new Map<ProviderCliId, Set<string>>();
-    const follow = (id: ProviderCliId, agentId: string) => {
-        const agents = awaiting.get(id) ?? new Set<string>();
-        agents.add(agentId);
+    /**
+     * Conversations whose widget started an install or a sign-in that has not finished, each with
+     * the account it adds, or `null` for the assistant's default sign-in.
+     */
+    const awaiting = new Map<ProviderCliId, Map<string, string | null>>();
+    const follow = (id: ProviderCliId, agentId: string, accountId: string | null = null) => {
+        const agents = awaiting.get(id) ?? new Map<string, string | null>();
+        agents.set(agentId, accountId);
         awaiting.set(id, agents);
     };
     const refused = (error: unknown) => {
@@ -53,22 +58,34 @@ export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderCl
             });
             return;
         }
-        if (cli.signIn.status !== "signed_in" || operation?.status === "running") return;
-        awaiting.delete(cli.id);
-        for (const agentId of agents) {
-            void connected(ctx, cli, agentId)
-                .then(async ({ note, wake }) => await chatUi.note(ctx, agentId, note, wake))
-                .catch((error: unknown) => {
-                    ctx.log.warn("A sign-in note could not be left.", {}, error);
-                });
+        for (const [agentId, accountId] of agents) {
+            if (accountId === null) {
+                if (cli.signIn.status !== "signed_in" || operation?.status === "running") continue;
+                agents.delete(agentId);
+                void connected(ctx, cli, agentId)
+                    .then(async ({ note, wake }) => await chatUi.note(ctx, agentId, note, wake))
+                    .catch((error: unknown) => {
+                        ctx.log.warn("A sign-in note could not be left.", {}, error);
+                    });
+                continue;
+            }
+            const account = cli.accounts?.find((candidate) => candidate.id === accountId);
+            if (account?.signIn !== "signed_in") continue;
+            agents.delete(agentId);
+            const note = `Another ${NAMES[cli.id]} account is connected and signed in${account.email === undefined ? "" : ` as ${account.email}`}.`;
+            void chatUi.note(ctx, agentId, note, true).catch((error: unknown) => {
+                ctx.log.warn("A sign-in note could not be left.", {}, error);
+            });
         }
+        if (agents.size === 0) awaiting.delete(cli.id);
     });
 
     chatUi.contribute(providerSignInComponent, {
-        prompt: "One AI's install and sign-in, live: it installs the AI's program when it is missing, opens its own sign-in, and takes a sign-in code or a pasted setup token or API key. Show one per AI the person may connect. A finished sign-in reaches you as a hidden note, in a turn of its own.",
-        fallback: (props) => `Sign in to ${NAMES[props.provider]} in Happy on your computer.`,
-        check: async (_ctx, props) =>
-            props.account === "new" ? ["Adding another account isn't available here yet."] : [],
+        prompt: "One AI's install and sign-in, live: it installs the AI's program when it is missing, opens its own sign-in, and takes a sign-in code or a pasted setup token or API key. Show one per AI the person may connect. With `account: \"new\"` it adds another account of a connected Claude Code or Codex instead. A finished sign-in reaches you as a hidden note, in a turn of its own.",
+        fallback: (props) =>
+            props.account === "new"
+                ? `Add another ${NAMES[props.provider]} account in Happy on your computer.`
+                : `Sign in to ${NAMES[props.provider]} in Happy on your computer.`,
         actions: {
             install: async (ctx, offer) => {
                 try {
@@ -80,6 +97,25 @@ export function contributeSignInComponent(chatUi: ChatUiModule, clis: ProviderCl
                 return { status: "accepted" };
             },
             sign_in: async (ctx, offer) => {
+                if (offer.props.account === "new") {
+                    let accountId: string | undefined;
+                    try {
+                        ({ accountId } = await clis.addAccount(
+                            ctx,
+                            offer.props.provider,
+                            undefined,
+                        ));
+                    } catch (error: unknown) {
+                        return refused(error);
+                    }
+                    if (accountId !== undefined) {
+                        follow(offer.props.provider, offer.agentId, accountId);
+                    }
+                    return {
+                        status: "accepted",
+                        result: accountId === undefined ? {} : { accountId },
+                    };
+                }
                 const cli = await clis.get(ctx, offer.props.provider);
                 // Signed in already: it connects as it is.
                 if (cli.signIn.status === "signed_in") {

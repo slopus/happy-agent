@@ -5,7 +5,10 @@
 Rig deliberately has no login flow of its own. Signing in means running the vendor's program and
 relaying the page it prints, so credentials stay in the vendor's normal home folder (`~/.claude`,
 `~/.codex`, `~/.grok`) and every other tool that uses that assistant sees the same sign-in. No
-separate credential folders are created for Happy.
+Happy-only credential folders are created. Adding another account is the one exception to the
+default folder, and it still follows the vendors' own convention: the sign-in runs in
+`~/.claude-N` or `~/.codex-N` through `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, folders people already
+use for second accounts, and the default sign-in is left alone.
 
 ## On macOS, a signed-out answer from outside the desktop session means nothing
 

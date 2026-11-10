@@ -12,13 +12,8 @@ import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import type {
-    AgentModel,
-    AgentModule,
-    AgentModuleHooks,
-    AgentProviders,
-} from "@slopus/happy-agent-base";
-import { cuid2Schema } from "@slopus/happy-agent-base";
+import type { AgentModel, AgentModule, AgentModuleHooks } from "@slopus/happy-agent-base";
+import { AgentProviders, cuid2Schema } from "@slopus/happy-agent-base";
 import {
     CodexProvider,
     CodexSessionCredential,
@@ -1869,7 +1864,15 @@ export class ConfigModule implements AgentModule {
         this.#executionObservations.endAgent(agentId);
     }
     readonly name = "config";
-    readonly configuration: HappyAgentConfiguration;
+    #configuration: HappyAgentConfiguration;
+
+    /**
+     * The resolved configuration. It is immutable; adding an account while running replaces it
+     * with a new one rather than changing it.
+     */
+    get configuration(): HappyAgentConfiguration {
+        return this.#configuration;
+    }
 
     readonly #scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined;
     readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -2211,7 +2214,7 @@ export class ConfigModule implements AgentModule {
         scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined,
         environment: Readonly<NodeJS.ProcessEnv>,
     ) {
-        this.configuration = configuration;
+        this.#configuration = configuration;
         this.#mcpServers = configuration.values.mcpServers;
         this.#runtimeValues = structuredClone(runtimeValues);
         // A default model chosen while running is kept in the generated runtime configuration.
@@ -2488,15 +2491,20 @@ export class ConfigModule implements AgentModule {
         this.#providerEnablement = new ProviderEnablement(source.ids, (id) =>
             this.#isAccountEnabled(id),
         );
-        this.#providers = providerRegistryUntil(
+        this.#providers = this.#liveRegistry(source, this.#providerEnablement);
+        return this.#providers;
+    }
+
+    /** Wrap source accounts so shutdown, enablement, and service tiers govern every session. */
+    #liveRegistry(source: AgentProviders, enablement: ProviderEnablement): AgentProviders {
+        return providerRegistryUntil(
             source,
             this.#providerLifetime.signal,
-            this.#providerEnablement,
+            enablement,
             (id) => this.isProviderEnabled(id),
             (id, request, provider) =>
                 this.validateProviderServiceTier(id, request.model, request.serviceTier, provider),
         );
-        return this.#providers;
     }
 
     get providerIds(): readonly string[] {
@@ -3217,6 +3225,102 @@ export class ConfigModule implements AgentModule {
         });
     }
 
+    /**
+     * Add one new, enabled account and use it at once, without a restart. Like
+     * {@link addRuntimeProvider}, it is written to runtime.toml. When a smart provider pools
+     * accounts of its type, the first such pool takes it as its last member, also in runtime.toml,
+     * which from then on keeps that pool's member list. Answers the pool it joined, if any. A
+     * provider that already exists is never replaced.
+     */
+    async addProviderNow(
+        ctx: Context,
+        providerId: string,
+        table: Readonly<Record<string, unknown>>,
+    ): Promise<{ readonly pool: string | null }> {
+        return await this.#runtimeLock.runInLock(ctx, async () => {
+            if (this.hasProvider(providerId)) {
+                throw new Error(`Provider "${providerId}" is already configured.`);
+            }
+            const values = this.configuration.values;
+            const pool =
+                Object.entries(values.providers).find(
+                    ([, provider]) =>
+                        provider.type === "smart" &&
+                        smartPoolType(values.providers, provider.providers) === table["type"],
+                ) ?? null;
+            const members =
+                pool !== null && pool[1].type === "smart"
+                    ? [...pool[1].providers, providerId]
+                    : undefined;
+            const next = structuredClone(this.#runtimeValues);
+            const runtimeProviders: Record<string, unknown> = { ...next.providers };
+            runtimeProviders[providerId] = { ...structuredClone(table), enabled: true };
+            if (pool !== null && members !== undefined) {
+                runtimeProviders[pool[0]] = {
+                    ...(runtimeProviders[pool[0]] as Record<string, unknown> | undefined),
+                    providers: members,
+                    type: "smart",
+                };
+            }
+            next.providers = runtimeProviders as NonNullable<PartialValues["providers"]>;
+            if (!Value.Check(partialValuesSchema, next)) {
+                throw new Error(`The configuration for provider "${providerId}" is invalid.`);
+            }
+            const added = mergeValues({
+                providers: { [providerId]: next.providers[providerId] },
+            } as PartialValues).providers[providerId];
+            const configuration = deepFreeze({
+                ...this.configuration,
+                values: {
+                    ...values,
+                    providers: {
+                        ...values.providers,
+                        [providerId]: added,
+                        ...(pool === null ? {} : { [pool[0]]: { ...pool[1], providers: members } }),
+                    },
+                },
+            });
+            if (!Value.Check(happyAgentConfigurationSchema, configuration)) {
+                throw new Error(`The configuration for provider "${providerId}" is invalid.`);
+            }
+            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            this.#runtimeValues = next;
+            this.#configuration = configuration;
+            this.#providerEnabled.set(
+                providerId,
+                this.configuredProviderOverride(providerId) ?? true,
+            );
+            this.#registerLive(pool === null ? [providerId] : [providerId, pool[0]]);
+            return { pool: pool?.[0] ?? null };
+        });
+    }
+
+    /**
+     * Make accounts the configuration just gained or changed resolvable now. A registry not built
+     * yet will read the new configuration when it is. Each changed source entry is rebuilt from the
+     * new configuration; a pool rebuilt this way starts its rotation afresh.
+     */
+    #registerLive(ids: readonly string[]): void {
+        const source = this.#sourceProviders;
+        if (source === undefined) return;
+        const fresh = this.#buildProviderSource();
+        for (const id of ids) {
+            const type = fresh.typeOf(id);
+            if (type === null) continue;
+            source.remove(id);
+            source.add(id, async ({ model }) => await resolved(fresh, id, model), type);
+            const live = this.#providers;
+            const enablement = this.#providerEnablement;
+            if (live === undefined || enablement === undefined || live.typeOf(id) !== null)
+                continue;
+            enablement.add(id, this.#isAccountEnabled(id));
+            const only = new AgentProviders();
+            only.add(id, async ({ model }) => await resolved(source, id, model), type);
+            const wrapped = this.#liveRegistry(only, enablement);
+            live.add(id, async ({ model }) => await resolved(wrapped, id, model), type);
+        }
+    }
+
     /** Atomically persist and publish the machine's live Tailcat enablement. */
     async updateRuntimeTailcatEnabled(ctx: Context, enabled: boolean): Promise<void> {
         await this.#runtimeLock.runInLock(ctx, async () => {
@@ -3637,17 +3741,7 @@ export class ConfigModule implements AgentModule {
 
     #providerSource(): AgentProviders {
         if (this.#sourceProviders === undefined) {
-            const scripted = this.#resolveScripted()?.providers;
-            this.#sourceProviders = agentProviders(
-                this.configuration,
-                (usage) => this.#reportAccountUsage(usage),
-                (id) => this.#isAccountEnabled(id),
-                (id) => this.#providerEnablement?.signal(id),
-                scripted,
-                this.#executionObservations,
-                this.#credentialFailures,
-                this.#accountFailures,
-            );
+            this.#sourceProviders = this.#buildProviderSource();
             // A test-owned inference registry is already authenticated. Initialize all its
             // accounts as usable, including canonical IDs whose production defaults are off. This
             // happens exactly once: ProviderScanModule may subsequently gate them without a later
@@ -3663,6 +3757,20 @@ export class ConfigModule implements AgentModule {
             }
         }
         return this.#sourceProviders;
+    }
+
+    /** The accounts the current configuration describes, as an unwrapped provider registry. */
+    #buildProviderSource(): AgentProviders {
+        return agentProviders(
+            this.configuration,
+            (usage) => this.#reportAccountUsage(usage),
+            (id) => this.#isAccountEnabled(id),
+            (id) => this.#providerEnablement?.signal(id),
+            this.#resolveScripted()?.providers,
+            this.#executionObservations,
+            this.#credentialFailures,
+            this.#accountFailures,
+        );
     }
 
     /**
@@ -6613,6 +6721,29 @@ async function readLocalCredentialFile(path: string): Promise<string | undefined
     } finally {
         await file?.close().catch(() => undefined);
     }
+}
+
+/** One registered account, which must be there. */
+async function resolved(
+    providers: AgentProviders,
+    id: string,
+    model: string | undefined,
+): Promise<BaseProvider> {
+    const provider = await providers.resolve(id, model);
+    if (provider === null) throw new Error(`Provider "${id}" is unavailable.`);
+    return provider;
+}
+
+/** The account type a smart provider pools: its first member's, skipping other pools. */
+function smartPoolType(
+    providers: HappyAgentConfigValues["providers"],
+    members: readonly string[],
+): string | undefined {
+    for (const id of members) {
+        const member = providers[id];
+        if (member !== undefined && member.type !== "smart") return member.type;
+    }
+    return undefined;
 }
 
 function deepFreeze<T>(value: T): T {

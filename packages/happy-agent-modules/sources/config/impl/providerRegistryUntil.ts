@@ -22,6 +22,14 @@ export class ProviderEnablement {
         }
     }
 
+    /** Govern an account configured while running. One already governed keeps its state. */
+    add(id: string, enabled: boolean): void {
+        if (this.#controllers.has(id)) return;
+        const controller = new AbortController();
+        if (!enabled) controller.abort(disabledError(id));
+        this.#controllers.set(id, controller);
+    }
+
     isEnabled(id: string): boolean {
         const controller = this.#controllers.get(id);
         return controller !== undefined && !controller.signal.aborted;

@@ -9787,11 +9787,23 @@ export class ApiModule implements AgentModule {
                     "provider CLI sign-in request",
                     2 * 1_024,
                 );
-                const providerCli = await this.#withMutationId(
-                    body.mutationId,
-                    async () => await providerClis.signIn(ctx, id, body.method, body.mutationId),
+                const started = await this.#withMutationId(body.mutationId, async () =>
+                    body.account === "new"
+                        ? await providerClis.addAccount(ctx, id, body.method, body.mutationId)
+                        : {
+                              providerCli: await providerClis.signIn(
+                                  ctx,
+                                  id,
+                                  body.method,
+                                  body.mutationId,
+                              ),
+                              accountId: undefined,
+                          },
                 );
-                sendJson(response, 200, { providerCli });
+                sendJson(response, 200, {
+                    providerCli: started.providerCli,
+                    ...(started.accountId === undefined ? {} : { accountId: started.accountId }),
+                });
                 return;
             }
             const body = await bodyAs(
