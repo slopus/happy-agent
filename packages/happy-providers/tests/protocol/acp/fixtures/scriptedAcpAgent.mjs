@@ -6,7 +6,8 @@
 // "wait" holds the prompt open until cancelled or steered; "throttled" is refused as too many
 // requests the first time it is sent, and "throttled late" only after reporting a tool call;
 // "over quota" fails with a 429 that names a weekly limit; "stubborn" never ends its first prompt;
-// anything else is echoed back.
+// anything else is echoed back. With SCRIPTED_ACP_REVISED_MODEL set, a new session repeats its
+// model list and then sends one that also has that model.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 
@@ -47,6 +48,33 @@ class ScriptedAgent {
         this.#servers.set(sessionId, params.mcpServers);
         writeFileSync(sessionsFile, JSON.stringify({ ...known(), [sessionId]: true }));
         log({ method: "newSession", sessionId, mcpServers: params.mcpServers.length });
+        if (process.env.SCRIPTED_ACP_REVISED_MODEL !== undefined) {
+            // Like an agent that answers from a cache: repeat that list, then send the real one.
+            const send = (options) =>
+                void this.#conn.sessionUpdate({
+                    sessionId,
+                    update: {
+                        sessionUpdate: "config_option_update",
+                        configOptions: [
+                            {
+                                id: "model",
+                                name: "Model",
+                                category: "model",
+                                type: "select",
+                                currentValue: "m1",
+                                options,
+                            },
+                        ],
+                    },
+                });
+            const cached = [
+                { value: "m1", name: "Model One" },
+                { value: "m2-high", name: "Model Two (High)" },
+            ];
+            const added = process.env.SCRIPTED_ACP_REVISED_MODEL;
+            setTimeout(() => send(cached), 50);
+            setTimeout(() => send([{ value: added, name: added }, ...cached]), 400);
+        }
         return {
             sessionId,
             configOptions: [

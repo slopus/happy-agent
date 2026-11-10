@@ -19,7 +19,14 @@ const EFFORT_SUFFIXES: readonly SessionReasoningEffort[] = [
     "max",
 ];
 
+/**
+ * antigravity-acp answers a new session from the model list its last run cached, then asks
+ * `agy models` (about five seconds) and sends the real list only if it differs.
+ */
+const MODEL_REVISION_MS = 20_000;
+
 const models: readonly ForeignAgentModel[] = [
+    model("gemini-4-carbon", "Gemini 4 Carbon", THREE, "medium"),
     model("gemini-4-argon", "Gemini 4 Argon", THREE, "medium"),
     model("gemini-3.8-flash", "Gemini 3.8 Flash", THREE, "high"),
     model("claude-opus-5-5", "Claude Opus 5.5 (Antigravity)", THREE, "medium"),
@@ -39,10 +46,15 @@ export const antigravityAgent: ForeignAgent = {
     type: "antigravity",
     modelPrefix: "antigravity",
     label: "Antigravity",
-    connect: (start) =>
-        acpSpawnConnect(
+    connect: (start) => {
+        const connect = acpSpawnConnect(
             foreignAgentLaunch(start, { command: "npx", args: ["-y", "antigravity-acp@1.2.0"] }),
-        ),
+        );
+        return async (cwd, client) => ({
+            ...(await connect(cwd, client)),
+            modelRevisionMs: MODEL_REVISION_MS,
+        });
+    },
     models,
     modelsFromSelector,
     profile: {

@@ -81,7 +81,9 @@ minute.
 (`impl/acpConnectionSpawn.ts`); a vendor can supply `connect` instead and drive the agent through
 its own typed API, presenting it as the same ACP surface. `acpDiscoverModels` opens a throwaway
 session and reads the agent's model selector, so the catalog lists the models the installed agent
-actually offers. A profile option may name an ACP `category` instead of an exact ID, for agents
+actually offers. A connection that sets `modelRevisionMs` belongs to an agent that answers from a
+cache and corrects itself afterwards: discovery stays connected that long and takes the
+`config_option_update` that carries a different list. A profile option may name an ACP `category` instead of an exact ID, for agents
 that call their model selector something else.
 
 ## Files

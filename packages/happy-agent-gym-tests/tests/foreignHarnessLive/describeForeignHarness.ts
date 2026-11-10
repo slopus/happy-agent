@@ -14,7 +14,8 @@ const run = promisify(execFile);
  * HAPPY_ACP_LIVE=claude-code,codex-cli,antigravity,opencode. Each harness uses its own login
  * unless given an account: HAPPY_ACP_CLAUDE_OAUTH_TOKEN for Claude Code,
  * HAPPY_ACP_CODEX_AUTH_FILE (a Codex `auth.json`) for Codex CLI, and HAPPY_ACP_XAI_API_KEY to
- * run OpenCode on xAI.
+ * run OpenCode on xAI. HAPPY_ACP_ANTIGRAVITY_MODEL runs Antigravity on another of its models, such
+ * as `antigravity/gemini-4-carbon`.
  */
 export type HarnessKind = "claude-code" | "codex-cli" | "antigravity" | "opencode";
 
@@ -65,7 +66,7 @@ const SETUPS: Readonly<Record<HarnessKind, HarnessSetup>> = {
     antigravity: {
         config: ["[harnesses.antigravity]"],
         providerId: "antigravity",
-        model: "antigravity/gemini-3.8-flash",
+        model: process.env.HAPPY_ACP_ANTIGRAVITY_MODEL ?? "antigravity/gemini-3.8-flash",
         effort: "low",
         stateDirectory: ["antigravity"],
     },

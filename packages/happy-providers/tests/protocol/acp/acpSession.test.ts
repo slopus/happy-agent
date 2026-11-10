@@ -610,6 +610,46 @@ describe("AcpSession", () => {
         ]);
     }, 30_000);
 
+    it("waits for the model list an agent sends after answering from its cache", async () => {
+        const directory = mkdtempSync(join(tmpdir(), "acp-discover-revised-"));
+        const launch = {
+            command: process.execPath,
+            args: [AGENT],
+            env: {
+                SCRIPTED_ACP_LOG: join(directory, "agent.jsonl"),
+                SCRIPTED_ACP_REVISED_MODEL: "gemini-9-medium",
+            },
+        };
+        // An agent that promises no revision is read once and left.
+        expect((await acpDiscoverModels(launch, directory)).map((model) => model.value)).toEqual([
+            "m1",
+            "m2-high",
+        ]);
+
+        // Antigravity's connection does, so the repeated cached list is passed over and the
+        // corrected one is taken as soon as it arrives.
+        const startedAt = Date.now();
+        const values = await acpDiscoverModels(antigravityAgent.connect(launch), directory);
+        expect(values.map((model) => model.value)).toEqual(["gemini-9-medium", "m1", "m2-high"]);
+        expect(Date.now() - startedAt).toBeLessThan(10_000);
+        expect(antigravityAgent.modelsFromSelector(values)[0]).toMatchObject({
+            id: "antigravity/gemini-9",
+            effortLevels: ["medium"],
+        });
+    }, 30_000);
+
+    it("assumes Gemini 4 Carbon first, with Antigravity's three efforts", () => {
+        expect(antigravityAgent.models[0]).toMatchObject({
+            id: "antigravity/gemini-4-carbon",
+            name: "Gemini 4 Carbon",
+            effortLevels: ["low", "medium", "high"],
+            defaultEffort: "medium",
+        });
+        expect(
+            antigravityAgent.profile.modelOptions?.("antigravity/gemini-4-carbon", undefined),
+        ).toEqual([{ configId: "model", value: "gemini-4-carbon-medium" }]);
+    });
+
     it("lets the next new session start when one that never bound its conversation is stopped", async () => {
         // One profile object, as every account of one agent shares in a daemon.
         const profile: AcpAgentProfile = { serializeNewSessions: true };

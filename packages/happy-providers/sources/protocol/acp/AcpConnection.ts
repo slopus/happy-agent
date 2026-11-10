@@ -39,6 +39,12 @@ export interface AcpConnection {
      * earlier with {@link processGroups} also cover commands the agent orphaned since.
      */
     terminate(groups?: readonly number[]): void;
+    /**
+     * How long after opening a session the agent may still replace the model list it first
+     * reported, for an agent that answers from a cache and looks up its real list afterwards.
+     * Model discovery stays connected this long for the replacement.
+     */
+    readonly modelRevisionMs?: number;
 }
 
 /** Start a foreign agent working in `cwd` that reports to `client`. */

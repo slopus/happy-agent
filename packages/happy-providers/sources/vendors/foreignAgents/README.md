@@ -23,6 +23,11 @@ lists here are only assumed until the agent reports its own through `modelsFromS
 and the generic `acp` agent assume none. Codex CLI runs the pinned `@openai/codex` this package
 depends on, else a `codex` on PATH, else the pinned release through `npx`.
 
+Antigravity's adapter answers a new session from the model list its previous run cached, then
+asks `agy models` and sends a `config_option_update` only when the list changed. Its connection
+therefore sets `modelRevisionMs`, so model discovery waits for that correction and a model Google
+adds is listed without a change here; ending the adapter sooner would also leave its cache stale.
+
 Antigravity's adapter ignores ACP `mcpServers`, but `agy` reads `.agents/mcp_config.json` from
 every workspace root, so the bridge is written into a private directory under the provider's
 state and passed as an additional directory. Nothing is ever written into the user's project.

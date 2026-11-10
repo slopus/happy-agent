@@ -210,8 +210,8 @@ compaction:
 | any, `acp`    | any ACP agent, from its `command`  | its own login or configured `env` |
 
 Each agent reports its own models, listed as `<harness type>/<model>`, such as
-`claude-code/opus`, `antigravity/gemini-3.8-flash`, or
-`antigravity/gemini-4-argon`. The conversation stays a Happy Agent conversation:
+`claude-code/opus`, `antigravity/gemini-4-carbon`, or
+`antigravity/gemini-3.8-flash`. The conversation stays a Happy Agent conversation:
 its history is the record, Happy Agent's tools reach the agent over MCP, the
 session's permission mode maps onto the agent's own, a new message steers it, and
 Stop ends its turn. By default, sessions on Happy Agent's own loop can start
