@@ -226,7 +226,17 @@ yet a provider stream suspended on a stalled response never resumed to honour th
 unsettled return held every later request at its wait for earlier work, so the agent stopped
 reaching inference, and a provider that did resume handed its stale answer to the next turn.
 Inference now runs on `withLifetime(..., abortSignal)`, as compaction already did, so an abort
-reaches the provider and the stream ends.
+reaches the provider and the stream ends. `#collect` also races `abortPromise` ahead of
+`iterator.next()`, because an abort between `#enterStage` and `session.run` hands the provider an
+already-aborted lifetime: a provider that answers with an empty stream resolves `next()`
+immediately, which otherwise beat the settled `abortPromise`, read as an unclosed stream instead
+of a cancellation, and reopened the run over input the abort had dropped.
+
+Session replacement and compaction also race their wait for earlier unwinding work against the
+turn's abort before clearing or destroying the session. When a broken stream cleanup hangs anyway,
+a reconfiguring turn or compaction cancels immediately instead of blocking on `#settled()`, while
+keeping the old session intact until a later request or `close` destroys it after that cleanup
+settles.
 
 ## Verification
 

@@ -1,6 +1,7 @@
 import type {
     BaseSession,
     SessionCompaction,
+    SessionDoneState,
     SessionEvent,
     SessionMessage,
     SessionStream,
@@ -5313,5 +5314,265 @@ describe("AgentBase scoped persistence", () => {
             user("switch"),
         ]);
         await agent.close();
+    });
+
+    it("aborts a stream stalled in iterator.next before any event and runs the next turn", async () => {
+        let markStreamStarted!: () => void;
+        const streamStarted = new Promise<void>((resolve) => {
+            markStreamStarted = resolve;
+        });
+        let firstLifetime: AbortSignal | undefined;
+        let streamReturned = false;
+        class StalledNextProvider extends ScriptedProvider {
+            override async session(id: string, options: never): Promise<BaseSession> {
+                const session = (await super.session(id, options)) as ScriptedSession;
+                const run = session.run.bind(session);
+                session.run = (runCtx, request): SessionStream => {
+                    if (session.requests.length > 0) return run(runCtx, request);
+                    session.requestContexts.push(runCtx);
+                    session.requests.push(request);
+                    firstLifetime = runCtx.lifetime;
+                    return (async function* () {
+                        try {
+                            markStreamStarted();
+                            await new Promise<void>((resolve) => {
+                                if (runCtx.lifetime?.aborted) {
+                                    resolve();
+                                    return;
+                                }
+                                runCtx.lifetime?.addEventListener("abort", () => resolve(), {
+                                    once: true,
+                                });
+                            });
+                        } finally {
+                            streamReturned = true;
+                        }
+                    })();
+                };
+                return session;
+            }
+        }
+
+        const persistence = new InMemoryPersistence();
+        const provider = new StalledNextProvider([textTurn("recovered reply")]);
+        let beforeInferenceCount = 0;
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence,
+            hooks: {
+                beforeInference: () => {
+                    beforeInferenceCount += 1;
+                },
+            },
+        });
+
+        await agent.send(ctx, user("stalled"));
+        await streamStarted;
+        expect(firstLifetime?.aborted).toBe(false);
+        expect(streamReturned).toBe(false);
+
+        await agent.abort(ctx);
+        await agent.waitForIdle();
+        expect(firstLifetime?.aborted).toBe(true);
+        await until(() => streamReturned);
+
+        await agent.send(ctx, user("follow up"));
+        await agent.waitForIdle();
+
+        expect(beforeInferenceCount).toBe(2);
+        expect(provider.sessions[0]?.requests).toHaveLength(2);
+        expect(persistence.records.at(-1)).toEqual({
+            type: "block",
+            block: { type: "text", text: "recovered reply" },
+        });
+        await agent.close();
+        expect(provider.sessions[0]?.destroyed).toBe(true);
+    });
+
+    it("cancels session recreation and compaction on abort when prior stream cleanup is hung without destroying the old session early", async () => {
+        let markFirstStreamStarted!: () => void;
+        const firstStreamStarted = new Promise<void>((resolve) => {
+            markFirstStreamStarted = resolve;
+        });
+        let releaseCleanup!: () => void;
+        const cleanupGate = new Promise<void>((resolve) => {
+            releaseCleanup = resolve;
+        });
+        class HungCleanupProvider extends ScriptedProvider {
+            override async session(id: string, options: never): Promise<BaseSession> {
+                const session = (await super.session(id, options)) as ScriptedSession;
+                if (this.sessions.length > 1) return session;
+                session.run = (runCtx, request): SessionStream => {
+                    session.requestContexts.push(runCtx);
+                    session.requests.push(request);
+                    const iterator: AsyncIterator<SessionEvent> = {
+                        next: () => {
+                            markFirstStreamStarted();
+                            return new Promise<IteratorResult<SessionEvent>>(() => undefined);
+                        },
+                        return: async () => {
+                            await cleanupGate;
+                            return { done: true, value: undefined };
+                        },
+                    };
+                    return { [Symbol.asyncIterator]: () => iterator };
+                };
+                return session;
+            }
+        }
+
+        const waitPromptly = async <T>(promise: Promise<T>): Promise<T> =>
+            Promise.race([
+                promise,
+                new Promise<never>((_, reject) => {
+                    setTimeout(
+                        () => reject(new Error("Timed out waiting for abort to settle.")),
+                        2_000,
+                    );
+                }),
+            ]);
+
+        let configurationReads = 0;
+        const provider = new HungCleanupProvider([textTurn("after cleanup released")]);
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            hooks: {
+                instructions: () => {
+                    configurationReads += 1;
+                    return "";
+                },
+            },
+        });
+
+        try {
+            await agent.send(ctx, user("hang"));
+            await firstStreamStarted;
+            await agent.abort(ctx);
+            await waitPromptly(agent.waitForIdle());
+
+            const oldSession = provider.sessions[0];
+            if (oldSession === undefined) throw new Error("Expected initial session.");
+            expect(oldSession.destroyed).toBe(false);
+
+            // Reconfiguring turn parks in #ensureSession waiting for the hung cleanup; abort
+            // cancels it immediately and leaves oldSession intact while cleanup is still running.
+            agent.state.instructions = "reconfigured";
+            const readsBeforeReconfigure = configurationReads;
+            await agent.send(ctx, user("reconfigure"));
+            await until(() => configurationReads > readsBeforeReconfigure);
+            await new Promise((resolve) => setImmediate(resolve));
+            expect(oldSession.destroyed).toBe(false);
+            expect(provider.sessions).toHaveLength(1);
+
+            await agent.abort(ctx);
+            await waitPromptly(agent.waitForIdle());
+            expect(oldSession.destroyed).toBe(false);
+            expect(provider.sessions).toHaveLength(1);
+
+            // Compaction with changed config parks in #ensureSession inside #compactHistoryAttempt.
+            const readsBeforeReconfigCompact = configurationReads;
+            await agent.compact(ctx);
+            await until(() => configurationReads > readsBeforeReconfigCompact);
+            await new Promise((resolve) => setImmediate(resolve));
+            await agent.abort(ctx);
+            await waitPromptly(agent.waitForIdle());
+            expect(oldSession.destroyed).toBe(false);
+            expect(oldSession.compactions).toHaveLength(0);
+
+            // Compaction with matching config reuses oldSession and parks on #settled() directly.
+            agent.state.instructions = "";
+            const readsBeforeMatchingCompact = configurationReads;
+            await agent.compact(ctx);
+            await until(() => configurationReads > readsBeforeMatchingCompact);
+            await new Promise((resolve) => setImmediate(resolve));
+            await agent.abort(ctx);
+            await waitPromptly(agent.waitForIdle());
+            expect(oldSession.destroyed).toBe(false);
+            expect(oldSession.compactions).toHaveLength(0);
+
+            // Once the hung stream cleanup finally settles, recreating the session destroys
+            // oldSession after cleanup and completes the new turn on a fresh session.
+            agent.state.instructions = "final instructions";
+            const readsBeforeFinalTurn = configurationReads;
+            await agent.send(ctx, user("after release"));
+            await until(() => configurationReads > readsBeforeFinalTurn);
+            await new Promise((resolve) => setImmediate(resolve));
+            expect(oldSession.destroyed).toBe(false);
+
+            releaseCleanup();
+            await waitPromptly(agent.waitForIdle());
+            expect(oldSession.destroyCalls).toBe(1);
+            expect(provider.sessions).toHaveLength(2);
+            expect(provider.sessions[1]?.requests).toHaveLength(1);
+        } finally {
+            releaseCleanup();
+            await agent.close();
+        }
+    });
+
+    it("cancels and keeps queued input queued when abort lands between #settled() and session.run", async () => {
+        let markHookEntered!: () => void;
+        const hookEntered = new Promise<void>((resolve) => {
+            markHookEntered = resolve;
+        });
+        let releaseHook!: () => void;
+        const hookGate = new Promise<void>((resolve) => {
+            releaseHook = resolve;
+        });
+        class EmptyOnAbortedLifetimeProvider extends ScriptedProvider {
+            override async session(id: string, options: never): Promise<BaseSession> {
+                const session = (await super.session(id, options)) as ScriptedSession;
+                const run = session.run.bind(session);
+                session.run = (runCtx, request): SessionStream => {
+                    if (runCtx.lifetime?.aborted) {
+                        session.requests.push(request);
+                        return (async function* () {})();
+                    }
+                    return run(runCtx, request);
+                };
+                return session;
+            }
+        }
+
+        const states: (SessionDoneState | undefined)[] = [];
+        let hookCalls = 0;
+        const provider = new EmptyOnAbortedLifetimeProvider([
+            textTurn("must not run"),
+            textTurn("nor this"),
+        ]);
+        const agent = await AgentBase.create(ctx, {
+            id: "test-agent",
+            providers: providersOf(provider),
+            provider: "scripted",
+            persistence: new InMemoryPersistence(),
+            hooks: {
+                beforeInference: async () => {
+                    hookCalls += 1;
+                    if (hookCalls === 1) {
+                        markHookEntered();
+                        await hookGate;
+                    }
+                },
+                afterInference: (_ctx, inference) => {
+                    states.push(inference.state);
+                },
+            },
+        });
+
+        await agent.send(ctx, user("first"));
+        await hookEntered;
+        await agent.send(ctx, user("queued behind aborted turn"));
+        await agent.abort(ctx);
+        releaseHook();
+        await agent.waitForIdle();
+
+        const requests = provider.sessions.flatMap((session) => session.requests).length;
+        await agent.close();
+        expect({ states, requests }).toEqual({ states: ["cancelled"], requests: 1 });
     });
 });

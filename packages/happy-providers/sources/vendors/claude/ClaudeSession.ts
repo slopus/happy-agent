@@ -257,6 +257,22 @@ export class ClaudeSession extends BaseSession {
         ctx: Context,
         request: SessionRunRequest,
     ): AsyncGenerator<SessionEvent> {
+        if (ctx.lifetime?.aborted) return;
+        let deliveredTerminal = false;
+        try {
+            for await (const event of this.streamRunEvents(ctx, request)) {
+                deliveredTerminal = event.type === "done";
+                yield event;
+            }
+        } finally {
+            if (!deliveredTerminal) this.invalidateActiveQuery();
+        }
+    }
+
+    private async *streamRunEvents(
+        ctx: Context,
+        request: SessionRunRequest,
+    ): AsyncGenerator<SessionEvent> {
         const signal = ctx.lifetime;
         const requestedModel = request.model ?? this.activeModel ?? this.model;
         const model =
@@ -368,6 +384,7 @@ export class ClaudeSession extends BaseSession {
             }
 
             if (usage !== undefined) yield usage;
+            if (blockStopped) yield { type: "block_stop" };
             if (terminal.state !== "error" && terminal.state !== "cancelled") {
                 const assistantMessage = assistant.message();
                 if (assistantMessage !== undefined) {
@@ -382,7 +399,6 @@ export class ClaudeSession extends BaseSession {
                     }
                 }
             }
-            if (blockStopped) yield { type: "block_stop" };
             yield terminal;
             return;
         }
@@ -390,17 +406,27 @@ export class ClaudeSession extends BaseSession {
 
     private async *streamQuery(options: ClaudeQueryOptions): AsyncGenerator<SessionEvent> {
         this.clearIdleQueryTimer();
+        let doneState: Extract<SessionEvent, { type: "done" }>["state"] | undefined;
         try {
-            yield* this.streamActiveQuery(options);
+            for await (const event of this.streamActiveQuery(options)) {
+                if (event.type === "done") doneState = event.state;
+                yield event;
+            }
         } finally {
-            const query = this.activeQuery;
-            if (query !== undefined) {
-                // Caller-owned tools can keep running after inference returns. Closing their
-                // SDK waits does not cancel them: the next run replays the caller's real results.
-                this.idleQueryTimer = setTimeout(() => {
-                    if (this.activeQuery === query) this.closeActiveQuery();
-                }, CLAUDE_QUERY_IDLE_TIMEOUT_MS);
-                this.idleQueryTimer.unref();
+            if (doneState === undefined || (options.compaction && doneState === "tool_call")) {
+                this.invalidateActiveQuery();
+            } else if (options.compaction) {
+                this.closeActiveQuery();
+            } else {
+                const query = this.activeQuery;
+                if (query !== undefined) {
+                    // Caller-owned tools can keep running after inference returns. Closing their
+                    // SDK waits does not cancel them: the next run replays the caller's real results.
+                    this.idleQueryTimer = setTimeout(() => {
+                        if (this.activeQuery === query) this.closeActiveQuery();
+                    }, CLAUDE_QUERY_IDLE_TIMEOUT_MS);
+                    this.idleQueryTimer.unref();
+                }
             }
         }
     }
@@ -452,11 +478,18 @@ export class ClaudeSession extends BaseSession {
         const cwd = this.cwd === undefined ? undefined : claudeWorkingDirectory(this.cwd);
         let stream = this.activeQuery;
         let resolveAbort = () => {};
+        let interrupted = false;
         let invalidatedAfterAbort = false;
         const aborted = new Promise<typeof CLAUDE_QUERY_ABORTED>((resolve) => {
             resolveAbort = () => resolve(CLAUDE_QUERY_ABORTED);
         });
+        const interruptStream = () => {
+            if (interrupted || typeof stream?.interrupt !== "function") return;
+            interrupted = true;
+            void Promise.resolve(stream.interrupt()).catch(() => undefined);
+        };
         const invalidateAfterAbort = () => {
+            interruptStream();
             this.closeActiveQuery();
             if (invalidatedAfterAbort) return;
             invalidatedAfterAbort = true;
@@ -464,12 +497,8 @@ export class ClaudeSession extends BaseSession {
         };
         const abort = () => {
             resolveAbort();
-            if (typeof stream?.interrupt === "function") {
-                void Promise.resolve(stream.interrupt()).catch(() => undefined);
-            }
             invalidateAfterAbort();
         };
-        options.abort?.addEventListener("abort", abort, { once: true });
         const activeTools = new Map<number, Omit<SessionToolCallBlock, "type">>();
         const completedTools: Omit<SessionToolCallBlock, "type">[] = [];
         const activeOutputBlocks = new Map<
@@ -510,15 +539,27 @@ export class ClaudeSession extends BaseSession {
         let attempts = 1;
         let usage = { ...EMPTY_SESSION_USAGE };
         let sawInferenceUsage = false;
+        options.abort?.addEventListener("abort", abort, { once: true });
         try {
+            if (options.abort?.aborted) {
+                invalidateAfterAbort();
+                yield { type: "block_reset" };
+                return;
+            }
             if (!continuingQuery) {
+                const fittedMessages = await fitClaudeImages(configuredContext.messages);
+                if (options.abort?.aborted) {
+                    invalidateAfterAbort();
+                    yield { type: "block_reset" };
+                    return;
+                }
                 // A context Claude cannot replay fails this run like any other error, rather than
                 // escaping the stream before it reports an outcome.
                 const replay = createClaudeSessionReplay({
                     ...(options.compaction ? { compaction: true } : {}),
                     context: {
                         ...configuredContext,
-                        messages: await fitClaudeImages(configuredContext.messages),
+                        messages: fittedMessages,
                     },
                     // The replayed environment must name the directory the live query runs in.
                     ...(cwd === undefined ? {} : { cwd }),
@@ -567,11 +608,13 @@ export class ClaudeSession extends BaseSession {
                     throw new Error("Claude could not match every result in the tool batch.");
                 }
             } else {
-                this.activePromptQueue?.enqueue(
-                    createClaudeLivePromptMessage(
-                        await fitClaudeImages(configuredContext.messages),
-                    ),
-                );
+                const fittedMessages = await fitClaudeImages(configuredContext.messages);
+                if (options.abort?.aborted) {
+                    invalidateAfterAbort();
+                    yield { type: "block_reset" };
+                    return;
+                }
+                this.activePromptQueue?.enqueue(createClaudeLivePromptMessage(fittedMessages));
             }
             // Only once the turn has actually been handed over does the query hold it.
             this.sentConversation = incomingConversation;
@@ -1002,6 +1045,15 @@ export class ClaudeSession extends BaseSession {
         }
     }
 
+    private invalidateActiveQuery(): void {
+        const query = this.activeQuery;
+        if (typeof query?.interrupt === "function") {
+            void Promise.resolve(query.interrupt()).catch(() => undefined);
+        }
+        this.closeActiveQuery();
+        this.sdkSessionId = randomUUID();
+    }
+
     private closeActiveQuery(): void {
         this.clearIdleQueryTimer();
         this.activeToolBridge?.close();
@@ -1013,6 +1065,7 @@ export class ClaudeSession extends BaseSession {
         this.activeQueryKey = undefined;
         this.sentConversation = undefined;
         this.activeReplay = undefined;
+        this.lastQueryToolCalls = [];
     }
 
     private clearIdleQueryTimer(): void {

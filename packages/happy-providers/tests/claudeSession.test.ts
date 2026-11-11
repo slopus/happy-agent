@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import type { SessionMessage } from "@/core/SessionContext.js";
+import type { SessionEvent, SessionStream } from "@/core/SessionEvent.js";
 import { assistantMessageFromEvents } from "@/core/SessionAssistantMessageAccumulator.js";
 import { ClaudeAuthTokenCredential } from "@/vendors/claude/ClaudeAuthTokenCredential.js";
 import { ClaudeSession, type ClaudeSdkQuery } from "@/vendors/claude/ClaudeSession.js";
@@ -262,6 +263,27 @@ describe("ClaudeSession", () => {
             expect(compactClose).not.toHaveBeenCalled();
             finish.resolve();
             expect(await compacting).toMatchObject({ status: "completed", summary: "SUMMARY" });
+            expect(compactClose).toHaveBeenCalledOnce();
+            expect(vi.getTimerCount()).toBe(0);
+        });
+
+        it("closes a compaction query immediately without arming an idle timer when compaction emits a tool call", async () => {
+            const compactClose = vi.fn();
+            const compactInterrupt = vi.fn();
+            const query = vi.fn<ClaudeSdkQuery>(() =>
+                Object.assign(fakeToolCallQuery(compactClose), { interrupt: compactInterrupt }),
+            );
+            const session = await createSession(query);
+            expect(
+                await session.compact(testContext, {
+                    context: { instructions: "", messages: [initialMessage] },
+                }),
+            ).toEqual({
+                status: "failed",
+                kind: "tool_call",
+                message: "Claude attempted to call a tool while compacting.",
+            });
+            expect(compactInterrupt).toHaveBeenCalledOnce();
             expect(compactClose).toHaveBeenCalledOnce();
             expect(vi.getTimerCount()).toBe(0);
         });
@@ -2711,6 +2733,402 @@ describe("ClaudeSession", () => {
         await collectSessionEvents(session.run(testContext, { context: firstTurn }));
 
         expect(query).toHaveBeenCalledTimes(2);
+    });
+
+    it("interrupts, closes, and rotates the query when ctx.lifetime aborts before or mid-stream, then recovers on the next run", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const beforeMessageStarted = deferred<void>();
+        const midStreamStalled = deferred<void>();
+        const sdkSessionIds: string[] = [];
+        const close1 = vi.fn();
+        const interrupt1 = vi.fn();
+        const close2 = vi.fn();
+        const interrupt2 = vi.fn();
+        const never = new Promise<never>(() => {});
+
+        const query = vi.fn<ClaudeSdkQuery>((parameters) => {
+            sdkSessionIds.push(parameters.options?.sessionId ?? parameters.options?.resume ?? "");
+            const call = query.mock.calls.length;
+            if (call === 1) {
+                return {
+                    [Symbol.asyncIterator]() {
+                        return this;
+                    },
+                    close: close1,
+                    interrupt: interrupt1,
+                    next() {
+                        beforeMessageStarted.resolve();
+                        return never;
+                    },
+                } as unknown as ReturnType<ClaudeSdkQuery>;
+            }
+            if (call === 2) {
+                let step = 0;
+                return {
+                    [Symbol.asyncIterator]() {
+                        return this;
+                    },
+                    close: close2,
+                    interrupt: interrupt2,
+                    next() {
+                        step += 1;
+                        if (step === 1) {
+                            return Promise.resolve({
+                                done: false,
+                                value: streamEvent("mid-stream-delta", {
+                                    type: "content_block_delta",
+                                    index: 0,
+                                    delta: { type: "text_delta", text: "PARTIAL" },
+                                }),
+                            });
+                        }
+                        midStreamStalled.resolve();
+                        return never;
+                    },
+                } as unknown as ReturnType<ClaudeSdkQuery>;
+            }
+            return fakeQuery("RECOVERED_AFTER_ABORTS");
+        });
+
+        const session = new ClaudeSession("abort-before-and-mid-stream", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query,
+            tools: [],
+        });
+
+        // Aborting after run() created the stream but before the first iterator.next() must not
+        // spawn an SDK query at all.
+        const preStartAbort = new AbortController();
+        const preStartStream = session.run(testContextWith(preStartAbort.signal), {
+            context: {
+                instructions: "",
+                messages: [{ role: "user", content: [{ type: "text", text: "Cancelled early." }] }],
+            },
+        });
+        preStartAbort.abort();
+        expect(await collectSessionEvents(preStartStream)).toEqual([]);
+        expect(query).not.toHaveBeenCalled();
+
+        // Aborting while fitClaudeImages is suspended after block_start must yield block_reset
+        // and return without spawning an SDK query.
+        const fitAbort = new AbortController();
+        const fitIterator = session
+            .run(testContextWith(fitAbort.signal), {
+                context: {
+                    instructions: "",
+                    messages: [
+                        {
+                            role: "user",
+                            content: [{ type: "text", text: "Cancelled during fit." }],
+                        },
+                    ],
+                },
+            })
+            [Symbol.asyncIterator]();
+        expect(await fitIterator.next()).toEqual({
+            done: false,
+            value: { type: "block_start" },
+        });
+        const pendingDuringFit = fitIterator.next();
+        fitAbort.abort();
+        expect(await pendingDuringFit).toEqual({
+            done: false,
+            value: { type: "block_reset" },
+        });
+        expect(await fitIterator.next()).toEqual({ done: true, value: undefined });
+        expect(query).not.toHaveBeenCalled();
+
+        // 1. Stalled inside stream.next() before any SDK message arrives.
+        const abort1 = new AbortController();
+        const firstRun = collectSessionEvents(
+            session.run(testContextWith(abort1.signal), {
+                context: {
+                    instructions: "",
+                    messages: [{ role: "user", content: [{ type: "text", text: "First." }] }],
+                },
+            }),
+        );
+        await beforeMessageStarted.promise;
+        abort1.abort();
+        await expect(settlesBeforeNextTurn(firstRun)).resolves.toContainEqual({
+            type: "block_reset",
+        });
+        expect(interrupt1).toHaveBeenCalledOnce();
+        expect(close1).toHaveBeenCalledOnce();
+
+        // 2. Stalled inside stream.next() mid-stream after text_delta.
+        const abort2 = new AbortController();
+        const secondRun = collectSessionEvents(
+            session.run(testContextWith(abort2.signal), {
+                context: {
+                    instructions: "",
+                    messages: [
+                        { role: "user", content: [{ type: "text", text: "First." }] },
+                        { role: "user", content: [{ type: "text", text: "Second." }] },
+                    ],
+                },
+            }),
+        );
+        await midStreamStalled.promise;
+        abort2.abort();
+        const secondEvents = await settlesBeforeNextTurn(secondRun);
+        expect(secondEvents).toContainEqual({ type: "text_delta", delta: "PARTIAL" });
+        expect(secondEvents).toContainEqual({ type: "block_reset" });
+        expect(interrupt2).toHaveBeenCalledOnce();
+        expect(close2).toHaveBeenCalledOnce();
+
+        // 3. The very next run starts a fresh query with a rotated SDK session ID and succeeds.
+        const thirdEvents = await collectSessionEvents(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        { role: "user", content: [{ type: "text", text: "First." }] },
+                        { role: "user", content: [{ type: "text", text: "Second." }] },
+                        { role: "user", content: [{ type: "text", text: "Third." }] },
+                    ],
+                },
+            }),
+        );
+        expect(query).toHaveBeenCalledTimes(3);
+        expect(new Set(sdkSessionIds).size).toBe(3);
+        expect(textFromSessionEvents(thirdEvents)).toBe("RECOVERED_AFTER_ABORTS");
+        expect(thirdEvents.at(-1)).toMatchObject({ type: "done", state: "normal" });
+        session.destroy();
+    });
+
+    it("cleans up the active query, rotates sdkSessionId, and resets tool calls on early iterator.return before done while keeping warm continuations after done", async () => {
+        vi.useFakeTimers();
+        try {
+            const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+            if (credential === null) throw new Error("Expected test credential.");
+
+            const sdkSessionIds: string[] = [];
+            const closeMidStream = vi.fn();
+            const interruptMidStream = vi.fn();
+            const closeAtUsage = vi.fn();
+            const closeAtBlockStop = vi.fn();
+            const closeWarm = vi.fn();
+            let replayedAfterBlockStop: unknown;
+
+            function liveToolQueryWithUsage(close: () => void): ReturnType<ClaudeSdkQuery> {
+                async function* messages() {
+                    yield streamEvent("tool-msg-start", {
+                        type: "message_start",
+                        message: {
+                            usage: {
+                                input_tokens: 10,
+                                output_tokens: 0,
+                                cache_creation_input_tokens: 0,
+                                cache_read_input_tokens: 0,
+                            },
+                        },
+                    });
+                    yield streamEvent("tool-start", {
+                        type: "content_block_start",
+                        index: 0,
+                        content_block: {
+                            type: "tool_use",
+                            id: "call-early",
+                            name: "Bash",
+                            input: {},
+                        },
+                    });
+                    yield streamEvent("tool-delta", {
+                        type: "content_block_delta",
+                        index: 0,
+                        delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
+                    });
+                    yield streamEvent("tool-stop", { type: "content_block_stop", index: 0 });
+                    yield streamEvent("tool-msg-delta", {
+                        type: "message_delta",
+                        delta: { stop_reason: "tool_use", stop_sequence: null },
+                        usage: {
+                            input_tokens: null,
+                            output_tokens: 4,
+                            cache_creation_input_tokens: null,
+                            cache_read_input_tokens: null,
+                        },
+                    });
+                    yield streamEvent("tool-msg-stop", { type: "message_stop" });
+                    await new Promise<never>(() => {});
+                }
+                return Object.assign(messages(), {
+                    close,
+                }) as unknown as ReturnType<ClaudeSdkQuery>;
+            }
+
+            const query = vi.fn<ClaudeSdkQuery>((parameters) => {
+                sdkSessionIds.push(
+                    parameters.options?.sessionId ?? parameters.options?.resume ?? "",
+                );
+                const call = query.mock.calls.length;
+                if (call === 1) {
+                    async function* messages() {
+                        yield streamEvent("delta-1", {
+                            type: "content_block_delta",
+                            index: 0,
+                            delta: { type: "text_delta", text: "UNFINISHED" },
+                        });
+                        await new Promise<never>(() => {});
+                    }
+                    return Object.assign(messages(), {
+                        close: closeMidStream,
+                        interrupt: interruptMidStream,
+                    }) as unknown as ReturnType<ClaudeSdkQuery>;
+                }
+                if (call === 2) return liveToolQueryWithUsage(closeAtUsage);
+                if (call === 3) return liveToolQueryWithUsage(closeAtBlockStop);
+                async function* warmMessages() {
+                    replayedAfterBlockStop = await parameters.options?.sessionStore?.load({
+                        projectKey: "test",
+                        sessionId: parameters.options.resume ?? "warm-session",
+                    });
+                    yield* fakeToolCallQuery(() => {});
+                    yield* fakeQuery("AFTER_TOOL");
+                    yield* fakeQuery("WARM_FOLLOW_UP");
+                }
+                return Object.assign(warmMessages(), {
+                    close: closeWarm,
+                }) as unknown as ReturnType<ClaudeSdkQuery>;
+            });
+
+            const session = new ClaudeSession("early-return-session", {
+                instructions: "",
+                credential,
+                model: "sonnet[1m]",
+                query,
+                tools: [{ name: "Bash", parameters: Type.Object({ command: Type.String() }) }],
+            });
+
+            const unwindAt = async (
+                stream: SessionStream,
+                stopType: SessionEvent["type"],
+            ): Promise<SessionEvent[]> => {
+                const iterator = stream[Symbol.asyncIterator]();
+                const seen: SessionEvent[] = [];
+                for (;;) {
+                    const next = await iterator.next();
+                    if (next.done) break;
+                    seen.push(next.value);
+                    if (next.value.type === stopType) {
+                        await iterator.return?.(undefined);
+                        break;
+                    }
+                }
+                return seen;
+            };
+
+            const collectUntilDoneAndReturn = async (
+                stream: SessionStream,
+            ): Promise<SessionEvent[]> => {
+                return unwindAt(stream, "done");
+            };
+
+            const firstUser: SessionMessage = {
+                role: "user",
+                content: [{ type: "text", text: "First prompt." }],
+            };
+            const secondUser: SessionMessage = {
+                role: "user",
+                content: [{ type: "text", text: "Second prompt." }],
+            };
+
+            // 1. Unwind mid-stream at text_delta.
+            await unwindAt(
+                session.run(testContext, { context: { instructions: "", messages: [firstUser] } }),
+                "text_delta",
+            );
+            expect(interruptMidStream).toHaveBeenCalledOnce();
+            expect(closeMidStream).toHaveBeenCalledOnce();
+            expect(vi.getTimerCount()).toBe(0);
+
+            // 2. Unwind right at token_usage before block_stop / done on a tool_call response.
+            await unwindAt(
+                session.run(testContext, {
+                    context: { instructions: "", messages: [firstUser, secondUser] },
+                }),
+                "token_usage",
+            );
+            expect(closeAtUsage).toHaveBeenCalledOnce();
+            expect(vi.getTimerCount()).toBe(0);
+
+            // 3. Unwind right at block_stop immediately before done on a tool_call response.
+            await unwindAt(
+                session.run(testContext, {
+                    context: { instructions: "", messages: [firstUser, secondUser] },
+                }),
+                "block_stop",
+            );
+            expect(closeAtBlockStop).toHaveBeenCalledOnce();
+            expect(vi.getTimerCount()).toBe(0);
+
+            // 4. Next run starts a fresh full-context query (not continuing a stale tool bridge or
+            // uncommitted assistant turn), and calling iterator.return() AFTER done keeps the query
+            // warm across both tool_call and normal continuations.
+            const toolTurnEvents = await collectUntilDoneAndReturn(
+                session.run(testContext, {
+                    context: { instructions: "", messages: [firstUser, secondUser] },
+                }),
+            );
+            expect(query).toHaveBeenCalledTimes(4);
+            expect(new Set(sdkSessionIds).size).toBe(4);
+            expect(JSON.stringify(replayedAfterBlockStop)).toContain("First prompt.");
+            expect(JSON.stringify(replayedAfterBlockStop)).not.toContain("call-early");
+            expect(toolTurnEvents.at(-1)).toMatchObject({ type: "done", state: "tool_call" });
+            expect(closeWarm).not.toHaveBeenCalled();
+
+            const toolAssistant = assistantMessageFromEvents(toolTurnEvents);
+            if (toolAssistant === undefined) throw new Error("Missing tool assistant message.");
+            const toolResult: SessionMessage = {
+                role: "tool",
+                callId: "call-1",
+                content: [{ type: "text", text: "done" }],
+            };
+
+            const afterToolEvents = await collectUntilDoneAndReturn(
+                session.run(testContext, {
+                    context: {
+                        instructions: "",
+                        messages: [firstUser, secondUser, toolAssistant, toolResult],
+                    },
+                }),
+            );
+            expect(textFromSessionEvents(afterToolEvents)).toBe("AFTER_TOOL");
+            expect(afterToolEvents.at(-1)).toMatchObject({ type: "done", state: "normal" });
+            expect(query).toHaveBeenCalledTimes(4);
+            expect(closeWarm).not.toHaveBeenCalled();
+
+            const normalAssistant = assistantMessageFromEvents(afterToolEvents);
+            if (normalAssistant === undefined) throw new Error("Missing normal assistant message.");
+            const warmFollowUpEvents = await collectUntilDoneAndReturn(
+                session.run(testContext, {
+                    context: {
+                        instructions: "",
+                        messages: [
+                            firstUser,
+                            secondUser,
+                            toolAssistant,
+                            toolResult,
+                            normalAssistant,
+                            { role: "user", content: [{ type: "text", text: "Follow up." }] },
+                        ],
+                    },
+                }),
+            );
+            expect(textFromSessionEvents(warmFollowUpEvents)).toBe("WARM_FOLLOW_UP");
+            expect(warmFollowUpEvents.at(-1)).toMatchObject({ type: "done", state: "normal" });
+            expect(query).toHaveBeenCalledTimes(4);
+            expect(closeWarm).not.toHaveBeenCalled();
+
+            session.destroy();
+            expect(closeWarm).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
 

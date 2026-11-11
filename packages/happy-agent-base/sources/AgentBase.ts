@@ -2701,7 +2701,7 @@ export class AgentBase {
             // A requested compaction runs before this turn's first inference, so the model
             // always receives a settled conversation — never one still owing tool results. A
             // response the restart owes is continued after it.
-            await this.#runCompaction(ctx, abort.signal, needsInference);
+            await this.#runCompaction(ctx, abort.signal, abortPromise, needsInference);
             if (this.#stopAtSafeEdgeRequested()) return "shutdown";
             // Each cycle first drains the queues, then runs one inference. Steering injects at
             // every stop between responses and always outranks sends; sent messages inject
@@ -2735,7 +2735,7 @@ export class AgentBase {
                 // A hook may request compaction after the response that dispatched the tool
                 // batch. Its results are settled now, so replace the measured context before
                 // another inference iteration or newly queued input can enter it.
-                await this.#runCompaction(ctx, abort.signal, needsInference);
+                await this.#runCompaction(ctx, abort.signal, abortPromise, needsInference);
                 if (this.#stopAtSafeEdgeRequested()) return "shutdown";
                 await this.#finishAdmittedQueueWrites();
                 // A message accepted through an outer transaction becomes visible only after
@@ -3086,11 +3086,16 @@ export class AgentBase {
         | undefined
     > {
         const { instructions, tools } = await this.#configuration(ctx);
-        const session = await this.#ensureSession(instructions, tools);
+        const session = await this.#ensureSession(instructions, tools, abortPromise);
         // Nothing from the previous response may still be holding the session — but that
         // unwinding was detached from an earlier abort precisely so it could never hold a
         // cancellation open, so a new cancellation must not start waiting for it either.
-        if ((await Promise.race([this.#settled(), abortPromise])) === ABORTED) return undefined;
+        if (
+            session === ABORTED ||
+            (await Promise.race([this.#settled(), abortPromise])) === ABORTED
+        ) {
+            return undefined;
+        }
         this.#inferenceId ??= createId();
         const inferenceStart: AgentBaseInferenceStart = {
             loopId: this.#loopId ?? createId(),
@@ -3371,11 +3376,12 @@ export class AgentBase {
     async #runCompaction(
         ctx: Context,
         signal: AbortSignal,
+        abortPromise: Promise<typeof ABORTED>,
         continueWithInference: boolean,
     ): Promise<void> {
         if (this.#compaction === undefined) return;
         await this.#span(ctx, "agent.compaction", {}, (compactionCtx) =>
-            this.#compactHistory(compactionCtx, signal, continueWithInference),
+            this.#compactHistory(compactionCtx, signal, abortPromise, continueWithInference),
         );
     }
 
@@ -3383,11 +3389,17 @@ export class AgentBase {
     async #compactHistory(
         ctx: Context,
         signal: AbortSignal,
+        abortPromise: Promise<typeof ABORTED>,
         continueWithInference: boolean,
     ): Promise<void> {
         for (;;) {
             if (
-                (await this.#compactHistoryAttempt(ctx, signal, continueWithInference)) !== "retry"
+                (await this.#compactHistoryAttempt(
+                    ctx,
+                    signal,
+                    abortPromise,
+                    continueWithInference,
+                )) !== "retry"
             ) {
                 return;
             }
@@ -3398,6 +3410,7 @@ export class AgentBase {
     async #compactHistoryAttempt(
         ctx: Context,
         signal: AbortSignal,
+        abortPromise: Promise<typeof ABORTED>,
         continueWithInference: boolean,
     ): Promise<"complete" | "retry"> {
         const pending = this.#compaction;
@@ -3405,9 +3418,16 @@ export class AgentBase {
         try {
             await this.#enterStage(ctx, "compaction");
             const { instructions, tools } = await this.#configuration(ctx);
-            const session = await this.#ensureSession(instructions, tools);
+            const session = await this.#ensureSession(instructions, tools, abortPromise);
+            if (
+                session === ABORTED ||
+                (await Promise.race([this.#settled(), abortPromise])) === ABORTED
+            ) {
+                this.#compaction = undefined;
+                pending.reject(new Error("The compaction was cancelled by an abort."));
+                return "complete";
+            }
             const snapshot = this.#messagesForProvider(this.#messages);
-            await this.#settled();
             const compactionStart: AgentBaseCompactionStart = {
                 loopId: this.#loopId ?? createId(),
                 turnId: this.#turnId ?? createId(),
@@ -5172,7 +5192,10 @@ export class AgentBase {
         let exhausted = false;
         try {
             while (true) {
-                const next = await Promise.race([iterator.next(), abortPromise]);
+                // Check abortPromise first: if abort landed after #enterStage opened this request
+                // and the provider answered its already-aborted lifetime with an empty stream,
+                // an already-fulfilled EOF must not outrun the cancellation.
+                const next = await Promise.race([abortPromise, iterator.next()]);
                 if (next === ABORTED) {
                     // Drop the unfinished block and end the turn.
                     await this.#emit(ctx, { type: "done", state: "cancelled" });
@@ -5451,17 +5474,21 @@ export class AgentBase {
     async #ensureSession(
         instructions: string,
         tools: readonly AnyAgentTool[],
-    ): Promise<BaseSession> {
+        abortPromise: Promise<typeof ABORTED>,
+    ): Promise<BaseSession | typeof ABORTED> {
         const config = sessionConfigOf(this.#providerId, this.#model, instructions, tools);
         if (
             this.#session !== undefined &&
             (this.#sessionConfig === undefined || !sessionConfigSame(this.#sessionConfig, config))
         ) {
+            // The session being replaced may still be held by a response iterator that has not
+            // finished unwinding. Destroying it first would tear it out from under that cleanup,
+            // while an abort leaves it in place until a later request or close can release it.
+            if ((await Promise.race([this.#settled(), abortPromise])) === ABORTED) {
+                return ABORTED;
+            }
             const session = this.#session;
             this.#session = undefined;
-            // The session being replaced may still be held by a response iterator that has not
-            // finished unwinding. Destroying it first would tear it out from under that cleanup.
-            await this.#settled();
             try {
                 await session.destroy();
             } catch {
