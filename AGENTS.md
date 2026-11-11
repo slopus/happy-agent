@@ -80,6 +80,8 @@ Do not implement a dedicated Plan mode, Vim or other modal editing modes, Jupyte
 
 Rig has one permission model for every provider. Codex, Claude, Pi, Grok, MCP, and future tool surfaces must execute through the same `AgentContext`, filesystem boundary, shell sandbox, and `PermissionContext`. Provider differences belong in tool names, argument schemas, result formatting, and model guidance; they must not create provider-specific security paths in the agent loop.
 
+Foreign harnesses (Claude Code, Codex CLI, Antigravity, OpenCode, and other ACP agents) are the one exception: they run their own loop and tools outside Rig's sandbox under their own permission system and reviewer, with their mode mapped from Rig's. Rig's Auto reviewer does not review their calls, including their calls to Rig's tools over MCP; what the harness itself asks becomes a permission question to the user (`source: "harness"`) except in Read only, which refuses, and Full access, which allows. The rules below about the sandbox, Auto never asking, and reviewing every MCP call apply to Rig's own loop. See `docs/permissions-and-sandbox.md`.
+
 The permission modes are:
 
 - Read only permits inspection and non-mutating commands while blocking workspace changes and shell network access. On macOS and Linux, restricted filesystem reads follow Codex and may inspect the host filesystem.
