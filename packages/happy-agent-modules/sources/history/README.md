@@ -92,7 +92,8 @@ tool calls, and tool results), let the model size what it did and did not see wi
   and `at` when the input omits them.
 - `recordStandalone(ctx, agentId, message, runId): Promise<void>` — store one message in a run of
   its own that is already finished when it appears, whatever run is open. No open run is closed or
-  joined and no model turn starts. Chat UI stores its attempt records this way, and a message the
+  joined and no model turn starts. The run carries `kind: "standalone"`, the one thing that tells
+  a reader it was never a turn; every other run has no `kind`. Chat UI stores its attempt records this way, and a message the
   daemon wrote while no run was open, because history pages are read by run and a message without
   one is in no page.
 - `read(ctx, agentId, query?: HistoryQuery): Promise<HistoryPage>` — one page, filtered and paged

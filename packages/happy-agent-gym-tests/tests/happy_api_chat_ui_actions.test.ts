@@ -153,17 +153,44 @@ describe("Chat UI actions", () => {
             const { events } = (await gym.client.getEvents({ limit: 2000 })) as unknown as {
                 events: JournalEvent[];
             };
+            const runEvents = (runId: string) =>
+                events.filter(
+                    (event) => (event.payload["run"] as { id?: string } | undefined)?.id === runId,
+                );
             for (const record of records) {
-                // The run is announced as already finished, and never as started.
-                expect(
-                    events
-                        .filter(
-                            (event) =>
-                                (event.payload["run"] as { id?: string } | undefined)?.id ===
-                                record.runId,
-                        )
-                        .map((event) => event.type),
-                ).toEqual(["run.finished"]);
+                // The run is announced as already finished, never as started, and marked as
+                // standing outside any turn.
+                const about = runEvents(record.runId);
+                expect(about.map((event) => event.type)).toEqual(["run.finished"]);
+                const run = about[0]!.payload["run"] as Record<string, unknown>;
+                expect(run).toMatchObject({
+                    status: "completed",
+                    reason: "completed",
+                    kind: "standalone",
+                    usage: {},
+                    costUsd: null,
+                });
+                expect(run["endedAt"]).toBe(run["startedAt"]);
+                // It is announced before the record it holds.
+                const created = events.find(
+                    (event) =>
+                        event.type === "message.created" &&
+                        (event.payload["message"] as { id?: string }).id === record.id,
+                )!;
+                expect(events.indexOf(about[0]!)).toBeLessThan(events.indexOf(created));
+            }
+            // History marks the same runs, and a turn of the model carries no mark.
+            const page = await gym.client.getMessages(agentId);
+            const kinds = new Map(page.runs.map((run) => [run.id, run.kind]));
+            expect(records.map((record) => kinds.get(record.runId))).toEqual([
+                "standalone",
+                "standalone",
+            ]);
+            expect(page.runs.find((run) => run.id === shown.runId)).not.toHaveProperty("kind");
+            const turnEvents = runEvents(shown.runId);
+            expect(turnEvents.map((event) => event.type)).toEqual(["run.started", "run.finished"]);
+            for (const event of turnEvents) {
+                expect(event.payload["run"]).not.toHaveProperty("kind");
             }
             await gym.send("Thanks.");
             const next = gym.inference.requests.findLast(

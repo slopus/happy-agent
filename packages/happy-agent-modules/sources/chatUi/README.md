@@ -198,7 +198,8 @@ one at a time. In order:
 6. `429` beyond 20 actions a minute on one component.
 
 A refusal stores nothing. Otherwise, in one transaction, the attempt's row is inserted, its record
-is stored `pending` in a finished run of its own (`HistoryModule.recordStandalone`), and a
+is stored `pending` in a finished run of its own (`HistoryModule.recordStandalone`, which marks
+the run `kind: "standalone"` so clients do not take it for a turn), and a
 `chat-ui.attempt` Durable Function call is made for it. The hook then runs with the whole payload,
 for at most 15 seconds. Its outcome is applied in one transaction: the note, the wake, and the
 record's outcome.

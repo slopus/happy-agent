@@ -294,6 +294,15 @@ that is already `completed`, with equal start and end, and appends the message t
 caller's transaction. It never touches the open run, so lifecycle readers still see exactly one
 running run.
 
+## A run stored outside a turn says so
+
+Clients could not tell the run of an attempt record from a short turn: both are `completed` runs,
+and guessing from equal timestamps or from the messages inside would break with the next thing
+stored this way. A run now has an optional `kind`, and `recordStandalone` writes `standalone`;
+turns and maintenance runs have none. The column came in a new migration, `008-history-run-kind`,
+as a nullable column, so every run stored before it reads as a turn. The API passes the field
+through on run metadata, where it means: never started, never the active run, ends no turn.
+
 ## A transactional tool's presentation outlives its commit
 
 An image the agent read never reached the chat: `Read`, `view_image`, and `ReadMediaFile` are

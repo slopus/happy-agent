@@ -456,6 +456,15 @@ export class HistoryModule implements AgentModule {
         ["005-history-words", migrateHistoryWords],
         ["006-history-block-words", migrateHistoryBlockWords],
         ["007-history-message-words", migrateHistoryMessageWords],
+        [
+            "008-history-run-kind",
+            async (_ctx, database) => {
+                await agentDatabaseRun(
+                    database,
+                    sql.raw(`ALTER TABLE ${HISTORY_RUNS_TABLE} ADD COLUMN kind TEXT`),
+                );
+            },
+        ],
     ];
 
     /**
@@ -570,8 +579,9 @@ export class HistoryModule implements AgentModule {
 
     /**
      * Record one message in a run of its own that is already finished when it appears, whatever
-     * run is open: no open run is closed or joined, and no model turn starts. Chat UI attempt
-     * records are stored this way. Joins the caller's transaction.
+     * run is open: no open run is closed or joined, and no model turn starts. The run's `kind` is
+     * `standalone`, so a reader can tell it from a turn. Chat UI attempt records are stored this
+     * way. Joins the caller's transaction.
      */
     async recordStandalone(
         ctx: Context,
@@ -599,9 +609,10 @@ export class HistoryModule implements AgentModule {
             await agentDatabaseRun(
                 txCtx.db,
                 sql`INSERT INTO ${sql.raw(HISTORY_RUNS_TABLE)} (
-                        agent_id, sequence, run_id, status, reason, started_at, ended_at
+                        agent_id, sequence, run_id, status, reason, started_at, ended_at, kind
                     ) VALUES (
-                        ${agentId}, ${sequence}, ${runId}, 'completed', 'completed', ${at}, ${at}
+                        ${agentId}, ${sequence}, ${runId}, 'completed', 'completed', ${at}, ${at},
+                        'standalone'
                     )`,
             );
             await this.#append(txCtx, agentId, stored);
@@ -1126,7 +1137,7 @@ export class HistoryModule implements AgentModule {
         return await this.#direct(ctx, async (txCtx) => {
             const rows = await agentDatabaseRows<HistoryRunRow>(
                 txCtx.db,
-                sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at
+                sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at, kind
                     FROM ${sql.raw(HISTORY_RUNS_TABLE)}
                     WHERE agent_id = ${agentId} AND run_id = ${runId}
                     LIMIT 1`,
@@ -1144,7 +1155,7 @@ export class HistoryModule implements AgentModule {
         // is one, and otherwise waits its turn behind any that is open, as a transaction would.
         const rows = await agentDatabaseRows<HistoryRunRow>(
             ctx.db,
-            sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at
+            sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at, kind
                 FROM ${sql.raw(HISTORY_RUNS_TABLE)}
                 WHERE agent_id = ${agentId} AND status = 'running'
                 ORDER BY sequence DESC
@@ -1283,7 +1294,7 @@ export class HistoryModule implements AgentModule {
         return await this.#direct(ctx, async (txCtx) => {
             const rows = await agentDatabaseRows<HistoryRunRow>(
                 txCtx.db,
-                sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at
+                sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at, kind
                     FROM ${sql.raw(HISTORY_RUNS_TABLE)}
                     WHERE agent_id = ${agentId}
                       AND sequence < (
@@ -3163,6 +3174,7 @@ interface HistoryRunRow {
     readonly reason: string | null;
     readonly started_at: number | string;
     readonly ended_at: number | string | null;
+    readonly kind: string | null;
 }
 
 /** How many candidate runs one message-count query covers. */
@@ -3480,7 +3492,7 @@ async function resolveRunAnchor(
         }
         const runRows = await agentDatabaseRows<HistoryRunRow>(
             database,
-            sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at
+            sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at, kind
                 FROM ${sql.raw(HISTORY_RUNS_TABLE)}
                 WHERE agent_id = ${agentId} AND run_id = ${message.run_id}
                 LIMIT 1`,
@@ -3519,12 +3531,12 @@ async function candidateRuns(
         return await agentDatabaseRows<HistoryRunRow>(
             database,
             anchor.includeAnchorRun
-                ? sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at
+                ? sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at, kind
                     FROM ${sql.raw(HISTORY_RUNS_TABLE)}
                     WHERE agent_id = ${agentId} AND sequence >= ${anchor.sequence}
                     ORDER BY sequence ASC
                     LIMIT ${limit}`
-                : sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at
+                : sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at, kind
                     FROM ${sql.raw(HISTORY_RUNS_TABLE)}
                     WHERE agent_id = ${agentId} AND sequence > ${anchor.sequence}
                     ORDER BY sequence ASC
@@ -3533,7 +3545,7 @@ async function candidateRuns(
     }
     return await agentDatabaseRows<HistoryRunRow>(
         database,
-        sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at
+        sql`SELECT agent_id, sequence, run_id, status, reason, started_at, ended_at, kind
             FROM ${sql.raw(HISTORY_RUNS_TABLE)}
             WHERE agent_id = ${agentId} AND sequence < ${anchor.sequence}
             ORDER BY sequence DESC
@@ -3638,6 +3650,7 @@ function runStateFromRow(row: HistoryRunRow): HistoryRunState {
         reason: row.reason as HistoryRun["reason"],
         startedAt,
         endedAt,
+        ...(row.kind === "standalone" ? { kind: "standalone" as const } : {}),
     };
     if (!Value.Check(historyRunStateSchema, run)) {
         throw new Error("The history module produced invalid run state.");

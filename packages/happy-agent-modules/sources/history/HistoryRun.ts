@@ -59,6 +59,12 @@ export const historyPendingMessageSchema = Type.Object(
 
 export type HistoryPendingMessage = Static<typeof historyPendingMessageSchema>;
 
+/**
+ * What a run is when it is not a turn of the agent. `standalone` is a run stored already finished,
+ * outside any turn: it never started and was never the agent's active run.
+ */
+export const historyRunKindSchema = Type.Literal("standalone");
+
 /** Durable lifecycle metadata for one exact run, independent of whether it has messages. */
 export const historyRunStateSchema = Type.Object(
     {
@@ -68,6 +74,8 @@ export const historyRunStateSchema = Type.Object(
         reason: historyRunReasonSchema,
         startedAt: historyTimestampSchema,
         endedAt: Type.Union([historyTimestampSchema, Type.Null()]),
+        /** Absent for a turn of the agent. */
+        kind: Type.Optional(historyRunKindSchema),
     },
     { additionalProperties: false },
 );

@@ -540,6 +540,57 @@ describe("HistoryModule run history", () => {
         }
     });
 
+    it("marks a run recorded outside a turn as standalone and leaves a turn unmarked", async () => {
+        const world = await setup("history-runs-standalone-kind");
+        try {
+            await world.history.queuePending(world.database.context, pending("message-a", 100));
+            await acceptBatch(world, [accepted("message-a", "send")]);
+            await world.history.recordStandalone(
+                world.database.context,
+                "agent-a",
+                {
+                    role: "service",
+                    recordId: "record-a",
+                    blocks: [{ type: "text", text: "Recorded beside the turn." }],
+                    at: 150,
+                },
+                "run-record-a",
+            );
+
+            // The turn is still the open run, and nothing marks it.
+            const turn = await world.history.runningRun(world.database.context, "agent-a");
+            expect(turn).toEqual({
+                id: "message-a",
+                agentId: "agent-a",
+                status: "running",
+                reason: null,
+                startedAt: 100,
+                endedAt: null,
+            });
+            expect(turn).not.toHaveProperty("kind");
+            expect(
+                await world.history.run(world.database.context, "agent-a", "run-record-a"),
+            ).toEqual({
+                id: "run-record-a",
+                agentId: "agent-a",
+                status: "completed",
+                reason: "completed",
+                startedAt: 150,
+                endedAt: 150,
+                kind: "standalone",
+            });
+
+            const page = await world.history.runs(world.database.context, "agent-a");
+            expect(page.runs.map((run) => [run.id, run.kind])).toEqual([
+                ["message-a", undefined],
+                ["run-record-a", "standalone"],
+            ]);
+            expect(Value.Check(historyRunsPageSchema, page)).toBe(true);
+        } finally {
+            world.database.close();
+        }
+    });
+
     it("keeps a successfully settled run open until durable steering is accepted", async () => {
         const world = await setup("history-runs-pending-steering-boundary");
         try {

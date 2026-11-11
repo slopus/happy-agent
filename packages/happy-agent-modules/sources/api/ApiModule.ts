@@ -4270,6 +4270,7 @@ export class ApiModule implements AgentModule {
             endedAt: run.endedAt,
             usage: summary.usage,
             costUsd: summary.costUsd,
+            ...(run.kind === undefined ? {} : { kind: run.kind }),
         };
     }
 
@@ -5999,6 +6000,7 @@ export class ApiModule implements AgentModule {
                         endedAt: run.endedAt,
                         usage: usage.usage,
                         costUsd: usage.costUsd,
+                        ...(run.kind === undefined ? {} : { kind: run.kind }),
                         messages,
                     };
                 }),
