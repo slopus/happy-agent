@@ -184,6 +184,8 @@ const EXECUTION_BASELINE_KEY = "execution_baseline";
 const EXECUTION_ANCHOR_KEY = "execution_anchor";
 /** Set once a run has overflowed its context and Agent Base reset it to retry. */
 const CONTEXT_RESET_KEY = "context_reset";
+/** In the run store of the turn that follows, the run its settlement left open for steering. */
+const HELD_RUN_KEY = "held_run";
 /** API.md bounds a spent pool's member list. */
 const MAX_POOL_MEMBER_FAILURES = 64;
 const TOOL_NAME_KEY = "tool_name";
@@ -274,6 +276,8 @@ export class HistoryModule implements AgentModule {
     readonly #durableFunctions: DurableFunctionsModule | undefined;
     readonly #executionReservations = new ExecutionConfigurationReservations();
     readonly #activeProviderResultStarts = new Map<string, Set<string>>();
+    /** Per settling transaction, the run that settled while a person's steering was pending. */
+    readonly #settledBeforeSteering = new WeakMap<object, string>();
 
     /** Who is watching the archive: the live subscriptions this module supervises. */
     readonly #appendListeners = new Set<HistoryAppendListener>();
@@ -616,6 +620,41 @@ export class HistoryModule implements AgentModule {
                     )`,
             );
             await this.#append(txCtx, agentId, stored);
+        });
+    }
+
+    /**
+     * End a run that is still `running` although no agent loop is answering it, as a stop would
+     * have ended it. Nothing else would: only a loop settles a run, and a run whose loop is gone is
+     * otherwise reported as working until the next message starts another. Answers the run it
+     * ended, or nothing when the agent's running run is the one its loop is answering. The caller
+     * leaves out maintenance runs, which their own operation ends. Joins the caller's
+     * transaction.
+     */
+    async abortDetachedRun(
+        ctx: Context,
+        agentId: string,
+        runId: string,
+    ): Promise<HistoryRunState | undefined> {
+        if (
+            !Value.Check(historyAgentIdSchema, agentId) ||
+            !Value.Check(historyRecordIdSchema, runId)
+        ) {
+            throw new Error("The history module received an invalid detached run.");
+        }
+        return await this.#direct(ctx, async (txCtx) => {
+            const active =
+                (await this.#events?.activeRunIdInTransaction(txCtx, agentId)) ??
+                this.#events?.activeRunId(agentId);
+            if (active === runId) return undefined;
+            await agentDatabaseRun(
+                txCtx.db,
+                sql`UPDATE ${sql.raw(HISTORY_RUNS_TABLE)}
+                    SET status = 'aborted', reason = 'abort', ended_at = ${Date.now()}
+                    WHERE agent_id = ${agentId} AND run_id = ${runId} AND status = 'running'`,
+            );
+            const ended = await this.run(txCtx, agentId, runId);
+            return ended?.status === "aborted" ? ended : undefined;
         });
     }
 
@@ -2050,21 +2089,46 @@ export class HistoryModule implements AgentModule {
         );
     }
 
+    /** End the run this turn or settlement ends, if it is still running, and name that run. */
     async #finishRun(
         ctx: Context,
-        agentId: string,
+        scope: AgentModuleScope,
         status: HistoryRun["status"],
         reason: HistoryRun["reason"],
         endedAt: number,
-    ): Promise<void> {
-        const runId = this.#events?.activeRunId(agentId);
-        if (runId === undefined) return;
+    ): Promise<string | undefined> {
+        const runId = await this.#endingRunId(ctx, scope);
+        if (runId === undefined) return undefined;
         await agentDatabaseRun(
             ctx.db,
             sql`UPDATE ${sql.raw(HISTORY_RUNS_TABLE)}
                 SET status = ${status}, reason = ${reason}, ended_at = ${endedAt}
-                WHERE agent_id = ${agentId} AND run_id = ${runId} AND status = 'running'`,
+                WHERE agent_id = ${scope.agent.id} AND run_id = ${runId} AND status = 'running'`,
         );
+        await scope.runKV.delete(ctx, HELD_RUN_KEY);
+        return runId;
+    }
+
+    /**
+     * The run a turn or settlement ends: the loop's own run, or else the run an earlier settlement
+     * left open for steering. A turn that is stopped or fails before it accepts that steering has
+     * no run of its own — Events may still name its loop, but History never began that run — and
+     * the open run would otherwise stay running with nothing left to end it.
+     */
+    async #endingRunId(ctx: Context, scope: AgentModuleScope): Promise<string | undefined> {
+        const active = this.#events?.activeRunId(scope.agent.id);
+        if (active !== undefined) {
+            const begun = await agentDatabaseRows<{ run_id: string }>(
+                ctx.db,
+                sql`SELECT run_id
+                    FROM ${sql.raw(HISTORY_RUNS_TABLE)}
+                    WHERE agent_id = ${scope.agent.id} AND run_id = ${active}
+                    LIMIT 1`,
+            );
+            if (begun.length > 0) return active;
+        }
+        const held = await scope.runKV.read(ctx, HELD_RUN_KEY);
+        return Value.Check(historyRecordIdSchema, held) ? held : active;
     }
 
     /**
@@ -2081,7 +2145,7 @@ export class HistoryModule implements AgentModule {
         error: string,
         settlementId: string,
     ): Promise<void> {
-        const runId = this.#events?.activeRunId(scope.agent.id);
+        const runId = await this.#endingRunId(ctx, scope);
         if (runId === undefined) return;
         const existing = await agentDatabaseRows<{ record_id: string }>(
             ctx.db,
@@ -2929,13 +2993,34 @@ export class HistoryModule implements AgentModule {
             }
         },
 
-        /** Reconcile an interrupted response before restored work can resume. */
-        afterAgentActivatedTransact: (
+        /**
+         * Reconcile an interrupted response before restored work can resume, and keep a run open
+         * for the steering its own settlement reopened the agent to accept.
+         */
+        afterAgentActivatedTransact: async (
             ctx: Context,
             scope: AgentModuleScope,
             activation,
-        ): Promise<void> =>
-            activation.restored ? this.#flushPendingBlocks(ctx, scope) : Promise.resolve(),
+        ): Promise<void> => {
+            if (activation.restored) {
+                await this.#flushPendingBlocks(ctx, scope);
+                return;
+            }
+            const runId = this.#settledBeforeSteering.get(ctx.db);
+            if (runId === undefined) return;
+            this.#settledBeforeSteering.delete(ctx.db);
+            // The settlement in this same transaction completed the run, and Agent Base is now
+            // opening the turn that accepts the steering. That acceptance ends the run as
+            // `aborted/steering`; until then it stays the one the person sees running.
+            await agentDatabaseRun(
+                ctx.db,
+                sql`UPDATE ${sql.raw(HISTORY_RUNS_TABLE)}
+                    SET status = 'running', reason = NULL, ended_at = NULL
+                    WHERE agent_id = ${scope.agent.id} AND run_id = ${runId}
+                      AND status = 'completed'`,
+            );
+            await scope.runKV.write(ctx, HELD_RUN_KEY, runId);
+        },
 
         /** Keep the current inference identity durable until its completed blocks are appended. */
         beforeInferenceTransact: async (ctx, scope, inference): Promise<void> => {
@@ -3111,7 +3196,7 @@ export class HistoryModule implements AgentModule {
             this.#activeProviderResultStarts.delete(scope.agent.id);
             this.#config?.endAgentExecutionObservations(scope.agent.id);
             this.#executionReservations.endAgent(scope.agent.id);
-            await this.#finishRun(ctx, scope.agent.id, "aborted", "abort", Date.now());
+            await this.#finishRun(ctx, scope, "aborted", "abort", Date.now());
         },
 
         /**
@@ -3136,9 +3221,14 @@ export class HistoryModule implements AgentModule {
                     settlement.error,
                     settlement.settlementId,
                 );
-                await this.#finishRun(ctx, scope.agent.id, "failed", "error", Date.now());
-            } else if (!(await hasPendingSteering(ctx.db, scope.agent.id))) {
-                await this.#finishRun(ctx, scope.agent.id, "completed", "completed", Date.now());
+                await this.#finishRun(ctx, scope, "failed", "error", Date.now());
+                return;
+            }
+            const runId = await this.#finishRun(ctx, scope, "completed", "completed", Date.now());
+            // Steering that is still pending stays queued after a stop, so only the turn Agent
+            // Base reopens in this commit will accept it; its activation keeps this run open.
+            if (runId !== undefined && (await hasPendingSteering(ctx.db, scope.agent.id))) {
+                this.#settledBeforeSteering.set(ctx.db, runId);
             }
         },
     };

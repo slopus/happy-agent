@@ -528,3 +528,22 @@ The fallback still announces runs the loop never started: maintenance runs and s
 A runtime test holds the queue at the turn's first event until the loop has settled, which is the
 lag at its worst, and the gym scenario for `show_ui` with `suggest_replies` asserts the same
 order through the daemon.
+
+## A settled run is announced even when its details cannot be read
+
+The settlement announcement read the run, its failure row, and its usage before appending
+`run.finished` and the idle `agent.updated`, and any of those reads throwing dropped both. The
+conversion error was only logged, so clients kept showing the agent working. Those reads are now
+optional: a failure is logged, `run.finished` falls back to the run's own metadata with no usage,
+and the idle update is always appended. A held run that the next settlement ends (see History's
+steering hold) is remembered per agent and announced by that settlement.
+
+## Stop ends a run no loop is answering
+
+An earlier daemon could leave a History run `running` with no loop behind it, and nothing ends
+such a run: Base's abort finds no turn, restart restores only owing agents, and the snapshot
+reads `working` forever. After signalling the abort, the abort route asks History to end the
+agent's running run as `aborted/abort` when Events is not answering it, announces
+`run.finished`, and bumps the agent's version. A manual compaction's run is skipped, since the
+abort already cancelled the compaction and Compactions ends that run. A failure here is logged;
+the stop was already accepted.

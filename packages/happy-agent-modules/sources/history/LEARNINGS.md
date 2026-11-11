@@ -114,11 +114,17 @@ which owns and restart-restores that live provider state, and fall back to Histo
 maintenance runs that Events intentionally does not represent. This does not make an API-side
 cache authoritative; emitted run metadata and every terminal outcome still come from History.
 
-Successful loop settlement is not always a public run settlement. When durable user steering is
-still pending, History leaves the current run open. Accepting that steering then performs the one
-atomic transition the public contract describes: the old run becomes `aborted/steering` and the
-successor becomes running. Provider failure and explicit abort still settle immediately; queued
-messages do not defer settlement.
+Successful loop settlement is not always a public run settlement. When a person's steering is
+still pending, accepting it must perform the one atomic transition the public contract describes:
+the old run becomes `aborted/steering` and the successor becomes running. History used to leave
+the run open whenever steering was pending, but a stop drops the turn that would accept it and the
+steering stays queued, so the run stayed `running` with nothing left to end it: every snapshot said
+working, further stops found no turn to cancel, and a restart did not help. Settlement now always
+ends the run, and only when Agent Base reopens the agent in that same commit (its activation hook,
+matched by transaction) does History reopen the run and record it in the next turn's run store
+(`held_run`). A turn that is stopped or fails before accepting the steering has no History run of
+its own, though Events names its loop, so it ends the held run instead. Provider failure and
+explicit abort still settle immediately; queued messages do not defer settlement.
 
 ## The first cursor has no previous page
 
