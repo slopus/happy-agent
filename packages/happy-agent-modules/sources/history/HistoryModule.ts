@@ -105,6 +105,7 @@ import {
     historyToolPresentationSchema,
     historyToolArgumentsWithinByteLimit,
     MAX_HISTORY_TOOL_OUTPUT_LENGTH,
+    MAX_HISTORY_TEXT_LENGTH,
     type HistoryBlock,
     type HistoryClientMetadata,
     type HistoryMessage,
@@ -272,6 +273,11 @@ export class HistoryModule implements AgentModule {
     readonly #config: ConfigModule | undefined;
     readonly #providerUsage: ProviderUsageModule | undefined;
     readonly #durableFunctions: DurableFunctionsModule | undefined;
+    /**
+     * Per agent, the text block the current response is still streaming. Agent Base keeps only
+     * finished blocks, so a stopped response would otherwise lose words the person already read.
+     */
+    readonly #streamingText = new Map<string, string>();
     readonly #executionReservations = new ExecutionConfigurationReservations();
     readonly #activeProviderResultStarts = new Map<string, Set<string>>();
 
@@ -1802,7 +1808,16 @@ export class HistoryModule implements AgentModule {
         scope: AgentModuleScope,
         inference: AgentBaseInference,
     ): Promise<void> {
-        const blocks = await this.#pendingBlocks(ctx, scope);
+        // A stopped response keeps the text it was still streaming: the person has read it. The
+        // run ends `aborted/abort`, which is what says the words stop short.
+        const stopped =
+            inference.state === "cancelled" ? this.#streamingText.get(scope.agent.id) : undefined;
+        const blocks: HistoryBlock[] = [
+            ...(await this.#pendingBlocks(ctx, scope)),
+            ...(stopped === undefined || stopped.trim() === ""
+                ? []
+                : [{ type: "text" as const, text: stopped }]),
+        ];
         const pendingInferenceId = await scope.runKV.read(ctx, PENDING_INFERENCE_ID_KEY);
         const activeRecordId = Value.Check(historyRecordIdSchema, pendingInferenceId)
             ? pendingInferenceId
@@ -2781,6 +2796,24 @@ export class HistoryModule implements AgentModule {
         ): Promise<void> => {
             if (event.type === "block_reset") {
                 this.#activeProviderResultStarts.delete(scope.agent.id);
+                this.#streamingText.delete(scope.agent.id);
+                return;
+            }
+            if (event.type === "text_start") {
+                this.#streamingText.set(scope.agent.id, "");
+                return;
+            }
+            if (event.type === "text_delta") {
+                const text = this.#streamingText.get(scope.agent.id);
+                if (text !== undefined)
+                    this.#streamingText.set(
+                        scope.agent.id,
+                        (text + event.delta).slice(0, MAX_HISTORY_TEXT_LENGTH),
+                    );
+                return;
+            }
+            if (event.type === "text_end") {
+                this.#streamingText.delete(scope.agent.id);
                 return;
             }
             if (event.type === "toolcall_result_start") {
@@ -3094,6 +3127,7 @@ export class HistoryModule implements AgentModule {
                 await this.#afterInference(ctx, scope, inference);
             } finally {
                 this.#activeProviderResultStarts.delete(scope.agent.id);
+                this.#streamingText.delete(scope.agent.id);
                 this.#config?.endExecutionObservation(scope.agent.id, inference.inferenceId);
                 // Reservations have the same lifetime as streamed output. A crash loses the
                 // uncommitted snapshot; rollback also releases it, so a retried inference makes

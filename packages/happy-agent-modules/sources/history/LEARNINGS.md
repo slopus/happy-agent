@@ -120,6 +120,14 @@ atomic transition the public contract describes: the old run becomes `aborted/st
 successor becomes running. Provider failure and explicit abort still settle immediately; queued
 messages do not defer settlement.
 
+## A stopped response keeps the words already streamed
+
+Agent Base keeps only finished blocks, so a text block cut off by Stop was shown live and then
+vanished on reload. History follows the text block being streamed in memory, per agent and capped at
+the text limit, and when the inference ends `cancelled` records it as the response's last text
+block. The run's `aborted/abort` is what tells a reader it stops short; no message field changes.
+The model's own context is untouched: Base still drops the unfinished block there.
+
 ## The first cursor has no previous page
 
 An explicit cursor of zero is the same first page as `from: "start"`; it does not prove that an
