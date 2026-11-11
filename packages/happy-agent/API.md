@@ -473,7 +473,9 @@ the options joined by a spaced middle dot; and an attempt record, a service mess
 is only an `action` block, is left out of history pages with the run it alone is in, and its
 `message.created` and `message.updated` events are not delivered. An older client therefore reads
 every document as its fallback lines and every suggestion as one line it can answer by typing, and
-never meets the new blocks. `quickReply` on a person's message is additive and left as it is. A
+never meets the new blocks. `quickReply` on a person's message is additive and left as it is.
+Protocol 35 also adds the optional `kind` on a run's metadata, which marks a run stored outside
+any turn; it is additive, and an older client ignores it. A
 daemon without chat UI omits the capability and answers `/actions` with `404`; clients then draw no
 components.
 
@@ -6855,6 +6857,18 @@ Every run has the same metadata:
 - `costUsd` — the provider-reported US-dollar cost accumulated inside this run, or `null` when
   its providers do not report monetary cost. The daemon never invents a price from a local
   table.
+- `kind` — optional; protocol 35 or newer. Absent for a turn of the agent. `"standalone"` marks a
+  run stored already finished, outside any turn: it never started and was never the agent's
+  active run. The daemon stores a chat UI attempt record this way, and a message it writes itself
+  while no run is open. A client treats a value it does not know as absent.
+
+A run whose `kind` is `"standalone"` only groups messages in history. Its `status` is
+`"completed"`, its `startedAt` and `endedAt` are equal, and it has no usage and no cost. It emits
+no `run.started` and no `run.boundary`: its one lifecycle event is `run.finished`, which precedes
+the `message.created` of every message in it. It never changes whether the agent is working: an
+agent that was working when it appeared is still working, and an idle one is still idle. A client
+therefore leaves the agent's activity as it was and shows no end of a turn for it. A maintenance
+run, such as explicit compaction's, starts and finishes like a turn and carries no `kind`.
 
 The boundary transitions are atomic in the event journal:
 
@@ -8452,9 +8466,9 @@ message whose content is exactly one `action` block:
   cannot be stored, the attempt is `failed`.
 
 A record's ID is the request's `id`. It is stored in a run of its own that is already finished
-when it appears, whether the agent is idle or in the middle of a run: it is announced with
-`run.finished` and then `message.created`, never `run.started`, and it never starts or joins a
-model turn. Its outcome is changed in place and announced with `message.updated`. No model ever reads a
+when it appears, whether the agent is idle or in the middle of a run, and whose `kind` is
+`"standalone"`: it is announced with `run.finished` and then `message.created`, never
+`run.started`, and it never starts or joins a model turn. Its outcome is changed in place and announced with `message.updated`. No model ever reads a
 record. A client does not draw records as messages; a component reads its own pending, accepted,
 and error state from the records naming it.
 
@@ -9192,7 +9206,7 @@ block. The message is created as `"running"` before provider work starts and upd
 the attempt completes or fails, exactly like a tool-call block changes status.
 
 Explicit compaction is allowed only while the agent is idle and no other compaction is running for
-it. It starts a standalone maintenance run whose ID is the compaction message ID. That run has no
+it. It starts a maintenance run of its own whose ID is the compaction message ID. That run has no
 accepted user messages: its `run.started.acceptedMessageIds` is empty. The ordered public
 lifecycle is `run.started`, `message.created`, one or more `message.updated` events, then
 `run.finished`. The generic agent status may move through `"working"`, but clients must not use
@@ -15239,8 +15253,8 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
 
 **Runs and messages**
 
-- `run.started` — a standalone run began; the agent left `"idle"`. Message acceptance and the
-  visible start of work are one event.
+- `run.started` — a run with no predecessor began; the agent left `"idle"`. Message acceptance
+  and the visible start of work are one event.
     - `agentId` (ID string).
     - `run` (full run metadata object) — status is `"running"`.
     - `acceptedMessageIds` (array of ID strings) — every visible message accepted into this run,
@@ -15255,10 +15269,12 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
     - `acceptedMessageIds` (array of ID strings) — every visible steering message accepted into
       `startedRun`, oldest first; empty when every accepted steering message is hidden.
 - `run.finished` — a run reached a terminal state without an immediate successor; the agent is
-  `"idle"` again.
+  `"idle"` again. A run whose `kind` is `"standalone"` is the one exception: it was never active,
+  this is its only lifecycle event, no `run.started` came before it, it precedes the
+  `message.created` of its messages, and the agent's status is whatever it was.
     - `agentId` (ID string).
     - `run` (full run metadata object) — terminal, including its explicit `reason`, final usage,
-      cost, and timestamps.
+      cost, and timestamps, and its `kind` when it has one.
 - `message.created` — a message came into being: a user message entering as `"pending"`
   (content complete, no run yet), or an agent/system/service message that may still grow.
     - `agentId` (ID string).
