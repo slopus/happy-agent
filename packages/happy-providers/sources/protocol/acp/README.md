@@ -30,8 +30,18 @@ Agent Base ── run(context) ──▶ AcpSession ── ACP over stdio ──
   history, a lost session — opens a new ACP session and replays Happy's instructions and
   transcript into its first prompt.
 - **Permission.** The agent's own permission is mapped onto its config options by the vendor
-  profile, and its `session/request_permission` asks are answered from the Happy mode: Read only
-  refuses, every other mode allows that one action.
+  profile, and the agent's own reviewer decides what it does without asking. Its
+  `session/request_permission` asks are answered from the Happy mode: Read only refuses, Full
+  access allows, and otherwise the turn environment's `askPermission` puts the action to the
+  person, offering Allow for this session only when the agent offers `allow_always`. Stopping the
+  turn withdraws the question and answers the agent `cancelled`. In Workspace write, an ask about a
+  Happy tool (marked with `happy/bridgedCall` metadata) is allowed without asking when that tool
+  has `autoReview: "never"` or its `shouldReviewInAutoMode` is false for the call. New sessions
+  carry the never-reviewed Happy tool names in `happy/approvedTools` metadata so a first-party
+  driver can approve them in advance.
+- **Tool schemas.** The bridge drops string `pattern` keywords from the schemas it advertises:
+  Antigravity validates them with Go's regex dialect and rejects its whole toolbox on one it
+  cannot compile. Agent Base still validates every call against the full schema.
 - **Compaction.** ACP has none. `compact` asks the agent for a handoff summary and the next run
   starts a new ACP session from it.
 
@@ -69,21 +79,13 @@ stop ends the wait as a cancellation, and steering ends it without resending: th
 the refused prompt, so the next run sends it once, together with the steering. A 429 that names a
 quota, usage, weekly or session limit, or a reset hours away, is not retried.
 
-Agents whose adapter binds a new session to whichever native conversation appears next in a
-shared store set `serializeNewSessions`: a new session's first prompt waits until the previous new
-session has reported turn content, so a chat and its title request cannot swap conversations. A
-session that stops or dies first opens the gate too, and no session waits on it longer than a
-minute.
-
 ## Connections and models
 
 `AcpProvider` talks to an `AcpAgentConnection`. By default that is a spawned ACP server
 (`impl/acpConnectionSpawn.ts`); a vendor can supply `connect` instead and drive the agent through
 its own typed API, presenting it as the same ACP surface. `acpDiscoverModels` opens a throwaway
 session and reads the agent's model selector, so the catalog lists the models the installed agent
-actually offers. A connection that sets `modelRevisionMs` belongs to an agent that answers from a
-cache and corrects itself afterwards: discovery stays connected that long and takes the
-`config_option_update` that carries a different list. A profile option may name an ACP `category` instead of an exact ID, for agents
+actually offers. A profile option may name an ACP `category` instead of an exact ID, for agents
 that call their model selector something else.
 
 ## Files

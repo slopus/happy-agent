@@ -4,19 +4,26 @@ import { createInterface } from "node:readline";
 import type * as acp from "@agentclientprotocol/sdk";
 
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
-import type {
-    AcpAgentConnection,
-    AcpConnect,
-    AcpConnection,
+import {
+    ACP_APPROVED_TOOLS_META,
+    ACP_BRIDGED_CALL_META,
+    type AcpAgentConnection,
+    type AcpConnect,
+    type AcpConnection,
 } from "@/protocol/acp/AcpConnection.js";
 import type { AcpAgentLaunch } from "@/protocol/acp/AcpProvider.js";
+import { ACP_BRIDGE_NAME } from "@/protocol/acp/impl/acpResponseEvents.js";
 import { processTreeGroups, terminateProcessTree } from "@/protocol/acp/impl/processTree.js";
 import { codexUsageFromAppServerRateLimits } from "@/vendors/codex/codexUsageFromRateLimits.js";
 import { codexItemUpdates } from "@/vendors/codexAppServer/impl/codexItemUpdates.js";
 
 const REQUEST_TIMEOUT_MS = 120_000;
-const SANDBOXES = ["read-only", "workspace-write", "danger-full-access"] as const;
-type Sandbox = (typeof SANDBOXES)[number];
+/**
+ * Happy's permission modes in Codex's terms. `auto` is the workspace sandbox with Codex's own
+ * reviewer deciding what the sandbox would block; `workspace-write` asks the person instead.
+ */
+const MODES = ["read-only", "workspace-write", "auto", "danger-full-access"] as const;
+type Mode = (typeof MODES)[number];
 
 interface CodexModel {
     readonly model: string;
@@ -30,7 +37,7 @@ interface CodexThread {
     readonly cwd: string;
     model: string | undefined;
     effort: string | undefined;
-    sandbox: Sandbox;
+    mode: Mode;
     /** The running turn and the prompt waiting for it to end. */
     turn:
         | {
@@ -81,6 +88,8 @@ class CodexAppServer implements AcpAgentConnection {
     readonly #child;
     readonly #pending = new Map<number, { resolve(v: unknown): void; reject(e: Error): void }>();
     readonly #threads = new Map<string, CodexThread>();
+    /** Each subagent thread's parent thread. */
+    readonly #parents = new Map<string, string>();
     readonly #updates = codexItemUpdates();
     #nextId = 1;
     #notifications: Promise<void> = Promise.resolve();
@@ -137,7 +146,7 @@ class CodexAppServer implements AcpAgentConnection {
         const started = (await this.#request("thread/start", {
             cwd: params.cwd,
             approvalPolicy: "never",
-            config: mcpConfig(params.mcpServers),
+            config: mcpConfig(params.mcpServers, params._meta?.[ACP_APPROVED_TOOLS_META]),
         })) as { thread: { id: string }; model: string; reasoningEffort: string | null };
         const thread = this.#track(started.thread.id, params.cwd, started);
         return { sessionId: started.thread.id, configOptions: await this.#configOptions(thread) };
@@ -148,7 +157,7 @@ class CodexAppServer implements AcpAgentConnection {
             threadId: params.sessionId,
             cwd: params.cwd,
             approvalPolicy: "never",
-            config: mcpConfig(params.mcpServers ?? []),
+            config: mcpConfig(params.mcpServers ?? [], params._meta?.[ACP_APPROVED_TOOLS_META]),
             excludeTurns: true,
         })) as { thread: { id: string }; model: string; reasoningEffort: string | null };
         const thread = this.#track(params.sessionId, params.cwd, resumed);
@@ -167,8 +176,8 @@ class CodexAppServer implements AcpAgentConnection {
         // Codex takes these with the next turn/start, for that turn and the ones after it.
         if (params.configId === "model") thread.model = value;
         if (params.configId === "reasoning_effort") thread.effort = value;
-        if (params.configId === "mode" && (SANDBOXES as readonly string[]).includes(value)) {
-            thread.sandbox = value as Sandbox;
+        if (params.configId === "mode" && (MODES as readonly string[]).includes(value)) {
+            thread.mode = value as Mode;
         }
         return { configOptions: await this.#configOptions(thread) };
     }
@@ -185,8 +194,7 @@ class CodexAppServer implements AcpAgentConnection {
                 input: userInput(params.prompt),
                 ...(thread.model === undefined ? {} : { model: thread.model }),
                 ...(thread.effort === undefined ? {} : { effort: thread.effort }),
-                approvalPolicy: "never",
-                sandboxPolicy: sandboxPolicy(thread.sandbox, thread.cwd),
+                ...turnPolicy(thread.mode, thread.cwd),
             })) as { turn: { id: string } };
             const waiting = thread.turn as CodexThread["turn"];
             if (waiting !== undefined) waiting.id = started.turn.id;
@@ -246,7 +254,7 @@ class CodexAppServer implements AcpAgentConnection {
             cwd,
             model: started.model,
             effort: started.reasoningEffort ?? undefined,
-            sandbox: "workspace-write",
+            mode: "workspace-write",
             turn: undefined,
         };
         this.#threads.set(id, thread);
@@ -295,11 +303,11 @@ class CodexAppServer implements AcpAgentConnection {
             },
             {
                 id: "mode",
-                name: "Sandbox",
+                name: "Permissions",
                 category: "mode",
                 type: "select",
-                currentValue: thread.sandbox,
-                options: SANDBOXES.map((sandbox) => ({ value: sandbox, name: sandbox })),
+                currentValue: thread.mode,
+                options: MODES.map((mode) => ({ value: mode, name: mode })),
             },
         ] as acp.SessionConfigOption[];
     }
@@ -344,6 +352,9 @@ class CodexAppServer implements AcpAgentConnection {
             void this.#answer(message.id, message.method, message.params);
             return;
         }
+        // Taken on arrival rather than in order, because the subagent may ask before its start
+        // notification has been handled.
+        this.#noteSubagent(message.params);
         // In arrival order: a turn must not end before the updates Codex sent ahead of its end.
         const params = message.params as Record<string, unknown>;
         this.#notifications = this.#notifications
@@ -410,40 +421,79 @@ class CodexAppServer implements AcpAgentConnection {
         }
     }
 
-    /** Codex asks before acting only when a policy demands it; Happy's permission mode decides. */
-    async #answer(id: number | string, method: string, params: unknown): Promise<void> {
+    /** Remember which thread started a subagent's thread, so its asks reach that session. */
+    #noteSubagent(params: unknown): void {
+        const { threadId, item } = (params ?? {}) as {
+            threadId?: unknown;
+            item?: { type?: unknown; agentThreadId?: unknown };
+        };
         if (
-            method !== "item/commandExecution/requestApproval" &&
-            method !== "item/fileChange/requestApproval"
+            typeof threadId === "string" &&
+            item?.type === "subAgentActivity" &&
+            typeof item.agentThreadId === "string"
         ) {
+            this.#parents.set(item.agentThreadId, threadId);
+        }
+    }
+
+    /** The session a thread belongs to: its own, or the one whose subagent started it. */
+    #sessionOf(threadId: string): string {
+        let current = threadId;
+        for (let depth = 0; depth < 16 && !this.#threads.has(current); depth++) {
+            const parent = this.#parents.get(current);
+            if (parent === undefined) break;
+            current = parent;
+        }
+        if (this.#threads.has(current)) return current;
+        // A subagent never seen starting belongs to the only session with a turn running.
+        const running = [...this.#threads].filter(([, thread]) => thread.turn !== undefined);
+        return running.length === 1 ? running[0]![0] : threadId;
+    }
+
+    /**
+     * Codex asks before what its sandbox or approval policy will not allow alone. Each ask goes
+     * to Happy, which answers from its permission mode or puts it to the person.
+     */
+    async #answer(id: number | string, method: string, params: unknown): Promise<void> {
+        const ask = codexAsk(method, params);
+        if (ask === undefined) {
             this.#send({
                 id,
                 error: { code: -32601, message: `Happy does not handle ${method}.` },
             });
             return;
         }
-        const request = params as {
-            threadId: string;
-            itemId: string;
-            command?: string;
-            reason?: string;
-        };
         const answer = await Promise.resolve(
             this.#client.requestPermission({
-                sessionId: request.threadId,
-                toolCall: {
-                    toolCallId: request.itemId,
-                    title: request.command ?? request.reason ?? method,
-                },
+                sessionId: this.#sessionOf(ask.threadId),
+                toolCall: ask.toolCall,
                 options: [
                     { optionId: "accept", name: "Allow", kind: "allow_once" },
+                    ...(ask.forSession === undefined
+                        ? []
+                        : [
+                              {
+                                  optionId: "session",
+                                  name: "Allow for this session",
+                                  kind: "allow_always" as const,
+                              },
+                          ]),
                     { optionId: "decline", name: "Decline", kind: "reject_once" },
                 ],
             }),
         ).catch(() => undefined);
-        const accepted =
-            answer?.outcome.outcome === "selected" && answer.outcome.optionId === "accept";
-        this.#send({ id, result: { decision: accepted ? "accept" : "decline" } });
+        const chosen = answer?.outcome.outcome === "selected" ? answer.outcome.optionId : undefined;
+        this.#send({
+            id,
+            result:
+                chosen === "accept"
+                    ? ask.accept
+                    : chosen === "session"
+                      ? (ask.forSession ?? ask.decline)
+                      : answer?.outcome.outcome === "cancelled"
+                        ? ask.cancel
+                        : ask.decline,
+        });
     }
 
     async #request(method: string, params: unknown): Promise<unknown> {
@@ -473,8 +523,12 @@ class CodexAppServer implements AcpAgentConnection {
     }
 }
 
-/** Happy's bridge as Codex MCP configuration, the same shape as `config.toml`. */
-function mcpConfig(servers: readonly acp.McpServer[]): Record<string, unknown> {
+/**
+ * Happy's bridge as Codex MCP configuration, the same shape as `config.toml`. Only Happy's tools
+ * that never need approval run without asking; the rest are reviewed like any MCP tool.
+ */
+function mcpConfig(servers: readonly acp.McpServer[], approved: unknown): Record<string, unknown> {
+    const names = Array.isArray(approved) ? approved.map(String) : [];
     const entries = servers.flatMap((server) => {
         if (!("type" in server) || server.type !== "http") return [];
         return [
@@ -483,9 +537,14 @@ function mcpConfig(servers: readonly acp.McpServer[]): Record<string, unknown> {
                 {
                     url: server.url,
                     http_headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])),
-                    // Happy runs its own tools under its own permission mode, so Codex never
-                    // stops to ask about them.
-                    default_tools_approval_mode: "approve",
+                    default_tools_approval_mode: "auto",
+                    ...(server.name === ACP_BRIDGE_NAME && names.length > 0
+                        ? {
+                              tools: Object.fromEntries(
+                                  names.map((name) => [name, { approval_mode: "approve" }]),
+                              ),
+                          }
+                        : {}),
                 },
             ] as const,
         ];
@@ -493,16 +552,132 @@ function mcpConfig(servers: readonly acp.McpServer[]): Record<string, unknown> {
     return entries.length === 0 ? {} : { mcp_servers: Object.fromEntries(entries) };
 }
 
-function sandboxPolicy(sandbox: Sandbox, cwd: string): Record<string, unknown> {
-    if (sandbox === "danger-full-access") return { type: "dangerFullAccess" };
-    if (sandbox === "read-only") return { type: "readOnly", networkAccess: false };
+/**
+ * The approval policy, reviewer and sandbox of a turn. Read only never asks, so whatever needs
+ * approval is refused; Full access never asks because nothing is held back.
+ */
+function turnPolicy(mode: Mode, cwd: string): Record<string, unknown> {
+    if (mode === "danger-full-access") {
+        return { approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } };
+    }
+    if (mode === "read-only") {
+        return {
+            approvalPolicy: "never",
+            sandboxPolicy: { type: "readOnly", networkAccess: false },
+        };
+    }
     return {
-        type: "workspaceWrite",
-        writableRoots: [cwd],
-        networkAccess: true,
-        excludeTmpdirEnvVar: false,
-        excludeSlashTmp: false,
+        approvalPolicy: "on-request",
+        approvalsReviewer: mode === "auto" ? "auto_review" : "user",
+        sandboxPolicy: {
+            type: "workspaceWrite",
+            writableRoots: [cwd],
+            networkAccess: false,
+            excludeTmpdirEnvVar: false,
+            excludeSlashTmp: false,
+        },
     };
+}
+
+/** One Codex approval request as an ACP permission ask, with the replies that answer it. */
+interface CodexAsk {
+    readonly threadId: string;
+    readonly toolCall: acp.ToolCallUpdate;
+    readonly accept: unknown;
+    readonly decline: unknown;
+    /** The reply when the ask was withdrawn because Happy stopped the turn. */
+    readonly cancel: unknown;
+    /** The reply that allows it for the rest of the session, when Codex offers one. */
+    readonly forSession?: unknown;
+}
+
+function codexAsk(method: string, params: unknown): CodexAsk | undefined {
+    const request = (params ?? {}) as {
+        threadId?: string;
+        itemId?: string;
+        command?: string | null;
+        reason?: string | null;
+        availableDecisions?: unknown[] | null;
+        permissions?: unknown;
+        serverName?: string;
+        message?: string;
+        _meta?: { codex_approval_kind?: unknown; tool_params?: unknown } | null;
+    };
+    const threadId = request.threadId;
+    if (typeof threadId !== "string") return undefined;
+    const title = (...parts: (string | null | undefined)[]): string =>
+        parts.filter((part) => typeof part === "string" && part.length > 0).join("\n");
+    if (method === "item/commandExecution/requestApproval") {
+        return {
+            threadId,
+            toolCall: {
+                toolCallId: request.itemId ?? "",
+                title: title(request.command, request.reason) || "Run a command",
+            },
+            accept: { decision: "accept" },
+            decline: { decision: "decline" },
+            cancel: { decision: "cancel" },
+            ...(request.availableDecisions?.includes("acceptForSession") === true
+                ? { forSession: { decision: "acceptForSession" } }
+                : {}),
+        };
+    }
+    if (method === "item/fileChange/requestApproval") {
+        return {
+            threadId,
+            toolCall: {
+                toolCallId: request.itemId ?? "",
+                title: title("Change files", request.reason),
+            },
+            accept: { decision: "accept" },
+            decline: { decision: "decline" },
+            cancel: { decision: "cancel" },
+            forSession: { decision: "acceptForSession" },
+        };
+    }
+    if (method === "item/permissions/requestApproval") {
+        return {
+            threadId,
+            toolCall: {
+                toolCallId: request.itemId ?? "",
+                title: title("Grant more access", request.reason),
+                rawInput: request.permissions,
+            },
+            accept: { permissions: request.permissions, scope: "turn" },
+            decline: { permissions: {} },
+            cancel: { permissions: {} },
+        };
+    }
+    if (
+        method === "mcpServer/elicitation/request" &&
+        request._meta?.codex_approval_kind === "mcp_tool_call"
+    ) {
+        // Codex names the tool only in its message: `Allow the happy MCP server to run tool "x"?`
+        const tool = /run tool "([^"]+)"/u.exec(request.message ?? "")?.[1];
+        const bridged = request.serverName === ACP_BRIDGE_NAME && tool !== undefined;
+        return {
+            threadId,
+            toolCall: {
+                toolCallId: `${request.serverName ?? "mcp"}:${tool ?? ""}`,
+                title: request.message ?? "Call an MCP tool",
+                rawInput: request._meta.tool_params,
+                ...(bridged
+                    ? {
+                          _meta: {
+                              [ACP_BRIDGED_CALL_META]: {
+                                  name: tool,
+                                  arguments: request._meta.tool_params ?? {},
+                              },
+                          },
+                      }
+                    : {}),
+            },
+            accept: { action: "accept", content: {} },
+            decline: { action: "decline" },
+            cancel: { action: "cancel" },
+        };
+    }
+    return undefined;
 }
 
 function userInput(prompt: readonly acp.ContentBlock[]): unknown[] {

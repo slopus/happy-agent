@@ -6,8 +6,9 @@
 // "wait" holds the prompt open until cancelled or steered; "throttled" is refused as too many
 // requests the first time it is sent, and "throttled late" only after reporting a tool call;
 // "over quota" fails with a 429 that names a weekly limit; "stubborn" never ends its first prompt;
-// anything else is echoed back. With SCRIPTED_ACP_REVISED_MODEL set, a new session repeats its
-// model list and then sends one that also has that model.
+// "needs permission" asks the client before a command, and "needs permission for happy" before a
+// bridged happy_secret call (with "only always", offering no one-time allow), then replies with
+// the option it got; anything else is echoed back.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 
@@ -47,34 +48,12 @@ class ScriptedAgent {
         const sessionId = `s${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
         this.#servers.set(sessionId, params.mcpServers);
         writeFileSync(sessionsFile, JSON.stringify({ ...known(), [sessionId]: true }));
-        log({ method: "newSession", sessionId, mcpServers: params.mcpServers.length });
-        if (process.env.SCRIPTED_ACP_REVISED_MODEL !== undefined) {
-            // Like an agent that answers from a cache: repeat that list, then send the real one.
-            const send = (options) =>
-                void this.#conn.sessionUpdate({
-                    sessionId,
-                    update: {
-                        sessionUpdate: "config_option_update",
-                        configOptions: [
-                            {
-                                id: "model",
-                                name: "Model",
-                                category: "model",
-                                type: "select",
-                                currentValue: "m1",
-                                options,
-                            },
-                        ],
-                    },
-                });
-            const cached = [
-                { value: "m1", name: "Model One" },
-                { value: "m2-high", name: "Model Two (High)" },
-            ];
-            const added = process.env.SCRIPTED_ACP_REVISED_MODEL;
-            setTimeout(() => send(cached), 50);
-            setTimeout(() => send([{ value: added, name: added }, ...cached]), 400);
-        }
+        log({
+            method: "newSession",
+            sessionId,
+            mcpServers: params.mcpServers.length,
+            approvedTools: params._meta?.["happy/approvedTools"],
+        });
         return {
             sessionId,
             configOptions: [
@@ -139,19 +118,17 @@ class ScriptedAgent {
             this.#throttled = true;
             throw new Error("exceeded retry limit, last status: 429 Too Many Requests");
         }
-        // "silent" reports nothing at all, as an agent may before it binds its conversation.
-        if (!text.includes("silent"))
-            await this.#conn.sessionUpdate({
-                sessionId: params.sessionId,
-                update: {
-                    sessionUpdate: "tool_call",
-                    toolCallId: `own-${Date.now()}`,
-                    title: "Read README.md",
-                    kind: "read",
-                    status: "completed",
-                    content: [{ type: "content", content: { type: "text", text: "# readme" } }],
-                },
-            });
+        await this.#conn.sessionUpdate({
+            sessionId: params.sessionId,
+            update: {
+                sessionUpdate: "tool_call",
+                toolCallId: `own-${Date.now()}`,
+                title: "Read README.md",
+                kind: "read",
+                status: "completed",
+                content: [{ type: "content", content: { type: "text", text: "# readme" } }],
+            },
+        });
         if (text.includes("throttled late")) {
             throw new Error("exceeded retry limit, last status: 429 Too Many Requests");
         }
@@ -164,6 +141,40 @@ class ScriptedAgent {
         if (text.includes("stubborn") && !existsSync(stubbornFile)) {
             writeFileSync(stubbornFile, "");
             await new Promise(() => undefined);
+        }
+        if (text.includes("needs permission")) {
+            const happy = text.includes("for happy");
+            const answer = await this.#conn.requestPermission({
+                sessionId: params.sessionId,
+                toolCall: {
+                    toolCallId: `ask-${Date.now()}`,
+                    title: happy ? "Call happy_secret" : "rm -rf build",
+                    kind: happy ? "other" : "execute",
+                    rawInput: happy ? { why: "test" } : { command: "rm -rf build" },
+                    ...(happy
+                        ? {
+                              _meta: {
+                                  "happy/bridgedCall": {
+                                      name: "happy_secret",
+                                      arguments: { why: "test" },
+                                  },
+                              },
+                          }
+                        : {}),
+                },
+                options: [
+                    ...(text.includes("only always")
+                        ? []
+                        : [{ optionId: "yes", name: "Allow", kind: "allow_once" }]),
+                    { optionId: "always", name: "Always allow", kind: "allow_always" },
+                    { optionId: "no", name: "Deny", kind: "reject_once" },
+                ],
+            });
+            const chosen =
+                answer.outcome.outcome === "selected" ? answer.outcome.optionId : "cancelled";
+            log({ method: "permission", chosen });
+            await this.#say(params.sessionId, `permission=${chosen}`);
+            return { stopReason: "end_turn" };
         }
         if (text.includes("wait")) {
             const steered = await new Promise((resolve) =>
@@ -184,7 +195,11 @@ class ScriptedAgent {
                 }),
             );
             const tools = await client.listTools();
-            log({ method: "mcp.listTools", names: tools.tools.map((tool) => tool.name) });
+            log({
+                method: "mcp.listTools",
+                names: tools.tools.map((tool) => tool.name),
+                schemas: tools.tools.map((tool) => tool.inputSchema),
+            });
             const result = await client.callTool({
                 name: "happy_secret",
                 arguments: { why: "test" },

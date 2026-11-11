@@ -10,10 +10,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionAssistantMessageAccumulator } from "@/core/SessionAssistantMessageAccumulator.js";
 import type { SessionMessage } from "@/core/SessionContext.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
+import type { SessionTool } from "@/core/SessionTool.js";
 import {
     AcpProvider,
     type AcpAgentProfile,
     type AcpPermissionMode,
+    type AcpPermissionQuestion,
+    type AcpTurnEnvironment,
 } from "@/protocol/acp/AcpProvider.js";
 import type { AcpSession } from "@/protocol/acp/AcpSession.js";
 import { acpDiscoverModels } from "@/protocol/acp/acpDiscoverModels.js";
@@ -33,7 +36,7 @@ const tools = [
     {
         name: "happy_secret",
         description: "Returns the secret.",
-        parameters: Type.Object({ why: Type.Optional(Type.String()) }),
+        parameters: Type.Object({ why: Type.Optional(Type.String({ pattern: "^[^\\u0000]*$" })) }),
     },
 ];
 
@@ -42,7 +45,14 @@ afterEach(async () => {
     await Promise.all(open.splice(0).map((session) => session.destroy()));
 });
 
-function harness(options: { steerable?: boolean; profile?: AcpAgentProfile } = {}) {
+function harness(
+    options: {
+        steerable?: boolean;
+        profile?: AcpAgentProfile;
+        tools?: readonly SessionTool[];
+        askPermission?: AcpTurnEnvironment["askPermission"];
+    } = {},
+) {
     const directory = mkdtempSync(join(tmpdir(), "acp-session-"));
     const logPath = join(directory, "agent.jsonl");
     let permissionMode: AcpPermissionMode = "auto";
@@ -80,7 +90,13 @@ function harness(options: { steerable?: boolean; profile?: AcpAgentProfile } = {
               }
             : {}),
         stateDirectory: join(directory, "state"),
-        environment: () => ({ cwd: directory, permissionMode }),
+        environment: () => ({
+            cwd: directory,
+            permissionMode,
+            ...(options.askPermission === undefined
+                ? {}
+                : { askPermission: options.askPermission }),
+        }),
         profile: options.profile ?? {
             modelOptions: (model) =>
                 model === undefined ? [] : [{ configId: "model", value: model }],
@@ -119,7 +135,10 @@ function harness(options: { steerable?: boolean; profile?: AcpAgentProfile } = {
             throw new Error("Timed out waiting for expected log entry.");
         },
         async session(): Promise<AcpSession> {
-            const session = await provider.session("agent-1", { instructions: "Be Happy.", tools });
+            const session = await provider.session("agent-1", {
+                instructions: "Be Happy.",
+                tools: options.tools ?? tools,
+            });
             open.push(session);
             return session;
         },
@@ -198,9 +217,21 @@ describe("AcpSession", () => {
         expect(done(second)).toMatchObject({ state: "normal" });
         // One foreign prompt served both Happy responses.
         expect(h.log().filter((entry) => entry.method === "prompt")).toHaveLength(1);
+        // The agent sees the schema without its JavaScript-dialect pattern, which agents that
+        // validate schemas in another regex dialect would reject.
         expect(h.log().find((entry) => entry.method === "mcp.listTools")).toMatchObject({
             names: ["happy_secret"],
+            schemas: [
+                {
+                    type: "object",
+                    properties: { why: { type: "string" } },
+                },
+            ],
         });
+        const listed = h.log().find((entry) => entry.method === "mcp.listTools") as {
+            schemas: { properties: { why: Record<string, unknown> } }[];
+        };
+        expect(listed.schemas[0]!.properties.why).not.toHaveProperty("pattern");
     }, 30_000);
 
     it("sends a fresh session Happy's instructions, then only new input on later turns", async () => {
@@ -579,6 +610,111 @@ describe("AcpSession", () => {
         });
     }, 30_000);
 
+    it("answers the agent's own permission asks by mode and puts the rest to the person", async () => {
+        const questions: AcpPermissionQuestion[] = [];
+        let answer: "allow_for_session" | "deny" = "allow_for_session";
+        const h = harness({
+            askPermission: async (question) => {
+                questions.push(question);
+                return answer;
+            },
+        });
+        const session = await h.session();
+
+        // Read only refuses and Full access allows, without asking anyone.
+        h.setPermissionMode("read_only");
+        h.user("needs permission");
+        expect(text(await h.run(session))).toBe("permission=no");
+        h.setPermissionMode("full_access");
+        h.user("needs permission");
+        expect(text(await h.run(session))).toBe("permission=yes");
+        h.user("needs permission only always");
+        expect(text(await h.run(session))).toBe("permission=always");
+        expect(questions).toEqual([]);
+
+        // Otherwise the person decides, offered the session-wide allow the agent offers.
+        h.setPermissionMode("workspace_write");
+        h.user("needs permission");
+        expect(text(await h.run(session))).toBe("permission=always");
+        answer = "deny";
+        h.setPermissionMode("auto");
+        h.user("needs permission");
+        expect(text(await h.run(session))).toBe("permission=no");
+        expect(questions).toEqual([
+            { action: 'rm -rf build\n{"command":"rm -rf build"}', allowForSession: true },
+            { action: 'rm -rf build\n{"command":"rm -rf build"}', allowForSession: true },
+        ]);
+    }, 30_000);
+
+    it("lets a Happy tool call through in Workspace write when the tool's own rule needs no approval", async () => {
+        const asked: string[] = [];
+        let review = false;
+        const h = harness({
+            tools: [
+                {
+                    ...tools[0]!,
+                    shouldReviewInAutoMode: (args: { why?: string }) =>
+                        review || args.why !== "test",
+                },
+                { name: "happy_listed", description: "Never reviewed.", autoReview: "never" },
+                { name: "listed", namespace: "ns", autoReview: "never" },
+            ],
+            askPermission: async (question) => {
+                asked.push(question.action);
+                return "deny";
+            },
+        });
+        const session = await h.session();
+        h.setPermissionMode("workspace_write");
+        h.user("needs permission for happy");
+        expect(text(await h.run(session))).toBe("permission=yes");
+        expect(asked).toEqual([]);
+
+        // A call its rule says needs approval goes to the person, as does any call in Auto.
+        review = true;
+        h.user("needs permission for happy");
+        expect(text(await h.run(session))).toBe("permission=no");
+        review = false;
+        h.setPermissionMode("auto");
+        h.user("needs permission for happy");
+        expect(text(await h.run(session))).toBe("permission=no");
+        expect(asked).toHaveLength(2);
+
+        // The agent is told which bridged tools it may call without asking at all.
+        expect(h.log().find((entry) => entry.method === "newSession")).toMatchObject({
+            approvedTools: ["happy_listed", "ns__listed"],
+        });
+    }, 30_000);
+
+    it("withdraws the person's question and cancels the agent's ask when the turn stops", async () => {
+        let withdrawn: AbortSignal | undefined;
+        const h = harness({
+            askPermission: (_question, signal) => {
+                withdrawn = signal;
+                return new Promise((resolve) =>
+                    signal.addEventListener("abort", () => resolve("deny"), { once: true }),
+                );
+            },
+        });
+        const session = await h.session();
+        h.setPermissionMode("workspace_write");
+        h.user("needs permission");
+        const stop = new AbortController();
+        const running = h.run(session, stop.signal);
+        for (let i = 0; i < 200 && withdrawn === undefined; i++) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        expect(withdrawn?.aborted).toBe(false);
+        stop.abort();
+        expect(done(await running)).toMatchObject({ state: "cancelled" });
+        expect(withdrawn?.aborted).toBe(true);
+        // Whatever the person's side answers once withdrawn, the agent is told the ask was cancelled.
+        await h.waitForLog((entry) => entry.method === "permission");
+        expect(h.log().find((entry) => entry.method === "permission")).toMatchObject({
+            chosen: "cancelled",
+        });
+    }, 30_000);
+
     it("reads the models an agent serves from its model selector", async () => {
         const directory = mkdtempSync(join(tmpdir(), "acp-discover-"));
         const values = await acpDiscoverModels(
@@ -595,47 +731,30 @@ describe("AcpSession", () => {
         ]);
         expect(
             antigravityAgent.modelsFromSelector([
-                { value: "gemini-9-low", name: "Gemini 9 (Low)" },
-                { value: "gemini-9-high", name: "Gemini 9 (High)" },
-                { value: "oss-1", name: "OSS One" },
+                { value: "gemini-9", name: "Gemini 9" },
+                { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+                { value: "oss-1-medium", name: "OSS One (Medium)" },
             ]),
         ).toEqual([
+            // A plain name takes agy's thinking levels as its efforts.
             expect.objectContaining({
                 id: "antigravity/gemini-9",
                 name: "Gemini 9",
-                effortLevels: ["low", "high"],
-                defaultEffort: "low",
+                effortLevels: ["low", "medium", "high"],
+                defaultEffort: "medium",
             }),
-            expect.objectContaining({ id: "antigravity/oss-1", effortLevels: ["medium"] }),
+            expect.objectContaining({
+                id: "antigravity/gemini-3.8-flash",
+                effortLevels: ["low", "medium", "high"],
+                defaultEffort: "high",
+            }),
+            // A model served at one effort only carries it in its name.
+            expect.objectContaining({
+                id: "antigravity/oss-1",
+                name: "OSS One",
+                effortLevels: ["medium"],
+            }),
         ]);
-    }, 30_000);
-
-    it("waits for the model list an agent sends after answering from its cache", async () => {
-        const directory = mkdtempSync(join(tmpdir(), "acp-discover-revised-"));
-        const launch = {
-            command: process.execPath,
-            args: [AGENT],
-            env: {
-                SCRIPTED_ACP_LOG: join(directory, "agent.jsonl"),
-                SCRIPTED_ACP_REVISED_MODEL: "gemini-9-medium",
-            },
-        };
-        // An agent that promises no revision is read once and left.
-        expect((await acpDiscoverModels(launch, directory)).map((model) => model.value)).toEqual([
-            "m1",
-            "m2-high",
-        ]);
-
-        // Antigravity's connection does, so the repeated cached list is passed over and the
-        // corrected one is taken as soon as it arrives.
-        const startedAt = Date.now();
-        const values = await acpDiscoverModels(antigravityAgent.connect(launch), directory);
-        expect(values.map((model) => model.value)).toEqual(["gemini-9-medium", "m1", "m2-high"]);
-        expect(Date.now() - startedAt).toBeLessThan(10_000);
-        expect(antigravityAgent.modelsFromSelector(values)[0]).toMatchObject({
-            id: "antigravity/gemini-9",
-            effortLevels: ["medium"],
-        });
     }, 30_000);
 
     it("assumes Gemini 4 Carbon first, with Antigravity's three efforts", () => {
@@ -645,30 +764,18 @@ describe("AcpSession", () => {
             effortLevels: ["low", "medium", "high"],
             defaultEffort: "medium",
         });
+        // agy offers whichever spelling it serves the model under; the effort is its own option.
         expect(
             antigravityAgent.profile.modelOptions?.("antigravity/gemini-4-carbon", undefined),
-        ).toEqual([{ configId: "model", value: "gemini-4-carbon-medium" }]);
+        ).toEqual([
+            { configId: "model", value: "gemini-4-carbon" },
+            { configId: "model", value: "gemini-4-carbon-medium" },
+            { configId: "thought_level", value: "medium" },
+        ]);
+        expect(antigravityAgent.profile.permissionOptions?.("workspace_write")).toEqual([
+            { configId: "mode", value: "accept-edits" },
+        ]);
     });
-
-    it("lets the next new session start when one that never bound its conversation is stopped", async () => {
-        // One profile object, as every account of one agent shares in a daemon.
-        const profile: AcpAgentProfile = { serializeNewSessions: true };
-        const silent = harness({ profile });
-        const next = harness({ profile });
-        const first = await silent.session();
-        silent.user("silent wait");
-        const stop = new AbortController();
-        const stopped = silent.run(first, stop.signal);
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
-        stop.abort();
-        await stopped;
-
-        const second = await next.session();
-        next.user("hello");
-        const startedAt = Date.now();
-        expect(text(await next.run(second))).toMatch(/hello$/u);
-        expect(Date.now() - startedAt).toBeLessThan(10_000);
-    }, 30_000);
 
     it("drives any ACP agent from its command, offering and selecting the models it reports", async () => {
         const directory = mkdtempSync(join(tmpdir(), "acp-generic-"));

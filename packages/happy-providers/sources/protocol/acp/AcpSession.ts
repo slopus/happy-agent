@@ -1,6 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-
 import type * as acp from "@agentclientprotocol/sdk";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -13,12 +10,16 @@ import type { SessionTool } from "@/core/SessionTool.js";
 import type { SessionUsage } from "@/core/SessionUsage.js";
 import type {
     AcpConfigOptionValue,
-    AcpPermissionMode,
+    AcpPermissionAnswer,
     AcpProviderOptions,
     AcpTurnEnvironment,
 } from "@/protocol/acp/AcpProvider.js";
 import { acpCompactWithAgent } from "@/protocol/acp/impl/acpCompactWithAgent.js";
-import type { AcpConnection } from "@/protocol/acp/AcpConnection.js";
+import {
+    ACP_APPROVED_TOOLS_META,
+    ACP_BRIDGED_CALL_META,
+    type AcpConnection,
+} from "@/protocol/acp/AcpConnection.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
 import {
     acpCatchUpPrompt,
@@ -49,28 +50,16 @@ export interface AcpSessionOptions extends AcpProviderOptions {
 const PREVIOUS_PROMPT_GRACE_MS = 10_000;
 /** How long a cancelled agent gets to end its prompt and save its session before it is stopped. */
 const CANCEL_GRACE_MS = 2_000;
-/** The longest a new session waits for the one before it to bind its native conversation. */
-const NEW_SESSION_GATE_MS = 60_000;
 /**
  * Waits before sending a prompt the agent's service refused as too many requests again. Agents
  * retry only briefly themselves, and a burst — a restarted agent's first request, or several
  * sessions on one account at once — clears within seconds.
  */
 const RATE_LIMIT_RETRY_MS = [3_000, 10_000, 30_000];
+/** The most of an ask's raw input shown to the person, in characters. */
+const MAX_ACTION_INPUT = 50_000;
 const ABORTED = Symbol("acp_aborted");
 const STEERED = Symbol("acp_steered");
-
-/** Updates an agent can only send from inside a turn, once it has a conversation to report. */
-const TURN_CONTENT_UPDATES = new Set<string>([
-    "agent_message_chunk",
-    "agent_thought_chunk",
-    "tool_call",
-    "tool_call_update",
-    "plan",
-]);
-
-/** The first prompt of the last new session started per agent profile, for agents that need it. */
-const newSessionPrompts = new WeakMap<object, Promise<unknown>>();
 
 type TurnItem =
     | { readonly kind: "update"; readonly update: acp.SessionUpdate }
@@ -131,11 +120,11 @@ export class AcpSession extends BaseSession {
     /** Settles once a stopped agent process has exited, so its successor never overlaps it. */
     #stopping: Promise<void> = Promise.resolve();
     #replaying = false;
-    /** Whether the foreign session was opened by this run and has not been prompted yet. */
-    #unprompted = false;
-    /** Lets the next new session start once this one's agent has bound its conversation. */
-    #releaseNewSession: (() => void) | undefined;
-    #permissionMode: AcpPermissionMode | undefined;
+    /** What the latest run was given: its permission mode and how to reach the person. */
+    #environment: AcpTurnEnvironment | undefined;
+    #runCtx: Context | undefined;
+    /** Questions put to the person that the agent is still waiting on. */
+    readonly #asks = new Set<AbortController>();
     #bridge: AcpToolBridgeServer | undefined;
     readonly #applied = new Map<string, string | boolean>();
     /** The configuration options the foreign session last advertised. */
@@ -208,7 +197,8 @@ export class AcpSession extends BaseSession {
             return;
         }
         const environment = this.#options.environment(ctx);
-        this.#permissionMode = environment.permissionMode;
+        this.#environment = environment;
+        this.#runCtx = ctx;
         yield { type: "block_start" };
 
         let connection: AcpConnection | undefined;
@@ -449,7 +439,6 @@ export class AcpSession extends BaseSession {
                 void connection.exited.then((error) => {
                     // A stopped agent was already detached; its exit belongs to no current turn.
                     if (this.#connection !== connection) return;
-                    this.#openNewSessionGate();
                     this.#turn?.items.push({ kind: "prompt_error", error });
                     this.#connection = undefined;
                     this.#acpSessionId = undefined;
@@ -471,11 +460,6 @@ export class AcpSession extends BaseSession {
             requestPermission: async (params) => this.#answerPermission(params),
             sessionUpdate: async (params) => {
                 if (this.#replaying || params.sessionId !== this.#acpSessionId) return;
-                // Session-level notices arrive before the agent has a conversation; only turn
-                // content proves it bound one.
-                if (TURN_CONTENT_UPDATES.has(params.update.sessionUpdate)) {
-                    this.#openNewSessionGate();
-                }
                 if (params.update.sessionUpdate === "config_option_update") {
                     this.#advertised = params.update.configOptions;
                 }
@@ -519,7 +503,7 @@ export class AcpSession extends BaseSession {
         const response = await connection.conn.newSession({
             cwd: environment.cwd,
             mcpServers: await this.#mcpServers(connection),
-            ...(await this.#additionalDirectories()),
+            _meta: this.#sessionMeta(),
         } as acp.NewSessionRequest);
         this.#acpSessionId = response.sessionId;
         this.#advertised = response.configOptions ?? undefined;
@@ -528,7 +512,6 @@ export class AcpSession extends BaseSession {
         this.#record = undefined;
         // The replaced session must not be continued by a later process before this one is kept.
         await acpSessionRecordClear(this.#options.stateDirectory, this.id, ctx);
-        this.#unprompted = true;
         let lastResponse = -1;
         messages.forEach((message, index) => {
             if (message.role === "assistant") lastResponse = index;
@@ -551,7 +534,7 @@ export class AcpSession extends BaseSession {
             sessionId: record.acpSessionId,
             cwd: environment.cwd,
             mcpServers: await this.#mcpServers(connection),
-            ...(await this.#additionalDirectories()),
+            _meta: this.#sessionMeta(),
         };
         try {
             if (capabilities?.sessionCapabilities?.resume != null) {
@@ -628,22 +611,13 @@ export class AcpSession extends BaseSession {
         ];
     }
 
-    /** Agents that ignore ACP `mcpServers` discover the bridge from a private extra directory. */
-    async #additionalDirectories(): Promise<{ additionalDirectories?: string[] }> {
-        const files = this.#options.profile?.bridgeDirectoryFiles;
-        const bridge = await this.#ensureBridge();
-        if (files === undefined || bridge === undefined) return {};
-        const directory = join(this.#options.stateDirectory, "bridge", encodeURIComponent(this.id));
-        for (const file of files({
-            name: ACP_BRIDGE_NAME,
-            url: bridge.url,
-            headers: bridge.headers,
-        })) {
-            const path = join(directory, file.path);
-            await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-            await writeFile(path, file.content, { mode: 0o600 });
-        }
-        return { additionalDirectories: [directory] };
+    /** The bridged tools the agent may call without asking: those no call of needs approval. */
+    #sessionMeta(): Record<string, unknown> {
+        return {
+            [ACP_APPROVED_TOOLS_META]: this.#bridgedTools
+                .filter((tool) => tool.autoReview === "never")
+                .map((tool) => AcpToolBridgeServer.toolName(tool)),
+        };
     }
 
     async #ensureBridge(): Promise<AcpToolBridgeServer | undefined> {
@@ -678,28 +652,8 @@ export class AcpSession extends BaseSession {
 
     #sendPrompt(connection: AcpConnection, turn: LiveTurn, prompt: acp.ContentBlock[]): void {
         const sessionId = this.#acpSessionId!;
-        const profile = this.#options.profile;
         turn.sent = prompt;
-        let send = (): Promise<acp.PromptResponse> => connection.conn.prompt({ sessionId, prompt });
-        if (this.#unprompted && profile?.serializeNewSessions === true) {
-            // The agent has bound its native conversation once it reports anything, so the next
-            // new session waits only for that, never for a whole turn that may itself wait on it.
-            const before = newSessionPrompts.get(profile) ?? Promise.resolve();
-            let release!: () => void;
-            const bound = new Promise<void>((resolve) => (release = resolve));
-            this.#releaseNewSession = release;
-            newSessionPrompts.set(profile, bound);
-            send = async () => {
-                // Bounded, so a session that went quiet without ever binding cannot hold every
-                // later one forever.
-                await settleWithin(before, NEW_SESSION_GATE_MS);
-                const response = connection.conn.prompt({ sessionId, prompt });
-                void response.finally(release).catch(() => undefined);
-                return await response;
-            };
-        }
-        this.#unprompted = false;
-        this.#previousPrompt = send().then(
+        this.#previousPrompt = connection.conn.prompt({ sessionId, prompt }).then(
             async (response) => {
                 // An agent that answered a prompt has saved its session, so where this
                 // conversation stands in it may now outlive the agent's process.
@@ -719,9 +673,14 @@ export class AcpSession extends BaseSession {
                         await this.#writeRecord(this.#record).catch(() => undefined);
                     }
                 }
+                // A prompt that ended waits on nothing it asked.
+                if (this.#turn === turn) this.#withdrawAsks();
                 turn.items.push({ kind: "prompt_end", response });
             },
-            (error: unknown) => turn.items.push({ kind: "prompt_error", error }),
+            (error: unknown) => {
+                if (this.#turn === turn) this.#withdrawAsks();
+                turn.items.push({ kind: "prompt_error", error });
+            },
         );
     }
 
@@ -764,9 +723,14 @@ export class AcpSession extends BaseSession {
         }
     }
 
+    #withdrawAsks(): void {
+        for (const ask of this.#asks) ask.abort();
+        this.#asks.clear();
+    }
+
     #abandonTurn(): void {
-        // A new session that will never report anything must not hold back the next one.
-        this.#openNewSessionGate();
+        // The agent stops waiting on what it asked; each open question is withdrawn.
+        this.#withdrawAsks();
         const turn = this.#turn;
         this.#turn = undefined;
         if (turn === undefined) return;
@@ -777,11 +741,6 @@ export class AcpSession extends BaseSession {
             });
         }
         turn.awaiting.clear();
-    }
-
-    #openNewSessionGate(): void {
-        this.#releaseNewSession?.();
-        this.#releaseNewSession = undefined;
     }
 
     async #commit(messages: readonly SessionMessage[]): Promise<void> {
@@ -803,19 +762,67 @@ export class AcpSession extends BaseSession {
         await acpSessionRecordWrite(this.#options.stateDirectory, this.id, record);
     }
 
-    #answerPermission(params: acp.RequestPermissionRequest): acp.RequestPermissionResponse {
-        // The agent asks before acting on its own. Read only refuses; every other mode lets
-        // this one action through.
-        const allow = this.#permissionMode !== "read_only";
-        const option =
-            params.options.find(
-                (candidate) => candidate.kind === (allow ? "allow_once" : "reject_once"),
-            ) ??
-            params.options.find((candidate) =>
-                candidate.kind.startsWith(allow ? "allow" : "reject"),
+    /**
+     * The agent's own permission system asks before acting. Read only refuses and Full access
+     * allows without asking anyone. Otherwise a call of a bridged Happy tool that its own rule says
+     * needs no approval goes ahead in Workspace write, and everything else is put to the person.
+     */
+    async #answerPermission(
+        params: acp.RequestPermissionRequest,
+    ): Promise<acp.RequestPermissionResponse> {
+        const environment = this.#environment;
+        const mode = environment?.permissionMode;
+        if (mode === "read_only") return pick(params, "deny");
+        if (mode === "full_access") {
+            // Once when it can, else for the session: Full access never refuses for want of it.
+            const once = params.options.some((option) => option.kind === "allow_once");
+            return pick(params, once ? "allow_once" : "allow_for_session");
+        }
+        if (mode === "workspace_write" && (await this.#needsNoApproval(params))) {
+            return pick(params, "allow_once");
+        }
+        const ask = environment?.askPermission;
+        if (ask === undefined) return pick(params, "deny");
+        // A stopped or finished turn has nobody to ask on its behalf.
+        if (this.#turn === undefined) return pick(params, "cancelled");
+        const withdrawn = new AbortController();
+        this.#asks.add(withdrawn);
+        try {
+            const answer = await ask(
+                {
+                    action: permissionAction(params.toolCall),
+                    allowForSession: params.options.some(
+                        (option) => option.kind === "allow_always",
+                    ),
+                },
+                withdrawn.signal,
             );
-        if (option === undefined) return { outcome: { outcome: "cancelled" } };
-        return { outcome: { outcome: "selected", optionId: option.optionId } };
+            return withdrawn.signal.aborted ? pick(params, "cancelled") : pick(params, answer);
+        } catch {
+            return pick(params, withdrawn.signal.aborted ? "cancelled" : "deny");
+        } finally {
+            this.#asks.delete(withdrawn);
+        }
+    }
+
+    /** Whether the ask is about a bridged Happy tool call that its own rule lets through. */
+    async #needsNoApproval(params: acp.RequestPermissionRequest): Promise<boolean> {
+        const call = params.toolCall._meta?.[ACP_BRIDGED_CALL_META] as
+            | { readonly name?: unknown; readonly arguments?: unknown }
+            | undefined;
+        const tool = this.#bridgedTools.find(
+            (candidate) => AcpToolBridgeServer.toolName(candidate) === call?.name,
+        );
+        if (tool === undefined || this.#runCtx === undefined) return false;
+        if (tool.autoReview === "never") return true;
+        try {
+            return (
+                (await tool.shouldReviewInAutoMode?.(call?.arguments ?? {}, this.#runCtx)) === false
+            );
+        } catch {
+            // A rule that cannot answer has not said the call is safe.
+            return false;
+        }
     }
 
     #usage(response: acp.PromptResponse | undefined, outputCharacters: number): SessionUsage {
@@ -912,4 +919,40 @@ async function settleWithin(promise: Promise<unknown>, ms: number): Promise<void
         promise.catch(() => undefined),
         new Promise((resolve) => setTimeout(resolve, ms).unref()),
     ]);
+}
+
+/** The agent's option for an answer, or a cancelled outcome when it offers none that fits. */
+function pick(
+    params: acp.RequestPermissionRequest,
+    answer: AcpPermissionAnswer,
+): acp.RequestPermissionResponse {
+    if (answer === "cancelled") return { outcome: { outcome: "cancelled" } };
+    const kinds: readonly acp.PermissionOptionKind[] =
+        answer === "allow_for_session"
+            ? ["allow_always", "allow_once"]
+            : answer === "allow_once"
+              ? ["allow_once"]
+              : ["reject_once", "reject_always"];
+    for (const kind of kinds) {
+        const option = params.options.find((candidate) => candidate.kind === kind);
+        if (option !== undefined) {
+            return { outcome: { outcome: "selected", optionId: option.optionId } };
+        }
+    }
+    return { outcome: { outcome: "cancelled" } };
+}
+
+/** The action an ask is about, as the agent described it; a long input is cut short. */
+function permissionAction(toolCall: acp.ToolCallUpdate): string {
+    const title = toolCall.title?.trim();
+    const raw =
+        toolCall.rawInput === undefined || toolCall.rawInput === null
+            ? undefined
+            : JSON.stringify(toolCall.rawInput);
+    const input =
+        raw !== undefined && raw.length > MAX_ACTION_INPUT
+            ? `${raw.slice(0, MAX_ACTION_INPUT)}… (${raw.length - MAX_ACTION_INPUT} more characters not shown)`
+            : raw;
+    const text = [title, input].filter((part) => part !== undefined && part.length > 0).join("\n");
+    return text.length === 0 ? "An action the agent did not describe." : text;
 }

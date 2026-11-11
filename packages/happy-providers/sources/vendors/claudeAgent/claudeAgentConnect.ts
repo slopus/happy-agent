@@ -4,19 +4,25 @@ import { randomUUID } from "node:crypto";
 import type * as acp from "@agentclientprotocol/sdk";
 import {
     query,
+    type CanUseTool,
     type ModelInfo,
     type PermissionMode,
+    type PermissionResult,
+    type PermissionUpdate,
     type Query,
     type SDKMessage,
     type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
-import type {
-    AcpAgentConnection,
-    AcpConnect,
-    AcpConnection,
+import {
+    ACP_APPROVED_TOOLS_META,
+    ACP_BRIDGED_CALL_META,
+    type AcpAgentConnection,
+    type AcpConnect,
+    type AcpConnection,
 } from "@/protocol/acp/AcpConnection.js";
+import { ACP_BRIDGE_NAME } from "@/protocol/acp/impl/acpResponseEvents.js";
 import { processTreeGroups, terminateProcessTree } from "@/protocol/acp/impl/processTree.js";
 import { CLAUDE_SDK_PRIVACY_ENVIRONMENT } from "@/vendors/claude/claudeSdkPrivacyEnvironment.js";
 import { claudeUsageFromRateLimitInfo } from "@/vendors/claude/claudeUsageFromRateLimitInfo.js";
@@ -29,6 +35,8 @@ const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 // auto-compaction off. Nothing compacts this one but Claude Code itself.
 const { DISABLE_AUTO_COMPACT: _, ...CLAUDE_CODE_PRIVACY_ENVIRONMENT } =
     CLAUDE_SDK_PRIVACY_ENVIRONMENT;
+/** How Claude Code names the tools of Happy's bridge. */
+const BRIDGE_PREFIX = `mcp__${ACP_BRIDGE_NAME}__`;
 const MODES: readonly PermissionMode[] = [
     "default",
     "acceptEdits",
@@ -111,12 +119,12 @@ class ClaudeAgentConnection implements AcpAgentConnection {
 
     async newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse> {
         const sessionId = randomUUID();
-        const thread = this.#open(sessionId, params.cwd, params.mcpServers, false);
+        const thread = this.#open(sessionId, params, false);
         return { sessionId, configOptions: await this.#configOptions(thread) };
     }
 
     async resumeSession(params: acp.ResumeSessionRequest): Promise<acp.ResumeSessionResponse> {
-        const thread = this.#open(params.sessionId, params.cwd, params.mcpServers ?? [], true);
+        const thread = this.#open(params.sessionId, params, true);
         return { configOptions: await this.#configOptions(thread) };
     }
 
@@ -196,18 +204,24 @@ class ClaudeAgentConnection implements AcpAgentConnection {
 
     #open(
         sessionId: string,
-        cwd: string,
-        mcpServers: readonly acp.McpServer[],
+        params: acp.NewSessionRequest | acp.ResumeSessionRequest,
         resume: boolean,
     ): ClaudeThread {
         if (this.#closed) throw new Error("The Claude agent was stopped.");
         const input = new AsyncInputQueue<SDKUserMessage>();
+        const approved = params._meta?.[ACP_APPROVED_TOOLS_META];
         const sdk = query({
             prompt: input,
             options: {
-                cwd,
+                cwd: params.cwd,
                 ...(resume ? { resume: sessionId } : { sessionId }),
-                mcpServers: Object.fromEntries(mcpServers.map(sdkMcpServer)),
+                mcpServers: Object.fromEntries((params.mcpServers ?? []).map(sdkMcpServer)),
+                // Happy's tools that never need approval run without asking; every other tool,
+                // including those of the person's own MCP servers, goes through Claude's own
+                // permission system.
+                allowedTools: Array.isArray(approved)
+                    ? approved.map((name) => `${BRIDGE_PREFIX}${String(name)}`)
+                    : [],
                 includePartialMessages: true,
                 // Happy's permission mode decides; full access maps to bypassing Claude's prompts.
                 allowDangerouslySkipPermissions: true,
@@ -220,20 +234,8 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                     ...this.#environment,
                     ...CLAUDE_CODE_PRIVACY_ENVIRONMENT,
                 },
-                canUseTool: async (toolName, toolInput, { toolUseID }) => {
-                    const answer = await this.#client.requestPermission({
-                        sessionId,
-                        toolCall: { toolCallId: toolUseID, title: toolName, rawInput: toolInput },
-                        options: [
-                            { optionId: "allow", name: "Allow", kind: "allow_once" },
-                            { optionId: "reject", name: "Reject", kind: "reject_once" },
-                        ],
-                    });
-                    return answer.outcome.outcome === "selected" &&
-                        answer.outcome.optionId === "allow"
-                        ? { behavior: "allow", updatedInput: toolInput }
-                        : { behavior: "deny", message: "Happy's permission mode refused this." };
-                },
+                canUseTool: (toolName, toolInput, options) =>
+                    this.#canUseTool(sessionId, toolName, toolInput, options),
                 stderr: (data) => {
                     this.#stderr = (this.#stderr + data).slice(-4000);
                 },
@@ -269,6 +271,99 @@ class ClaudeAgentConnection implements AcpAgentConnection {
         this.#threads.set(sessionId, thread);
         void this.#pump(sessionId, thread);
         return thread;
+    }
+
+    /** Claude Code asks before a tool call its own permission system will not decide alone. */
+    async #canUseTool(
+        sessionId: string,
+        toolName: string,
+        toolInput: Record<string, unknown>,
+        options: Parameters<CanUseTool>[2],
+    ): Promise<PermissionResult> {
+        // Trust rests on where the server came from, never on its name alone. An ask the person's
+        // own ask rule forced is theirs to answer, so it is never let through as Happy's tool.
+        const bridged =
+            options.mcpServer?.name === ACP_BRIDGE_NAME &&
+            options.mcpServer.source === "dynamic" &&
+            toolName.startsWith(BRIDGE_PREFIX) &&
+            options.matchedAskRule === undefined;
+        // Only what the person can be shown is kept for the session: allow rules and folders.
+        const grants =
+            options.suppressAlwaysAllowRule === true
+                ? []
+                : (options.suggestions ?? []).filter(
+                      (update) =>
+                          (update.type === "addRules" && update.behavior === "allow") ||
+                          update.type === "addDirectories",
+                  );
+        const forSession = grants.length > 0;
+        const withdrawn = new Promise<acp.RequestPermissionResponse>((resolve) => {
+            const cancel = (): void => resolve({ outcome: { outcome: "cancelled" } });
+            if (options.signal.aborted) cancel();
+            else options.signal.addEventListener("abort", cancel, { once: true });
+        });
+        const asked = Promise.resolve(
+            this.#client.requestPermission({
+                sessionId,
+                toolCall: {
+                    toolCallId: options.toolUseID,
+                    title: [
+                        options.title ?? toolName,
+                        options.description,
+                        options.decisionReason,
+                        forSession
+                            ? `Allow for this session would allow: ${grants.map(grantText).join("; ")}`
+                            : undefined,
+                    ]
+                        .filter((part) => part !== undefined && part.length > 0)
+                        .join("\n"),
+                    rawInput: toolInput,
+                    ...(bridged
+                        ? {
+                              _meta: {
+                                  [ACP_BRIDGED_CALL_META]: {
+                                      name: toolName.slice(BRIDGE_PREFIX.length),
+                                      arguments: toolInput,
+                                  },
+                              },
+                          }
+                        : {}),
+                },
+                options: [
+                    { optionId: "allow", name: "Allow", kind: "allow_once" },
+                    ...(forSession
+                        ? [
+                              {
+                                  optionId: "allow_session",
+                                  name: "Allow for this session",
+                                  kind: "allow_always" as const,
+                              },
+                          ]
+                        : []),
+                    { optionId: "reject", name: "Reject", kind: "reject_once" },
+                ],
+            }),
+        );
+        // Claude Code stops waiting when its own turn is interrupted.
+        asked.catch(() => undefined);
+        const answer = await Promise.race([asked, withdrawn]);
+        const chosen = answer.outcome.outcome === "selected" ? answer.outcome.optionId : undefined;
+        if (chosen === "allow") return { behavior: "allow", updatedInput: toolInput };
+        if (chosen === "allow_session") {
+            return {
+                behavior: "allow",
+                updatedInput: toolInput,
+                // Kept for this session only, never written to the person's settings files.
+                updatedPermissions: grants.map((update) => ({ ...update, destination: "session" })),
+            };
+        }
+        return {
+            behavior: "deny",
+            message:
+                answer.outcome.outcome === "cancelled"
+                    ? "The request was withdrawn before anyone answered it."
+                    : "Not allowed: Happy's permission mode or the person refused this action.",
+        };
     }
 
     /** Translate one query's messages into ACP updates and end each prompt at its result. */
@@ -433,4 +528,17 @@ function claudeTurnFailure(message: Extract<SDKMessage, { type: "result" }>): st
     }
     if (message.subtype === "error_max_turns") return undefined;
     return message.errors.join("\n") || `The Claude turn ended with ${message.subtype}.`;
+}
+
+/** What one kept grant allows, as the person reads it. */
+function grantText(update: PermissionUpdate): string {
+    if (update.type === "addDirectories") return `files in ${update.directories.join(", ")}`;
+    if (update.type !== "addRules") return update.type;
+    return update.rules
+        .map((rule) =>
+            rule.ruleContent === undefined
+                ? rule.toolName
+                : `${rule.toolName}(${rule.ruleContent})`,
+        )
+        .join(", ");
 }

@@ -283,9 +283,10 @@ export {
     AcpProvider,
     type AcpAgentLaunch,
     type AcpAgentProfile,
-    type AcpBridgeDirectoryFile,
     type AcpConfigOptionValue,
+    type AcpPermissionAnswer,
     type AcpPermissionMode,
+    type AcpPermissionQuestion,
     type AcpProviderOptions,
     type AcpTurnEnvironment,
 } from "@/protocol/acp/AcpProvider.js";

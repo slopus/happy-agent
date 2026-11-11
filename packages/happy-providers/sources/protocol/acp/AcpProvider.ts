@@ -17,10 +17,29 @@ export interface AcpAgentLaunch {
 /** The access the hosting agent currently grants, in Happy's four permission modes. */
 export type AcpPermissionMode = "read_only" | "workspace_write" | "auto" | "full_access";
 
+/** An action the foreign agent's own permission system wants a person to decide on. */
+export interface AcpPermissionQuestion {
+    /** What the agent wants to do, in its own words: a command, a path, a tool call. */
+    readonly action: string;
+    /** Whether the agent offers to allow such actions for the rest of its session. */
+    readonly allowForSession: boolean;
+}
+
+/** The person's decision; `cancelled` when the question was withdrawn before they answered. */
+export type AcpPermissionAnswer = "allow_once" | "allow_for_session" | "deny" | "cancelled";
+
 /** Where and under what permission one turn of the foreign agent runs. */
 export interface AcpTurnEnvironment {
     readonly cwd: string;
     readonly permissionMode?: AcpPermissionMode;
+    /**
+     * Put an action the agent asked about to the person. `signal` aborts when the turn stops and
+     * the question must be withdrawn. Without it, an ask the mode leaves open is refused.
+     */
+    readonly askPermission?: (
+        question: AcpPermissionQuestion,
+        signal: AbortSignal,
+    ) => Promise<AcpPermissionAnswer>;
 }
 
 /** One ACP session configuration option to set before a prompt. */
@@ -34,15 +53,9 @@ export interface AcpConfigOptionValue {
     readonly value: string | boolean;
 }
 
-/** Files to place in a private directory the foreign agent is given as an extra workspace root. */
-export interface AcpBridgeDirectoryFile {
-    readonly path: string;
-    readonly content: string;
-}
-
 /**
- * What differs between foreign agents. ACP fixes the wire; each agent still names its models,
- * maps permission, and discovers MCP servers in its own way.
+ * What differs between foreign agents. ACP fixes the wire; each agent still names its models and
+ * maps permission in its own way.
  */
 export interface AcpAgentProfile {
     /** The agent's config-option values for the selected Happy model and effort. */
@@ -52,20 +65,6 @@ export interface AcpAgentProfile {
     ) => readonly AcpConfigOptionValue[];
     /** The agent's config-option values that best match a Happy permission mode. */
     readonly permissionOptions?: (mode: AcpPermissionMode) => readonly AcpConfigOptionValue[];
-    /**
-     * For agents that ignore ACP `mcpServers`: files that make the bridge discoverable when the
-     * directory holding them is passed as an additional workspace directory.
-     */
-    readonly bridgeDirectoryFiles?: (bridge: {
-        readonly name: string;
-        readonly url: string;
-        readonly headers: Readonly<Record<string, string>>;
-    }) => readonly AcpBridgeDirectoryFile[];
-    /**
-     * For agents that bind a new session to whichever native conversation appears next in a
-     * shared store: only one new session's first prompt runs at a time, so two cannot swap.
-     */
-    readonly serializeNewSessions?: boolean;
 }
 
 export interface AcpProviderOptions {

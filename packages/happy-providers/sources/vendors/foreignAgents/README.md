@@ -5,13 +5,13 @@ the shared session in [`protocol/acp`](../../protocol/acp/README.md): how to rea
 models assumed before it has been asked, how its model selector becomes Happy models, how a Happy
 model, effort and permission mode become its own options, and how credentials reach it.
 
-| Type          | Reached through                                                      | Happy tools reach it through                           |
-| ------------- | -------------------------------------------------------------------- | ------------------------------------------------------ |
-| `claude-code` | Claude Agent SDK ([`claudeAgent`](../claudeAgent/README.md))         | SDK `mcpServers` (HTTP)                                |
-| `codex-cli`   | `codex app-server` ([`codexAppServer`](../codexAppServer/README.md)) | `mcp_servers` thread config (HTTP)                     |
-| `antigravity` | ACP adapter `antigravity-acp@1.2.0` (community, Bun, npx)            | `.agents/mcp_config.json` in a private extra workspace |
-| `opencode`    | ACP, `opencode acp`                                                  | ACP `mcpServers` (HTTP)                                |
-| `acp`         | ACP, to the configured `command`                                     | ACP `mcpServers` (HTTP), when the agent accepts them   |
+| Type          | Reached through                                                      | Happy tools reach it through                         |
+| ------------- | -------------------------------------------------------------------- | ---------------------------------------------------- |
+| `claude-code` | Claude Agent SDK ([`claudeAgent`](../claudeAgent/README.md))         | SDK `mcpServers` (HTTP)                              |
+| `codex-cli`   | `codex app-server` ([`codexAppServer`](../codexAppServer/README.md)) | `mcp_servers` thread config (HTTP)                   |
+| `antigravity` | ACP, `agy acp` (1.5.5 or newer)                                      | ACP `mcpServers` (HTTP)                              |
+| `opencode`    | ACP, `opencode acp`                                                  | ACP `mcpServers` (HTTP)                              |
+| `acp`         | ACP, to the configured `command`                                     | ACP `mcpServers` (HTTP), when the agent accepts them |
 
 Claude Code and Codex have typed APIs, so they use first-party drivers that present themselves
 as an ACP connection and take steering mid-turn. ACP is for agents without such an API.
@@ -23,14 +23,13 @@ lists here are only assumed until the agent reports its own through `modelsFromS
 and the generic `acp` agent assume none. Codex CLI runs the pinned `@openai/codex` this package
 depends on, else a `codex` on PATH, else the pinned release through `npx`.
 
-Antigravity's adapter answers a new session from the model list its previous run cached, then
-asks `agy models` and sends a `config_option_update` only when the list changed. Its connection
-therefore sets `modelRevisionMs`, so model discovery waits for that correction and a model Google
-adds is listed without a change here; ending the adapter sooner would also leave its cache stale.
-
-Antigravity's adapter ignores ACP `mcpServers`, but `agy` reads `.agents/mcp_config.json` from
-every workspace root, so the bridge is written into a private directory under the provider's
-state and passed as an additional directory. Nothing is ever written into the user's project.
+Antigravity is started as `agy acp`, without `--dangerously-skip-permissions`, after checking
+that `agy --version` is at least 1.5.5. It takes HTTP `mcpServers` over ACP although it does not
+advertise `mcpCapabilities`, so its initialize answer is read as accepting them. Its model
+selector lists base names (`gemini-3.8-flash`) with a separate `thought_level` option, and its
+modes are `plan`, `accept-edits`, and `auto`. It never asks before an MCP call, and it registers
+only small MCP tools as functions: larger ones, `create_agent` among them, are left for its model
+to load from a schema file, which it does not reliably do.
 
 ## Files
 

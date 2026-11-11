@@ -159,11 +159,19 @@ export function acpBridgeResult(message: SessionToolResultMessage): CallToolResu
     };
 }
 
-/** A plain JSON Schema object, stripped of TypeBox's symbol metadata. */
+/**
+ * A plain JSON Schema object, stripped of TypeBox's symbol metadata and of `pattern`. Happy writes
+ * patterns as JavaScript regular expressions, with `\u` escapes and lookaheads that other regex
+ * dialects reject; an agent that validates schemas in such a dialect, as Antigravity does with
+ * Go's, refuses every tool once one pattern fails. The call is still checked against the full
+ * schema when Agent Base runs it.
+ */
 function toInputSchema(tool: SessionTool): { type: "object"; [key: string]: unknown } {
     const schema =
         tool.parameters === undefined
             ? {}
-            : (JSON.parse(JSON.stringify(tool.parameters)) as Record<string, unknown>);
+            : (JSON.parse(JSON.stringify(tool.parameters), (key, value: unknown) =>
+                  key === "pattern" && typeof value === "string" ? undefined : value,
+              ) as Record<string, unknown>);
     return { ...schema, type: "object" };
 }

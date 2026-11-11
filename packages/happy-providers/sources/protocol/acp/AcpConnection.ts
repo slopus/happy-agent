@@ -39,13 +39,19 @@ export interface AcpConnection {
      * earlier with {@link processGroups} also cover commands the agent orphaned since.
      */
     terminate(groups?: readonly number[]): void;
-    /**
-     * How long after opening a session the agent may still replace the model list it first
-     * reported, for an agent that answers from a cache and looks up its real list afterwards.
-     * Model discovery stays connected this long for the replacement.
-     */
-    readonly modelRevisionMs?: number;
 }
+
+/**
+ * `_meta` key on a new, resumed or loaded session: the names of the bridged Happy tools the agent
+ * may call without asking, because no call of them ever needs approval.
+ */
+export const ACP_APPROVED_TOOLS_META = "happy/approvedTools";
+
+/**
+ * `_meta` key on a permission request's `toolCall` when the agent asks before calling one of
+ * Happy's bridged tools: `{ name, arguments }` of that call.
+ */
+export const ACP_BRIDGED_CALL_META = "happy/bridgedCall";
 
 /** Start a foreign agent working in `cwd` that reports to `client`. */
 export type AcpConnect = (cwd: string, client: acp.Client) => Promise<AcpConnection>;
