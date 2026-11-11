@@ -1,11 +1,10 @@
 # Bots — learnings
 
-## The Stories switch updates the bot without renaming it
+## Retired Stories inputs do not change bots
 
-Bot PATCH accepts a name, a Stories switch, or both. A stories-only edit leaves the name,
-conversation title, and automatic naming eligibility alone. The switch belongs to Bot Settings;
-its changes advance the bot version and publish the normal bot update, capturing the boolean
-inside the transaction so delayed event delivery cannot substitute a later setting.
+Bot PATCH still accepts the old optional Stories input for released clients, but ignores it.
+It cannot change the bot's version, name, conversation title, or automatic naming eligibility.
+Public bot responses always report Stories disabled.
 
 ## Managed pictures share one normalization function
 

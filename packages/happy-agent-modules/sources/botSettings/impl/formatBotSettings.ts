@@ -15,5 +15,5 @@ export function formatBotSettings(settings: BotSettings): string {
         settings.compute.type === "host"
             ? "Compute: the machine holding the bot's folder, under the ordinary sandbox."
             : `Compute: a Docker container of ${JSON.stringify(settings.compute.image)} with only each agent's folder mounted.`;
-    return [secrets, reach, compute, `Stories: ${settings.stories ? "on" : "off"}.`].join("\n");
+    return [secrets, reach, compute].join("\n");
 }

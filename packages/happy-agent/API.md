@@ -690,13 +690,10 @@ routes under `/v0/provider-clis` and the `provider_cli.updated` event reports
 `capabilities.providerClis: true` from health. Older daemons omit it and answer the routes with
 `404`; clients then offer only the manual terminal path for installing and signing in.
 
-Story feeds are additive and do not increment the protocol version. A daemon that serves the
-routes under `/v0/stories` and the `story.changed` and `story.removed` events reports
-`capabilities.storyFeed: true` from health. Older daemons omit it and answer the routes with `404`;
-clients then show no stories. A client that predates story feeds never meets one: nothing changes
-until its person turns the `stories` setting on, and it ignores `story.changed` and `story.removed`
-like every event type it does not recognize.
-The capability is deliberately not `stories`, which named the Stories removed below.
+Stories is retired. Current daemons omit `capabilities.storyFeed`, answer every `/v0/stories`
+route with `404 not_found`, and emit no new `story.changed` or `story.removed` events. Stored
+personal or bot Stories settings cannot enable it. Published client types remain readable for
+older daemons, and historical message quotes and their still-frame route remain available.
 
 The Feed is additive and does not increment the protocol version. A daemon that serves the routes
 under `/v0/feed` and the `feed.*` events reports `capabilities.feed: true` from health and
@@ -9757,7 +9754,7 @@ one, which is what keeps this chapter additive for protocol 22.
 
 Bots are a versioned resource: mutations require `If-Match` with the usual `409` conflict
 carrying the authoritative `bot`, and accept the optional `mutationId` from the basics. The bot's
-`version` covers the bot's own fields — name, avatar, order, archival, Stories switch. The embedded
+`version` covers the bot's own fields — name, avatar, order, and archival. The embedded
 agent is independently versioned and changes through `agent.updated` without advancing the bot,
 exactly as agents embedded in projects and workspaces do; clients merge it by its own version.
 
@@ -9788,7 +9785,7 @@ exactly as agents embedded in projects and workspaces do; clients merge it by it
 Fields:
 
 - `id` — stable bot identifier.
-- `stories` — whether this bot has story tools and visible stories, off by default. Current daemons return a boolean; older compatible daemons may omit it. Stored in the bot's settings and included in `bot.updated`.
+- `stories` — retired compatibility field, always `false` on current daemons. Older compatible daemons may omit it or support Stories.
 - `name` — the human display name. Required, 1–256 nonblank characters, no ASCII control
   characters.
 - `shortName` — optional generated label of at most 10 characters; clients fall back to `name`.
@@ -9906,9 +9903,9 @@ Response — `200`: `{ "bot": { ... } }`; `404` when no such bot exists.
 
 ### `PATCH /v0/bots/:botId`
 
-Updates the bot's display name or Stories switch. Requires `If-Match`, with the same authorization as rename.
+Updates the bot's display name. Requires `If-Match`, with the same authorization as rename.
 
-Request: `{ "name"?: "Research Buddy", "stories"?: true, "mutationId"?: "..." }`; at least one of `name` or `stories` is required (`400 invalid_request` otherwise). Omitted fields are unchanged. A stories-only change does not rename the bot or settle automatic naming.
+Request: `{ "name"?: "Research Buddy", "stories"?: true, "mutationId"?: "..." }`; at least one of `name` or `stories` is required (`400 invalid_request` otherwise). The retired `stories` input is accepted and ignored; a stories-only request does not change the bot, its version, or automatic naming.
 
 Renaming also updates the bot's conversation title, clears `shortName`, and permanently cancels
 eligibility for automatic naming, even when the submitted name equals the current display name. This decision
@@ -12370,7 +12367,19 @@ Idempotent. The same callers may unarchive as may archive.
 Response — `200`: `{ "task": { ... }, "membership": { ... } }` with `archivedAt` `null`, and a
 `task.updated` event after commit, echoing `mutationId`. `403`, `404`, and `409` as for archive.
 
-## Stories
+## Stories (retired)
+
+Stories was removed because Activity is a better version of Stories today. A Stories-like feed
+may return for the latest updates in Activity. The runtime no longer loads a Stories module,
+offers `post_story`, `list_stories`, or `delete_story`, serves `/v0/stories` routes, advertises
+`storyFeed`, or publishes Stories events. Desktop bootstrap returns `storiesEnabled: false` and
+`stories: []` for older clients. Bot projections return `stories: false`, and the retired bot
+PATCH input is ignored. Opaque user settings remain readable and writable but have no effect.
+Stored Stories tables, migration history, media, and existing message quotes are preserved;
+the historical quote still-frame route remains available. No retirement migration deletes data.
+
+The following describes the historical wire formats retained by published clients for connecting
+to older daemons. It does not require current daemons to implement any Stories behavior.
 
 A story is one image or video that a task's own agent publishes to the people who joined the task, with a few words
 of caption, to show something that shipped. It lasts 24 hours. Clients show live stories on the
@@ -15413,6 +15422,9 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
 
 **Stories**
 
+Retired: current daemons emit neither event below. The shapes remain documented for older daemons
+and retained event history.
+
 - `story.changed` — a story or repost was posted, someone replied to it, or the reader marked it
   seen. Each reader receives their own copy, because `seen` and `canDelete` are theirs; in team
   mode only that reader receives it, including journal pulls, replay, and live delivery. Only people
@@ -15690,10 +15702,8 @@ Response — `200`:
     "surfaces": [
         /* the full Surface instance catalog, ascending ID */
     ],
-    "storiesEnabled": true,
-    "stories": [
-        /* exactly the stories array from GET /v0/stories for this reader */
-    ],
+    "storiesEnabled": false,
+    "stories": [],
     "feedUnread": 3,
     "teammates": [
         /* every team member who signs in, as GET /v0/users describes each one */
@@ -15740,13 +15750,10 @@ Response — `200`:
   Todo data and revision history are loaded on demand through the Todo Surface endpoints.
   Calendar events, occurrences, and revision history are likewise loaded on demand through the
   Calendar Surface endpoints.
-- `storiesEnabled` — whether Stories is enabled for the authenticated reader, with the same
-  setting and membership checks as the Stories routes. Optional on older compatible daemons.
-- `stories` — every current story this reader may see, oldest `postedAt` first, exactly as
-  `GET /v0/stories` returns it. Included with `storiesEnabled` by daemons supporting this
-  bootstrap addition; an off flag accompanies an empty array. Optional on older compatible
-  daemons, where clients load the feed separately. Follow `story.changed` and `story.removed`
-  from the ordinary bootstrap `cursor`; no separate feed cursor or initial feed request is needed.
+- `storiesEnabled` — retired compatibility field, always `false` on current daemons.
+- `stories` — retired compatibility field, always `[]` on current daemons. Historically
+  included with `storiesEnabled` by daemons supporting the Stories bootstrap addition;
+  both fields may be absent on older compatible daemons.
 - `feedUnread` — the caller's count of open Feed entries, exactly `unread` from `GET /v0/feed`, so
   a client can show the Feed's badge before reading the Feed itself. Follow `feed.unread.updated`
   from the bootstrap `cursor`. Optional; absent on daemons without the Feed and for guests.

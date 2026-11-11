@@ -4,8 +4,7 @@ import { createRootContext } from "@steve.kite/stdlib";
 import { drizzle } from "drizzle-orm/libsql";
 import { expect, it } from "vitest";
 
-import { StoriesModule } from "../../sources/stories/StoriesModule.js";
-import { storyMigrations } from "../../sources/stories/storyStore.js";
+import { storyMigrations } from "../../sources/stories/storyMigrations.js";
 
 it.each(["prototype", "prototype-agents", "minimal-preview", "local-fix", "fresh"])(
     "cleans retired %s Stories storage and preserves the rebuilt feed on restart",
@@ -16,16 +15,7 @@ it.each(["prototype", "prototype-agents", "minimal-preview", "local-fix", "fresh
             database: drizzle(client),
             acquireLock: async () => ({ release: async () => {} }),
         });
-        const stories = new StoriesModule(
-            {} as never,
-            {} as never,
-            {} as never,
-            {} as never,
-            {} as never,
-            {} as never,
-            {} as never,
-            {} as never,
-        );
+        const stories = { name: "stories-v2", migrations: storyMigrations } satisfies AgentModule;
         try {
             await storage.migrate(ctx, [
                 { name: "unrelated", migrations: [["001-keep", async () => {}]] },

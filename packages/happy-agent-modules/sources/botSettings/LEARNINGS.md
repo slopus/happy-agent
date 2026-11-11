@@ -1,11 +1,10 @@
 # Bot settings — learnings
 
-## Stories is an opt-in bot setting
+## Retired Stories settings are inert
 
-Each bot's Stories switch defaults off and lives in these settings, rather than depending on
-the last sender's personal preference. The bot's own agent checks it once when tools are
-assembled. Personal Stories settings still decide who can see the bot's stories. Bot PATCH
-uses the same edit authority as rename and publishes the normal versioned bot update.
+The old optional Stories field remains accepted when reading stored settings, but normalization
+discards it and tools neither offer nor describe it. Stored opt-ins cannot revive the removed
+feature or count as permission widenings.
 
 ## Settings live in a leaf module keyed by the bot's agent
 

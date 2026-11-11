@@ -43,6 +43,7 @@ export const botSettingsSchema = Type.Object(
         /** `false` confines governed agents to the bot's own agents. It never widens reach. */
         crossWorkspace: Type.Boolean(),
         compute: botComputeSettingSchema,
+        /** Retired; accepted only when reading stored settings and old tool arguments. */
         stories: Type.Optional(Type.Boolean()),
     },
     exact,

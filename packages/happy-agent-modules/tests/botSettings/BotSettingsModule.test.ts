@@ -17,6 +17,24 @@ const LOCKED: BotSettings = {
 };
 
 describe("BotSettingsModule", () => {
+    it("reads old Stories opt-ins without exposing or enabling the retired setting", async () => {
+        const tree = await governedTree("bot-settings-retired-stories");
+        try {
+            await tree.botSettings.write(tree.ctx, "botagent", LOCKED);
+            const previous = { ...LOCKED, stories: true };
+            await agentDatabaseRun(
+                tree.ctx.db,
+                sql`UPDATE happy_agent_module_bot_settings SET settings_json = ${JSON.stringify(previous)}`,
+            );
+            await expect(tree.botSettings.read(tree.ctx, "botagent")).resolves.toEqual(LOCKED);
+            expect(tree.botSettings.describe(previous)).not.toContain("Stories");
+            expect(tree.botSettings.merge(previous, { stories: true })).toEqual(LOCKED);
+            expect(tree.botSettings.widenings(LOCKED, previous)).toEqual([]);
+        } finally {
+            tree.close();
+        }
+    });
+
     it("runs an unconfigured bot with the defaults and governs nothing", async () => {
         const tree = await governedTree("bot-settings-defaults");
         try {
@@ -283,7 +301,6 @@ describe("BotSettingsModule", () => {
                     'Secrets: only "deploy-token".',
                     "Reach: only the bot's own agents.",
                     'Compute: a Docker container of "node:22" with only each agent\'s folder mounted.',
-                    "Stories: off.",
                 ].join("\n"),
             );
         } finally {

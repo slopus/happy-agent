@@ -86,7 +86,7 @@ export class BotSettingsModule implements AgentModule {
 
     /** One bot's settings, read from its own agent; the defaults when none were stored. */
     async read(ctx: Context, botAgentId: string): Promise<BotSettings> {
-        return structuredClone(
+        return normalize(
             (await readStoredBotSettings(ctx, botAgentId))?.settings ?? DEFAULT_BOT_SETTINGS,
         );
     }
@@ -113,7 +113,7 @@ export class BotSettingsModule implements AgentModule {
                 throw new BotSettingsError("Only a bot's own agent carries bot settings.");
             }
             const stored = await readStoredBotSettings(txCtx, botAgentId);
-            const previous = stored?.settings ?? DEFAULT_BOT_SETTINGS;
+            const previous = normalize(stored?.settings ?? DEFAULT_BOT_SETTINGS);
             if (this.same(previous, next)) {
                 return {
                     previous: structuredClone(previous),
@@ -154,7 +154,6 @@ export class BotSettingsModule implements AgentModule {
                     : patch.allowedSecretIds,
             crossWorkspace: patch.crossWorkspace ?? current.crossWorkspace,
             compute: patch.compute ?? current.compute,
-            stories: patch.stories ?? current.stories ?? false,
         });
     }
 
@@ -183,7 +182,9 @@ export class BotSettingsModule implements AgentModule {
     async governing(ctx: Context, agentId: string): Promise<BotSettingsGovernance | undefined> {
         const root = await this.#treeRoot(ctx, agentId);
         const stored = await readStoredBotSettings(ctx, root);
-        return stored === undefined ? undefined : { botAgentId: root, settings: stored.settings };
+        return stored === undefined
+            ? undefined
+            : { botAgentId: root, settings: normalize(stored.settings) };
     }
 
     /**
@@ -286,7 +287,6 @@ export class BotSettingsModule implements AgentModule {
 /** One canonical shape: fixed key order and a sorted allowlist. */
 function normalize(settings: BotSettings): BotSettings {
     return {
-        ...(settings.stories ? { stories: true } : {}),
         allowedSecretIds:
             settings.allowedSecretIds === null
                 ? null

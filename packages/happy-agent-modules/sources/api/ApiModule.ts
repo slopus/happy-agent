@@ -6,8 +6,6 @@ import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import type { Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
-// Bun replaces bare "undici" with its native parser, which drops multipart file content types.
-import { Response as MultipartResponse } from "undici/index.js";
 import {
     BridgeError,
     BridgesModule,
@@ -42,7 +40,6 @@ import {
     providerRouteIdSchema,
     providerRouteUseRequestSchema,
 } from "../providerRoutes/index.js";
-import { StoriesModule, StoryInputError } from "../stories/index.js";
 import { FeedError, FeedModule } from "../feed/index.js";
 import { NodeSearchModule } from "../nodeSearch/index.js";
 import {
@@ -101,15 +98,11 @@ import {
     taskListScopeSchema,
     unarchiveTaskRequestSchema,
     renameBotRequestSchema,
-    storyCreateRequestSchema,
     feedCursorSchema,
     feedQuerySchema,
     feedReadAllRequestSchema,
     feedSeenRequestSchema,
     feedSubscriptionRequestSchema,
-    storyReplyRequestSchema,
-    storyRepostRequestSchema,
-    storyMetadataSchema,
     reorderBotRequestSchema,
     reorderConnectionRequestSchema,
     connectionIdSchema,
@@ -695,7 +688,6 @@ export class ApiModule implements AgentModule {
     readonly #mobileConnector: MobileConnectorModule | undefined;
     readonly #providerClis: ProviderClisModule | undefined;
     readonly #providerRoutes: ProviderRoutesModule | undefined;
-    readonly #stories: StoriesModule | undefined;
     readonly #feed: FeedModule | undefined;
     readonly #nodeSearch: NodeSearchModule | undefined;
     readonly #teammates: TeammatesModule | undefined;
@@ -876,7 +868,6 @@ export class ApiModule implements AgentModule {
         mobileConnector?: MobileConnectorModule,
         providerClis?: ProviderClisModule,
         providerRoutes?: ProviderRoutesModule,
-        stories?: StoriesModule,
         feed?: FeedModule,
         nodeSearch?: NodeSearchModule,
         teammates?: TeammatesModule,
@@ -928,7 +919,6 @@ export class ApiModule implements AgentModule {
         this.#mobileConnector = mobileConnector;
         this.#providerClis = providerClis;
         this.#providerRoutes = providerRoutes;
-        this.#stories = stories;
         this.#feed = feed;
         this.#nodeSearch = nodeSearch;
     }
@@ -2097,7 +2087,6 @@ export class ApiModule implements AgentModule {
             }
             if (await this.#handleBotRoute(ctx, request, response, url)) return;
             if (await this.#handleTaskRoute(ctx, request, response, url)) return;
-            if (await this.#handleStoryRoute(ctx, request, response, url)) return;
             if (await this.#handleFeedRoute(ctx, request, response, url)) return;
             if (await this.#handleSurfaceRoute(ctx, request, response, url)) return;
             if (await this.#handleVaultUploadRoute(ctx, request, response, url)) return;
@@ -3397,13 +3386,6 @@ export class ApiModule implements AgentModule {
                     );
                 }),
             );
-        if (this.#stories !== undefined)
-            this.#unsubscribe.push(
-                // Seen state is each reader's own, so every reader gets their own copy.
-                this.#stories.onEvent((_eventCtx, { readerId, type, payload }) => {
-                    this.#journal.append(type, payload, Date.now(), readerId);
-                }),
-            );
         if (this.#feed !== undefined)
             this.#unsubscribe.push(
                 // Each reader's entries are their own. Fan-out and joining answer no request.
@@ -3690,7 +3672,7 @@ export class ApiModule implements AgentModule {
         if (agent === undefined) throw new Error("The bot event has no agent.");
         const resource: Record<string, unknown> = {
             ...botResource(event.bot, agent),
-            stories: event.stories ?? false,
+            stories: false,
         };
         const workspace = botWorkspaceResource(event.bot, agent);
         if (event.type === "bot_created") {
@@ -6819,13 +6801,7 @@ export class ApiModule implements AgentModule {
                         await this.#withMutationId(
                             body.mutationId,
                             async () =>
-                                await this.#bots.rename(
-                                    ctx,
-                                    botId,
-                                    body.name,
-                                    current.bot.version,
-                                    body.stories,
-                                ),
+                                await this.#bots.rename(ctx, botId, body.name, current.bot.version),
                         ),
                 );
                 sendJson(response, 200, { bot: await this.#botResource(ctx, bot) });
@@ -7962,103 +7938,6 @@ export class ApiModule implements AgentModule {
         const stream = this.#eventStreams.get(streamId);
         if (stream === undefined || stream.writer.closed || stream.userId !== teamUser(ctx)?.id)
             throw new ApiError(404, "not_found", "The event stream was not found.");
-    }
-
-    /** Stories: a 404 for anything the caller may not see, as if it did not exist. */
-    async #handleStoryRoute(
-        ctx: Context,
-        request: IncomingMessage,
-        response: ServerResponse,
-        url: URL,
-    ): Promise<boolean> {
-        const stories = this.#stories;
-        if (stories === undefined || !url.pathname.startsWith("/v0/stories")) return false;
-        if (request.method === "GET" && url.pathname === "/v0/stories") {
-            const cursor = this.#journal.cursor();
-            sendJson(response, 200, { stories: await stories.list(ctx), cursor });
-            return true;
-        }
-        if (request.method === "POST" && url.pathname === "/v0/stories") {
-            if (!(await stories.enabled(ctx))) throw notFound("The story was not found.");
-            // Files streamed through artifact uploads are referenced; multipart carries its own.
-            const story = request.headers["content-type"]?.startsWith("application/json")
-                ? await stories
-                      .create(ctx, await bodyAs(request, storyCreateRequestSchema, "story"))
-                      .catch(storyInputError)
-                : await readStoryUpload(request, true).then(
-                      async ({ media, metadata, round }) =>
-                          await stories.upload(ctx, media!, metadata, round).catch(storyInputError),
-                  );
-            if (story === undefined) throw notFound("The story was not found.");
-            sendJson(response, 200, { story });
-            return true;
-        }
-        const layer = /^\/v0\/stories\/([a-z][a-z0-9]*)\/layers\/([a-z][a-z0-9]*)$/.exec(
-            url.pathname,
-        );
-        if (layer !== null && request.method === "GET") {
-            const file = await stories.file(ctx, layer[1]!, "media", layer[2]!);
-            if (file === undefined) throw notFound("The story was not found.");
-            await sendStoredFile(request, response, {
-                ...file,
-                cacheControl: "private, max-age=31536000, immutable",
-            });
-            return true;
-        }
-        const match =
-            /^\/v0\/stories\/([a-z][a-z0-9]*)(?:\/(seen|media|round|replies|repost))?$/.exec(
-                url.pathname,
-            );
-        if (match === null) return false;
-        const storyId = match[1] as string;
-        const route = `${request.method} ${match[2] ?? ""}`;
-        if (route === "POST seen") {
-            const story = await stories.markSeen(ctx, storyId);
-            if (story === undefined) throw notFound("The story was not found.");
-            sendJson(response, 200, { story });
-        } else if (route === "GET media" || route === "GET round") {
-            const file = await stories.file(ctx, storyId, match[2] as "media" | "round");
-            if (file === undefined) throw notFound("The story was not found.");
-            // A story's media is a snapshot taken once, so the same URL never names other bytes.
-            await sendStoredFile(request, response, {
-                ...file,
-                cacheControl: "private, max-age=31536000, immutable",
-            });
-        } else if (route === "GET replies") {
-            const replies = await stories.replies(ctx, storyId);
-            if (replies === undefined) throw notFound("The story was not found.");
-            sendJson(response, 200, { replies });
-        } else if (route === "POST replies") {
-            const { text } = await bodyAs(request, storyReplyRequestSchema, "story reply");
-            const reply = await stories.reply(ctx, storyId, text);
-            if (reply === undefined) throw notFound("The story was not found.");
-            sendJson(response, 200, { reply });
-        } else if (route === "POST repost") {
-            // Decode only for someone who sees the story.
-            if ((await stories.get(ctx, storyId)) === undefined)
-                throw notFound("The story was not found.");
-            const upload = request.headers["content-type"]?.startsWith("multipart/form-data")
-                ? await readStoryUpload(request, false)
-                : undefined;
-            const legacy = upload
-                ? undefined
-                : await bodyAs(request, storyRepostRequestSchema, "story repost");
-            const body = upload?.metadata ?? legacy!;
-            const round =
-                upload?.round ?? (legacy?.round && Buffer.from(legacy.round.data, "base64"));
-            const story = await stories
-                .repost(ctx, storyId, body.caption ?? null, round, body.layers, legacy?.mediaLayers)
-                .catch(storyInputError);
-            if (story === undefined) throw notFound("The story was not found.");
-            sendJson(response, 200, { story });
-        } else if (route === "DELETE ") {
-            const deleted = await stories.delete(ctx, storyId);
-            if (deleted === undefined) throw notFound("The story was not found.");
-            if (deleted === "forbidden")
-                throw new ApiError(403, "forbidden", "Only its owner may delete this story.");
-            sendJson(response, 200, {});
-        } else return false;
-        return true;
     }
 
     async #handleFeedRoute(
@@ -9460,7 +9339,7 @@ export class ApiModule implements AgentModule {
         if (agent === undefined) throw new Error("The bot has no agent.");
         return {
             ...botResource(bot, agent),
-            stories: (await this.#bots.settings(ctx, bot.id)).stories === true,
+            stories: false,
         };
     }
 
@@ -10397,8 +10276,7 @@ export class ApiModule implements AgentModule {
         // Capture first. A mutation concurrent with the reads is replayed after this cursor, which
         // may cause a harmless dirty/refetch but can never disappear between snapshot and stream.
         const cursor = this.#journal.cursor();
-        // The feed is read alongside the catalog, so stories cost the desktop no extra request.
-        const [profile, projects, workspaces, bots, stories, feed] = await Promise.all([
+        const [profile, projects, workspaces, bots, feed] = await Promise.all([
             this.#team.enabled
                 ? this.#team.currentUser(ctx).then(teamProfileResource)
                 : this.#profile.ensure(ctx).then(profileResource),
@@ -10407,7 +10285,6 @@ export class ApiModule implements AgentModule {
                 ? this.#allWorkspaces(ctx, undefined, false)
                 : Promise.resolve([]),
             this.#bots.list(ctx),
-            this.#storiesBootstrap(ctx),
             this.#feedBootstrap(ctx),
         ]);
         const shallow = workspaces.filter(
@@ -10456,7 +10333,8 @@ export class ApiModule implements AgentModule {
             ...(this.#userSettings === undefined
                 ? {}
                 : { userSettings: await this.#userSettings.list(ctx) }),
-            ...stories,
+            storiesEnabled: false,
+            stories: [],
             ...feed,
             cursor,
         };
@@ -10478,14 +10356,6 @@ export class ApiModule implements AgentModule {
     async #feedBootstrap(ctx: Context): Promise<Record<string, unknown>> {
         const unread = await this.#feed?.unread(ctx);
         return unread === undefined ? {} : { feedUnread: unread };
-    }
-
-    /** Whether Stories is on for the caller, and exactly the feed `GET /v0/stories` lists. */
-    async #storiesBootstrap(ctx: Context): Promise<Record<string, unknown>> {
-        const stories = this.#stories;
-        if (stories === undefined) return {};
-        const storiesEnabled = await stories.enabled(ctx);
-        return { storiesEnabled, stories: storiesEnabled ? await stories.list(ctx) : [] };
     }
 
     /** Every task oldest first, and the caller's own memberships in the caller's order. */
@@ -10815,7 +10685,6 @@ export class ApiModule implements AgentModule {
                           },
                       }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
-                ...(this.#stories === undefined ? {} : { storyFeed: true }),
                 ...(this.#feed === undefined ? {} : { feed: true, feedSubjectFilter: true }),
                 ...(this.#artifacts === undefined ? {} : { artifactCovers: true }),
                 ...(this.#live === undefined
@@ -11604,59 +11473,6 @@ async function readBytes(request: IncomingMessage, maximum: number): Promise<Buf
         chunks.push(buffer);
     }
     return Buffer.concat(chunks);
-}
-
-function storyInputError(error: unknown): never {
-    throw error instanceof StoryInputError ? invalidRequest(error.message) : error;
-}
-
-/** Bounded binary multipart upload; metadata is validated separately from the files. */
-async function readStoryUpload(request: IncomingMessage, original: boolean) {
-    const type = request.headers["content-type"] ?? "";
-    if (!type.startsWith("multipart/form-data"))
-        throw invalidRequest("Use multipart/form-data for a story upload.");
-    const bytes = await readBytes(request, (original ? 48 : 16) * 1024 * 1024 + 65536);
-    const body = Readable.from([bytes]);
-    const form = await new MultipartResponse(body, { headers: { "content-type": type } })
-        .formData()
-        .catch(() => {
-            throw invalidRequest("The story upload is invalid.");
-        });
-    for (const key of form.keys()) {
-        if (
-            !["metadata", "round", ...(original ? ["media"] : [])].includes(key) ||
-            form.getAll(key).length !== 1
-        )
-            throw invalidRequest("The story upload has unexpected or repeated parts.");
-    }
-    let value: unknown;
-    try {
-        value = JSON.parse(String(form.get("metadata") ?? "{}"));
-    } catch {
-        throw invalidRequest("The story metadata is invalid.");
-    }
-    const metadata = queryAs(value, storyMetadataSchema, "story metadata");
-    const media = form.get("media"),
-        round = form.get("round");
-    if ((original && !(media instanceof Blob)) || (round !== null && !(round instanceof Blob)))
-        throw invalidRequest("The story needs binary files.");
-    for (const [file, cap] of [
-        [media, 32 * 1024 * 1024],
-        [round, 16 * 1024 * 1024],
-    ] as const) {
-        if (file instanceof Blob && file.size === 0)
-            throw invalidRequest("The story file is empty.");
-        if (file instanceof Blob && file.size > cap)
-            throw new ApiError(413, "too_large", "The story file is too large.");
-    }
-    const mediaType = (file: Blob) => file.type.replace(/;.*/su, "").trim().toLowerCase();
-    if (round instanceof Blob && mediaType(round) !== "video/mp4")
-        throw invalidRequest("A round must be an H.264 MP4 video.");
-    return {
-        metadata,
-        media: media instanceof Blob ? media.slice(0, media.size, mediaType(media)) : undefined,
-        round: round instanceof Blob ? new Uint8Array(await round.arrayBuffer()) : undefined,
-    };
 }
 
 interface ApiUsageTokens {
