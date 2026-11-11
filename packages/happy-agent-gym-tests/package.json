@@ -15,7 +15,7 @@
         "@sinclair/typebox": "^0.34.49",
         "@slopus/happy-agent-client": "0.0.162",
         "@slopus/happy-agent-gym": "workspace:*",
-        "@slopus/happy-providers": "0.0.59",
+        "@slopus/happy-providers": "0.0.61",
         "@steve.kite/stdlib": "0.0.12",
         "@types/node": "^24.0.10",
         "@types/ws": "8.18.1",
