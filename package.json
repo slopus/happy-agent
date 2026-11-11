@@ -29,6 +29,7 @@
         "test:scripts": "TMPDIR=\"$PWD/.local\" tsx --test scripts/release/*.test.ts scripts/recipes/*.test.ts"
     },
     "devDependencies": {
+        "@sinclair/typebox": "^0.34.49",
         "@types/node": "^24.0.10",
         "drizzle-orm": "^0.45.2",
         "husky": "^9.1.7",

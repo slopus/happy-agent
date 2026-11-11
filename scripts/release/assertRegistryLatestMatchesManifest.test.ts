@@ -10,6 +10,28 @@ describe("assertRegistryLatestMatchesManifest", () => {
         assert.doesNotThrow(() => assertRegistryLatestMatchesManifest(MANIFEST, '"0.0.5"'));
     });
 
+    it("accepts pnpm's single-result array for npm latest", () => {
+        assert.doesNotThrow(() => assertRegistryLatestMatchesManifest(MANIFEST, '["0.0.5"]'));
+    });
+
+    it("preserves drift detection and recovery for pnpm's array result", () => {
+        assert.throws(
+            () => assertRegistryLatestMatchesManifest(MANIFEST, '["0.0.6"]'),
+            /worktree but npm latest is 0\.0\.6/u,
+        );
+        assert.doesNotThrow(() =>
+            assertRegistryLatestMatchesManifest(MANIFEST, '["0.0.3"]', {
+                isTaggedUnpublishedVersion: (version) => version === "0.0.4" || version === "0.0.5",
+            }),
+        );
+    });
+
+    it("rejects empty, multiple, or malformed registry results", () => {
+        for (const latest of ["[]", '["0.0.5", "0.0.6"]', "[5]", "null", "{}"]) {
+            assert.throws(() => assertRegistryLatestMatchesManifest(MANIFEST, latest));
+        }
+    });
+
     it("rejects version drift before another release can hide it", () => {
         assert.throws(
             () => assertRegistryLatestMatchesManifest(MANIFEST, '"0.0.6"'),

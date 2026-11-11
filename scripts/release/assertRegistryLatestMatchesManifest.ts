@@ -1,16 +1,14 @@
 import type { PackageManifest } from "./PackageManifest.js";
+import { readRegistryLatestVersion } from "./readRegistryLatestVersion.js";
 
 export function assertRegistryLatestMatchesManifest(
     manifest: PackageManifest,
     registryLatestJson: string,
     options: { isTaggedUnpublishedVersion?: (version: string) => boolean } = {},
 ): void {
-    const latest = JSON.parse(registryLatestJson) as unknown;
+    const latest = readRegistryLatestVersion(registryLatestJson);
     if (latest !== manifest.version) {
-        const unpublishedVersions =
-            typeof latest === "string"
-                ? unpublishedPatchVersions(latest, manifest.version)
-                : undefined;
+        const unpublishedVersions = unpublishedPatchVersions(latest, manifest.version);
         if (
             unpublishedVersions !== undefined &&
             unpublishedVersions.length > 0 &&

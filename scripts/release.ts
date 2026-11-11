@@ -1,4 +1,5 @@
 import { readPackageManifest } from "./release/readPackageManifest.js";
+import { readRegistryLatestVersion } from "./release/readRegistryLatestVersion.js";
 import { assertReleaseBumpAllowed } from "./release/assertReleaseBumpAllowed.js";
 import { assertRegistryLatestMatchesManifest } from "./release/assertRegistryLatestMatchesManifest.js";
 import { resolveReleasePackage } from "./release/resolveReleasePackage.js";
@@ -139,7 +140,7 @@ async function release(): Promise<void> {
             assertRegistryLatestMatchesManifest(initialManifest, latest, {
                 isTaggedUnpublishedVersion,
             });
-            if (JSON.parse(latest) !== initialManifest.version) {
+            if (readRegistryLatestVersion(latest) !== initialManifest.version) {
                 console.log(
                     `Recovering after tagged releases through ${releaseTag} were not published.`,
                 );
