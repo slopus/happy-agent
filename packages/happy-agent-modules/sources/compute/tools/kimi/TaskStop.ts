@@ -23,6 +23,7 @@ export function kimiTaskStopTool(compute: Compute) {
         ),
         durable: false,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (_ctx, args) => ({
             task_id: args.task_id,
             stopped: (

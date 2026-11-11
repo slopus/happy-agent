@@ -28,6 +28,7 @@ export function setBotNameTool(bots: BotsModule, botAgentId: string) {
         returnType: botRecordSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: SetBotNameInput) => {
             const bot = await bots.forAgent(ctx, botAgentId);
             if (bot === undefined) throw new Error("Only a bot can rename itself.");

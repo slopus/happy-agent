@@ -32,6 +32,7 @@ export function sendTaskMessageTool(tasks: TasksModule, actingAgentId: string) {
         returnType: Type.Void(),
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: SendTaskMessageInput, call) => {
             await tasks.sendMessage(
                 ctx,

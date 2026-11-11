@@ -19,6 +19,7 @@ export function getGoalTool(goals: GoalModule, agentId: string, maxOutputCharact
         reloadable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => ({ goal: (await goals.goal(ctx, agentId)) ?? null }),
         toLLM: ({ goal }) => [
             { type: "text", text: formatGoalForModel(goal, maxOutputCharacters) },

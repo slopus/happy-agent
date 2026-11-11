@@ -31,6 +31,7 @@ export function switchSubtaskModelTool(
         durable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input, call) =>
             await subtasks.switchModel(ctx, actingAgentId, input, call.id, creator),
         toLLM: (result) => [

@@ -70,6 +70,7 @@ export function createMcpProtocolTools(
             reloadable: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input: McpListToolsInput): Promise<McpToolPage> => {
                 assertServer(input.server);
                 return await module.listToolPage(ctx, agentId, {
@@ -118,6 +119,7 @@ export function createMcpProtocolTools(
             reloadable: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input: McpListResourcesInput): Promise<McpResourcePage> => {
                 assertServer(input.server);
                 return await module.listResourcePage(ctx, agentId, {
@@ -140,6 +142,7 @@ export function createMcpProtocolTools(
             reloadable: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (
                 ctx,
                 input: McpListResourcesInput,
@@ -167,6 +170,7 @@ export function createMcpProtocolTools(
             reloadable: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input): Promise<McpReadResourceResult> => {
                 assertServer(input.server);
                 return await module.readResource(ctx, agentId, input);
@@ -186,6 +190,7 @@ export function createMcpProtocolTools(
             reloadable: true,
             requiresAutoOrFullAccess: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input: McpListPromptsInput) => {
                 assertServer(input.server);
                 return await module.listPromptPage(ctx, agentId, input);

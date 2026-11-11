@@ -28,6 +28,7 @@ export function resumeWorkflowTool(
         returnType: workflowRunSchema,
         durable: false,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { id }: ResumeWorkflowParameters) =>
             await module.resume(ctx, agentId, id, ownerPermissionMode),
         toLLM: (run) => [{ type: "text", text: module.formatRunForModel(run) }],

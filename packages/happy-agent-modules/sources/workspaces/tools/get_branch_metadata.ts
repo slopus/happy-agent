@@ -33,6 +33,7 @@ export function getBranchMetadataTool(workspaces: WorkspacesModule, agentId: str
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (
             ctx,
             { workspaceId, ...query }: { workspaceId: string } & WorkspaceBranchMetadataDetailQuery,

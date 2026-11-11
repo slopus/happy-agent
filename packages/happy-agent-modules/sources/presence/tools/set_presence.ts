@@ -33,6 +33,7 @@ export function setPresenceTool(presence: PresenceModule) {
         durable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { input }: SetPresenceToolParameters) => ({
             presence: await presence.setPresence(ctx, input),
         }),

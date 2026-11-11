@@ -23,6 +23,7 @@ export function waitWorkflowTool(module: WorkflowsModule, agentId: string) {
         returnType: workflowRunSchema,
         durable: false,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { id }: WaitWorkflowParameters) => await module.wait(ctx, agentId, id),
         toLLM: (run) => [{ type: "text", text: module.formatRunForModel(run) }],
     });

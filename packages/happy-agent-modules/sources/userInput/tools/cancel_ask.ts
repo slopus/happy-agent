@@ -51,6 +51,7 @@ export function cancelAskTool(userInput: UserInputModule, agentId: string) {
         returnType: userInputRequestSchema,
         durable: false,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { input }: CancelAskToolParameters) =>
             await userInput.cancel(ctx, agentId, {
                 requestId: "requestId" in input ? input.requestId : input.ask_id,

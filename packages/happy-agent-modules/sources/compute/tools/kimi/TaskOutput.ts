@@ -20,6 +20,7 @@ export function kimiTaskOutputTool(compute: Compute) {
         returnType: kimiTaskResultSchema,
         durable: false,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, args) =>
             kimiTaskResult(
                 (

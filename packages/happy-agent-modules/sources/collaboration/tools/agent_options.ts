@@ -38,6 +38,7 @@ export function agentOptionsTool(
         returnType: agentOptionsResultSchema,
         durable: false,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: AgentOptionsInput) => {
             const text = collaboration.agentOptionsText(creator);
             await markKnown(ctx, text);

@@ -591,6 +591,14 @@ export class ComputeModule implements AgentModule {
         return this.#processes.list(agentId);
     }
 
+    /**
+     * Whose tools an agent is handed. `"foreign"` means it runs on a foreign harness, which brings
+     * its own tools and its own permission system.
+     */
+    toolVendor(scope: AgentModuleScope): ComputeToolVendor {
+        return vendorFor(scope);
+    }
+
     /** Commands currently running for one already-resolved agent compute. */
     runningCommands(agentId: string): readonly ComputeSessionActivity[] {
         const compute = this.#computes.get(agentId)?.compute;

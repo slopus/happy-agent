@@ -24,6 +24,7 @@ export function listBotsTool(bots: BotsModule) {
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: ListBotsInput): Promise<{ bots: BotRecord[] }> => ({
             bots: (await bots.list(ctx))
                 .filter(

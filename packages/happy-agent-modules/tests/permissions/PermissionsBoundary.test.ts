@@ -492,6 +492,40 @@ describe("permissions boundary contracts", () => {
         ]);
     });
 
+    it("leaves a foreign harness's calls to its own reviewer in Auto, on any account", async () => {
+        const reviewer = reviewerAnswering(() => deniedDecision());
+        const { hooks } = await resolvedHooks({ reviewer });
+        const reviewTool = testTool("reviewed", {
+            shouldReviewInAutoMode: () => true,
+            shouldRunInFullAccessInAutoMode: () => true,
+            describeAutoPermissionAction: () => "Run a reviewed action.",
+        });
+        const on = (provider: string, providerKind: string, model: string): AgentModuleScope => {
+            const base = scope(`${provider}-agent`, "auto");
+            return { agent: { ...base.agent, provider, providerKind, model } } as AgentModuleScope;
+        };
+
+        // Claude Code and Codex CLI run on ordinary claude and codex accounts.
+        for (const harness of [
+            on("claude", "claude", "claude-code/sonnet"),
+            on("codex", "codex", "codex-cli/gpt-6.1-sol"),
+            on("antigravity", "foreign", "antigravity/gemini-3.8-flash"),
+        ]) {
+            expect(await hooks.beforeToolCall?.(ctx, harness, call(reviewTool))).toBeUndefined();
+        }
+        expect(reviewer.seen).toHaveLength(0);
+
+        // Happy's own loop is still reviewed, on the same account or on a gateway whose model IDs
+        // merely look like a harness's.
+        for (const own of [
+            on("claude", "claude", "anthropic/sonnet-5-5"),
+            on("gateway", "openai_compatible", "acp/x"),
+        ]) {
+            expect(await hooks.beforeToolCall?.(ctx, own, call(reviewTool))).toBeDefined();
+        }
+        expect(reviewer.seen).toHaveLength(2);
+    });
+
     it("fails closed when either tool predicate or action description is malformed", async () => {
         const seen: PermissionReviewRequest[] = [];
         const reviewer: PermissionReviewer = {

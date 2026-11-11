@@ -35,6 +35,7 @@ export function createAgentTool(
         returnType: collaborationCreateResultSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: CollaborationCreateInput, call) =>
             await collaboration.createToolAgent(
                 ctx,

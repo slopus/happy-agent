@@ -29,6 +29,7 @@ export function listWorkflowsTool(module: WorkflowsModule, agentId: string) {
         reloadable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { input }: ListWorkflowsToolParameters) =>
             await module.list(ctx, agentId, input),
         toLLM: (page) => [{ type: "text", text: module.formatPageForModel(page) }],

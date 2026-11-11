@@ -30,6 +30,7 @@ export function voiceSidebarTools(live: LiveModule, ownerId: string): AnyAgentTo
             returnType: resultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx) => ({
                 text: JSON.stringify(await live.voiceOutline(ctx, ownerId)),
             }),
@@ -45,6 +46,7 @@ export function voiceSidebarTools(live: LiveModule, ownerId: string): AnyAgentTo
             returnType: resultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input: Static<typeof conversationsSchema>) => ({
                 text: await live.readConversations(ctx, ownerId, {
                     ids: input.ids,

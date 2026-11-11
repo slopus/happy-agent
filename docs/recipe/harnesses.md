@@ -17,18 +17,18 @@ of its own, named after its harness.
 Either way the conversation stays a Happy conversation. Happy's history is the record, and the
 agent's own session is kept in step with it. Happy's tools (projects, sub-agents, artifacts,
 messaging, and the rest) reach the agent over MCP, and Happy's permission mode is mapped onto the
-agent's own. Sending a message while the agent works steers it: Claude Code and Codex CLI take it
+agent's own (see [Permissions](#permissions)). Sending a message while the agent works steers it: Claude Code and Codex CLI take it
 mid-turn; Antigravity, OpenCode, and other ACP agents are interrupted and continue from the new
 message. Stop ends the agent's turn and the commands it was running.
 
-| Harness       | Runs                                   | On                               | Needs on the machine                  |
-| ------------- | -------------------------------------- | -------------------------------- | ------------------------------------- |
-| `happy`       | Happy's own loop                       | every provider (default)         | nothing                               |
-| `claude_code` | Claude Code, through the Agent SDK     | `claude` providers (default all) | nothing; Happy ships Claude Code      |
-| `codex_cli`   | Codex, through `codex app-server`      | `codex` providers (default all)  | the pinned Codex, a `codex`, or `npx` |
-| `antigravity` | Antigravity, through `antigravity-acp` | its own login                    | `agy` signed in, Bun, and `npx`       |
-| `opencode`    | OpenCode, through `opencode acp`       | its own login                    | `opencode` signed in                  |
-| any, `acp`    | any ACP agent, from its `command`      | its own login                    | that agent, installed and signed in   |
+| Harness       | Runs                               | On                               | Needs on the machine                  |
+| ------------- | ---------------------------------- | -------------------------------- | ------------------------------------- |
+| `happy`       | Happy's own loop                   | every provider (default)         | nothing                               |
+| `claude_code` | Claude Code, through the Agent SDK | `claude` providers (default all) | nothing; Happy ships Claude Code      |
+| `codex_cli`   | Codex, through `codex app-server`  | `codex` providers (default all)  | the pinned Codex, a `codex`, or `npx` |
+| `antigravity` | Antigravity, through `agy acp`     | its own login                    | `agy` 1.5.5 or newer, signed in       |
+| `opencode`    | OpenCode, through `opencode acp`   | its own login                    | `opencode` signed in                  |
+| any, `acp`    | any ACP agent, from its `command`  | its own login                    | that agent, installed and signed in   |
 
 ## Before editing
 
@@ -139,12 +139,58 @@ A sub-agent on a foreign harness is an ordinary Happy agent with its own foreign
 foreign agent's own sub-agents (Claude Code's Task tool, Codex's agents) stay inside it; Happy
 shows each as one tool call.
 
+## Permissions
+
+A foreign agent does not run inside Happy's sandbox. It keeps its own permission system and its
+own Auto reviewer, and Happy sets the agent's mode from the conversation's permission mode. When
+the agent asks before an action, the ask reaches the person as a permission question from that
+harness (`permissionRequest.source = "harness"`), with Allow once, Allow for this session when
+the agent offers it, and Deny. Stop withdraws an open question and cancels the agent's ask.
+
+| Happy mode      | Claude Code             | Codex CLI                               | Antigravity    | Asks the agent makes                     |
+| --------------- | ----------------------- | --------------------------------------- | -------------- | ---------------------------------------- |
+| Read only       | `plan`                  | `read-only`, never asks                 | `plan`         | refused without asking anyone            |
+| Workspace write | `acceptEdits`           | `workspace-write`, asks the person      | `accept-edits` | go to the person                         |
+| Auto            | `auto` (its classifier) | `workspace-write`, its Guardian reviews | `auto`         | its reviewer's handoffs go to the person |
+| Full access     | `bypassPermissions`     | `danger-full-access`, never asks        | `auto`         | allowed without asking                   |
+
+Happy's own tools reach the agent as MCP tools, and the agent's permission system decides those
+too. Tools Happy never reviews (reading history, listing projects, and the like) are approved in
+advance on Claude Code and Codex CLI; the user's other MCP servers are not. In Workspace write,
+any other Happy tool the agent asks about is allowed when Happy itself would not review that
+call, and goes to the person otherwise. An agent that never asks before MCP calls, such as
+Antigravity, runs every Happy tool with no question and no review by anyone, including tools that
+reach the user's own MCP servers through Happy. Only Happy's own mode limits still apply, such as
+MCP tools needing Auto or Full access.
+
+What each agent's reviewer does is its own, and it is more permissive than Happy's Auto review.
+Seen against the pinned releases:
+
+- Claude Code's `auto` classifier allowed a force push, `rm` outside the project, and writes to
+  `.git/hooks` without asking anyone.
+- Antigravity's `auto` allowed a force push and `rm -rf` outside the project, and its sandbox
+  leaves `/tmp` writable. It does hand writes outside the project to the person.
+- Codex's Guardian decides alone; Happy treats its denials as final. Codex's `workspace-write`
+  sandbox, used in Workspace write and Auto, also leaves `/tmp` writable and blocks the network.
+
+Workspace write puts the most in front of the person, but it does not put everything there. The
+agent still acts without asking where its own rules allow it: reading outside the project,
+writing to `/tmp` where its sandbox allows that, commands it judges safe, and anything its own
+settings allow. Claude Code reads the user's and the project's settings, so a repository's
+`.claude/settings.json` allow rules apply. The agent's own sub-agents (Claude Code's Task tool, Codex's agents) ask on the conversation that
+started them. Antigravity's sub-agents never send an ask; they stall until stopped. A Happy
+sub-agent asks on its own conversation, like any other agent.
+
+Antigravity registers only small MCP tools as functions and leaves larger ones, `create_agent`
+among them, for its model to load from a schema file, which it does not reliably do; so an
+Antigravity agent usually cannot start Happy sub-agents.
+
 ## Antigravity from Happy
 
 To let a Happy agent start Antigravity sessions on the user's Google account:
 
-1. On the machine, install Antigravity's `agy`, Bun, and Node's `npx`. Have the user run `agy`
-   once and sign in; Happy never handles the Google login.
+1. On the machine, install Antigravity's `agy` 1.5.5 or newer. Have the user run `agy` once and
+   sign in; Happy never handles the Google login.
 2. Add `[harnesses.antigravity]` and [reload the daemon](../configuration.md#applying-configuration-changes).
    The `Antigravity` account appears in the picker with its models, such as
    `antigravity/gemini-3.8-flash`.
@@ -159,9 +205,10 @@ The quota is shown to agents only; the app's usage panel does not show Antigravi
 ## Generic ACP agents
 
 A generic agent gets Happy's tools only if it accepts HTTP MCP servers over ACP. Its model
-selector must be an ACP session config option of category `model`. Happy's permission mode
-answers the agent's permission requests (Read only refuses them); everything the agent does
-without asking follows its own settings, so set those to match what the user expects.
+selector must be an ACP session config option of category `model`. Its permission requests
+follow the [table above](#permissions): Read only refuses them, Full access allows them, and
+otherwise they reach the person. Everything the agent does without asking follows its own
+settings, so set those to match what the user expects.
 
 ## Check
 

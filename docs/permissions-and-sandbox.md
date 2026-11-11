@@ -32,6 +32,7 @@ The relevant fields on a tool definition are:
 | `describeAutoPermissionAction`    | Human-readable description of the exact reviewed boundary. Required whenever a review can happen.           |
 | `autoPermissionInstructions`      | Provider-specific Auto guidance injected into the system prompt only while the tool is active.              |
 | `availableToPermissionReviewer`   | Whether the read-only reviewer agent may call the tool while investigating.                                 |
+| `autoReview: "never"`             | No call is ever reviewed, so a foreign harness may run the tool without asking.                             |
 
 ## The four permission modes
 
@@ -394,6 +395,39 @@ enforce its boundary locally.
   `read_mcp_resource`, `list_mcp_prompts`.
 - The approval text discloses the external boundary explicitly: the server can
   perform actions outside Happy Agent's filesystem sandbox.
+
+## Foreign harnesses
+
+Claude Code, Codex CLI, Antigravity, OpenCode, and other ACP agents run their own agent loop, so
+everything above about Happy's sandbox and Auto review does not apply to what they do with their
+own tools. Each keeps its own permission system and reviewer, and Happy sets its mode from the
+conversation's permission mode:
+
+- Read only: the agent's own read-only or plan mode. Anything it asks is refused without asking
+  anyone.
+- Workspace write: the agent's own edit-in-the-project mode. Every ask reaches the person as a
+  permission question from that harness (`permissionRequest.source = "harness"`): Allow once,
+  Allow for this session when the agent offers it, or Deny. What the agent's own rules and
+  settings allow, such as reads outside the project or commands it judges safe, it does without
+  asking.
+- Auto: the agent's own Auto reviewer decides, including about Happy's tools. Happy's reviewer
+  does not review a foreign agent's calls, and only what the agent's reviewer hands off reaches
+  the person.
+- Full access: the agent's own bypass mode. Anything it still asks is allowed.
+
+Stop withdraws an open question and cancels the agent's ask. A foreign agent's reviewer is more
+permissive than Happy's: Claude Code's `auto` classifier allowed a force push, `rm` outside the
+project, and writes to `.git/hooks`; Antigravity's `auto` allowed a force push and `rm -rf`
+outside the project; Codex's Guardian decides alone, and its denials are final. Workspace write
+puts the most in front of the person.
+
+Happy's own tools reach the agent over MCP, and the agent's permission system gates them. A tool
+with `autoReview: "never"` is approved in advance on Claude Code and Codex CLI. In Workspace
+write, any other Happy tool the agent asks about is allowed when that tool's
+`shouldReviewInAutoMode` is false for the call, and goes to the person otherwise. On an agent that
+never gates MCP calls, such as Antigravity, Happy's tools run with no question and no review; only
+Happy's own mode limits on them apply. See [Harnesses](recipe/harnesses.md#permissions) for each
+agent's modes and sub-agents.
 
 ## Docker sandbox environments
 

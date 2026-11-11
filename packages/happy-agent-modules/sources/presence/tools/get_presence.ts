@@ -19,6 +19,7 @@ export function getPresenceTool(presence: PresenceModule) {
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => ({ presence: (await presence.read(ctx)) ?? null }),
         toLLM: ({ presence }) => [
             {

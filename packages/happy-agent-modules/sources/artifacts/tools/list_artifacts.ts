@@ -51,6 +51,7 @@ export function listArtifactsTool(artifacts: ArtifactsModule, agentId: string) {
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx: Context, input: ListArtifactsToolInput): Promise<ArtifactToolPage> => {
             const query: ArtifactListQuery = {
                 ...(input.type === undefined ? {} : { type: input.type }),

@@ -56,6 +56,7 @@ function getAgentUsageTool(module: UsageModule, agentId: string) {
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: GetAgentUsageInput): Promise<UsageSummary> => {
             const owner = contextAgentId(ctx);
             if (owner !== undefined && agentId !== owner) {
@@ -101,6 +102,7 @@ function getHostUsageTool(module: UsageModule) {
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: GetUsageInput): Promise<UsageSummary> => {
             const owner = contextAgentId(ctx);
             const query = {

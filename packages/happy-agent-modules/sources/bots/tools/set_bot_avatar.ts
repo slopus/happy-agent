@@ -32,6 +32,7 @@ export function setBotAvatarTool(bots: BotsModule, botAgentId: string) {
         returnType: Type.Void(),
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: SetBotAvatarInput) => {
             const bot = await bots.forAgent(ctx, botAgentId);
             if (bot === undefined) throw new Error("Only a bot can set its own avatar.");

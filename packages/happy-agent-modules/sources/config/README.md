@@ -154,6 +154,11 @@ pair into a route; the registry sends a model with a foreign prefix to that rout
 agents are the one exception to the curated list: each reports its own models when the daemon
 starts (`impl/foreignAgentModels.ts`), cached per route, with the built-in list until it answers.
 
+A foreign agent keeps its own permission system. When it asks before an action that the agent's
+permission mode leaves open, the route hands the ask to whatever module registered with
+`onHarnessPermission` — the user-input module, which puts it to the person — named after the
+harness. With nothing registered, the ask is refused.
+
 `harnessAllowsSubagents` decides which harnesses an agent on one harness may start sub-agents on:
 its own; else the creator's `subagent_harnesses`; else, for `happy`, only `antigravity` (models
 Happy cannot run itself); else, for a foreign harness, every harness but `happy`. Collaboration's

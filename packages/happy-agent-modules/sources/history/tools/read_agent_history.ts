@@ -198,6 +198,7 @@ export function readAgentHistoryTool(history: HistoryModule, agentId: string, st
         reloadable: true,
         transactional: storage === undefined,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (callCtx, args) => {
             const ctx = storage ?? callCtx;
             if (args.cursor !== undefined && args.from !== undefined) {

@@ -30,6 +30,7 @@ export function sendBotMessageTool(bots: BotsModule, actingAgentId: string) {
         returnType: Type.Void(),
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: SendBotMessageInput, call) => {
             await bots.sendMessage(
                 ctx,

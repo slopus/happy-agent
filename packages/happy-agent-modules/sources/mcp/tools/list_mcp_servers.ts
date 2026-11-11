@@ -42,6 +42,7 @@ export function listMcpServersTool(
         reloadable: true,
         requiresAutoOrFullAccess: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, query: McpServerPageQuery): Promise<McpServerPage> => {
             const page = await module.listServerPage(ctx, agentId, query, permissionMode);
             if (quarantinedByName.size === 0) return page;

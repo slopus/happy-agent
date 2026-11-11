@@ -23,6 +23,7 @@ export function cancelWorkflowTool(module: WorkflowsModule, agentId: string) {
         returnType: workflowRunSchema,
         durable: false,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { id }: CancelWorkflowParameters) =>
             await module.cancel(ctx, agentId, id),
         toLLM: (run) => [{ type: "text", text: module.formatRunForModel(run) }],

@@ -32,6 +32,7 @@ export function createBotTool(bots: BotsModule, actingAgentId: string) {
         returnType: botRecordSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         // A bot outlives the call that made it, so its identity is minted once and remembered in
         // this invocation's own store. A repeated call after an interruption finds the bot it
         // already created instead of minting a duplicate.

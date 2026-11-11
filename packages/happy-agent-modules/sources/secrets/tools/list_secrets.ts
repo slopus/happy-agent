@@ -28,6 +28,7 @@ export function listSecretsTool(secrets: SecretsModule, agentId: string) {
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, query: ListSecretsInput) =>
             await secrets.listCatalogForAgent(ctx, agentId, query),
         toLLM: (page) => [

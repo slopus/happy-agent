@@ -9,6 +9,9 @@ import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 
+import type { AcpPermissionAnswer } from "@slopus/happy-providers";
+
+import type { ConfigModule, HarnessPermissionAsk } from "../config/index.js";
 import { PresenceModule } from "../presence/index.js";
 
 import {
@@ -26,6 +29,7 @@ import {
     MAX_USER_INPUT_OPTION_COUNT,
     MAX_USER_INPUT_OPTION_DESCRIPTION_CHARACTERS,
     MAX_USER_INPUT_OPTION_LABEL_CHARACTERS,
+    MAX_USER_INPUT_PERMISSION_SERVER_CHARACTERS,
     MAX_USER_INPUT_QUESTION_CHARACTERS,
     MAX_USER_INPUT_TIMESTAMP,
     userInputAgentIdSchema,
@@ -87,6 +91,10 @@ export const MAX_USER_INPUT_OUTPUT_CHARACTERS = 8_000;
 const MAX_USER_INPUT_ANCESTRY_DEPTH = 64;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const ABORTED_TURN_CANCEL_REASON = "The agent run was aborted.";
+const HARNESS_QUESTION_ID = "permission";
+const ALLOW_ONCE = "Allow once";
+const ALLOW_FOR_SESSION = "Allow for this session";
+const DENY = "Deny";
 
 type UserInputWaitOutcome =
     | {
@@ -115,14 +123,19 @@ export class UserInputModule implements AgentModule {
     /** In-flight waits, woken by the settling transaction once it commits. */
     readonly #waiters = new Map<string, Set<(request: UserInputRequest) => void>>();
     readonly #presence: PresenceModule;
+    readonly #config: ConfigModule | undefined;
+    /** Whether this module already answers config's harness permission asks. */
+    #asksForHarnesses = false;
     readonly #transactionalListeners = new Set<UserInputEventListener>();
     readonly #listeners = new Set<UserInputEventListener>();
     /** The collection this module runs in, which is where one agent's family tree is known. */
     #agents: AgentSystemRef | undefined;
 
-    constructor(presence: PresenceModule) {
+    /** With `config`, what a foreign harness's own permission system asks reaches the person. */
+    constructor(presence: PresenceModule, config?: ConfigModule) {
         this.#store = createSqliteUserInputStorage();
         this.#presence = presence;
+        this.#config = config;
     }
 
     readonly #hooks: AgentModuleHooks = {
@@ -143,6 +156,13 @@ export class UserInputModule implements AgentModule {
 
     readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
         this.#agents = agents;
+        if (!this.#asksForHarnesses && this.#config !== undefined) {
+            // For the module's whole life; one runtime starts it once.
+            this.#config.onHarnessPermission((ctx, ask, signal) =>
+                this.askHarnessPermission(ctx, ask, signal),
+            );
+            this.#asksForHarnesses = true;
+        }
         return this.#hooks;
     };
 
@@ -214,6 +234,86 @@ export class UserInputModule implements AgentModule {
             ),
         );
         return structuredClone(request);
+    }
+
+    /**
+     * Puts an action a foreign harness's own permission system asked about to the person, as a
+     * permission request from that harness on the agent it runs as. When `signal` aborts because
+     * the turn stopped, the question is withdrawn and the harness is told it was cancelled. Anything
+     * but one of the allow options, including a free-text answer or nobody answering, denies it.
+     */
+    async askHarnessPermission(
+        ctx: Context,
+        ask: HarnessPermissionAsk,
+        signal: AbortSignal,
+    ): Promise<AcpPermissionAnswer> {
+        if (signal.aborted) return "cancelled";
+        const name = ask.harnessName.slice(0, MAX_USER_INPUT_PERMISSION_SERVER_CHARACTERS);
+        const action = ask.action.slice(0, MAX_USER_INPUT_CONTEXT_CHARACTERS - 400);
+        // Longer than any run of backticks in the action, so the action cannot end its own block.
+        const fence = "`".repeat(
+            [...action.matchAll(/`+/g)].reduce((most, run) => Math.max(most, run[0].length + 1), 3),
+        );
+        const pending = await this.askForPermission(
+            ctx,
+            ask.agentId,
+            {
+                context: `${name} wants to do this:\n\n${fence}\n${action}\n${fence}`,
+                questions: [
+                    {
+                        id: HARNESS_QUESTION_ID,
+                        header: "Permission",
+                        question: `Allow ${name} to do this?`,
+                        options: [
+                            { label: ALLOW_ONCE, description: "Allow this one action." },
+                            ...(ask.allowForSession
+                                ? [
+                                      {
+                                          label: ALLOW_FOR_SESSION,
+                                          description: `Allow actions like this until ${name}'s session ends.`,
+                                      },
+                                  ]
+                                : []),
+                            { label: DENY, description: `${name} is told it was not allowed.` },
+                        ],
+                        multiSelect: false,
+                    },
+                ],
+            },
+            {
+                source: "harness",
+                server: ask.harnessId.slice(0, MAX_USER_INPUT_PERMISSION_SERVER_CHARACTERS),
+                serverTitle: name,
+            },
+        );
+        const withdraw = (): void => {
+            this.cancel(ctx, ask.agentId, {
+                requestId: pending.id,
+                reason: `${name} no longer needs an answer.`,
+            }).catch((error: unknown) => {
+                ctx.log.warn(`Could not withdraw the question from ${name}: ${String(error)}`);
+            });
+        };
+        signal.addEventListener("abort", withdraw, { once: true });
+        if (signal.aborted) withdraw();
+        let settled: UserInputRequest;
+        try {
+            settled = await this.wait(ctx, ask.agentId, pending.id);
+        } catch (error) {
+            // Nobody can answer a question whose wait failed; it must not stay open.
+            withdraw();
+            throw error;
+        } finally {
+            signal.removeEventListener("abort", withdraw);
+        }
+        // Away, timed out, or withdrawn by the agent: nobody allowed it.
+        if (settled.status !== "answered") return signal.aborted ? "cancelled" : "deny";
+        // A choice arrives as the option's label, alone or among the selected options.
+        const answer = settled.answers?.[HARNESS_QUESTION_ID];
+        const chosen = typeof answer === "string" ? [answer] : (answer?.selectedOptions ?? []);
+        if (chosen.includes(ALLOW_ONCE)) return "allow_once";
+        if (chosen.includes(ALLOW_FOR_SESSION)) return "allow_for_session";
+        return "deny";
     }
 
     async wait(

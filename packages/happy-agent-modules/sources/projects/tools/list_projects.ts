@@ -20,6 +20,7 @@ export function listProjectsTool(projects: ProjectsModule, agentId: string) {
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, query: ProjectPageQuery) => await projects.list(ctx, query),
         toLLM: (page) => [{ type: "text", text: projects.formatPageForModel(page) }],
     });

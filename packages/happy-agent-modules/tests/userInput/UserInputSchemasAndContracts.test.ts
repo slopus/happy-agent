@@ -328,12 +328,12 @@ describe("UserInput runtime schemas and contracts", () => {
         expect(Value.Check(userInputTerminalRequestSchema, answered)).toBe(true);
     });
 
-    it("takes the presence module and nothing else", () => {
+    it("takes the presence module and, for harness permission asks, the config module", () => {
         const presence = createPresenceModule();
         const module = new UserInputModule(presence);
 
         expect(module.name).toBe("userInput");
-        expect(UserInputModule.length).toBe(1);
+        expect(UserInputModule.length).toBe(2);
         expect(MAX_USER_INPUT_PAGE_SIZE).toBe(50);
         expect(MAX_USER_INPUT_OUTPUT_CHARACTERS).toBe(8_000);
     });

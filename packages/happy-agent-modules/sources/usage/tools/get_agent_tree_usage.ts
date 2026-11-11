@@ -22,6 +22,7 @@ export function getAgentTreeUsageTool(module: UsageModule, agentId: string) {
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (_ctx, _input: GetAgentTreeUsageInput): Promise<UsageAgentTree> =>
             await module.readAgentTreeUsage(_ctx, agentId),
         toLLM: (tree) => [

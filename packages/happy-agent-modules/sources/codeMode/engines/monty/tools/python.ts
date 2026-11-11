@@ -63,6 +63,7 @@ export function createCodeModePythonTool(run: CodeModePythonRun) {
         returnType: codeModePythonResultSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: (ctx, { code }, call) => run(ctx, code, call),
         isError: ({ isError }) => isError,
         toLLM: ({ output }) => [{ type: "text", text: output }],

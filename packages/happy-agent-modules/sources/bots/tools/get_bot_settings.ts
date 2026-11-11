@@ -34,6 +34,7 @@ export function getBotSettingsTool(
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { botId }: GetBotSettingsInput) =>
             await bots.settingsForAgent(ctx, actingAgentId, botId),
         toLLM: ({ botId, name, settings }) => [

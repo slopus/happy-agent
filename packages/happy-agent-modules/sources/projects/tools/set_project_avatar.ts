@@ -30,6 +30,7 @@ export function setProjectAvatarTool(projects: ProjectsModule) {
         returnType: Type.Void(),
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: SetProjectAvatarInput) => {
             const project = await projects.get(ctx, input.projectId);
             if (project === undefined) throw new Error("The project was not found.");

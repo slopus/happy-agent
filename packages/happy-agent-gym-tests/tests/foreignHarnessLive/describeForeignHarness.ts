@@ -1,7 +1,12 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+
+import type { Question } from "@slopus/happy-agent-client";
 
 import { createAgentGym, type AgentGym, type GymAgentHistory } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,6 +21,10 @@ const run = promisify(execFile);
  * HAPPY_ACP_CODEX_AUTH_FILE (a Codex `auth.json`) for Codex CLI, and HAPPY_ACP_XAI_API_KEY to
  * run OpenCode on xAI. HAPPY_ACP_ANTIGRAVITY_MODEL runs Antigravity on another of its models, such
  * as `antigravity/gemini-4-carbon`.
+ *
+ * Every harness keeps its own permission system. What it asks and the agent's mode leaves open
+ * reaches the person as a permission question from that harness; these scenarios answer it the
+ * way a person would and check the file system and the wire, never what the model says.
  */
 export type HarnessKind = "claude-code" | "codex-cli" | "antigravity" | "opencode";
 
@@ -28,6 +37,12 @@ interface HarnessSetup {
     readonly effort: string;
     /** Under `<agentHome>/foreign-agents`. */
     readonly stateDirectory: readonly string[];
+    /**
+     * False when its model cannot reach Happy's `create_agent`. Antigravity registers only small
+     * MCP tools as functions; larger ones, `create_agent` among them, are left for the model to
+     * load from a schema file, which it does not do.
+     */
+    readonly createsHappySubAgents?: false;
 }
 
 const claudeToken = process.env.HAPPY_ACP_CLAUDE_OAUTH_TOKEN;
@@ -59,7 +74,7 @@ const SETUPS: Readonly<Record<HarnessKind, HarnessSetup>> = {
             'providers = ["live_codex"]',
         ],
         providerId: "live_codex",
-        model: "codex-cli/gpt-6-luna",
+        model: "codex-cli/gpt-6.1-sol",
         effort: "low",
         stateDirectory: ["codex_cli", "live_codex"],
     },
@@ -69,6 +84,7 @@ const SETUPS: Readonly<Record<HarnessKind, HarnessSetup>> = {
         model: process.env.HAPPY_ACP_ANTIGRAVITY_MODEL ?? "antigravity/gemini-3.8-flash",
         effort: "low",
         stateDirectory: ["antigravity"],
+        createsHappySubAgents: false,
     },
     opencode: {
         config: [
@@ -81,6 +97,66 @@ const SETUPS: Readonly<Record<HarnessKind, HarnessSetup>> = {
         stateDirectory: ["opencode"],
     },
 };
+
+/** What each harness's own permission system does, as observed against the pinned releases. */
+interface HarnessPermissions {
+    readonly harnessId: string;
+    readonly harnessName: string;
+    /**
+     * In Auto, its reviewer hands an action it will not decide alone to the person instead of
+     * deciding: Antigravity asks before writing outside its sandbox, while Claude Code's
+     * classifier and Codex's reviewer decide by themselves.
+     */
+    readonly autoAsksPerson: boolean;
+    /** Its permission system asks before Happy's own tools; Antigravity never gates MCP calls. */
+    readonly gatesHappyTools: boolean;
+    /** How to have it start one of its own sub-agents, when that sub-agent's asks reach Happy. */
+    readonly ownSubagent?: string;
+}
+
+const PERMISSIONS: Partial<Readonly<Record<HarnessKind, HarnessPermissions>>> = {
+    "claude-code": {
+        harnessId: "claude_code",
+        harnessName: "Claude Code",
+        autoAsksPerson: false,
+        gatesHappyTools: true,
+        ownSubagent: "Use your Task tool to start exactly one subagent",
+    },
+    "codex-cli": {
+        harnessId: "codex_cli",
+        harnessName: "Codex CLI",
+        autoAsksPerson: false,
+        gatesHappyTools: true,
+        ownSubagent: "Use your spawn_agent tool to start exactly one subagent",
+    },
+    // Antigravity's own sub-agents never send their asks to the client; they stall instead.
+    antigravity: {
+        harnessId: "antigravity",
+        harnessName: "Antigravity",
+        autoAsksPerson: true,
+        gatesHappyTools: false,
+    },
+};
+
+/** Outside the gym's workspace and its temporary folders, which some sandboxes leave writable. */
+const OUTSIDE_ROOT = fileURLToPath(
+    new URL("../../../../.context/harness-outside/", import.meta.url),
+);
+
+async function outsideFile(name: string): Promise<string> {
+    const directory = join(OUTSIDE_ROOT, randomUUID());
+    await mkdir(directory, { recursive: true });
+    return join(directory, name);
+}
+
+function writeOutside(path: string, content: string): string {
+    return (
+        `Create the file ${path} containing exactly ${content}, using your own tools. It is ` +
+        "outside your workspace on purpose. If your sandbox blocks it, request permission or " +
+        "escalation for that same action. If permission is refused, do not try another way; " +
+        "reply REFUSED. Otherwise reply DONE."
+    );
+}
 
 interface Block {
     readonly type: string;
@@ -113,6 +189,66 @@ function toolNames(history: GymAgentHistory): string[] {
 }
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Whether a foreign harness's own permission system asked `question`. */
+function fromHarness(question: Question): boolean {
+    // The published client's type predates the `"harness"` source; the wire value is what counts.
+    return (question.permissionRequest?.source as string | undefined) === "harness";
+}
+
+/** The harness's permission question pending on `agentId`, if any. */
+async function harnessQuestion(gym: AgentGym, agentId: string): Promise<Question | undefined> {
+    const { question } = await gym.client.getPendingQuestion(agentId);
+    return question?.status === "pending" && fromHarness(question) ? question : undefined;
+}
+
+/** Every permission question a harness put to the person in this gym. */
+async function harnessQuestionsAsked(gym: AgentGym): Promise<Question[]> {
+    return (await gym.events()).flatMap((event) =>
+        event.type === "question.created" && fromHarness(event.payload.question)
+            ? [event.payload.question]
+            : [],
+    );
+}
+
+async function answerQuestion(
+    gym: AgentGym,
+    agentId: string,
+    question: Question,
+    label: string,
+): Promise<void> {
+    await gym.client.answerQuestion(agentId, question.id, {
+        answers: { [question.questions[0]!.id]: [label] },
+        mutationId: randomUUID(),
+    });
+}
+
+/**
+ * Answer every permission question the harness asks on `agentId` with `label` until `until`
+ * settles, the way a person at the screen would. Returns the questions it answered.
+ */
+async function answerEvery(
+    gym: AgentGym,
+    agentId: string,
+    label: string,
+    until: Promise<unknown>,
+): Promise<Question[]> {
+    let settled = false;
+    const done = until.finally(() => {
+        settled = true;
+    });
+    const answered: Question[] = [];
+    while (!settled) {
+        const question = await harnessQuestion(gym, agentId);
+        if (question !== undefined && !answered.some((seen) => seen.id === question.id)) {
+            answered.push(question);
+            await answerQuestion(gym, agentId, question, label);
+        }
+        await Promise.race([done, pause(500)]);
+    }
+    await done;
+    return answered;
+}
 
 export function describeForeignHarness(kind: HarnessKind): void {
     const live = (process.env.HAPPY_ACP_LIVE ?? "").split(",").map((v) => v.trim());
@@ -308,6 +444,8 @@ export function describeForeignHarness(kind: HarnessKind): void {
                     { ...select, permissionMode: "read_only" },
                 );
                 expect(await gym.exists("blocked.txt")).toBe(false);
+                // Read only refuses whatever the harness asks, without asking the person.
+                expect(await harnessQuestionsAsked(gym)).toEqual([]);
             },
             TURN_MS,
         );
@@ -364,7 +502,7 @@ export function describeForeignHarness(kind: HarnessKind): void {
             TURN_MS * 2,
         );
 
-        it(
+        it.skipIf(setup.createsHappySubAgents === false)(
             "creates a Happy sub-agent on its own harness and receives its report",
             async () => {
                 const gym = await gymFor();
@@ -406,4 +544,275 @@ export function describeForeignHarness(kind: HarnessKind): void {
             TURN_MS * 3,
         );
     });
+
+    const permissions = PERMISSIONS[kind];
+    describe.skipIf(!live.includes(kind) || permissions === undefined)(
+        `${kind} harness permissions, live`,
+        () => {
+            const traits = permissions!;
+            const askedBy = {
+                source: "harness",
+                server: traits.harnessId,
+                serverTitle: traits.harnessName,
+            };
+
+            it(
+                "asks the person before writing outside the workspace in Workspace write, and writes once allowed",
+                async () => {
+                    const gym = await gymFor();
+                    const path = await outsideFile("allowed.txt");
+                    const run = await gym.send(writeOutside(path, "ALLOWED-1"), {
+                        ...select,
+                        permissionMode: "workspace_write",
+                        wait: false,
+                    });
+                    const asked = await answerEvery(
+                        gym,
+                        gym.defaultSessionId,
+                        "Allow once",
+                        gym.waitForRun(run.runId),
+                    );
+                    expect(asked.length).toBeGreaterThan(0);
+                    expect(asked[0]!.permissionRequest).toEqual(askedBy);
+                    expect(asked[0]!.questions[0]!.options.map((option) => option.label)).toContain(
+                        "Deny",
+                    );
+                    expect((await readFile(path, "utf8")).trim()).toBe("ALLOWED-1");
+                },
+                TURN_MS * 2,
+            );
+
+            it(
+                "leaves the file unwritten when the person denies",
+                async () => {
+                    const gym = await gymFor();
+                    const path = await outsideFile("denied.txt");
+                    const run = await gym.send(writeOutside(path, "DENIED-1"), {
+                        ...select,
+                        permissionMode: "workspace_write",
+                        wait: false,
+                    });
+                    const asked = await answerEvery(
+                        gym,
+                        gym.defaultSessionId,
+                        "Deny",
+                        gym.waitForRun(run.runId),
+                    );
+                    expect(asked.length).toBeGreaterThan(0);
+                    expect(existsSync(path)).toBe(false);
+                },
+                TURN_MS * 2,
+            );
+
+            it(
+                "withdraws a pending question when the turn is stopped, and the harness never acts",
+                async () => {
+                    const gym = await gymFor();
+                    const path = await outsideFile("stopped.txt");
+                    const run = await gym.send(writeOutside(path, "STOPPED-1"), {
+                        ...select,
+                        permissionMode: "workspace_write",
+                        wait: false,
+                    });
+                    const question = await gym.waitUntil(
+                        () => harnessQuestion(gym, gym.defaultSessionId),
+                        "the harness's permission question",
+                        TURN_MS,
+                    );
+                    await gym.abort();
+                    await gym.waitForRun(run.runId);
+                    expect(await harnessQuestion(gym, gym.defaultSessionId)).toBeUndefined();
+                    await gym.waitForEvent(
+                        (event) =>
+                            event.type === "question.updated" &&
+                            event.payload.questionId === question.id &&
+                            event.payload.changes.status === "canceled",
+                        "the withdrawn question",
+                    );
+                    await pause(5_000);
+                    expect(existsSync(path)).toBe(false);
+                    // The conversation goes on.
+                    await gym.send("Reply with only the word AGAIN.", {
+                        ...select,
+                        permissionMode: "workspace_write",
+                    });
+                    expect(lastText(await gym.history())).toContain("AGAIN");
+                },
+                TURN_MS * 2,
+            );
+
+            it(
+                "writes outside without asking anyone in Full access",
+                async () => {
+                    const gym = await gymFor();
+                    const path = await outsideFile("full.txt");
+                    await gym.send(writeOutside(path, "FULL-1"), {
+                        ...select,
+                        permissionMode: "full_access",
+                    });
+                    expect((await readFile(path, "utf8")).trim()).toBe("FULL-1");
+                    expect(await harnessQuestionsAsked(gym)).toEqual([]);
+                },
+                TURN_MS,
+            );
+
+            it(
+                traits.autoAsksPerson
+                    ? "hands an outside write its reviewer will not decide to the person in Auto"
+                    : "lets its own reviewer decide an outside write the person asked for in Auto, without asking",
+                async () => {
+                    const gym = await gymFor();
+                    // Inside the workspace, nothing is asked.
+                    await gym.send(
+                        "Create inside.txt in your workspace containing exactly INSIDE-1 using your own tools, then reply DONE.",
+                        { ...select, permissionMode: "auto" },
+                    );
+                    expect((await gym.readFile("inside.txt")).trim()).toBe("INSIDE-1");
+                    expect(await harnessQuestionsAsked(gym)).toEqual([]);
+
+                    const path = await outsideFile("auto.txt");
+                    const run = await gym.send(writeOutside(path, "AUTO-1"), {
+                        ...select,
+                        permissionMode: "auto",
+                        wait: false,
+                    });
+                    const asked = await answerEvery(
+                        gym,
+                        gym.defaultSessionId,
+                        "Allow once",
+                        gym.waitForRun(run.runId),
+                    );
+                    if (traits.autoAsksPerson) expect(asked.length).toBeGreaterThan(0);
+                    else expect(asked).toEqual([]);
+                    expect((await readFile(path, "utf8")).trim()).toBe("AUTO-1");
+                },
+                TURN_MS * 2,
+            );
+
+            it(
+                traits.gatesHappyTools
+                    ? "runs Happy's never-reviewed tools freely and asks before one that needs review in Workspace write"
+                    : "runs Happy's tools without asking, since it never gates MCP calls",
+                async () => {
+                    const gym = await gymFor();
+                    const run = await gym.send(
+                        "Call the Happy tool list_projects once. Then call the Happy tool " +
+                            'delete_artifact once with artifactId "art_missing_1". If a call is refused, do not ' +
+                            "retry it. Reply DONE.",
+                        { ...select, permissionMode: "workspace_write", wait: false },
+                    );
+                    const asked = await answerEvery(
+                        gym,
+                        gym.defaultSessionId,
+                        "Allow once",
+                        gym.waitForRun(run.runId),
+                    );
+                    const calls = toolNames(await gym.history());
+                    expect(calls).toContain("list_projects");
+                    // Allowed, the call reaches Happy, which runs it.
+                    expect(calls).toContain("delete_artifact");
+                    if (traits.gatesHappyTools) {
+                        expect(asked.length).toBeGreaterThan(0);
+                        expect(
+                            asked.every((question) => !question.context?.includes("list_projects")),
+                        ).toBe(true);
+                        expect(
+                            asked.some((question) => question.context?.includes("delete_artifact")),
+                        ).toBe(true);
+                    } else {
+                        expect(asked).toEqual([]);
+                    }
+                },
+                TURN_MS * 2,
+            );
+
+            it.skipIf(!traits.gatesHappyTools)(
+                "keeps Happy's tool unrun when the person denies it",
+                async () => {
+                    const gym = await gymFor();
+                    const run = await gym.send(
+                        'Call the Happy tool delete_artifact once with artifactId "art_missing_2". If it ' +
+                            "is refused, do not retry it. Reply DONE.",
+                        { ...select, permissionMode: "workspace_write", wait: false },
+                    );
+                    const asked = await answerEvery(
+                        gym,
+                        gym.defaultSessionId,
+                        "Deny",
+                        gym.waitForRun(run.runId),
+                    );
+                    expect(asked.length).toBeGreaterThan(0);
+                    // Refused by the harness, the call never reaches Happy.
+                    expect(toolNames(await gym.history())).not.toContain("delete_artifact");
+                },
+                TURN_MS * 2,
+            );
+
+            it.skipIf(traits.ownSubagent === undefined)(
+                "brings its own sub-agent's ask to the person on the same agent",
+                async () => {
+                    const gym = await gymFor();
+                    const path = await outsideFile("subagent.txt");
+                    const run = await gym.send(
+                        `${traits.ownSubagent} and tell it to do exactly this: ${writeOutside(path, "SUB-1")} ` +
+                            "Do not do it yourself. Wait for the subagent and reply with what it reports.",
+                        { ...select, permissionMode: "workspace_write", wait: false },
+                    );
+                    const asked = await answerEvery(
+                        gym,
+                        gym.defaultSessionId,
+                        "Allow once",
+                        gym.waitForRun(run.runId),
+                    );
+                    expect(asked.length).toBeGreaterThan(0);
+                    expect((await readFile(path, "utf8")).trim()).toBe("SUB-1");
+                },
+                TURN_MS * 3,
+            );
+
+            it.skipIf(setup.createsHappySubAgents === false)(
+                "asks the person on a Happy sub-agent running on the same harness",
+                async () => {
+                    const gym = await gymFor();
+                    const path = await outsideFile("collaborator.txt");
+                    const parent = await gym.send(
+                        `Call the Happy MCP tool create_agent (not a sub-agent tool of your own) with provider "${setup.providerId}", model ` +
+                            `"${setup.model}", effort "${setup.effort}", title "Writer", and text ` +
+                            `${JSON.stringify(
+                                `Create the file ${path} containing exactly CHILD-1 with your own tools. ` +
+                                    "If you are asked to wait for permission, wait; if it is refused, reply REFUSED. Otherwise reply DONE.",
+                            )}. Do nothing else, and reply with only WAITING.`,
+                        { ...select, permissionMode: "workspace_write", wait: false },
+                    );
+                    // Only the collaborator is meant to act; whatever the parent asks is refused.
+                    await answerEvery(
+                        gym,
+                        gym.defaultSessionId,
+                        "Deny",
+                        gym.waitForRun(parent.runId),
+                    );
+                    const spawn = agentBlocks(await gym.history()).find(
+                        (block) => block.type === "tool_call" && block.name === "create_agent",
+                    );
+                    const childId = spawn?.presentation?.agentId;
+                    expect(childId, "the parent calls create_agent").toBeDefined();
+                    const asked = await answerEvery(
+                        gym,
+                        childId!,
+                        "Allow once",
+                        gym.waitUntil(
+                            () => (existsSync(path) ? true : undefined),
+                            "the collaborator to write its file",
+                            TURN_MS,
+                        ),
+                    );
+                    expect(asked.length).toBeGreaterThan(0);
+                    expect(asked[0]!.agentId).toBe(childId);
+                    expect(asked[0]!.permissionRequest).toEqual(askedBy);
+                    expect((await readFile(path, "utf8")).trim()).toBe("CHILD-1");
+                },
+                TURN_MS * 3,
+            );
+        },
+    );
 }

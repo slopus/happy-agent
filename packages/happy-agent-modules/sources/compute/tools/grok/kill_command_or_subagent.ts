@@ -37,6 +37,7 @@ Usage notes:
         durable: false,
         // Ending work Happy Agent itself started stays inside the machine the agent already has.
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (_ctx, { task_id }) => {
             const commandId = parseGrokTaskId(task_id);
             let stop;

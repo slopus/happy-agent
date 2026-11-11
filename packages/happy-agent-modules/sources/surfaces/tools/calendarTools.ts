@@ -136,6 +136,7 @@ export function calendarTools(
             }),
             durable: false,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) => {
                 const range = await surfaces.listCalendar(
                     ctx,
@@ -319,6 +320,7 @@ export function calendarTools(
             }),
             durable: false,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) => {
                 const page = await surfaces.calendarEventVersions(
                     ctx,

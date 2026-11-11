@@ -30,6 +30,7 @@ export function scheduleMessageTool(scheduling: SchedulingModule, agentId: strin
         returnType: schedulingScheduledMessageSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { input }: ScheduleMessageToolParameters, call) => {
             const { agent_id: targetAgentId, ...scheduleInput } = input;
             return await scheduling.schedule(ctx, agentId, {

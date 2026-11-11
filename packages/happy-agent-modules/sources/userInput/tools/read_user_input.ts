@@ -31,6 +31,7 @@ export function readUserInputTool(userInput: UserInputModule, agentId: string) {
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { requestId, ...query }: ReadUserInputToolParameters) =>
             await userInput.getPage(ctx, agentId, requestId, query),
         toLLM: (page) => [{ type: "text", text: userInput.formatDetailPageForModel(page) }],

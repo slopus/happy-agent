@@ -92,6 +92,7 @@ export function searchInstanceTool(cleanup: CleanupModule, actingAgentId: string
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: SearchInstanceInput) =>
             await cleanup.searchForAgent(ctx, actingAgentId, toQuery(input)),
         toLLM: (page) => {

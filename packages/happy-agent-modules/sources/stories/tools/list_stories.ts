@@ -15,6 +15,7 @@ export function listStoriesTool(stories: StoriesModule, scope: AgentModuleScope)
         parameters: Type.Object({}, { additionalProperties: false }),
         returnType: Type.Unknown(),
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => {
             return await stories.ofAgent(ctx, scope.agent.id);
         },

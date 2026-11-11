@@ -674,7 +674,7 @@ export async function startHappyAgentRuntime(
             abort,
             durableFunctions,
         );
-        const userInput = new UserInputModule(presence);
+        const userInput = new UserInputModule(presence, config);
         const mcp = new McpModule(config, userInput, workspaces, runners, compute.computeModule);
         registerShutdown("mcp", async () => await mcp.close());
         userInput.onEventTransactional(async (listenerCtx, event) => {

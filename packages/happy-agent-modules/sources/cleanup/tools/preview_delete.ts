@@ -20,6 +20,7 @@ export function previewDeleteTool(cleanup: CleanupModule, actingAgentId: string)
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, target) => await cleanup.previewForAgent(ctx, actingAgentId, target),
         toLLM: (plan) => [
             {

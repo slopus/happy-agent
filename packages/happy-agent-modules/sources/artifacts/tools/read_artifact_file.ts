@@ -84,6 +84,7 @@ export function readArtifactFileTool(artifacts: ArtifactsModule) {
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (
             ctx: Context,
             input: ReadArtifactFileToolInput,

@@ -28,6 +28,7 @@ Pausing, resuming, and clearing a goal are controlled by the user.`,
         durable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { status }) => ({
             goal: await goals.changeGoalStatus(ctx, agentId, status),
         }),

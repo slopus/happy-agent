@@ -20,6 +20,7 @@ export function listScheduledMessagesTool(scheduling: SchedulingModule, agentId:
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: SchedulingScheduleToolPageQuery) =>
             await scheduling.listSchedulePage(ctx, agentId, input),
         toLLM: (page) => [{ type: "text", text: scheduling.formatSchedulePageForModel(page) }],

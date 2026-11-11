@@ -9120,11 +9120,13 @@ The question then carries `permissionRequest`:
 ```
 
 - `source` — what is asking. `"mcp_elicitation"` means an MCP server sent an elicitation during one
-  of the agent's tool calls. A client that does not recognize a source shows the question as a
-  permission request without naming what is asking.
-- `server` — the configured MCP server name, 1–128 characters.
-- `serverTitle` — the server's display name, 1–128 characters, which clients show instead of
-  `server`.
+  of the agent's tool calls. `"harness"` means the permission system of the foreign harness the
+  agent runs on, such as Claude Code or Codex CLI, asks before an action its permission mode does
+  not allow on its own; the action is in the question's context. A client that does not recognize a
+  source shows the question as a permission request without naming what is asking.
+- `server` — the configured MCP server name, or the harness ID for `"harness"`, 1–128 characters.
+- `serverTitle` — the server's or harness's display name, 1–128 characters, which clients show
+  instead of `server`.
 
 A client should present a permission request so the person can tell it apart from the agent's own
 questions, naming `serverTitle` as the party asking. The prompts, options, and answer route are the

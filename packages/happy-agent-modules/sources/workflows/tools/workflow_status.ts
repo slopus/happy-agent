@@ -25,6 +25,7 @@ export function workflowStatusTool(module: WorkflowsModule, agentId: string) {
         reloadable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { id }: WorkflowStatusParameters) =>
             await module.status(ctx, agentId, id),
         toLLM: (run) => [

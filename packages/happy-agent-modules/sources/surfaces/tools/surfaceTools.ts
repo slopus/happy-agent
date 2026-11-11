@@ -111,6 +111,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             returnType: systemMonitorSnapshotSchema,
             durable: false,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: (ctx, input) => surfaces.systemMonitor(ctx, input.surfaceId),
             toLLM: (snapshot) => [{ type: "text" as const, text: formatSystemMonitor(snapshot) }],
         }),
@@ -128,6 +129,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             }),
             durable: false,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) => {
                 const all = await surfaces.list(ctx);
                 const start = input.offset ?? 0;
@@ -221,6 +223,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             }),
             durable: false,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) => {
                 const all = await surfaces.listTodos(ctx, input.surfaceId, input.scope);
                 const start = input.offset ?? 0;
@@ -370,6 +373,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             returnType: todoVersionListResponseSchema,
             durable: false,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) =>
                 surfaces.versions(
                     ctx,
@@ -403,6 +407,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             returnType: documentReadingSchema,
             durable: false,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) => {
                 const reading = await surfaces.document(ctx, input.surfaceId, input.seq);
                 const promptDocument = await surfaces.promptDocumentEntry(ctx, input.surfaceId);
@@ -477,6 +482,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
             returnType: surfaceDocumentChangeListResponseSchema,
             durable: false,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) =>
                 surfaces.documentChanges(
                     ctx,

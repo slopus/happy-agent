@@ -367,6 +367,10 @@ export class PermissionsModule implements AgentModule {
             return this.#toolError(outOfModeRefusal(name, mode));
         }
         if (mode !== "auto") return undefined;
+        // A foreign harness reaches Happy's tools only through its own permission system, whose
+        // reviewer has already decided this call in Auto. Reviewing it again here would put two
+        // gates on one action; it runs in the current sandbox, never elevated.
+        if (this.#compute.toolVendor(scope) === "foreign") return undefined;
         // A throwing predicate has not said the action is safe. v1 turns it into a tool error and
         // never runs the action; treating it as "no review needed" or "not elevated" would let a
         // broken predicate quietly widen what an agent may do. This fails closed and, being a

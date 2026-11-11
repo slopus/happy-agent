@@ -17,6 +17,7 @@ export function clearGoalTool(goals: GoalModule, agentId: string) {
         durable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => ({ cleared: await goals.clearGoal(ctx, agentId) }),
         toLLM: ({ cleared }) => [
             {

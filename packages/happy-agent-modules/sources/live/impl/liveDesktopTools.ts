@@ -27,6 +27,7 @@ const tool = (
         returnType: resultSchema,
         durable: false,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, args) => ({
             text: await live.runVoiceAction(ctx, agentId, {
                 ...(args as object),

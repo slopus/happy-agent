@@ -30,6 +30,7 @@ export function createCodeModeJavaScriptTool(run: CodeModeJavaScriptRun) {
         returnType: codeModeJavaScriptResultSchema,
         durable: false,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: (ctx, { code }) => run(ctx, code),
         isError: ({ isError }) => isError,
         toLLM: ({ output }) => [{ type: "text", text: output }],

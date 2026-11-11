@@ -64,6 +64,7 @@ export function writeArtifactDataTool(data: ArtifactDataModule, agentId: string)
         returnType: artifactDataEntrySchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         // The call's own ID is the write ID, so a call repeated after an interruption is answered
         // with the write it already made instead of applying again.
         execute: async (ctx, input: WriteArtifactDataToolInput, call) => {

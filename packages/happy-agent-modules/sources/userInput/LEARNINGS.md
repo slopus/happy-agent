@@ -73,3 +73,16 @@ both get `200`, the second carrying the first one's answer as if it had won. The
 the answer now share one transaction, and `answer` throws `UserInputConflictError` for a settled
 request, which the API reports as `409` with the question as it stands. Cancellation and completion
 stay idempotent: repeating them asks for nothing new.
+
+## A foreign harness's ask is a permission question from that harness
+
+Claude Code, Codex CLI, Antigravity, and ACP agents run outside Happy's sandbox, and their asks
+used to be answered from the permission mode alone: anything but Read only was allowed without the
+person seeing it. User input now registers with config for those asks and turns each into an
+ordinary `permissionRequest` question on the asking agent, with `source: "harness"`, the harness
+ID as `server`, and its display name as `serverTitle`. The options are Allow once, Allow for this
+session only when the harness offers it, and Deny. A plain string answer counts like a selected
+option, because that is what clients send. When the turn stops, the question is cancelled and the
+harness is told `cancelled`, so a stopped agent never leaves a question the person can still
+answer. A question nobody answers (away, timed out) is a denial, not a cancellation: ACP agents
+read `cancelled` as their own turn being cancelled. A Happy sub-agent asks on its own conversation through the same path.

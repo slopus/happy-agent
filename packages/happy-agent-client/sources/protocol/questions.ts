@@ -30,17 +30,21 @@ export interface QuestionSecretRequest {
 
 /**
  * Marks a question asked by something outside the agent, such as an MCP server
- * wanting the person's approval. The agent cannot answer it, and the answer goes
- * to whatever asked. Clients should tell it apart from the agent's own questions
- * and name `serverTitle` as the party asking. Treat an unknown `source` as a
- * permission request from an unnamed party.
+ * or the agent's own harness wanting the person's approval. The agent cannot
+ * answer it, and the answer goes to whatever asked. Clients should tell it apart
+ * from the agent's own questions and name `serverTitle` as the party asking.
+ * Treat an unknown `source` as a permission request from an unnamed party.
  */
 export interface QuestionPermissionRequest {
-    /** `"mcp_elicitation"`: an MCP server elicitation during an agent tool call. */
-    source: "mcp_elicitation";
-    /** The configured MCP server name, 1–128 characters. */
+    /**
+     * `"mcp_elicitation"`: an MCP server elicitation during an agent tool call.
+     * `"harness"`: the permission system of the foreign harness the agent runs
+     * on, such as Claude Code, asking before an action.
+     */
+    source: "mcp_elicitation" | "harness";
+    /** The configured MCP server name or harness ID, 1–128 characters. */
     server: string;
-    /** The server's display name, 1–128 characters. */
+    /** The server's or harness's display name, 1–128 characters. */
     serverTitle: string;
 }
 

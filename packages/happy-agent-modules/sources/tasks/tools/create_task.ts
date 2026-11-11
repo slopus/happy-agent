@@ -63,6 +63,7 @@ export function createTaskTool(
         returnType: taskRecordSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         // A task outlives the call that made it, so its identity is minted once and remembered in
         // this invocation's own store. A repeated call after an interruption finds the task it
         // already created instead of minting a duplicate.

@@ -38,6 +38,7 @@ export function createSubtaskTool(
         returnType: subtaskResultSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input, call) =>
             await subtasks.create(
                 ctx,

@@ -21,6 +21,7 @@ export function renameWorkspaceTool(workspaces: WorkspacesModule, agentId: strin
         durable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: WorkspaceRenameToolInput, call) =>
             await workspaces.rename(ctx, { ...input, operationId: call.id }),
         toLLM: (workspace) => [

@@ -53,6 +53,7 @@ export function readArtifactTool(artifacts: ArtifactsModule) {
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx: Context, input: ReadArtifactToolInput): Promise<ArtifactRead> => {
             const artifact = await artifacts.get(ctx, input.artifactId);
             if (artifact === undefined) throw new ArtifactNotFoundError();

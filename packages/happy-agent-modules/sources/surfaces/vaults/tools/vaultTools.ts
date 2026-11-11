@@ -190,6 +190,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             durable: false,
             reloadable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) => {
                 const path = input.path ?? "/";
                 const found = await vaults.walk(ctx, input.surfaceId, path);
@@ -293,6 +294,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             durable: false,
             reloadable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input): Promise<FileRead> => {
                 const file = await vaultToolFile(
                     ctx,
@@ -410,6 +412,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             returnType: writeResultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input, call): Promise<VaultToolWrite> => {
                 requireVaultWrites(ctx);
                 const commit = (tx: Context, result: VaultToolWrite) => call.commit(tx, result);
@@ -499,6 +502,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             returnType: writeResultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input, call): Promise<VaultToolWrite> => {
                 requireVaultWrites(ctx);
                 const file = await vaultToolFile(ctx, vaults, input.surfaceId, input.path);
@@ -549,6 +553,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             durable: false,
             reloadable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) => {
                 const root = await folderOf(ctx, input.surfaceId, input.path ?? "/");
                 const { entries, more } = await vaults.subtree(
@@ -619,6 +624,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             durable: false,
             reloadable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) => {
                 let pattern: RegExp;
                 try {
@@ -715,6 +721,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             returnType: folderResultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input, call) => {
                 requireVaultWrites(ctx);
                 const found = await vaults.walk(ctx, input.surfaceId, input.path);
@@ -802,6 +809,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             returnType: writeResultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input, call) => {
                 requireVaultWrites(ctx);
                 const source = await itemAt(ctx, input.surfaceId, input.path);
@@ -864,6 +872,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             durable: false,
             reloadable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) => {
                 const { items, nextPageCursor } = await vaults.trash(ctx, input.surfaceId, {
                     limit: 200,
@@ -903,6 +912,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             durable: false,
             reloadable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input) => {
                 const entry = await itemAt(ctx, input.surfaceId, input.path);
                 if (entry.kind === "folder")
@@ -1302,6 +1312,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             returnType: itemResultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input, call) => {
                 requireVaultWrites(ctx);
                 const item = await kindAt(ctx, input.surfaceId, input.path, kind, "move");
@@ -1348,6 +1359,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             returnType: itemResultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, input, call) => {
                 requireVaultWrites(ctx);
                 const item = await kindAt(ctx, input.surfaceId, input.path, kind, "delete");
@@ -1399,6 +1411,7 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             returnType: itemResultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx, rawInput, call) => {
                 requireVaultWrites(ctx);
                 const input = rawInput as { surfaceId: string; toPath?: string } & Record<

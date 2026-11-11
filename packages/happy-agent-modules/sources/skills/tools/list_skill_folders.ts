@@ -19,6 +19,7 @@ export function listSkillFoldersTool(skillFolders: SkillFoldersModule, actingAge
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => await skillFolders.list(ctx, actingAgentId),
         toLLM: (result) => [{ type: "text", text: formatSkillFolders(result.folders) }],
     });

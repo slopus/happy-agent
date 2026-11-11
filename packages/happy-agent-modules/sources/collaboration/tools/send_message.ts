@@ -48,6 +48,7 @@ export function sendMessageTool(
         durable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: CollaborationSendToolInput, call) => {
             const { toAgentId, explanation, text } = input;
             await collaboration.sendMessage(

@@ -34,6 +34,7 @@ export function getWorkspaceTool(workspaces: WorkspacesModule, agentId: string) 
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (
             ctx,
             { workspaceId, ...query }: { workspaceId: string } & WorkspaceDetailQuery,

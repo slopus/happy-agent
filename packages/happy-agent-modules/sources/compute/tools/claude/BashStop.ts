@@ -38,6 +38,7 @@ export function claudeBashStopTool(compute: Compute, shellName: "Bash" | "PowerS
         durable: false,
         // Ending work Happy Agent itself started stays inside the machine the agent already has.
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (_ctx, { bash_id }) => {
             const commandId = parseClaudeBashId(bash_id);
             const stopped = await stopComputeCommand(compute, { commandId });

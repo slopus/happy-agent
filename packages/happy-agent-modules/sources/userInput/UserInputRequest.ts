@@ -205,13 +205,14 @@ const userInputBatchAnswersSchema = Type.Record(userInputQuestionIdSchema, userI
 });
 
 /**
- * Marks a question that something outside the agent is asking: today, an MCP server's elicitation
- * during one of the agent's tool calls. Only the module's own `askForPermission` sets it, so no
- * agent tool can present its own question as one.
+ * Marks a question that something outside the agent is asking: an MCP server's elicitation during
+ * one of the agent's tool calls (`server` is the MCP server), or the own permission system of the
+ * foreign harness the agent runs on (`server` is the harness). Only the module's own
+ * `askForPermission` sets it, so no agent tool can present its own question as one.
  */
 export const userInputPermissionRequestSchema = Type.Object(
     {
-        source: Type.Literal("mcp_elicitation"),
+        source: Type.Union([Type.Literal("mcp_elicitation"), Type.Literal("harness")]),
         server: Type.String({
             minLength: 1,
             maxLength: MAX_USER_INPUT_PERMISSION_SERVER_CHARACTERS,

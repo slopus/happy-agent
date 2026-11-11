@@ -32,6 +32,7 @@ export function referenceSecretTool(secrets: SecretsModule, agentId: string) {
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: ReferenceSecretInput): Promise<ReferenceSecretResult> => ({
             secret: (await secrets.catalogSecretForAgent(ctx, agentId, input.id)) ?? null,
         }),

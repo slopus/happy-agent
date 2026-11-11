@@ -36,6 +36,7 @@ export function codexKillSessionTool(compute: Compute) {
         // Ending work Happy Agent itself started stays inside the machine the agent already has, so there
         // is nothing here for a reviewer to weigh.
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (_ctx, { session_id }) => {
             const commandId = codexSessionId(session_id);
             const stop = await stopComputeCommand(compute, { commandId });

@@ -33,6 +33,7 @@ export function getExportedBotStatusTool(exportedBots: ExportedBotsModule, actin
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: GetExportedBotStatusInput) =>
             await exportedBots.status(ctx, actingAgentId, input.botId),
         toLLM: (status) => [{ type: "text", text: formatExportedBotStatus(status) }],

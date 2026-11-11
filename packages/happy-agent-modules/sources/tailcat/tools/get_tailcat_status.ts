@@ -19,6 +19,7 @@ export function getTailcatStatusTool(tailcat: TailcatModule, actingAgentId: stri
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => await tailcat.getStatus(ctx, actingAgentId),
         toLLM: (status) => [{ type: "text", text: formatTailcatStatus(status) }],
     });

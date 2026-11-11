@@ -26,6 +26,7 @@ export function listTeammatesTool(teammates: TeammatesModule) {
         parameters: Type.Object({}, { additionalProperties: false }),
         returnType: Type.Array(teammateSchema),
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => (await teammates.list(ctx)).map((person) => ({ ...person })),
         toLLM: (list) => [
             {

@@ -71,6 +71,7 @@ const claudeToolSearch = defineAgentTool({
     visibleToUser: false,
     returnType: emptyResultSchema,
     shouldReviewInAutoMode: () => false,
+    autoReview: "never",
     execute: () => Promise.reject(new Error("Claude owns ToolSearch execution.")),
     toLLM: () => [],
 });
@@ -85,6 +86,7 @@ const bedrockToolSearch = defineAgentTool({
     visibleToUser: false,
     returnType: emptyResultSchema,
     shouldReviewInAutoMode: () => false,
+    autoReview: "never",
     execute: () => Promise.reject(new Error("Anthropic Bedrock owns ToolSearch execution.")),
     toLLM: () => [],
 });
@@ -103,6 +105,7 @@ const codexToolSearch = defineAgentTool({
     visibleToUser: false,
     returnType: emptyResultSchema,
     shouldReviewInAutoMode: () => false,
+    autoReview: "never",
     execute: () => Promise.reject(new Error("Codex owns tool_search execution.")),
     toLLM: () => [],
 });

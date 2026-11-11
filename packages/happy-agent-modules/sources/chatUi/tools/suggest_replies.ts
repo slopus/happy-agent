@@ -44,6 +44,7 @@ Ask your question in your reply's text, then call this with the likely answers. 
         returnType: suggestRepliesResultSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: (_ctx, { options }) => {
             const replies = chatUi.replies(options);
             if ("problems" in replies) {

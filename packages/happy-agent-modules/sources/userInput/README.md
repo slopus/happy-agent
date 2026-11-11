@@ -9,7 +9,7 @@ commits.
 ```ts
 import { PresenceModule, UserInputModule } from "@slopus/happy-agent-modules";
 
-const userInput = new UserInputModule(presence);
+const userInput = new UserInputModule(presence, config);
 userInput.onEventTransactional(async (ctx, event) => {
     await auto.recordUserInputEventTransactional(ctx, event);
 });
@@ -18,9 +18,14 @@ userInput.onEvent(async (ctx, event) => {
 });
 ```
 
-The module takes the [presence](../presence/README.md) module and nothing else. It asks presence
-for the person's answer-wait policy and subscribes to changes while a wait is in flight; nothing
-sits between the two modules. Every character and count bound is a `MAX_USER_INPUT_*` constant,
+The module takes the [presence](../presence/README.md) module and, optionally, the
+[config](../config/README.md) module. It asks presence for the person's answer-wait policy and
+subscribes to changes while a wait is in flight; nothing sits between the two modules. Given the
+config module, it answers what a foreign harness's own permission system asks — Claude Code, Codex
+CLI, or any ACP agent asking before an action its mode does not allow — by putting it to the person
+as a permission request with `source: "harness"` on the agent the harness runs as. Allow once,
+allow for the session where the harness offers it, and deny are the options; a stopped turn
+withdraws the question and the harness is told the ask was cancelled. Every character and count bound is a `MAX_USER_INPUT_*` constant,
 and request and event identities are the module's own.
 
 Each create and settlement transition uses `ctx.inTx`; storage reads and writes the database facade

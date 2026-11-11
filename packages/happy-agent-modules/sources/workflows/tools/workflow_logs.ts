@@ -29,6 +29,7 @@ export function workflowLogsTool(module: WorkflowsModule, agentId: string) {
         reloadable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { input }: WorkflowLogsToolParameters) =>
             await module.logs(ctx, agentId, input),
         toLLM: (page) => [{ type: "text", text: module.formatLogsForModel(page) }],

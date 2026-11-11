@@ -16,6 +16,7 @@ export function deleteStoryTool(stories: StoriesModule, scope: AgentModuleScope)
         returnType: Type.Object({ deleted: Type.Boolean() }),
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { id }) => {
             return { deleted: await stories.deleteOwn(ctx, scope.agent.id, id) };
         },

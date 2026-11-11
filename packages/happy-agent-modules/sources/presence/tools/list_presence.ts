@@ -23,6 +23,7 @@ export function listPresenceTool(presence: PresenceModule) {
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => {
             const presences: PresenceDefinition[] = [...(await presence.listPresences(ctx))];
             return { presences };

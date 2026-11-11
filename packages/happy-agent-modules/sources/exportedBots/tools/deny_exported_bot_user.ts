@@ -31,6 +31,7 @@ export function denyExportedBotUserTool(exportedBots: ExportedBotsModule, acting
         // The same access as approving, but taking access away needs no review.
         requiresAutoOrFullAccess: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: ExportedBotUserInput) =>
             await exportedBots.denyUser(ctx, actingAgentId, input),
         toLLM: (denied) => [

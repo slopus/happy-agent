@@ -579,3 +579,11 @@ renamed for the account the agent ran on.
 A chat UI action sets the default model through `setDefaultModel`, not through the API's route, so
 nothing told clients it changed. Config now calls `onDefaultModelChanged` listeners after the
 write, and the API announces `config.updated` from there for every caller.
+
+## A harness's permission ask reaches the person through user input
+
+Foreign-agent providers are built in config, but asking the person belongs to user input, which
+config cannot depend on. Config therefore exposes `onHarnessPermission`: user input registers its
+asker, and every foreign provider's turn environment calls it with the agent from the context and
+the harness's display name. With no asker registered or no agent in the context, the ask is denied
+rather than allowed, because nobody could have approved it.

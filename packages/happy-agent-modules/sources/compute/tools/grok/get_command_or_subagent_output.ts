@@ -77,6 +77,7 @@ Usage notes:
         // has, so there is nothing here for a reviewer to weigh.
         durable: false,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { task_ids, timeout_ms }) => {
             const taskIds = [...new Set(task_ids.map((taskId) => taskId.trim()))].filter(
                 (taskId) => taskId.length > 0,

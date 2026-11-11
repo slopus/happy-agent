@@ -17,6 +17,7 @@ export function getVoiceSettingsTool(live: LiveModule, agentId: string) {
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => await live.voiceSettingsForAdmin(ctx, agentId),
         toLLM: (result) => [{ type: "text", text: describeVoiceSettings(result) }],
     });

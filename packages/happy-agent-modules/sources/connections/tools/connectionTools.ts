@@ -15,6 +15,7 @@ export function listConnectionsTool(module: ConnectionsModule, agentId: string) 
         returnType: connectionListResponseSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => ({ connections: await module.listForAdmin(ctx, agentId) }),
         toLLM: (result) => [{ type: "text", text: JSON.stringify(result) }],
     });

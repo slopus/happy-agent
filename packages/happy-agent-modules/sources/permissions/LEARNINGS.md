@@ -33,3 +33,15 @@ external destination can be resolved by the user explicitly approving that exact
 data after the risk is explained, or by adding the destination as trusted to their global
 `SECURITY.md`, whose path the auto module supplies from configuration. Unproven outcomes carry no
 such remedy, because nothing judged the destination.
+
+## A foreign harness keeps its own Auto reviewer
+
+Happy's Auto reviewer judged Happy tool calls a foreign harness made over MCP, after the harness's
+own reviewer had already decided them, so one action was reviewed twice by two policies. In Auto,
+Permissions now leaves calls from an agent on a foreign harness to that harness's reviewer and
+never elevates them. Compute decides, the same way it decides which tools the agent gets: Claude
+Code and Codex CLI run on ordinary `claude` and `codex` accounts, so a first version that tested
+the provider kind still reviewed both twice, and a gateway's model ID can look like a harness's
+while running on Happy's own loop. Harness reviewers are more permissive than Happy's (Claude Code's
+classifier allowed a force push and `rm` outside the project); Workspace write is the mode that
+puts every outside action to the person.

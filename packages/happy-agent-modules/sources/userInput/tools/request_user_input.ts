@@ -41,6 +41,7 @@ export function requestUserInputTool(userInput: UserInputModule, agentId: string
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (
             ctx,
             input: RequestUserInputToolParameters,

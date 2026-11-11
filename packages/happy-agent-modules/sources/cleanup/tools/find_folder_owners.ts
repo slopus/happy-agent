@@ -45,6 +45,7 @@ export function findFolderOwnersTool(cleanup: CleanupModule, actingAgentId: stri
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { folder }: FindFolderOwnersInput) =>
             await cleanup.folderOwnersForAgent(ctx, actingAgentId, folder),
         toLLM: (owners) => {

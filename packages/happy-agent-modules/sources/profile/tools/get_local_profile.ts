@@ -16,6 +16,7 @@ export function getLocalProfileTool(module: ProfileModule, actingAgentId: string
         durable: true,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => await module.getLocalProfileForAdmin(ctx, actingAgentId),
         toLLM: (profile) => [{ type: "text", text: JSON.stringify(profile) }],
     });

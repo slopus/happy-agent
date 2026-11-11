@@ -141,6 +141,7 @@ export function peerMessagingTools(
             returnType: peerDebugSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
+            autoReview: "never",
             execute: async (ctx) => await module.debug(ctx, agentId),
             toLLM,
         }),

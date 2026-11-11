@@ -40,6 +40,7 @@ export function loopInTeammateTool(teammates: TeammatesModule, taskId: string, a
         returnType: loopInTeammateResultSchema,
         durable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: LoopInTeammateInput) => {
             const result = await teammates.loopIn(ctx, {
                 taskId,

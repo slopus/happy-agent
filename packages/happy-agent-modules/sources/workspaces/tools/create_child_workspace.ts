@@ -29,6 +29,7 @@ export function createChildWorkspaceTool(workspaces: WorkspacesModule, agentId: 
         durable: true,
         transactional: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, input: CreateChildWorkspaceInput, call) =>
             await workspaces.createChildWorkspace(ctx, agentId, input.name, input.baseRef, call.id),
         toLLM: (workspace) => [

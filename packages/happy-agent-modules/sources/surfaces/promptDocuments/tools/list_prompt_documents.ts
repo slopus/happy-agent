@@ -24,6 +24,7 @@ export function listPromptDocumentsTool(surfaces: SurfacesModule, actingAgentId:
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => await surfaces.listPromptDocuments(ctx, actingAgentId),
         toLLM: (result) => [{ type: "text", text: formatPromptDocuments(result.documents) }],
     });

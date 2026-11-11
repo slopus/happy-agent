@@ -82,6 +82,7 @@ export function claudeBashOutputTool(
         durable: false,
         // Reading back work Happy Agent itself started stays inside the machine the agent already has.
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx, { bash_id, block, timeout }) => {
             const commandId = parseClaudeBashId(bash_id);
             const { released, snapshot } = await readComputeCommand(compute, ctx, {

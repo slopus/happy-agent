@@ -52,6 +52,7 @@ export function listTasksTool(tasks: TasksModule, kv: AgentKV) {
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx: Context, input: ListTasksInput): Promise<TaskPage> => {
             const matching = (await listScope(ctx, tasks, kv, input.scope ?? "all")).filter(
                 (task) => input.status === undefined || task.status === input.status,

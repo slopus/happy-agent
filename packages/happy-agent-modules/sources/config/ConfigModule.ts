@@ -18,12 +18,14 @@ import type {
     AgentModuleHooks,
     AgentProviders,
 } from "@slopus/happy-agent-base";
-import { cuid2Schema } from "@slopus/happy-agent-base";
+import { agentId as contextAgentId, cuid2Schema } from "@slopus/happy-agent-base";
 import {
     CodexProvider,
     CodexSessionCredential,
     GrokProvider,
     GrokSessionCredential,
+    type AcpPermissionAnswer,
+    type AcpPermissionQuestion,
     type AnthropicBedrockTransport,
     type BaseProvider,
     type SessionReasoningEffort,
@@ -42,6 +44,7 @@ import {
 import { parse, stringify, TomlDate, type TomlTable, type TomlValue } from "smol-toml";
 
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
+import type { HarnessPermissionAsker } from "./HarnessPermission.js";
 import { getManagedWorkspacesDirectory } from "../impl/managedWorkspacesDirectory.js";
 import { machinePaths } from "../impl/machinePaths.js";
 import { isUserOriginMetadata } from "../impl/messageOrigin.js";
@@ -1910,6 +1913,7 @@ export class ConfigModule implements AgentModule {
     #instanceId: string | undefined;
     #peerMessaging: PeerMessagingConfig;
     readonly #accountUsageListeners = new Set<(usage: ProviderUsage) => void>();
+    #harnessAsker: HarnessPermissionAsker | undefined;
     #resolvedScripted: ConfigInferenceOverride | undefined;
     #scriptedModelSnapshot: readonly AgentModel[] | undefined;
     #workspacesHome: string | undefined;
@@ -3370,6 +3374,34 @@ export class ConfigModule implements AgentModule {
         return () => this.#signInListeners.delete(listener);
     }
 
+    /**
+     * Put what foreign agents' own permission systems ask to the person with `asker`, the module
+     * that owns asking. Until one is set, such an ask is refused. Returns the function that stops
+     * it.
+     */
+    onHarnessPermission(asker: HarnessPermissionAsker): () => void {
+        this.#harnessAsker = asker;
+        return () => {
+            if (this.#harnessAsker === asker) this.#harnessAsker = undefined;
+        };
+    }
+
+    async #askHarnessPermission(
+        ctx: Context,
+        harnessId: string,
+        question: AcpPermissionQuestion,
+        signal: AbortSignal,
+    ): Promise<AcpPermissionAnswer> {
+        const asker = this.#harnessAsker;
+        const agent = contextAgentId(ctx);
+        if (asker === undefined || agent === undefined) return "deny";
+        return await asker(
+            ctx,
+            { agentId: agent, harnessId, harnessName: this.harnessName(harnessId), ...question },
+            signal,
+        );
+    }
+
     /** Sign-in state is bookkeeping too; a listener that throws never breaks inference. */
     #reportSignIn(providerId: string, signIn: ProviderSignInObservation): void {
         for (const listener of this.#signInListeners) {
@@ -3590,6 +3622,8 @@ export class ConfigModule implements AgentModule {
                     this.#executionObservations,
                     this.#credentialFailures,
                     this.#accountFailures,
+                    (ctx, harnessId, question, signal) =>
+                        this.#askHarnessPermission(ctx, harnessId, question, signal),
                 ),
             },
             this.configuration,
@@ -3662,6 +3696,8 @@ export class ConfigModule implements AgentModule {
                 this.#executionObservations,
                 this.#credentialFailures,
                 this.#accountFailures,
+                (ctx, harnessId, question, signal) =>
+                    this.#askHarnessPermission(ctx, harnessId, question, signal),
             );
             // A test-owned inference registry is already authenticated. Initialize all its
             // accounts as usable, including canonical IDs whose production defaults are off. This

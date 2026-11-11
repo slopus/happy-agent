@@ -198,8 +198,10 @@ entry per question with its options, `multiSelect`, and `allowCustom`, since
 Happy Agent accepts any answer text and not only the labels it offered. A question
 that something outside the agent is asking, such as an MCP server's elicitation,
 also carries `permissionRequest` on the form, `{ source: "mcp_elicitation",
-server, serverTitle }`, so a phone can show it as a permission request from that
-server rather than as the agent's own question. Answering a
+server, serverTitle }` or, for a foreign harness's own permission ask,
+`{ source: "harness", server, serverTitle }`, so a phone can show it as a
+permission request from that server or harness rather than as the agent's own
+question. Answering a
 question anywhere moves it into `completedCommunications` with the answers, so
 another device settles the card it is still showing.
 

@@ -20,6 +20,7 @@ export function findOrphanFoldersTool(cleanup: CleanupModule, actingAgentId: str
         durable: false,
         reloadable: true,
         shouldReviewInAutoMode: () => false,
+        autoReview: "never",
         execute: async (ctx) => await cleanup.orphanFoldersForAgent(ctx, actingAgentId),
         toLLM: ({ orphans, roots, truncated }) => {
             const where = (runnerId: string | undefined) =>
