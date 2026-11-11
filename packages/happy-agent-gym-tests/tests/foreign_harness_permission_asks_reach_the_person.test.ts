@@ -53,12 +53,9 @@ async function gymWithScriptedHarness(): Promise<AgentGym> {
 
 const select = { providerId: "scripted", modelId: MODEL, effort: "medium" };
 
-/** The published client's type predates the `"harness"` source; the wire value is what counts. */
+/** A pending question from a foreign harness's own permission system. */
 function fromHarness(question: Question | null): question is Question {
-    return (
-        question?.status === "pending" &&
-        (question.permissionRequest?.source as string | undefined) === "harness"
-    );
+    return question?.status === "pending" && question.permissionRequest?.source === "harness";
 }
 
 async function pendingQuestion(gym: AgentGym): Promise<Question> {

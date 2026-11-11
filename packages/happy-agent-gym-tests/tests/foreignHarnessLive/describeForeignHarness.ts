@@ -192,8 +192,7 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Whether a foreign harness's own permission system asked `question`. */
 function fromHarness(question: Question): boolean {
-    // The published client's type predates the `"harness"` source; the wire value is what counts.
-    return (question.permissionRequest?.source as string | undefined) === "harness";
+    return question.permissionRequest?.source === "harness";
 }
 
 /** The harness's permission question pending on `agentId`, if any. */

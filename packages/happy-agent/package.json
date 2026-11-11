@@ -51,11 +51,11 @@
     "dependencies": {
         "@sinclair/typebox": "^0.34.49",
         "@slopus/happy-agent-base": "0.0.69",
-        "@slopus/happy-agent-client": "0.0.162",
+        "@slopus/happy-agent-client": "0.0.163",
         "@slopus/happy-agent-compute": "0.1.30",
         "@slopus/happy-agent-modules": "workspace:*",
         "@slopus/happy-agent-supervisor": "0.0.20",
-        "@slopus/happy-providers": "0.0.61",
+        "@slopus/happy-providers": "0.0.62",
         "@steve.kite/stdlib": "0.0.12",
         "ws": "^8.21.1"
     },
