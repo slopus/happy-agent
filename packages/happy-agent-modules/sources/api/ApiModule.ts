@@ -800,6 +800,8 @@ export class ApiModule implements AgentModule {
     /** Created agents awaiting their announcement, each with the mutation its creator answered. */
     readonly #pendingAgentCreations = new Map<string, string | undefined>();
     readonly #announcedTerminalRuns = new Set<string>();
+    /** Per agent, the run History kept open for steering when the agent's loop last settled. */
+    readonly #heldRuns = new Map<string, string>();
     /**
      * Runs the agent loop started, which its settlement announces as finished. The durable
      * fallback for service messages never does: their events may still wait in the queue.
@@ -4073,69 +4075,7 @@ export class ApiModule implements AgentModule {
             return;
         }
         if (event.type === "loop.settled") {
-            this.#runMutations.settle(agentId, stringValue(payload?.["runId"]));
-            // A settled run retries nothing; announce the clear before the settlement's own updates.
-            const cleared = await this.#retryingChange(ctx, agentId, event.type, payload);
-            if (cleared.retrying !== undefined)
-                await this.#appendAgentUpdate(ctx, event, {
-                    ...cleared,
-                    updatedAt: event.occurredAt,
-                });
-            await this.#flushAcceptedMessages(ctx, agentId);
-            for (const [recordId, owner] of this.#announcedExecutionConfigurations) {
-                if (owner === agentId) this.#announcedExecutionConfigurations.delete(recordId);
-            }
-            this.#streamingAssistantBlocks.delete(agentId);
-            this.#streamingDeltaOffsets.delete(agentId);
-            const runId = stringValue(payload?.["runId"]);
-            const run =
-                runId === undefined ? undefined : await this.#history.run(ctx, agentId, runId);
-            if (run === undefined) {
-                await this.#appendAgentUpdate(ctx, event, {
-                    status: "idle",
-                    updatedAt: event.occurredAt,
-                });
-                await this.#refreshParentSubagents(ctx, agentId);
-                return;
-            }
-            if (run.status === "running") {
-                await this.#appendAgentUpdate(ctx, event, {
-                    status: "working",
-                    updatedAt: event.occurredAt,
-                });
-                await this.#refreshParentSubagents(ctx, agentId);
-                return;
-            }
-            const errorText =
-                stringValue(payload?.["error"]) ?? stringValue(payload?.["errorMessage"]);
-            if (errorText !== undefined) {
-                const failure = await this.#history.runFailure(ctx, agentId, run.id);
-                if (failure !== undefined) {
-                    this.#journal.append(
-                        "message.created",
-                        {
-                            agentId,
-                            runId: run.id,
-                            message: messageResource(failure),
-                        },
-                        event.occurredAt,
-                    );
-                }
-            }
-            if (!this.#announcedTerminalRuns.has(run.id)) {
-                boundedAdd(this.#announcedTerminalRuns, run.id, MAX_ANNOUNCED_TERMINAL_RUNS);
-                this.#journal.append(
-                    "run.finished",
-                    { agentId, run: await this.#runResource(ctx, run) },
-                    event.occurredAt,
-                );
-            }
-            await this.#appendAgentUpdate(ctx, event, {
-                status: "idle",
-                updatedAt: event.occurredAt,
-            });
-            this.#scheduleUnreadUpdate(ctx, agentId, run.endedAt ?? event.occurredAt);
-            await this.#refreshParentSubagents(ctx, agentId);
+            await this.#convertLoopSettled(ctx, event, agentId, payload);
             return;
         }
         if (event.type === "agent.metadata-changed") {
@@ -4200,6 +4140,150 @@ export class ApiModule implements AgentModule {
             ...(await this.#retryingChange(ctx, agentId, event.type, payload)),
             updatedAt: event.occurredAt,
         });
+    }
+
+    /**
+     * A stop leaves the agent idle even when no loop was left to stop: a run History still holds
+     * `running` with nothing answering it ends `aborted/abort` and is announced finished. A
+     * manual compaction's run is left to the compaction, which the abort has already cancelled.
+     * The stop itself has already been accepted, so a failure here is logged, not reported.
+     */
+    async #abortDetachedRun(ctx: Context, agentId: string): Promise<void> {
+        try {
+            const running = await this.#history.runningRun(ctx, agentId);
+            if (running === undefined) return;
+            if ((await this.#compactions.get(ctx, running.id)) !== undefined) return;
+            const ended = await this.#history.abortDetachedRun(ctx, agentId, running.id);
+            if (ended === undefined) return;
+            if (!this.#announcedTerminalRuns.has(ended.id)) {
+                boundedAdd(this.#announcedTerminalRuns, ended.id, MAX_ANNOUNCED_TERMINAL_RUNS);
+                this.#journal.append("run.finished", {
+                    agentId,
+                    run: await this.#runResource(ctx, ended),
+                });
+            }
+            // A new agent version, so a client holding the working one refetches it idle.
+            await this.#updateAgentMetadata(ctx, agentId, {});
+        } catch (error: unknown) {
+            ctx.log.warn("The API could not end a run no loop was answering.", { agentId }, error);
+        }
+    }
+
+    /**
+     * Announce a settled loop. The end of a turn is the one thing every client must hear: a run
+     * left `running` in a client's state, or an agent left `working`, is shown as busy until
+     * something else happens to arrive. Everything else the settlement announces — a cleared
+     * retry, accepted messages, the failure row, the run's usage — is therefore optional here,
+     * and a failure reading it is logged rather than allowed to swallow `run.finished` and the
+     * idle update.
+     */
+    async #convertLoopSettled(
+        ctx: Context,
+        event: AgentEvent,
+        agentId: string,
+        payload: Record<string, unknown> | undefined,
+    ): Promise<void> {
+        const optional = async <Result>(
+            step: string,
+            work: () => Promise<Result>,
+        ): Promise<Result | undefined> => {
+            try {
+                return await work();
+            } catch (error: unknown) {
+                ctx.log.warn(
+                    "The API could not announce part of a settled run.",
+                    { agentId, step },
+                    error,
+                );
+                return undefined;
+            }
+        };
+        const runId = stringValue(payload?.["runId"]);
+        this.#runMutations.settle(agentId, runId);
+        // A settled run retries nothing; announce the clear before the settlement's own updates.
+        await optional("retrying", async () => {
+            const cleared = await this.#retryingChange(ctx, agentId, event.type, payload);
+            if (cleared.retrying !== undefined)
+                await this.#appendAgentUpdate(ctx, event, {
+                    ...cleared,
+                    updatedAt: event.occurredAt,
+                });
+        });
+        await optional("accepted messages", () => this.#flushAcceptedMessages(ctx, agentId));
+        for (const [recordId, owner] of this.#announcedExecutionConfigurations) {
+            if (owner === agentId) this.#announcedExecutionConfigurations.delete(recordId);
+        }
+        this.#streamingAssistantBlocks.delete(agentId);
+        this.#streamingDeltaOffsets.delete(agentId);
+        let run =
+            runId === undefined
+                ? undefined
+                : await optional("run", () => this.#history.run(ctx, agentId, runId));
+        if (run?.status === "running") {
+            // History held the run open for a person's steering. The turn that accepts it ends
+            // the run with a boundary; one stopped first ends it in its own settlement, under that
+            // turn's run ID, so the held run is remembered to be announced then.
+            boundedSet(this.#heldRuns, agentId, run.id, MAX_ANNOUNCED_TERMINAL_RUNS);
+            await this.#appendAgentUpdate(ctx, event, {
+                status: "working",
+                updatedAt: event.occurredAt,
+            });
+            await optional("subagents", () => this.#refreshParentSubagents(ctx, agentId));
+            return;
+        }
+        const heldRunId = this.#heldRuns.get(agentId);
+        this.#heldRuns.delete(agentId);
+        if (run === undefined && heldRunId !== undefined) {
+            const held = await optional("held run", () =>
+                this.#history.run(ctx, agentId, heldRunId),
+            );
+            if (held?.status !== "running") run = held;
+        }
+        if (run !== undefined) {
+            const ended = run;
+            const errorText =
+                stringValue(payload?.["error"]) ?? stringValue(payload?.["errorMessage"]);
+            if (errorText !== undefined) {
+                await optional("failure", async () => {
+                    const failure = await this.#history.runFailure(ctx, agentId, ended.id);
+                    if (failure === undefined) return;
+                    this.#journal.append(
+                        "message.created",
+                        { agentId, runId: ended.id, message: messageResource(failure) },
+                        event.occurredAt,
+                    );
+                });
+            }
+            if (!this.#announcedTerminalRuns.has(ended.id)) {
+                boundedAdd(this.#announcedTerminalRuns, ended.id, MAX_ANNOUNCED_TERMINAL_RUNS);
+                const resource = await optional("usage", () => this.#runResource(ctx, ended));
+                // Without its usage the run still ended; its metadata says so with none counted.
+                this.#journal.append(
+                    "run.finished",
+                    {
+                        agentId,
+                        run: resource ?? {
+                            id: ended.id,
+                            status: ended.status,
+                            reason: ended.reason,
+                            startedAt: ended.startedAt,
+                            endedAt: ended.endedAt,
+                            usage: {},
+                            costUsd: null,
+                            ...(ended.kind === undefined ? {} : { kind: ended.kind }),
+                        },
+                    },
+                    event.occurredAt,
+                );
+            }
+        }
+        await this.#appendAgentUpdate(ctx, event, {
+            status: "idle",
+            updatedAt: event.occurredAt,
+        });
+        if (run !== undefined)
+            this.#scheduleUnreadUpdate(ctx, agentId, run.endedAt ?? event.occurredAt);
+        await optional("subagents", () => this.#refreshParentSubagents(ctx, agentId));
     }
 
     async #convertCompactionMessageEvent(
@@ -5077,10 +5161,10 @@ export class ApiModule implements AgentModule {
                     throw new ApiError(409, "conflict", "A different run is active.");
                 }
                 const cursor = this.#journal.cursor();
-                await this.#withMutationId(
-                    body.mutationId,
-                    async () => await this.#abort.abort(ctx, agentId),
-                );
+                await this.#withMutationId(body.mutationId, async () => {
+                    await this.#abort.abort(ctx, agentId);
+                    await this.#abortDetachedRun(ctx, agentId);
+                });
                 sendJson(response, 202, {
                     ...(await this.#focusedAgentResponse(ctx, agentId)),
                     cursor,

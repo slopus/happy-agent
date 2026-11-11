@@ -612,6 +612,12 @@ describe("HistoryModule run history", () => {
                 world.scope,
                 { loopId: "loop-a", settlementId: "settlement-a" },
             );
+            // Agent Base reopens the agent for the steering in the settlement's own commit.
+            await world.historyHooks.afterAgentActivatedTransact?.(
+                world.database.context,
+                world.scope,
+                { restored: false },
+            );
             expect(await world.history.runningRun(world.database.context, "agent-a")).toMatchObject(
                 {
                     id: "message-a",
@@ -635,6 +641,46 @@ describe("HistoryModule run history", () => {
                     status: "running",
                 },
             );
+        } finally {
+            world.database.close();
+        }
+    });
+
+    it("ends a settled run whose pending steering nothing will accept", async () => {
+        const world = await setup("history-runs-stopped-pending-steering");
+        try {
+            await world.history.queuePending(world.database.context, pending("message-a", 100));
+            await acceptBatch(world, [accepted("message-a", "send")]);
+            await finishInference(world, "inference-a", "first answer");
+            await world.history.queuePending(
+                world.database.context,
+                pending("message-b", 200, "steer"),
+            );
+
+            // A stop dropped the turn that would have accepted the steering, so the settlement
+            // reopens nothing and the steering stays queued for the person.
+            await world.historyHooks.afterAgentSettledTransact?.(
+                world.database.context,
+                world.scope,
+                { loopId: "loop-a", settlementId: "settlement-a" },
+            );
+            await world.eventHooks.afterAgentSettledTransact?.(
+                world.database.context,
+                world.scope,
+                { loopId: "loop-a", settlementId: "settlement-a" },
+            );
+
+            expect(await world.history.runningRun(world.database.context, "agent-a")).toBe(
+                undefined,
+            );
+            expect(
+                await world.history.run(world.database.context, "agent-a", "message-a"),
+            ).toMatchObject({ status: "completed", reason: "completed" });
+            expect(
+                (await world.history.pending(world.database.context, "agent-a")).map(
+                    (message) => message.id,
+                ),
+            ).toEqual(["message-b"]);
         } finally {
             world.database.close();
         }
