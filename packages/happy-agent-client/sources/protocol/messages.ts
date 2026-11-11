@@ -1034,7 +1034,14 @@ export type RunStatus = "running" | "completed" | "aborted" | "failed";
 /** Why a run ended; status is the outcome, reason is the cause. */
 export type RunReason = "completed" | "steering" | "abort" | "error";
 
-/** The work an agent did in response to a message. */
+/**
+ * What a run is when it is not a turn of the agent. `standalone` is a run stored already finished,
+ * outside any turn, such as the run of a chat UI attempt record: it emits `run.finished` and never
+ * `run.started`, it never changes whether the agent is working, and it ends no turn.
+ */
+export type RunKind = "standalone";
+
+/** The work an agent did in response to a message, or a run that holds messages outside a turn. */
 export interface Run {
     id: Cuid2;
     status: RunStatus;
@@ -1043,6 +1050,11 @@ export interface Run {
     endedAt: Timestamp | null;
     usage: UsageBreakdown;
     costUsd: number | null;
+    /**
+     * Absent for a turn of the agent; protocol 35 or newer. A client treats a value it does not
+     * know as absent.
+     */
+    kind?: RunKind;
 }
 
 /** One whole history group, with its messages oldest first. */
