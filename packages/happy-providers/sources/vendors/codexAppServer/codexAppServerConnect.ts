@@ -82,6 +82,15 @@ export function codexAppServerConnect(
     };
 }
 
+/**
+ * The most subagent threads remembered per connection. Codex leaves a finished subagent open for
+ * more work, so the oldest are forgotten instead; an ask from one forgotten goes to the session
+ * with a turn running, which is where it almost always belongs.
+ */
+const MAX_SUBAGENT_THREADS = 1_000;
+/** Notifications after which a thread never runs again. */
+const THREAD_ENDS = new Set(["thread/closed", "thread/deleted", "thread/archived"]);
+
 class CodexAppServer implements AcpAgentConnection {
     readonly #client: acp.Client;
     readonly #onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
@@ -355,6 +364,7 @@ class CodexAppServer implements AcpAgentConnection {
         // Taken on arrival rather than in order, because the subagent may ask before its start
         // notification has been handled.
         this.#noteSubagent(message.params);
+        if (THREAD_ENDS.has(message.method)) this.#forgetSubagents(message.params);
         // In arrival order: a turn must not end before the updates Codex sent ahead of its end.
         const params = message.params as Record<string, unknown>;
         this.#notifications = this.#notifications
@@ -432,7 +442,26 @@ class CodexAppServer implements AcpAgentConnection {
             item?.type === "subAgentActivity" &&
             typeof item.agentThreadId === "string"
         ) {
+            this.#parents.delete(item.agentThreadId);
             this.#parents.set(item.agentThreadId, threadId);
+            if (this.#parents.size > MAX_SUBAGENT_THREADS) {
+                this.#parents.delete(this.#parents.keys().next().value!);
+            }
+        }
+    }
+
+    /**
+     * Forget a thread that ended and every subagent thread under it. A subagent that only finished
+     * its turn stays known: its parent may give it more work.
+     */
+    #forgetSubagents(params: unknown): void {
+        const { threadId } = (params ?? {}) as { threadId?: unknown };
+        if (typeof threadId !== "string") return;
+        const ended = [threadId];
+        for (let index = 0; index < ended.length; index++) {
+            const parent = ended[index]!;
+            this.#parents.delete(parent);
+            for (const [child, of] of this.#parents) if (of === parent) ended.push(child);
         }
     }
 
