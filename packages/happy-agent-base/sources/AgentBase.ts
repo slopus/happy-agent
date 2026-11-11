@@ -5553,6 +5553,7 @@ const SESSION_TOOL_FIELDS = [
     "searchKeywords",
     "server",
     "grammar",
+    "autoReview",
 ] as const;
 
 /** The provider-facing configuration of a session: what recreating it would hand the provider. */

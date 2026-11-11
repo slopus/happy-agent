@@ -116,6 +116,11 @@ export interface AgentTool<Args extends TSchema = TSchema, Result extends TSchem
      */
     readonly shouldReviewInAutoMode: AgentToolAutoPermissionPredicate<Static<Args>>;
     /**
+     * `"never"` declares that `shouldReviewInAutoMode` is false for every invocation, so a foreign
+     * agent that gates tool calls with its own permission system may run this tool without asking.
+     */
+    readonly autoReview?: "never";
+    /**
      * Whether an approved invocation must temporarily run in Full access. Review and elevation
      * are deliberately separate decisions; omission means the current sandbox remains active.
      */
