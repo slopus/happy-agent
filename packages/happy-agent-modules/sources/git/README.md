@@ -106,7 +106,9 @@ Worktree deletion and adoption rely on both top-level and shared common-director
 refuse symbolic-link destinations. `removeWorktree` with `preserveChanges` first commits uncommitted
 and untracked work (and a detached HEAD no ref contains) to the named `refs/happy/archived/` ref
 through a temporary index, creating the ref only if it is absent, and does not delete the folder
-when that fails. A clone runs in a private staging directory and is renamed into
+when that fails. Work larger than the request's `maximumBytes`, measured by a stat of each changed
+path before anything is written, is reported `too_large` and the folder is kept. Afterwards, saves
+under `refs/happy/archived/` whose commit is older than `retentionMs` are deleted. A clone runs in a private staging directory and is renamed into
 place only after its identity is proved, so a failed or interrupted clone never exposes a partial
 project.
 

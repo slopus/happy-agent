@@ -140,8 +140,11 @@ anything the branch does not hold — uncommitted and untracked files (not ignor
 detached HEAD no ref contains — is committed on top of HEAD to `refs/happy/archived/<workspace ID>`
 in the project's repository, through a temporary index so the branch, index, and stashes are
 untouched. The ref is only ever created, never replaced, so a retry after a half-finished removal
-keeps the first save. If saving fails, the folder stays and the archive call retries. What was saved
-is logged, and `archive_workspace` and `archive_subtask` name the ref and how to recover it.
+keeps the first save. If saving fails, the folder stays and the archive call retries. Work over
+`ARCHIVED_WORK_MAXIMUM_BYTES` (100 MB) is not saved: the folder is kept and the archive completes.
+Each archive then deletes saves in that repository older than `ARCHIVED_WORK_RETENTION_DAYS` (30),
+by the save commit's date. What happened is logged, and `archive_workspace` and `archive_subtask`
+state the ref, the retention, the size limit, and how to recover, all from those constants.
 
 `purge(ctx, workspaceId)` deletes an archived workspace for good, for an admin's permanent
 deletion. It refuses one still `archiving`, because that archival is still stopping its agents, and

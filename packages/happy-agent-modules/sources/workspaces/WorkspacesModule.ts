@@ -32,7 +32,7 @@ import {
     loadWorkspaceFolderSettings,
     type WorkspaceFolderSettings,
 } from "./impl/loadWorkspaceFolderSettings.js";
-import { archivedWorkspaceRef } from "./impl/archivedWorkspaceRef.js";
+import { archivedWorkspaceRef, describeArchivedWork } from "./impl/archivedWorkspaceRef.js";
 import { deleteWorkspaceBranch } from "./impl/deleteWorkspaceBranch.js";
 import { removeWorkspaceDirectory } from "./impl/removeWorkspaceDirectory.js";
 import { runWorkspaceSetupCommands } from "./impl/runWorkspaceSetupCommands.js";
@@ -1686,7 +1686,7 @@ export class WorkspacesModule implements AgentModule {
                             workspace,
                         }),
                 );
-                if (preserved !== undefined) {
+                if (preserved?.outcome === "saved") {
                     retryCtx.log.info(
                         {
                             changedPaths: preserved.changedPaths,
@@ -1696,6 +1696,16 @@ export class WorkspacesModule implements AgentModule {
                             workspaceId,
                         },
                         "Saved the archived workspace's uncommitted work to a Git ref before removing its worktree.",
+                    );
+                } else if (preserved?.outcome === "too_large") {
+                    retryCtx.log.warn(
+                        {
+                            bytes: preserved.bytes,
+                            changedPaths: preserved.changedPaths,
+                            path: workspace.path,
+                            workspaceId,
+                        },
+                        "Kept the archived workspace's worktree folder because its uncommitted work is too large to save.",
                     );
                 }
             },
@@ -2653,6 +2663,14 @@ export class WorkspacesModule implements AgentModule {
             throw new Error("Workspace operation output exceeds its model-output bound.");
         }
         return output;
+    }
+
+    /**
+     * What archiving does with a worktree's uncommitted work: where it is saved, for how long, how
+     * to recover it, and when the folder is kept instead. Names the exact ref for one workspace.
+     */
+    archivedWorkNotice(workspaceId?: string): string {
+        return describeArchivedWork(workspaceId);
     }
 
     formatWorkspaceForModel(workspace: Workspace): string {

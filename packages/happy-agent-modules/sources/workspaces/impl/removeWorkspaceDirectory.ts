@@ -5,7 +5,11 @@ import { computePermissions, type Compute } from "@slopus/happy-agent-compute";
 import type { GitModule, GitWorktreePreservation } from "../../git/index.js";
 import type { Project } from "../../projects/index.js";
 import type { Workspace } from "../Workspace.js";
-import { archivedWorkspaceRef } from "./archivedWorkspaceRef.js";
+import {
+    ARCHIVED_WORK_MAXIMUM_BYTES,
+    ARCHIVED_WORK_RETENTION_MS,
+    archivedWorkspaceRef,
+} from "./archivedWorkspaceRef.js";
 
 const VALID_STORAGE_KEY = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u;
 const PRODUCT = computePermissions("full_access");
@@ -21,8 +25,10 @@ const PRODUCT = computePermissions("full_access");
  * the shared Git directory is gone too — otherwise something else still owns this checkout.
  *
  * Archival passes `preserveChanges`: before a worktree folder is deleted, whatever its branch does
- * not already hold is committed to `archivedWorkspaceRef` in the project's repository, and the
- * answer says what was saved. Purging and clearing a half-made checkout delete outright.
+ * not already hold is committed to `archivedWorkspaceRef` in the project's repository, or the
+ * folder is kept when that work is too large to save, and saves past their retention are expired.
+ * The answer says what happened to the work. Purging and clearing a half-made checkout delete
+ * outright.
  */
 export async function removeWorkspaceDirectory(options: {
     git: GitModule;
@@ -93,8 +99,10 @@ export async function removeWorkspaceDirectory(options: {
             ...(options.preserveChanges
                 ? {
                       preserveChanges: {
+                          maximumBytes: ARCHIVED_WORK_MAXIMUM_BYTES,
                           message: preservationMessage(workspace),
                           ref: archivedWorkspaceRef(workspace.id),
+                          retentionMs: ARCHIVED_WORK_RETENTION_MS,
                       },
                   }
                 : {}),

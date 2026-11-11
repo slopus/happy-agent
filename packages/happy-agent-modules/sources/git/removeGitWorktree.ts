@@ -1,22 +1,31 @@
 import { lstat } from "node:fs/promises";
 
 import { runGitCommandOrThrow, type GitCommandRunner } from "./GitCommandRunner.js";
+import { localGitWorkingFiles, type GitWorkingFiles } from "./gitWorkingFiles.js";
 import { normalizeGitPath } from "./normalizeGitPath.js";
 import {
+    expireArchivedGitWork,
     preserveGitWorktreeChanges,
     type GitWorktreePreservation,
+    type GitWorktreePreservationRequest,
 } from "./preserveGitWorktreeChanges.js";
 import { readGitCommonDir } from "./readGitCommonDir.js";
 import { readGitTopLevel } from "./readGitTopLevel.js";
 import { WORKTREE_CHECKOUT_TIMEOUT_MS } from "./worktreeCheckoutTimeout.js";
 
+/**
+ * Retires a worktree. With `preserveChanges`, the work its branch does not hold is saved first;
+ * work too large to save keeps the folder where it is, and old saves are expired afterwards.
+ */
 export async function removeGitWorktree(options: {
     expectedCommonDir: string;
+    /** Measure files on the machine the workspace lives on. Defaults to this one. */
+    files?: Pick<GitWorkingFiles, "lstatMany" | "paths">;
     git: GitCommandRunner;
     /** Inspect a path on the machine the workspace lives on. Defaults to this one. */
     inspect?: (path: string) => Promise<{ isDirectory: boolean; isSymbolicLink: boolean }>;
-    /** Save uncommitted work to this ref before the folder is deleted. */
-    preserveChanges?: { message: string; ref: string };
+    /** Save uncommitted work before the folder is deleted. */
+    preserveChanges?: GitWorktreePreservationRequest;
     projectPath: string;
     removeDirectory: boolean;
     workspacePath: string;
@@ -50,18 +59,28 @@ export async function removeGitWorktree(options: {
             options.preserveChanges === undefined
                 ? undefined
                 : await preserveGitWorktreeChanges({
+                      files: options.files ?? localGitWorkingFiles,
                       git: options.git,
-                      message: options.preserveChanges.message,
-                      ref: options.preserveChanges.ref,
+                      request: options.preserveChanges,
                       workspacePath: options.workspacePath,
                   });
-        await runGitCommandOrThrow(
-            options.git,
-            options.projectPath,
-            ["worktree", "remove", "--force", "--force", options.workspacePath],
-            { timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS },
-        );
+        if (preserved?.outcome !== "too_large") {
+            await runGitCommandOrThrow(
+                options.git,
+                options.projectPath,
+                ["worktree", "remove", "--force", "--force", options.workspacePath],
+                { timeoutMs: WORKTREE_CHECKOUT_TIMEOUT_MS },
+            );
+        }
     }
     await runGitCommandOrThrow(options.git, options.projectPath, ["worktree", "prune"]);
+    if (options.preserveChanges !== undefined) {
+        await expireArchivedGitWork({
+            git: options.git,
+            now: Date.now(),
+            projectPath: options.projectPath,
+            retentionMs: options.preserveChanges.retentionMs,
+        });
+    }
     return preserved;
 }

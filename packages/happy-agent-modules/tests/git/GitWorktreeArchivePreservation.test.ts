@@ -15,7 +15,13 @@ import {
 } from "./helpers.js";
 
 const REF = "refs/happy/archived/workspace-1";
-const SAVE = { message: "Uncommitted work from archived workspace", ref: REF };
+const DAY_MS = 24 * 60 * 60 * 1_000;
+const SAVE = {
+    maximumBytes: 1024 * 1024,
+    message: "Uncommitted work from archived workspace",
+    ref: REF,
+    retentionMs: 30 * DAY_MS,
+};
 
 const modules: GitModule[] = [];
 afterEach(() => {
@@ -40,10 +46,10 @@ async function projectWithWorktree() {
         projectPath: project,
         workspacePath,
     });
-    const remove = async () =>
+    const remove = async (request: typeof SAVE = SAVE) =>
         await module.removeWorktree({
             expectedCommonDir: commonDir,
-            preserveChanges: SAVE,
+            preserveChanges: request,
             projectPath: project,
             removeDirectory: true,
             workspacePath,
@@ -86,11 +92,12 @@ describe("removing a worktree on archive", () => {
 
         const preserved = await remove();
 
-        expect(preserved).toMatchObject({ changedPaths: 4, ref: REF });
+        expect(preserved).toMatchObject({ outcome: "saved", changedPaths: 4, ref: REF });
+        if (preserved?.outcome !== "saved") throw new Error("Nothing was saved.");
         expect(existsSync(workspacePath)).toBe(false);
         await git(project, ["worktree", "prune"]);
         await git(project, ["gc", "--quiet", "--prune=now"]);
-        expect(await git(project, ["rev-parse", REF])).toBe(preserved?.commit);
+        expect(await git(project, ["rev-parse", REF])).toBe(preserved.commit);
         expect(await git(project, ["rev-parse", `${REF}^`])).toBe(head);
         expect(await git(project, ["show", `${REF}:tracked.txt`])).toBe("two");
         expect(await git(project, ["show", `${REF}:staged.txt`])).toBe("staged");
@@ -119,7 +126,7 @@ describe("removing a worktree on archive", () => {
         await git(project, ["update-ref", REF, first]);
         await writeFile(join(workspacePath, "untracked.txt"), "half deleted\n");
 
-        await expect(remove()).resolves.toEqual({ commit: first, ref: REF });
+        await expect(remove()).resolves.toEqual({ outcome: "saved", commit: first, ref: REF });
 
         expect(await git(project, ["rev-parse", REF])).toBe(first);
         expect(existsSync(workspacePath)).toBe(false);
@@ -130,9 +137,49 @@ describe("removing a worktree on archive", () => {
         await git(workspacePath, ["checkout", "--quiet", "--detach"]);
         const detached = await commitFile(workspacePath, "detached.txt", "detached\n");
 
-        await expect(remove()).resolves.toEqual({ changedPaths: 0, commit: detached, ref: REF });
+        await expect(remove()).resolves.toMatchObject({
+            outcome: "saved",
+            changedPaths: 0,
+            ref: REF,
+        });
 
-        expect(await git(project, ["rev-parse", REF])).toBe(detached);
+        expect(await git(project, ["rev-parse", `${REF}^`])).toBe(detached);
+    });
+
+    it("keeps the folder and saves nothing when the work is larger than the limit", async () => {
+        const { commonDir, module, project, remove, workspacePath } = await projectWithWorktree();
+        await writeFile(join(workspacePath, "small.txt"), "small\n");
+        await writeFile(join(workspacePath, "large.bin"), Buffer.alloc(4096));
+
+        await expect(remove({ ...SAVE, maximumBytes: 2048 })).resolves.toEqual({
+            outcome: "too_large",
+            bytes: 4096 + 6,
+            changedPaths: 2,
+        });
+
+        expect(existsSync(join(workspacePath, "large.bin"))).toBe(true);
+        await expect(module.isWorktreeAt({ commonDir, path: workspacePath })).resolves.toBe(true);
+        expect(await refExists(project, REF)).toBe(false);
+    });
+
+    it("expires saves older than the retention and keeps fresh ones", async () => {
+        const { project, remove } = await projectWithWorktree();
+        const save = async (name: string, ageDays: number) => {
+            const seconds = Math.floor((Date.now() - ageDays * DAY_MS) / 1_000);
+            const result = await gitRunner.run(
+                project,
+                ["commit-tree", "-p", "HEAD", "-m", name, "HEAD^{tree}"],
+                { environment: { GIT_COMMITTER_DATE: `@${String(seconds)} +0000` } },
+            );
+            await git(project, ["update-ref", `refs/happy/archived/${name}`, result.stdout.trim()]);
+        };
+        await save("expired", 31);
+        await save("fresh", 29);
+
+        await expect(remove()).resolves.toBeUndefined();
+
+        expect(await refExists(project, "refs/happy/archived/expired")).toBe(false);
+        expect(await refExists(project, "refs/happy/archived/fresh")).toBe(true);
     });
 
     it("deletes outright when no save is asked for", async () => {

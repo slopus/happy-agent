@@ -31,7 +31,10 @@ import { listGitWorkingTreeFiles, type GitWorkingTreeFiles } from "./listGitWork
 import { normalizeFuturePath } from "./normalizeFuturePath.js";
 import { normalizeProjectCwd } from "./normalizeProjectCwd.js";
 import { parseHostingRepository, type HostingRepository } from "./parseHostingRepository.js";
-import { type GitWorktreePreservation } from "./preserveGitWorktreeChanges.js";
+import {
+    type GitWorktreePreservation,
+    type GitWorktreePreservationRequest,
+} from "./preserveGitWorktreeChanges.js";
 import { probeGitRepository, type GitRepositoryProbe } from "./probeGitRepository.js";
 import { readGitCommonDir } from "./readGitCommonDir.js";
 import { readGitFileAtRevision, type GitRevisionFile } from "./readGitFileAtRevision.js";
@@ -526,12 +529,14 @@ export class GitModule implements AgentModule {
      * worktree and shares the repository the caller named. With `preserveChanges`, uncommitted
      * and untracked work (and a detached HEAD no ref contains) is first committed to that ref in
      * the shared repository, so the ref outlives the folder; removal does not proceed when that
-     * save fails. The answer says what was saved, if anything.
+     * save fails, and the folder is kept when the work is larger than the request allows. Saves
+     * older than the request's retention are then deleted. The answer says what happened to the
+     * work, if there was any.
      */
     async removeWorktree(
         options: GitPlacement & {
             readonly expectedCommonDir: string;
-            readonly preserveChanges?: { readonly message: string; readonly ref: string };
+            readonly preserveChanges?: GitWorktreePreservationRequest;
             readonly projectPath: string;
             readonly removeDirectory: boolean;
             readonly workspacePath: string;
@@ -540,6 +545,7 @@ export class GitModule implements AgentModule {
         const machine = this.#machine(options.runnerId);
         const preserved = await removeGitWorktree({
             expectedCommonDir: options.expectedCommonDir,
+            files: machine.files,
             git: machine.foreground,
             ...(this.#native(options.runnerId)
                 ? {}

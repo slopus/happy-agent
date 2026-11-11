@@ -139,8 +139,11 @@ archival is never rolled back because a folder could not be deleted.
 Removing a worktree never discards work. Its branch is kept, and before the
 folder is deleted any uncommitted or untracked work in it (ignored files
 excepted) is saved as a commit on top of the branch at
-`refs/happy/archived/<workspace ID>` in the project's repository. To get it
-back:
+`refs/happy/archived/<workspace ID>` in the project's repository. Saves are
+kept for 30 days; each later archive in that repository deletes older ones.
+When the work is larger than 100 MB nothing is saved and the folder stays on
+disk instead, so delete it yourself once you have what you need. To get saved
+work back:
 
 ```sh
 git for-each-ref refs/happy/archived            # list saved work
@@ -161,7 +164,8 @@ workspaces around "for later": a later task gets a fresh one.
 
 `archive_workspace` is reviewed in Auto mode, and the review text names the
 workspace, says its managed worktree will be removed, and says uncommitted work
-is saved to a Git ref first.
+is saved to a Git ref for 30 days first, or the folder kept when it is over
+100 MB.
 
 ## Working inside a workspace
 

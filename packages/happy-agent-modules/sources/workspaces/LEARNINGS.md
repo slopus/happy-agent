@@ -179,6 +179,14 @@ halfway keeps the first, complete save. A failed save leaves the folder in place
 call retries. The tools and the log name the ref; purge deletes it with the branch, and clearing
 a half-made checkout saves nothing.
 
+Kirill asked how these refs ever get cleaned up; in a registered repository they never did, and
+each one pins its objects against `gc`. Saves now last 30 days: every archive deletes the
+repository's saves whose commit is older, and a save is always a fresh commit so its date is when
+it was saved. Work over 100 MB is not saved at all, because it would sit in the object store for
+the whole retention and slow the archive; that folder is kept instead, which is the same
+no-save-no-delete rule. Both numbers are constants beside `archivedWorkspaceRef`, and the tool text
+is built from them so the stated deadline cannot drift.
+
 ## Permanent deletion follows archival, not the keep settings
 
 Admins asked for deletion that really removes folders, conversations, and branches. `purge` runs

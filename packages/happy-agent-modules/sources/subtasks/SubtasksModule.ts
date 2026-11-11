@@ -498,6 +498,11 @@ export class SubtasksModule implements AgentModule {
         });
     }
 
+    /** What archiving a workspace-bound subtask does with the uncommitted work in its worktree. */
+    archivedWorkNotice(): string {
+        return this.#workspaces.archivedWorkNotice();
+    }
+
     async archive(
         ctx: Context,
         actingAgentId: string,
