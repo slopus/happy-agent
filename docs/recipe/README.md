@@ -137,7 +137,7 @@ managed settings that preset the server in the apps.
 ## Reporting bugs
 
 Read [Report a Happy bug](report-bug.md) when the user wants to report a problem with Happy,
-including Happy Desktop's "Start a report". Thank them, hand the work to a subtask when the chat
-was doing something else, gather only what is missing, keep secrets out, and let them choose
+including Happy Desktop's "Troubleshoot" button. Thank them, hand the work to a subtask when the
+chat was doing something else, gather only what is missing, keep secrets out, and let them choose
 between a well-written issue and a fix. Offer GitHub, X, and Discord links, and publish nothing
 without their explicit OK.

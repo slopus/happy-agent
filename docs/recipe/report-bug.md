@@ -1,9 +1,9 @@
 # Report a Happy bug
 
-Use this recipe when the user wants to report a problem with Happy. Happy Desktop's "Start a
-report" adds a template to the open chat's draft, or starts a new task with it when no chat is
-open: "What happened", "Expected", an optional screenshot, and a "Context" line with the desktop
-version, OS, and agent or chat ID when known.
+Use this recipe when the user wants to report a problem with Happy. Happy Desktop's
+"Troubleshoot" button adds a template to the open chat's draft, or starts a new task with it when
+no chat is open: "What happened", "Expected", an optional screenshot, and a "Context" line with the
+desktop version, OS, and agent or chat ID when known.
 
 ## 1. Thank the user and keep their chat on track
 
