@@ -133,3 +133,10 @@ Read [Put a team server behind an SSO load balancer](edge-sso-load-balancer.md) 
 sits behind an HTTPS load balancer or gateway that enforces sign-in itself. It covers the paths
 that bypass edge authentication, idle timeouts, WebSocket tunnels instead of `CONNECT`, and the
 managed settings that preset the server in the apps.
+
+## Reporting bugs
+
+Read [Report a Happy bug](report-bug.md) when the user wants to report a problem with Happy,
+including every task opened from Happy Desktop's bug button. Thank them, gather what they have not
+already written, keep secrets out, and let them choose between a well-written issue and a fix.
+Offer GitHub, X, and Discord links, and publish nothing without their explicit OK.
