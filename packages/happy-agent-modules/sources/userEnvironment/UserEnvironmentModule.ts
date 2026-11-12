@@ -8,7 +8,7 @@ import type {
 import type { SessionSystemMessage } from "@slopus/happy-providers";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import type { Context } from "@steve.kite/stdlib";
+import { afterCommit, type Context } from "@steve.kite/stdlib";
 
 import type { TasksModule } from "../tasks/index.js";
 import { TeamAuthenticationError, type TeamModule, teamUser } from "../team/index.js";
@@ -25,6 +25,7 @@ import {
     userDeviceIdSchema,
     userEnvironmentReportSchema,
     type StoredUserEnvironment,
+    type UserEnvironmentListener,
     type UserEnvironmentOwner,
     type UserEnvironmentReport,
     type UserEnvironmentReportResult,
@@ -64,6 +65,7 @@ export class UserEnvironmentModule implements AgentModule {
 
     readonly #team: TeamModule;
     readonly #tasks: TasksModule;
+    readonly #listeners = new Set<UserEnvironmentListener>();
     #agents: AgentSystemRef | undefined;
 
     constructor(team: TeamModule, tasks: TasksModule) {
@@ -107,8 +109,11 @@ export class UserEnvironmentModule implements AgentModule {
             const { deviceId } = report;
             const stored = await queryUserDeviceEnvironment(txCtx, owner, deviceId);
             const environment = mergeUserEnvironment(stored?.environment, report);
-            const same = stored !== undefined && Value.Equal(stored.environment, environment);
             const kind = report.deviceKind ?? stored?.deviceKind;
+            const same =
+                stored !== undefined &&
+                stored.deviceKind === kind &&
+                Value.Equal(stored.environment, environment);
             const result: StoredUserEnvironment = {
                 deviceId,
                 ...(kind === undefined ? {} : { deviceKind: kind }),
@@ -117,12 +122,33 @@ export class UserEnvironmentModule implements AgentModule {
                 reportedAt: now,
             };
             await saveUserDeviceEnvironment(txCtx, owner, result, now - USER_DEVICE_STALE_AFTER_MS);
+            const event = { owner, device: structuredClone(result) };
+            afterCommit(txCtx, async (eventCtx) => {
+                for (const listener of Array.from(this.#listeners)) {
+                    try {
+                        await listener(eventCtx, event);
+                    } catch (error: unknown) {
+                        eventCtx.log.error("A user environment subscriber failed.", {}, error);
+                    }
+                }
+            });
             const changed = changedAspects(
                 toldEnvironment(stored?.environment ?? {}),
                 toldEnvironment(environment),
             );
             return { ...result, changed };
         });
+    }
+
+    /**
+     * Watch every accepted report after its transaction commits; call the returned function to
+     * stop. A failing listener is logged and cannot undo the report.
+     */
+    onEvent(listener: UserEnvironmentListener): () => void {
+        this.#listeners.add(listener);
+        return () => {
+            this.#listeners.delete(listener);
+        };
     }
 
     async #notices(

@@ -9,9 +9,10 @@ import { UserEnvironmentError } from "../UserEnvironmentError.js";
 
 /**
  * One device's environment after its report: every field the report carries replaces the stored
- * one, and every field it leaves out keeps it. The device's identity and kind are not part of it. Languages are stored in canonical BCP 47 form. A time zone that
- * names the stored zone by another spelling or alias keeps the stored name, because ICU's
- * canonical names include legacy aliases such as `Asia/Calcutta`.
+ * one, and every field it leaves out keeps it. The device's identity and kind are not part of it.
+ * Languages are stored in canonical BCP 47 form and time zones in canonical letter case. A time
+ * zone naming the stored zone by a link, such as `Asia/Calcutta` for `Asia/Kolkata`, keeps the
+ * stored name.
  */
 export function mergeUserEnvironment(
     stored: UserEnvironment | undefined,
@@ -34,7 +35,9 @@ export function mergeUserEnvironment(
         const canonical = canonicalTimeZone(timeZone);
         const kept = stored?.timeZone;
         merged.timeZone =
-            kept !== undefined && canonicalTimeZone(kept) === canonical ? kept : timeZone;
+            kept !== undefined && canonicalTimeZone(kept) === canonical
+                ? kept
+                : spelledTimeZone(timeZone);
     }
     if (locale !== undefined) merged.locale = canonicalLanguage(locale);
     if (languages !== undefined) merged.languages = languages.map(canonicalLanguage);
@@ -77,6 +80,28 @@ const TIME_ZONE_LINKS: Readonly<Record<string, string>> = {
     Universal: "UTC",
     Zulu: "UTC",
 };
+
+/**
+ * The zone's name in its canonical letter case, `europe/berlin` as `Europe/Berlin`. Only the case
+ * changes: Node's ICU would turn `Asia/Kolkata` into its legacy name `Asia/Calcutta`, so a name the
+ * runtime resolves to a different zone keeps the name the client sent.
+ */
+function spelledTimeZone(timeZone: string): string {
+    const lower = timeZone.toLowerCase();
+    const known = KNOWN_TIME_ZONES.get(lower);
+    if (known !== undefined) return known;
+    const resolved = resolvedTimeZone(timeZone);
+    return resolved.toLowerCase() === lower ? resolved : timeZone;
+}
+
+/** Every zone name the runtime lists, and both sides of the link table, by lower case. */
+const KNOWN_TIME_ZONES: ReadonlyMap<string, string> = new Map(
+    [
+        ...Intl.supportedValuesOf("timeZone"),
+        ...Object.keys(TIME_ZONE_LINKS),
+        ...Object.values(TIME_ZONE_LINKS),
+    ].map((name) => [name.toLowerCase(), name]),
+);
 
 /** One name for a zone however it was spelled, used only to compare two names. */
 function canonicalTimeZone(timeZone: string): string {

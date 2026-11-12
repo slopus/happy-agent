@@ -4,7 +4,9 @@ import {
     clientMetadataSchema,
     messageModeSchema,
     quickReplySchema,
+    reportEnvironmentRequestSchema,
     toolCallRequestBlockSchema,
+    userDeviceIdSchema,
 } from "@slopus/happy-agent-client";
 
 export {
@@ -227,6 +229,8 @@ export const messageSendBodySchema = Type.Object(
     {
         clientMetadata: Type.Optional(clientMetadataSchema),
         content: Type.Optional(messageSendContentSchema),
+        /** The sending device, as reported to `PUT /v0/environment`. */
+        deviceId: Type.Optional(userDeviceIdSchema),
         delivery: Type.Optional(Type.Union([Type.Literal("queue"), Type.Literal("steer")])),
         id: Type.Optional(apiIdSchema),
         mode: requestedAgentModeSchema,
@@ -337,6 +341,18 @@ export const userSettingBodySchema = Type.Object(
         mutationId: Type.Optional(mutationIdSchema),
         value: userSettingValueSchema,
         updatedAt: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+    },
+    { additionalProperties: false },
+);
+
+/**
+ * `PUT /v0/environment`: the client's report, closed so an unknown field is refused, with the
+ * daemon's bound on `mutationId` as on every other write.
+ */
+export const environmentReportBodySchema = Type.Object(
+    {
+        ...reportEnvironmentRequestSchema.properties,
+        mutationId: Type.Optional(mutationIdSchema),
     },
     { additionalProperties: false },
 );
