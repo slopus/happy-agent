@@ -43,6 +43,39 @@ describe("openHappyAgentDatabase", () => {
         }
     });
 
+    it("keeps its connection settings on the connection that serves later work", async () => {
+        const directory = await createTestDirectory();
+        const opened = await openHappyAgentDatabase(join(directory, "agent.sqlite"));
+        try {
+            // Settings are per connection, so read them back after a transaction has borrowed
+            // and returned the pooled connection.
+            await opened.database.transaction(async (tx) => {
+                await tx.run(sql`CREATE TABLE settings_probe (value TEXT)`);
+            });
+            const read = async (name: string): Promise<unknown> => {
+                const [row] = await opened.database.all<Record<string, unknown>>(
+                    sql.raw(`PRAGMA ${name}`),
+                );
+                return Object.values(row ?? {})[0];
+            };
+            expect({
+                cacheSize: await read("cache_size"),
+                foreignKeys: await read("foreign_keys"),
+                journalMode: await read("journal_mode"),
+                journalSizeLimit: await read("journal_size_limit"),
+                synchronous: await read("synchronous"),
+            }).toEqual({
+                cacheSize: -131_072,
+                foreignKeys: 1,
+                journalMode: "wal",
+                journalSizeLimit: 67_108_864,
+                synchronous: 1,
+            });
+        } finally {
+            await opened.close();
+        }
+    });
+
     it("rejects a second connection until the process owner closes", async () => {
         const directory = await createTestDirectory();
         const path = join(directory, "agent.sqlite");

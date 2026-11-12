@@ -105,9 +105,23 @@ function serializeDatabaseAccess(client: Client, database: LibSQLDatabase): void
     });
 }
 
+/**
+ * Connection settings. These are per connection, so they hold only while the serialized queue
+ * keeps libSQL's pool at its one connection.
+ *
+ * - `synchronous = NORMAL`: in WAL mode a commit no longer waits for an fsync; the WAL is synced
+ *   at each checkpoint. An application crash loses nothing; an OS crash or power loss can roll
+ *   back the last commits since the previous checkpoint, never corrupt the database.
+ * - `cache_size = -131072`: 128 MiB of page cache, grown only as pages are read, so a large
+ *   conversation that is read repeatedly stays in memory instead of being re-read page by page.
+ * - `journal_size_limit`: truncates the WAL back to 64 MiB after a checkpoint resets it, so one
+ *   long reader or large transaction does not leave a gigabyte-sized WAL behind.
+ */
 async function configure(client: Client): Promise<void> {
     await client.execute("PRAGMA journal_mode = WAL");
-    await client.execute("PRAGMA synchronous = FULL");
+    await client.execute("PRAGMA synchronous = NORMAL");
+    await client.execute("PRAGMA cache_size = -131072");
+    await client.execute("PRAGMA journal_size_limit = 67108864");
     await client.execute("PRAGMA foreign_keys = ON");
     await client.execute("PRAGMA busy_timeout = 250");
     await awaitCrashRecovery(client);

@@ -58,3 +58,19 @@ does not know, in a module that build has. A change to stored data that an older
 misread, such as a new document format, must add a migration to the module that owns that data,
 even an empty marker. Otherwise the older release opens the data and fails later, while it is
 running. Fields that older code ignores need no migration, and neither does a new module.
+
+## Commits do not wait for an fsync
+
+With `synchronous = FULL`, every commit to the daemon's database waited for an fsync on the JS
+thread, about 1.8 ms each on the host's NVMe and seconds on a saturated disk. A 30-turn gym run
+with five tool calls a turn took 22 s instead of 8 s, and its event-loop lag p99 was 137 ms
+instead of 46 ms. The daemon now uses `synchronous = NORMAL` in WAL mode: a daemon crash loses
+nothing, and an OS crash or power loss can lose only the commits since the last checkpoint, never
+consistency.
+
+It also keeps a 128 MiB page cache, enough that rereading a large conversation is served from
+memory: a 34 MB history page read fell from 17 ms to 4 ms, where 64 MiB was too small to help. The
+WAL file is truncated to 64 MiB after checkpoints. `mmap_size` was rejected: this libSQL build
+maps at most the first 2 GiB of the file, a quarter of an 8 GB database, and it helped no more
+than the cache. `temp_store` is already memory in this build. All of these settings are per
+connection, so they hold only while the serialized queue keeps libSQL's pool at one connection.
