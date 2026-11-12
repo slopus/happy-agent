@@ -6,6 +6,7 @@ import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
 import { projectRepositoryRefSchema, projectSchema } from "../Project.js";
 import type { ProjectsModule } from "../ProjectsModule.js";
+import { getOrCreateDurably } from "../../impl/durableCommit.js";
 
 const createProjectInputSchema = Type.Object(
     { path: projectRepositoryRefSchema },
@@ -38,7 +39,7 @@ export function createProjectTool(projects: ProjectsModule) {
         execute: async (ctx, input: CreateProjectInput, call) =>
             await projects.register(ctx, {
                 ...input,
-                projectId: await call.kv.getOrCreate(ctx, "projectId", () => createId()),
+                projectId: await getOrCreateDurably(ctx, call.kv, "projectId", () => createId()),
             }),
         toLLM: (project) => [
             {

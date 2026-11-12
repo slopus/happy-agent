@@ -94,9 +94,7 @@ export class ArtifactDataStore {
         });
         try {
             await client.execute("PRAGMA journal_mode = WAL");
-            // As in the daemon's database: a crash of the daemon loses nothing; an OS crash or
-            // power loss can lose the last writes, never corrupt the store.
-            await client.execute("PRAGMA synchronous = NORMAL");
+            await client.execute("PRAGMA synchronous = FULL");
             await client.execute("PRAGMA busy_timeout = 5000");
             const version = Number((await client.execute("PRAGMA user_version")).rows[0]?.[0] ?? 0);
             if (version > SCHEMA_VERSION) {

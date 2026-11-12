@@ -96,11 +96,20 @@ flush and tracks its transactions there.
 It is requested where losing a suffix would do visible harm: the tool batch record, before a tool
 acts outside the daemon; a person's pending message, before the sender is told it was accepted;
 the Happy outbox, before it sends, and the remote sequence it has applied; rotated Cloud and MCP
-tokens, whose predecessors the server has already revoked; an exported bot's sent counter; a
-provider sign-in attempt, so a restart does not reopen the browser; and a person's own decisions:
-secrets, settings, question answers, and creating, archiving, or renaming a project, bot, or
-task. Only the first two are hot. In a 30-turn gym run they are 180 of 3,630 commits (5%), and the
-run took 7.7 s against 7.3 s with every commit at NORMAL and 13.5 s with every commit at FULL.
-Everything else that is lost is rebuilt, re-run, or repaired by clients refetching after a
-version gap. Tool-call idempotency keys need nothing: a tool whose batch record survived is never
-run again, and one whose record was lost had not started.
+tokens, whose predecessors the server has already revoked; an exported bot's reply, when it is
+owed, when a bridge numbers it, and after each piece is sent; a provider sign-in attempt, so a
+restart does not reopen the browser; every Surface change, document edit included, before it is
+acknowledged or broadcast; and a person's own decisions: secrets, settings, question answers, and
+creating, archiving, or renaming a project, bot, or task. Only the first two are hot. In a 30-turn
+gym run they are 180 of 3,630 commits (5%), and the run took 7.7 s against 7.3 s with every
+commit at NORMAL and 13.5 s with every commit at FULL. Everything else that is lost is rebuilt,
+re-run, or repaired by clients refetching after a version gap.
+
+Agent Base runs durable and reloadable tools again when it recovers their batch, so a tool's
+`call.kv.getOrCreate` key must survive whenever the tool's effect does. Keys whose effect is in
+this database need nothing: losing the key loses every later commit too. Keys whose effect
+lands outside it, a project folder or clone, a subtask's workspace, or a bot or task folder, go
+through `getOrCreateDurably`, or the rerun would create a second one under a new ID.
+
+Artifact app data lives in separate SQLite files with no durable flush, and its writes are
+people's edits acknowledged as soon as they commit. Those stores stay at `synchronous = FULL`.

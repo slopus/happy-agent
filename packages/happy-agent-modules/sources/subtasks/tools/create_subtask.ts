@@ -5,6 +5,7 @@ import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 import { createSubtaskInputSchema, subtaskResultSchema } from "../Subtask.js";
 import type { CollaborationCreator } from "../../collaboration/index.js";
 import type { SubtasksModule } from "../SubtasksModule.js";
+import { getOrCreateDurably } from "../../impl/durableCommit.js";
 
 /**
  * `creatorPermissionMode` is the coordinator's persistent mode, which the subtask runs in unless
@@ -44,10 +45,10 @@ export function createSubtaskTool(
                 ctx,
                 agentId,
                 input,
-                await call.kv.getOrCreate(ctx, "agentId", () => createId()),
+                await getOrCreateDurably(ctx, call.kv, "agentId", () => createId()),
                 input.workspace === undefined
                     ? undefined
-                    : await call.kv.getOrCreate(ctx, "workspaceId", () => createId()),
+                    : await getOrCreateDurably(ctx, call.kv, "workspaceId", () => createId()),
                 creator,
                 { creatorPermissionMode },
             ),

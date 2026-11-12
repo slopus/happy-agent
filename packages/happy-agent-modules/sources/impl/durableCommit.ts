@@ -1,4 +1,4 @@
-import { agentDatabase } from "@slopus/happy-agent-base";
+import { agentDatabase, type AgentKV } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 
 /** Transactions currently open on a database that can sync its WAL, as their Drizzle facades. */
@@ -27,6 +27,21 @@ export async function requireDurableCommit(ctx: Context): Promise<void> {
         return;
     }
     await durableFlushes.get(database)?.();
+}
+
+/**
+ * `kv.getOrCreate`, made durable before the caller acts on the value. A durable tool runs again
+ * after a crash, and must find the same ID rather than create its folder or clone twice.
+ */
+export async function getOrCreateDurably<Value>(
+    ctx: Context,
+    kv: AgentKV,
+    key: string,
+    create: () => Value | Promise<Value>,
+): Promise<Value> {
+    const value = await kv.getOrCreate(ctx, key, create);
+    await requireDurableCommit(ctx);
+    return value;
 }
 
 /** Let `requireDurableCommit` flush this root database outside a transaction. */

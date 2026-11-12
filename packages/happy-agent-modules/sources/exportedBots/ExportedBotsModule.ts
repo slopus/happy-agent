@@ -1815,6 +1815,8 @@ export class ExportedBotsModule implements AgentModule {
                 `exported-bot-chat:${conversation.kind}:${conversation.botId}:${conversation.chatId}`,
             ],
         });
+        // The reply starts reaching the chat right after this commits; it must not be forgotten.
+        await requireDurableCommit(ctx);
     }
 
     /**

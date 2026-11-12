@@ -17,6 +17,7 @@ import {
 import { narrowerPermissionMode } from "../../impl/delegatedPermissionMode.js";
 import { TaskInputError, taskNameSchema, taskRecordSchema } from "../Task.js";
 import type { TasksModule } from "../TasksModule.js";
+import { getOrCreateDurably } from "../../impl/durableCommit.js";
 
 const createTaskToolInputSchema = Type.Object(
     {
@@ -107,7 +108,7 @@ export function createTaskTool(
                 );
             }
             return await tasks.create(ctx, {
-                id: await call.kv.getOrCreate(ctx, "taskId", () => createId()),
+                id: await getOrCreateDurably(ctx, call.kv, "taskId", () => createId()),
                 creatorAgentId: actingAgentId,
                 ...(ownerUserId === undefined ? {} : { ownerUserId }),
                 ...(input.name === undefined ? {} : { name: input.name }),

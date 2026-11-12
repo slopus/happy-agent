@@ -3,11 +3,18 @@ import { once } from "node:events";
 import { mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+import { Sqlite3Client } from "@libsql/client/sqlite3";
+import type { ResultSet } from "@libsql/client";
 import { sql } from "drizzle-orm";
-import { afterEach, describe, expect, it } from "vitest";
+import type { LibSQLDatabase } from "drizzle-orm/libsql";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { agentDatabaseRun, withAgentDatabase } from "@slopus/happy-agent-base";
-import { createRootContext } from "@steve.kite/stdlib";
+import {
+    agentDatabaseRun,
+    ensureAgentDatabaseConnection,
+    withAgentDatabase,
+} from "@slopus/happy-agent-base";
+import { afterCommit, createRootContext, type Context } from "@steve.kite/stdlib";
 
 import { requireDurableCommit } from "../../sources/impl/durableCommit.js";
 import { openHappyAgentDatabase } from "../../sources/runtime/HappyAgentDatabase.js";
@@ -80,49 +87,75 @@ describe("openHappyAgentDatabase", () => {
         }
     });
 
-    it("makes a commit durable on request and returns to its normal setting", async () => {
-        const directory = await createTestDirectory();
-        const opened = await openHappyAgentDatabase(join(directory, "agent.sqlite"));
-        try {
-            const ctx = withAgentDatabase(
-                createRootContext().named("test.durable-commit"),
-                opened.database,
-            );
-            await opened.database.run(sql`CREATE TABLE durable_probe (value TEXT)`);
+    it("syncs once per durable transaction, never for a rolled-back one", async () => {
+        await withTracedDatabase(async ({ ctx, database, syncs }) => {
             await ctx.inTx(async (txCtx) => {
-                await agentDatabaseRun(
-                    txCtx.db,
-                    sql`INSERT INTO durable_probe VALUES ('in transaction')`,
-                );
+                await agentDatabaseRun(txCtx.db, sql`INSERT INTO durable_probe VALUES ('kept')`);
                 await requireDurableCommit(txCtx);
+                await requireDurableCommit(txCtx);
+                await txCtx.inTx(async (nestedCtx) => await requireDurableCommit(nestedCtx));
             });
-            await opened.database.run(sql`INSERT INTO durable_probe VALUES ('outside')`);
-            await requireDurableCommit(ctx);
+            expect(syncs()).toBe(1);
+
             await expect(
                 ctx.inTx(async (txCtx) => {
                     await agentDatabaseRun(
                         txCtx.db,
-                        sql`INSERT INTO durable_probe VALUES ('rolled back')`,
+                        sql`INSERT INTO durable_probe VALUES ('lost')`,
                     );
                     await requireDurableCommit(txCtx);
                     throw new Error("roll back this transaction");
                 }),
             ).rejects.toThrow("roll back this transaction");
+            expect(syncs()).toBe(1);
+
+            await ctx.inTx(async (txCtx) => {
+                await agentDatabaseRun(txCtx.db, sql`INSERT INTO durable_probe VALUES ('normal')`);
+            });
+            expect(syncs()).toBe(1);
+
+            await requireDurableCommit(ctx);
+            expect(syncs()).toBe(2);
 
             await expect(
-                opened.database.all<{ value: string }>(
+                database.all<{ value: string }>(
                     sql`SELECT value FROM durable_probe ORDER BY rowid`,
                 ),
-            ).resolves.toEqual([{ value: "in transaction" }, { value: "outside" }]);
-            await expect(opened.database.all(sql`PRAGMA synchronous`)).resolves.toEqual([
+            ).resolves.toEqual([{ value: "kept" }, { value: "normal" }]);
+            await expect(database.all(sql`PRAGMA synchronous`)).resolves.toEqual([
                 { synchronous: 1 },
             ]);
-            await expect(opened.database.all(sql`PRAGMA user_version`)).resolves.toEqual([
-                { user_version: 0 },
+            await expect(database.all(sql`PRAGMA user_version`)).resolves.toEqual([
+                { user_version: 7 },
             ]);
-        } finally {
-            await opened.close();
-        }
+        });
+    });
+
+    it("finishes the sync after the commit and before anything learns of it", async () => {
+        await withTracedDatabase(async ({ ctx, syncs, holdSync }) => {
+            const order: string[] = [];
+            const release = holdSync();
+            const acknowledged = ctx
+                .inTx(async (txCtx) => {
+                    await agentDatabaseRun(txCtx.db, sql`INSERT INTO durable_probe VALUES ('x')`);
+                    await requireDurableCommit(txCtx);
+                    afterCommit(txCtx, () => {
+                        order.push(`after commit, ${String(syncs())} sync`);
+                    });
+                    order.push(`work done, ${String(syncs())} syncs`);
+                })
+                .then(() => order.push(`acknowledged, ${String(syncs())} sync`));
+            await release.reached;
+            await new Promise((resolve) => setTimeout(resolve, 20));
+            expect(order).toEqual(["work done, 0 syncs"]);
+            release.resolve();
+            await acknowledged;
+            expect(order).toEqual([
+                "work done, 0 syncs",
+                "after commit, 1 sync",
+                "acknowledged, 1 sync",
+            ]);
+        });
     });
 
     it("rejects a second connection until the process owner closes", async () => {
@@ -201,6 +234,70 @@ describe("openHappyAgentDatabase", () => {
         ).resolves.toBeUndefined();
     }, 20_000);
 });
+
+/**
+ * Open a database whose statements are observed: `syncs` counts finished durable commits, which
+ * rewrite the sentinel user version 7 at FULL, and `holdSync` stalls the next one until released.
+ */
+async function withTracedDatabase(
+    work: (traced: {
+        readonly ctx: Context;
+        readonly database: LibSQLDatabase;
+        syncs(): number;
+        holdSync(): { readonly reached: Promise<void>; resolve(): void };
+    }) => Promise<void>,
+): Promise<void> {
+    let synchronous = "NORMAL";
+    let syncs = 0;
+    let hold:
+        | { reached: ReturnType<typeof deferred<void>>; gate: ReturnType<typeof deferred<void>> }
+        | undefined;
+    const execute = Sqlite3Client.prototype.execute;
+    const spy = vi.spyOn(Sqlite3Client.prototype, "execute").mockImplementation(async function (
+        this: Sqlite3Client,
+        ...args: unknown[]
+    ) {
+        const statement = args[0];
+        const text = typeof statement === "string" ? statement : (statement as { sql: string }).sql;
+        if (text.startsWith("PRAGMA synchronous = ")) synchronous = text.slice(21);
+        const sync = synchronous === "FULL" && text === "PRAGMA user_version = 7";
+        if (sync && hold !== undefined) {
+            const { reached, gate } = hold;
+            hold = undefined;
+            reached.resolve();
+            await gate.promise;
+        }
+        const result = await (execute as (...args: unknown[]) => Promise<ResultSet>).apply(
+            this,
+            args,
+        );
+        if (sync) syncs += 1;
+        return result;
+    });
+    const directory = await createTestDirectory();
+    const opened = await openHappyAgentDatabase(join(directory, "agent.sqlite"));
+    try {
+        ensureAgentDatabaseConnection(opened.database);
+        await opened.database.run(sql`PRAGMA user_version = 7`);
+        await opened.database.run(sql`CREATE TABLE durable_probe (value TEXT)`);
+        await work({
+            ctx: withAgentDatabase(
+                createRootContext().named("test.durable-commit"),
+                opened.database,
+            ),
+            database: opened.database,
+            syncs: () => syncs,
+            holdSync: () => {
+                hold = { reached: deferred<void>(), gate: deferred<void>() };
+                const { reached, gate } = hold;
+                return { reached: reached.promise, resolve: () => gate.resolve() };
+            },
+        });
+    } finally {
+        await opened.close();
+        spy.mockRestore();
+    }
+}
 
 async function createTestDirectory(): Promise<string> {
     const scratch = resolve(import.meta.dirname, "../../../.context");

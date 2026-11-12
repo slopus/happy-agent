@@ -53,6 +53,7 @@ import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, backoff, type Context } from "@steve.kite/stdlib";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 import { createUuidV7Factory } from "../utils/createUuidV7.js";
 import { TeamModule } from "../team/index.js";
 import { BotsModule } from "../bots/index.js";
@@ -1386,6 +1387,8 @@ export class SurfacesModule implements AgentModule {
         await this.search.indexTodo(ctx, todo);
     }
     async #event(ctx: Context, event: SurfaceEvent, actor?: SurfaceActor): Promise<void> {
+        // Every Surface change reaches people through here, so none is acknowledged until durable.
+        await requireDurableCommit(ctx);
         // Reserve the initiating event before transactional listeners enqueue derived changes.
         await this.durable.invoke(ctx, {
             function: "surfaces.notify",
@@ -1401,6 +1404,7 @@ export class SurfacesModule implements AgentModule {
         seq: number,
         actor: SurfaceActor,
     ): Promise<void> {
+        await requireDurableCommit(ctx);
         const change = { surfaceId, seq, actor: { ...actor }, at: Date.now() };
         await this.search.documentChanged(ctx, surfaceId, seq);
         for (const listener of this.#documentChanged) await listener(ctx, change);

@@ -9,6 +9,7 @@ import { defineAgentTool } from "@slopus/happy-agent-base";
 
 import { botRecordSchema, type BotRecord } from "../Bot.js";
 import type { BotsModule } from "../BotsModule.js";
+import { getOrCreateDurably } from "../../impl/durableCommit.js";
 
 const createBotToolInputSchema = Type.Object(
     {
@@ -43,7 +44,7 @@ export function createBotTool(bots: BotsModule, actingAgentId: string) {
             }
             return await bots.create(
                 ctx,
-                { ...input, id: await call.kv.getOrCreate(ctx, "botId", () => createId()) },
+                { ...input, id: await getOrCreateDurably(ctx, call.kv, "botId", () => createId()) },
                 actingAgentId,
             );
         },

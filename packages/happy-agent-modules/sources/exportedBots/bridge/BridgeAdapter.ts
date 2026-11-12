@@ -39,6 +39,7 @@ import {
     type BridgeSettings,
 } from "./BridgeSettings.js";
 import { setBridgeExportedBotTool } from "./set_bridge_exported_bot.js";
+import { requireDurableCommit } from "../../impl/durableCommit.js";
 
 /** A bridge falling this far behind waits before it is sent more. */
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
@@ -161,6 +162,9 @@ export class BridgeAdapter implements ExportedBotAdapter<BridgeSettings> {
                 },
                 MAX_WAITING_REPLIES,
             );
+            // The bridge numbers what it delivers; a reply lost after delivery would let its
+            // sequence be reused for another.
+            await requireDurableCommit(txCtx);
         });
         this.#sessions.get(endpoint.account)?.bridge?.flush();
     }

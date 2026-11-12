@@ -6,6 +6,7 @@ import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
 import { projectNameSchema, projectRemoteSourceSchema, projectSchema } from "../Project.js";
 import type { ProjectsModule } from "../ProjectsModule.js";
+import { getOrCreateDurably } from "../../impl/durableCommit.js";
 
 const cloneProjectInputSchema = Type.Object(
     {
@@ -43,7 +44,7 @@ export function cloneProjectTool(projects: ProjectsModule) {
         execute: async (ctx, input: CloneProjectInput, call) =>
             await projects.createRemote(ctx, {
                 ...input,
-                projectId: await call.kv.getOrCreate(ctx, "projectId", () => createId()),
+                projectId: await getOrCreateDurably(ctx, call.kv, "projectId", () => createId()),
             }),
         toLLM: (project) => [
             {
