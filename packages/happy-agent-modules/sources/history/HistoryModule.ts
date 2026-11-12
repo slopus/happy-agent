@@ -49,6 +49,7 @@ import {
     senderAgentIdOf,
 } from "../impl/messageOrigin.js";
 import { decodeRequestProfile } from "../impl/requestProfile.js";
+import { requireDurableCommit } from "../runtime/HappyAgentDatabase.js";
 import { storyQuoteOf } from "../impl/storyQuote.js";
 import type { BotSettingsModule } from "../botSettings/index.js";
 import type { DurableFunctionsModule } from "../durableFunctions/index.js";
@@ -706,6 +707,9 @@ export class HistoryModule implements AgentModule {
                         ${message.agentId}, ${position}, ${message.id}, ${encoded}
                     )`,
             );
+            // The sender is told the message was accepted once this returns, so it must not be
+            // lost to an OS crash after that.
+            await requireDurableCommit(txCtx);
             this.#schedulePendingNotification(txCtx, message);
         });
     }
@@ -3012,6 +3016,10 @@ export class HistoryModule implements AgentModule {
             call: SessionToolCallBlock,
         ): Promise<void> => {
             await scope.runKV.write(ctx, TOOL_NAME_KEY, call.name);
+            // The tool acts outside the daemon next. If an OS crash lost this batch record, a
+            // restart could ask the model again and repeat the call instead of reporting it as
+            // interrupted.
+            await requireDurableCommit(ctx);
         },
 
         // Only explicit requests bypass the ordinary bounded history representation. Their

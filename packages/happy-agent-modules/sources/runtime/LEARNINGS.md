@@ -72,5 +72,26 @@ It also keeps a 128 MiB page cache, enough that rereading a large conversation i
 memory: a 34 MB history page read fell from 17 ms to 4 ms, where 64 MiB was too small to help. The
 WAL file is truncated to 64 MiB after checkpoints. `mmap_size` was rejected: this libSQL build
 maps at most the first 2 GiB of the file, a quarter of an 8 GB database, and it helped no more
-than the cache. `temp_store` is already memory in this build. All of these settings are per
-connection, so they hold only while the serialized queue keeps libSQL's pool at one connection.
+than the cache. `temp_store` is already memory in this build.
+
+These settings are per connection, and libSQL's pool opens a fresh, unconfigured connection for
+any call that overlaps another, losing even `foreign_keys`. The client is therefore created with
+`concurrency: 1`; the queue already admits one statement or transaction at a time.
+
+## Durable commits are requested where the daemon acts outside itself
+
+Kirill asked for FULL only on the writes that must survive an OS crash. The WAL is append-only,
+so a crash loses a suffix of commits, and one FULL commit makes every earlier commit durable too.
+SQLite refuses to change `synchronous` inside a transaction, and the code that knows a write
+matters usually runs inside a transaction someone else opened, so the setting is not chosen at
+`BEGIN`. `requireDurableCommit(ctx)` instead marks the transaction carried by `ctx`; right after it
+commits, still in the queue and before its after-commit work, the database commits a one-page
+rewrite of the unchanged `user_version` at FULL. Outside a transaction it does that at once.
+Strace showed exactly one WAL fsync per request.
+
+History requests it in the two hot places where losing a suffix would do visible harm: the tool
+batch record, before a tool acts outside the daemon, and a person's pending message, before the
+sender is told it was accepted. In a 30-turn gym run that is 180 of 3,630 commits (5%), and the
+run took 7.7 s against 7.3 s with every commit at NORMAL and 13.5 s with every commit at FULL.
+Everything else that is lost is rebuilt, re-run, or repaired by clients refetching after a
+version gap.

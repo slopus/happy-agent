@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 
 import { createClient, type Client } from "@libsql/client";
+import type { Context } from "@steve.kite/stdlib";
 import { drizzle, type LibSQLDatabase } from "drizzle-orm/libsql";
 
 import { acquireHappyAgentSQLiteProcessLock } from "./HappyAgentSQLiteProcessLock.js";
@@ -13,7 +14,10 @@ export interface HappyAgentDatabase {
 /** Open the runtime-owned SQLite database through libSQL's asynchronous Drizzle driver. */
 export async function openHappyAgentDatabase(path: string): Promise<HappyAgentDatabase> {
     const processLock = await acquireHappyAgentSQLiteProcessLock(path);
+    // One connection: the settings below are per connection, and every statement already waits
+    // its turn in the queue, so a second pooled connection could only ever arrive unconfigured.
     const client = createClient({
+        concurrency: 1,
         intMode: "number",
         timeout: 5_000,
         url: pathToFileURL(path).href,
@@ -40,6 +44,32 @@ export async function openHappyAgentDatabase(path: string): Promise<HappyAgentDa
         }
         throw error;
     }
+}
+
+/** Transactions currently open on a Happy Agent database, as their Drizzle facades. */
+const openTransactions = new WeakSet<object>();
+/** Open transactions that asked to survive an OS crash. */
+const durableTransactions = new WeakSet<object>();
+/** How to make everything committed so far durable, by root Drizzle database. */
+const durableFlushes = new WeakMap<object, () => Promise<void>>();
+
+/**
+ * Make the work carried by `ctx` survive an OS crash or power loss, not only a daemon crash.
+ *
+ * Commits normally return before SQLite syncs the WAL. Call this before the daemon acts outside
+ * itself on what it wrote: before a tool runs, before acknowledging what a person sent or
+ * decided, before spending a credential the server has just rotated. Inside a transaction the
+ * sync happens right after it commits, before the transaction returns and before its after-commit
+ * work; outside one, it happens now. Either way it also makes every earlier commit durable. A
+ * database this file did not open keeps its own synchronous setting, so nothing is done there.
+ */
+export async function requireDurableCommit(ctx: Context): Promise<void> {
+    const database = ctx.db as object;
+    if (openTransactions.has(database)) {
+        durableTransactions.add(database);
+        return;
+    }
+    await durableFlushes.get(database)?.();
 }
 
 /**
@@ -95,23 +125,49 @@ function serializeDatabaseAccess(client: Client, database: LibSQLDatabase): void
         writable: false,
     });
 
+    // The WAL is synced by a commit made at FULL, which also covers every commit before it, so a
+    // one-page write of the unchanged user version is the cheapest durable commit there is. It
+    // runs in the queue right after the work it protects.
+    const flush = async (): Promise<void> => {
+        const version = (await execute("PRAGMA user_version")).rows[0]?.[0];
+        await execute("PRAGMA synchronous = FULL");
+        try {
+            await execute(`PRAGMA user_version = ${String(Number(version ?? 0))}`);
+        } finally {
+            await execute("PRAGMA synchronous = NORMAL");
+        }
+    };
+    durableFlushes.set(database, async () => await serialized(flush));
+
     const transaction = database.transaction.bind(database);
     Object.defineProperty(database, "transaction", {
         configurable: false,
         enumerable: false,
-        value: (...args: Parameters<typeof transaction>) =>
-            serialized(async () => await transaction(...args)),
+        value: (...[work, config]: Parameters<typeof transaction>) =>
+            serialized(async () => {
+                let opened: object | undefined;
+                const result = await transaction(async (tx) => {
+                    opened = tx;
+                    openTransactions.add(tx);
+                    try {
+                        return await work(tx);
+                    } finally {
+                        openTransactions.delete(tx);
+                    }
+                }, config);
+                if (opened !== undefined && durableTransactions.has(opened)) await flush();
+                return result;
+            }),
         writable: false,
     });
 }
 
 /**
- * Connection settings. These are per connection, so they hold only while the serialized queue
- * keeps libSQL's pool at its one connection.
+ * Connection settings. These are per connection, which is why the client has exactly one.
  *
  * - `synchronous = NORMAL`: in WAL mode a commit no longer waits for an fsync; the WAL is synced
- *   at each checkpoint. An application crash loses nothing; an OS crash or power loss can roll
- *   back the last commits since the previous checkpoint, never corrupt the database.
+ *   at each checkpoint and by `requireDurableCommit`. An application crash loses nothing; an OS
+ *   crash or power loss can roll back the last commits since then, never corrupt the database.
  * - `cache_size = -131072`: 128 MiB of page cache, grown only as pages are read, so a large
  *   conversation that is read repeatedly stays in memory instead of being re-read page by page.
  * - `journal_size_limit`: truncates the WAL back to 64 MiB after a checkpoint resets it, so one

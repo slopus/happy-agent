@@ -6,7 +6,13 @@ import { join, resolve } from "node:path";
 import { sql } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { openHappyAgentDatabase } from "../../sources/runtime/HappyAgentDatabase.js";
+import { agentDatabaseRun, withAgentDatabase } from "@slopus/happy-agent-base";
+import { createRootContext } from "@steve.kite/stdlib";
+
+import {
+    openHappyAgentDatabase,
+    requireDurableCommit,
+} from "../../sources/runtime/HappyAgentDatabase.js";
 
 const createdDirectories = new Set<string>();
 
@@ -71,6 +77,51 @@ describe("openHappyAgentDatabase", () => {
                 journalSizeLimit: 67_108_864,
                 synchronous: 1,
             });
+        } finally {
+            await opened.close();
+        }
+    });
+
+    it("makes a commit durable on request and returns to its normal setting", async () => {
+        const directory = await createTestDirectory();
+        const opened = await openHappyAgentDatabase(join(directory, "agent.sqlite"));
+        try {
+            const ctx = withAgentDatabase(
+                createRootContext().named("test.durable-commit"),
+                opened.database,
+            );
+            await opened.database.run(sql`CREATE TABLE durable_probe (value TEXT)`);
+            await ctx.inTx(async (txCtx) => {
+                await agentDatabaseRun(
+                    txCtx.db,
+                    sql`INSERT INTO durable_probe VALUES ('in transaction')`,
+                );
+                await requireDurableCommit(txCtx);
+            });
+            await opened.database.run(sql`INSERT INTO durable_probe VALUES ('outside')`);
+            await requireDurableCommit(ctx);
+            await expect(
+                ctx.inTx(async (txCtx) => {
+                    await agentDatabaseRun(
+                        txCtx.db,
+                        sql`INSERT INTO durable_probe VALUES ('rolled back')`,
+                    );
+                    await requireDurableCommit(txCtx);
+                    throw new Error("roll back this transaction");
+                }),
+            ).rejects.toThrow("roll back this transaction");
+
+            await expect(
+                opened.database.all<{ value: string }>(
+                    sql`SELECT value FROM durable_probe ORDER BY rowid`,
+                ),
+            ).resolves.toEqual([{ value: "in transaction" }, { value: "outside" }]);
+            await expect(opened.database.all(sql`PRAGMA synchronous`)).resolves.toEqual([
+                { synchronous: 1 },
+            ]);
+            await expect(opened.database.all(sql`PRAGMA user_version`)).resolves.toEqual([
+                { user_version: 0 },
+            ]);
         } finally {
             await opened.close();
         }
