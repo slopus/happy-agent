@@ -716,6 +716,10 @@ Provider routes are additive and do not increment the protocol version. A daemon
 `capabilities.providerRoutes: true` from health. Older daemons omit it and answer the routes with
 `404`.
 
+Daily usage is additive and does not increment the protocol version. A daemon that serves
+`GET /v0/usage/daily` reports `capabilities.dailyUsage: true` from health. Older daemons omit it
+and answer the route with `404`; clients then show no activity grid.
+
 By explicit product decision, three experiments are removed as a one-off exception to additive
 compatibility: Spaces (the sidebar document, stem cells, sidebar proposals, and Prioritizing),
 Stories with their stickers, and onboarding in Happy's conversation with its inline actions and
@@ -1598,7 +1602,8 @@ Fields:
   `feedSubjectFilter: true` advertises `subjects` on `GET /v0/feed` and
   `POST /v0/feed/read-all`, described under Feed. `chatUi` advertises chat UI, described under
   Chat UI: `{ "version": 1, "components": ["file_tree", "default_model", "media"] }`, the catalog
-  version the daemon speaks and exactly the component types it serves.
+  version the daemon speaks and exactly the component types it serves. `dailyUsage: true` advertises
+  `GET /v0/usage/daily`, described under Usage.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
   It is a CUID2 of exactly 24 characters matching `^[a-z][a-z0-9]{23}$`, generated once and
   persisted with the installation's data, so it survives restarts and upgrades. It is reported
@@ -9647,6 +9652,56 @@ Response — `200`:
   `capturedAt`, so a client can show how old each number is. The reading's `capturedAt` is when its
   newest window was measured; a report that measured no window does not move it. A window that
   has reset since it was measured is dropped rather than shown as current.
+
+### `GET /v0/usage/daily`
+
+Reports what the daemon has consumed per calendar day, for an activity grid. Query parameters,
+both optional:
+
+- `days` — how many days to report, ending with today: an integer from 1 to 1,096. Omitted, 365.
+- `tz` — the IANA time zone whose calendar days are reported, such as `Europe/Berlin`. Omitted,
+  `UTC`.
+
+Response — `200`:
+
+```json
+{
+    "days": [
+        {
+            "date": "2026-11-10",
+            "byProvider": {
+                "codex": {
+                    "openai/gpt-5.6-sol": {
+                        "input": 310000,
+                        "output": 21000,
+                        "cacheRead": 250000,
+                        "cacheWrite": 30000
+                    }
+                }
+            }
+        }
+    ],
+    "since": "2025-03-02"
+}
+```
+
+- `days` — one entry for each day in the range that has usage, in ascending `date` order. A day
+  without usage is absent; clients show it as zero. The range is today in `tz` and the `days − 1`
+  calendar days before it.
+- `date` — the calendar day in `tz`, as `YYYY-MM-DD`.
+- `byProvider` — the same provider-then-model breakdown, with the same keys and token fields, as
+  the windows of `GET /v0/usage`. Providers are configured account IDs, so one account's grid is
+  its own key. A provider or model appears only on a day it spent tokens.
+- `since` — the first calendar day in `tz` with any usage, regardless of `days`, or `null` when
+  the daemon has recorded none. Clients show nothing before it.
+
+Usage is recorded in UTC hours. Each hour counts toward the calendar day in `tz` on which it
+starts, which follows daylight-saving changes. In a zone whose offset is not a whole number of
+hours, such as `Asia/Kolkata`, the hour that crosses midnight counts entirely toward the day it
+starts on.
+
+`400` with code `invalid_request` when `days` is not an integer from 1 to 1,096 or `tz` is not a
+known IANA time zone.
 
 ### `POST /v0/usage/refresh`
 

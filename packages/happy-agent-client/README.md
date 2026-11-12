@@ -216,6 +216,11 @@ arrive as events. An entry without `refreshedAt` comes from an older daemon that
 event nor serves the refresh, so keep polling `getUsage()` there. Readings live in daemon memory;
 read `getUsage()` again after a resync or a daemon restart.
 
+`getDailyUsage({ days, tz })` reads tokens per calendar day in an IANA time zone for an activity
+grid: only days with usage, ascending, and `since`, the first day ever used. Fill the days between
+`since` and today with zeros and show nothing before `since`. Daemons that serve it report
+`capabilities.dailyUsage`; older ones answer `404`.
+
 A folder on a runner has a `{ type: "runner", runnerId, path }` compute, with `path` in the
 runner's filesystem and `null` for the home project before its runner first connects. Docker
 workspace computes may carry the mounted `path` and the holding `runnerId`. `registerProject()` and

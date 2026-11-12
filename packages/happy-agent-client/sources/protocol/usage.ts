@@ -149,6 +149,41 @@ export const providerUsageRefreshResponseSchema = Type.Object({
 });
 export type ProviderUsageRefreshResponse = Static<typeof providerUsageRefreshResponseSchema>;
 
+/** `GET /v0/usage/daily` query; served when health reports `capabilities.dailyUsage`. */
+export const dailyUsageQuerySchema = Type.Object(
+    {
+        /** Days to report, ending with today: 1 to 1,096. The daemon defaults to 365. */
+        days: Type.Optional(Type.Integer({ minimum: 1, maximum: 1_096 })),
+        /** IANA time zone whose calendar days are reported. The daemon defaults to `UTC`. */
+        tz: Type.Optional(Type.String({ minLength: 1 })),
+    },
+    { additionalProperties: false },
+);
+export type DailyUsageQuery = Static<typeof dailyUsageQuerySchema>;
+
+const calendarDateSchema = Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" });
+
+const modelUsageSchema = Type.Object({
+    input: Type.Number(),
+    output: Type.Number(),
+    cacheRead: Type.Number(),
+    cacheWrite: Type.Number(),
+});
+
+/** One calendar day with usage, broken down by provider and then by model. */
+export const dailyUsageDaySchema = Type.Object({
+    date: calendarDateSchema,
+    byProvider: Type.Record(Type.String(), Type.Record(Type.String(), modelUsageSchema)),
+});
+export type DailyUsageDay = Static<typeof dailyUsageDaySchema>;
+
+/** `GET /v0/usage/daily` — only days with usage, ascending; `since` is the first ever. */
+export const dailyUsageResponseSchema = Type.Object({
+    days: Type.Array(dailyUsageDaySchema),
+    since: Nullable(calendarDateSchema),
+});
+export type DailyUsageResponse = Static<typeof dailyUsageResponseSchema>;
+
 /** The latest exact provider measurement of one agent's active conversation context. */
 export interface AgentContextUsage {
     approximate: boolean;

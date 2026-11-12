@@ -309,6 +309,8 @@ import type {
 } from "./protocol/terminals.js";
 import type {
     AgentUsageResponse,
+    DailyUsageQuery,
+    DailyUsageResponse,
     DaemonUsageResponse,
     ProviderUsageRefreshRequest,
     ProviderUsageRefreshResponse,
@@ -4197,6 +4199,22 @@ export class HappyAgentClient {
     /** `GET /v0/usage` — the whole daemon, in rolling windows ending now. */
     async getUsage(options: RequestOptions = {}): Promise<DaemonUsageResponse> {
         return await this.#json({ method: "GET", path: "v0/usage", signal: options.signal });
+    }
+
+    /**
+     * `GET /v0/usage/daily` — tokens per calendar day in `tz`, only days with usage, for an
+     * activity grid. Health reports `capabilities.dailyUsage`; an older daemon answers `404`.
+     */
+    async getDailyUsage(
+        query: DailyUsageQuery = {},
+        options: RequestOptions = {},
+    ): Promise<DailyUsageResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/usage/daily",
+            query: { days: query.days, tz: query.tz },
+            signal: options.signal,
+        });
     }
 
     /**
