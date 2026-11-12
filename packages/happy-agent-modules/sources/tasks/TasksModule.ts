@@ -97,6 +97,7 @@ import { archiveTaskTool } from "./tools/archive_task.js";
 import { createTaskTool } from "./tools/create_task.js";
 import { listTasksTool } from "./tools/list_tasks.js";
 import { sendTaskMessageTool } from "./tools/send_task_message.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 
 /** The latest human sender of each agent's conversation, who owns the tasks that agent creates. */
 const OWNER_KEY = "owner";
@@ -672,6 +673,7 @@ export class TasksModule implements AgentModule {
             throw new TaskInputError("An opening message needs the agent that sends it.");
         }
         return await ctx.inTx(async (txCtx) => {
+            await requireDurableCommit(txCtx);
             if (input.id !== undefined) {
                 const existing = await readTask(txCtx, input.id);
                 if (existing !== undefined) {
@@ -1104,6 +1106,7 @@ export class TasksModule implements AgentModule {
     ): Promise<TaskRecord> {
         const decided = decide(structuredClone(current));
         if (decided === undefined) return current;
+        await requireDurableCommit(ctx);
         const next: TaskRecord = {
             ...decided,
             version: current.version + 1,

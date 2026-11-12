@@ -89,9 +89,18 @@ commits, still in the queue and before its after-commit work, the database commi
 rewrite of the unchanged `user_version` at FULL. Outside a transaction it does that at once.
 Strace showed exactly one WAL fsync per request.
 
-History requests it in the two hot places where losing a suffix would do visible harm: the tool
-batch record, before a tool acts outside the daemon, and a person's pending message, before the
-sender is told it was accepted. In a 30-turn gym run that is 180 of 3,630 commits (5%), and the
+`requireDurableCommit` lives in the package's shared `impl/durableCommit.ts`, beside the other
+cross-module helpers, so modules do not import from `runtime/`; the runtime only registers the
+flush and tracks its transactions there.
+
+It is requested where losing a suffix would do visible harm: the tool batch record, before a tool
+acts outside the daemon; a person's pending message, before the sender is told it was accepted;
+the Happy outbox, before it sends, and the remote sequence it has applied; rotated Cloud and MCP
+tokens, whose predecessors the server has already revoked; an exported bot's sent counter; a
+provider sign-in attempt, so a restart does not reopen the browser; and a person's own decisions:
+secrets, settings, question answers, and creating, archiving, or renaming a project, bot, or
+task. Only the first two are hot. In a 30-turn gym run they are 180 of 3,630 commits (5%), and the
 run took 7.7 s against 7.3 s with every commit at NORMAL and 13.5 s with every commit at FULL.
 Everything else that is lost is rebuilt, re-run, or repaired by clients refetching after a
-version gap.
+version gap. Tool-call idempotency keys need nothing: a tool whose batch record survived is never
+run again, and one whose record was lost had not started.

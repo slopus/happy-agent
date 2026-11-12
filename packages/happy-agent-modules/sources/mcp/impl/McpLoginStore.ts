@@ -3,6 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
+import { requireDurableCommit } from "../../impl/durableCommit.js";
 
 const MAX_URL = 2_048;
 const MAX_TOKEN = 16_384;
@@ -148,5 +149,7 @@ export async function writeMcpLogin(
                 ON CONFLICT (catalog, name, url)
                 DO UPDATE SET login = excluded.login, updated_at = excluded.updated_at`,
         );
+        // A server that rotates refresh tokens has already retired the previous one.
+        await requireDurableCommit(txCtx);
     });
 }

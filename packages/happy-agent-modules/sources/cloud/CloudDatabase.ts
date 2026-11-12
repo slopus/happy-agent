@@ -10,6 +10,7 @@ import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 
 import { createCloudVersion } from "./createCloudVersion.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 
 const CLOUD_STATE_TABLE = "happy_agent_cloud_state";
 const UUID_V7_PATTERN = "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$";
@@ -213,6 +214,8 @@ async function write(ctx: Context, state: CloudStoredState): Promise<void> {
         // the refresh token, so never allow the original error to cross the Cloud storage boundary.
         throw new Error("The Cloud authentication state could not be stored.");
     }
+    // WorkOS retires a refresh token once it hands out the next one, so a lost write signs out.
+    await requireDurableCommit(ctx);
 }
 
 function parseState(value: string): CloudStoredState {

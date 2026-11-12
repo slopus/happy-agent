@@ -1,9 +1,13 @@
 import { pathToFileURL } from "node:url";
 
 import { createClient, type Client } from "@libsql/client";
-import type { Context } from "@steve.kite/stdlib";
 import { drizzle, type LibSQLDatabase } from "drizzle-orm/libsql";
 
+import {
+    closeDurableTransaction,
+    openDurableTransaction,
+    registerDurableFlush,
+} from "../impl/durableCommit.js";
 import { acquireHappyAgentSQLiteProcessLock } from "./HappyAgentSQLiteProcessLock.js";
 
 export interface HappyAgentDatabase {
@@ -44,32 +48,6 @@ export async function openHappyAgentDatabase(path: string): Promise<HappyAgentDa
         }
         throw error;
     }
-}
-
-/** Transactions currently open on a Happy Agent database, as their Drizzle facades. */
-const openTransactions = new WeakSet<object>();
-/** Open transactions that asked to survive an OS crash. */
-const durableTransactions = new WeakSet<object>();
-/** How to make everything committed so far durable, by root Drizzle database. */
-const durableFlushes = new WeakMap<object, () => Promise<void>>();
-
-/**
- * Make the work carried by `ctx` survive an OS crash or power loss, not only a daemon crash.
- *
- * Commits normally return before SQLite syncs the WAL. Call this before the daemon acts outside
- * itself on what it wrote: before a tool runs, before acknowledging what a person sent or
- * decided, before spending a credential the server has just rotated. Inside a transaction the
- * sync happens right after it commits, before the transaction returns and before its after-commit
- * work; outside one, it happens now. Either way it also makes every earlier commit durable. A
- * database this file did not open keeps its own synchronous setting, so nothing is done there.
- */
-export async function requireDurableCommit(ctx: Context): Promise<void> {
-    const database = ctx.db as object;
-    if (openTransactions.has(database)) {
-        durableTransactions.add(database);
-        return;
-    }
-    await durableFlushes.get(database)?.();
 }
 
 /**
@@ -137,7 +115,7 @@ function serializeDatabaseAccess(client: Client, database: LibSQLDatabase): void
             await execute("PRAGMA synchronous = NORMAL");
         }
     };
-    durableFlushes.set(database, async () => await serialized(flush));
+    registerDurableFlush(database, async () => await serialized(flush));
 
     const transaction = database.transaction.bind(database);
     Object.defineProperty(database, "transaction", {
@@ -145,17 +123,16 @@ function serializeDatabaseAccess(client: Client, database: LibSQLDatabase): void
         enumerable: false,
         value: (...[work, config]: Parameters<typeof transaction>) =>
             serialized(async () => {
-                let opened: object | undefined;
+                let durable = false;
                 const result = await transaction(async (tx) => {
-                    opened = tx;
-                    openTransactions.add(tx);
+                    openDurableTransaction(tx);
                     try {
                         return await work(tx);
                     } finally {
-                        openTransactions.delete(tx);
+                        durable = closeDurableTransaction(tx);
                     }
                 }, config);
-                if (opened !== undefined && durableTransactions.has(opened)) await flush();
+                if (durable) await flush();
                 return result;
             }),
         writable: false,

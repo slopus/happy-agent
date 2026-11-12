@@ -92,6 +92,7 @@ import { detachSecretTool } from "./tools/detach_secret.js";
 import { listSecretsTool } from "./tools/list_secrets.js";
 import { referenceSecretTool } from "./tools/reference_secret.js";
 import { updateSecretTool } from "./tools/update_secret.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 
 /** How many references one page returns when the caller does not ask for fewer. */
 export const SECRETS_PAGE_SIZE = 50;
@@ -1210,6 +1211,7 @@ export class SecretsModule implements AgentModule {
             if (change.event !== undefined) {
                 await this.#observe(txCtx, change.event);
             }
+            await requireDurableCommit(txCtx);
             return structuredClone(change.result);
         });
     }

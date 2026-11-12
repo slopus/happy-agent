@@ -23,6 +23,7 @@ import {
 } from "./UserSettings.js";
 import { UserSettingsError } from "./UserSettingsError.js";
 import { userSettingsMigrations } from "./UserSettingsMigrations.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 
 /**
  * Small opaque preferences that belong to one person and follow them from device to device.
@@ -90,6 +91,7 @@ export class UserSettingsModule implements AgentModule {
             const result = await saveUserSetting(txCtx, owner, key, write, Date.now());
             if (result.applied) {
                 await this.#publish(txCtx, { owner, setting: result.setting });
+                await requireDurableCommit(txCtx);
             }
             return result.setting;
         });

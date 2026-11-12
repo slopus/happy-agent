@@ -5,6 +5,7 @@ import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
 
 import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 import { ProviderScanModule } from "../providerScan/index.js";
 import { checkProviderCliSignIn } from "./impl/checkProviderCliSignIn.js";
 import { createProviderCliVersion } from "./impl/createProviderCliVersion.js";
@@ -138,6 +139,7 @@ export class ProviderClisModule implements AgentModule {
                     });
                     return null;
                 }
+                await requireDurableCommit(ctx);
                 await this.#signIn(ctx, call.arguments);
                 return null;
             },

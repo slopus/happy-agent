@@ -83,6 +83,7 @@ import { sendBotMessageTool } from "./tools/send_bot_message.js";
 import { setBotAvatarTool } from "./tools/set_bot_avatar.js";
 import { setBotNameTool } from "./tools/set_bot_name.js";
 import { updateBotSettingsTool } from "./tools/update_bot_settings.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 
 const BOT_NAME_ATTEMPTED_KEY = "bot-name-attempted";
 const NAMING_FUNCTION = "bots.name";
@@ -366,6 +367,7 @@ export class BotsModule implements AgentModule {
             throw new BotInputError();
         }
         return await ctx.inTx(async (txCtx) => {
+            await requireDurableCommit(txCtx);
             if (input.id !== undefined) {
                 const existing = await readBot(txCtx, input.id);
                 if (existing !== undefined) {
@@ -971,6 +973,7 @@ export class BotsModule implements AgentModule {
     ): Promise<BotRecord> {
         const decided = decide(structuredClone(current));
         if (decided === undefined) return current;
+        await requireDurableCommit(ctx);
         const next: BotRecord = {
             ...decided,
             version: current.version + 1,

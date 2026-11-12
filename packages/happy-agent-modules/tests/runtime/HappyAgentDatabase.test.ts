@@ -9,10 +9,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { agentDatabaseRun, withAgentDatabase } from "@slopus/happy-agent-base";
 import { createRootContext } from "@steve.kite/stdlib";
 
-import {
-    openHappyAgentDatabase,
-    requireDurableCommit,
-} from "../../sources/runtime/HappyAgentDatabase.js";
+import { requireDurableCommit } from "../../sources/impl/durableCommit.js";
+import { openHappyAgentDatabase } from "../../sources/runtime/HappyAgentDatabase.js";
 
 const createdDirectories = new Set<string>();
 

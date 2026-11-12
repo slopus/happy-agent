@@ -48,8 +48,8 @@ import {
     senderAgentExplanationOf,
     senderAgentIdOf,
 } from "../impl/messageOrigin.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 import { decodeRequestProfile } from "../impl/requestProfile.js";
-import { requireDurableCommit } from "../runtime/HappyAgentDatabase.js";
 import { storyQuoteOf } from "../impl/storyQuote.js";
 import type { BotSettingsModule } from "../botSettings/index.js";
 import type { DurableFunctionsModule } from "../durableFunctions/index.js";

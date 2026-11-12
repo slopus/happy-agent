@@ -131,6 +131,7 @@ import { approveExportedBotUserTool } from "./tools/approve_exported_bot_user.js
 import { denyExportedBotUserTool } from "./tools/deny_exported_bot_user.js";
 import { getExportedBotStatusTool } from "./tools/get_exported_bot_status.js";
 import { removeExportedBotTool } from "./tools/remove_exported_bot.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 
 /** The one route a bridge uses. */
 export const EXPORTED_BOT_CONNECT_PATH = "/v0/exported-bots/connect";
@@ -1773,6 +1774,8 @@ export class ExportedBotsModule implements AgentModule {
                 return null;
             }
             await call.kv.write(ctx, "sent", index + 1);
+            // The piece is already in the chat; a lost count would send it again.
+            await requireDurableCommit(ctx);
         }
         // A service may hide "typing…" once the bot speaks, so a conversation still working shows
         // it again at once rather than at its next renewal.

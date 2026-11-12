@@ -58,6 +58,7 @@ import {
 } from "./HappyWorkspaceRead.js";
 import { happyComposerDraftSnapshotSchema } from "./HappyComposerDraft.js";
 import { createHappyAccountFingerprint } from "./credentials/createHappyAccountFingerprint.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 
 const HTTP_TIMEOUT_MS = 15_000;
 const RETRY_DELAY_MS = 2_000;
@@ -1023,6 +1024,8 @@ export class HappySessionClient {
                 OUTBOX_BATCH,
             );
             if (pending.length === 0) return;
+            // Once the server has these, a lost copy here would be regenerated under new IDs.
+            await requireDurableCommit(this.#options.context);
             await this.#request(
                 `${this.#options.configuration.serverUrl}/v3/sessions/${encodeURIComponent(remoteSessionId)}/messages`,
                 {
@@ -1084,6 +1087,8 @@ export class HappySessionClient {
                 seq,
                 Date.now(),
             );
+            // Losing the cursor while the message it covers survived would deliver it twice.
+            await requireDurableCommit(txCtx);
         });
     }
 

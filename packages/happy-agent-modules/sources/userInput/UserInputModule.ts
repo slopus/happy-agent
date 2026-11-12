@@ -82,6 +82,7 @@ import { cancelAskTool } from "./tools/cancel_ask.js";
 import { readUserInputTool } from "./tools/read_user_input.js";
 import { requestUserInputTool } from "./tools/request_user_input.js";
 import { UserInputConflictError } from "./UserInputConflictError.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 
 /** The most requests one list page may return. */
 export const MAX_USER_INPUT_PAGE_SIZE = 50;
@@ -379,6 +380,8 @@ export class UserInputModule implements AgentModule {
                 answeredAt: at,
                 updatedAt: at,
             };
+            // The person is told their answer was taken once this returns.
+            await requireDurableCommit(txCtx);
             return await this.#persistTransition(txCtx, agentId, "user_input_answered", answered);
         });
         return structuredClone(request);

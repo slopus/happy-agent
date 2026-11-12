@@ -23,6 +23,7 @@ import {
     sameJson,
 } from "./ProjectTransition.js";
 import { deepFreeze, isDeepFrozen, requirePromise } from "./projectRuntime.js";
+import { requireDurableCommit } from "../impl/durableCommit.js";
 
 /** Distributes over the event union, so each event keeps its own fields. */
 export type ProjectEventPayload = ProjectEvent extends infer TEvent
@@ -102,6 +103,7 @@ export class ProjectMutations {
                         );
             const raw = await spec.run(txCtx, before);
             assertProjectStoreMutationResult(raw);
+            await requireDurableCommit(txCtx);
             if (!("project" in raw)) {
                 throw new Error("A project mutation did not return a project.");
             }
