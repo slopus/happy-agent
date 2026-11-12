@@ -8,6 +8,7 @@
  */
 
 import type {
+    SDKAPIRetryMessage,
     SDKAssistantMessageError,
     SDKRateLimitInfo,
     SDKResultMessage,
@@ -112,6 +113,34 @@ export function classifyClaudeError(options: {
         type: "unclassified",
         ...(diagnostics === undefined ? {} : { diagnostics }),
     };
+}
+
+/**
+ * What an `api_retry` is retrying. Claude Code names the failure with the same assistant error
+ * vocabulary it uses for a terminal one, so a retried 401 stays an authentication failure rather
+ * than reading as an outage while Claude Code refreshes its login. A retry with no HTTP status
+ * never got a response at all.
+ */
+export function classifyClaudeRetry(message: SDKAPIRetryMessage): SessionProviderError {
+    const status = message.error_status ?? undefined;
+    if (status === undefined && message.error === "unknown") {
+        const diagnostics = extractProviderErrorDiagnostics(undefined, {
+            attempts: message.attempt,
+            code: message.error,
+        });
+        return { type: "network", ...(diagnostics === undefined ? {} : { diagnostics }) };
+    }
+    const providerError = classifyClaudeError({
+        assistantError: message.error,
+        attempts: message.attempt,
+        message: "",
+    });
+    const diagnostics = extractProviderErrorDiagnostics(undefined, {
+        attempts: message.attempt,
+        code: message.error,
+        ...(status === undefined ? {} : { status }),
+    });
+    return { ...providerError, ...(diagnostics === undefined ? {} : { diagnostics }) };
 }
 
 export function claudeResultErrorMessage(

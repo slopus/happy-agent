@@ -68,7 +68,11 @@ export type SessionEvent =
           isError?: boolean;
           incomplete?: boolean;
       }
-    | { type: "retrying"; attempt: number; reason: string }
+    /**
+     * A provider-owned retry is about to start. `providerError` classifies the failure being
+     * retried when the provider knows it, in the same vocabulary as a terminal error.
+     */
+    | { type: "retrying"; attempt: number; reason: string; providerError?: SessionProviderError }
     | { type: "token_usage"; usage: SessionUsage }
     | { type: "done"; state: "cancelled" }
     | { type: "done"; state: "normal"; tokens: SessionTokens; endTurn?: boolean }

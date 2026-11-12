@@ -15,6 +15,7 @@ import { toLlmParametersSchema } from "@/tools/sanitizeSchema.js";
 import { DEFAULT_INFERENCE_MAX_RETRIES } from "@/core/inferenceRetrySettings.js";
 import type { ClaudeCredential } from "@/vendors/VendorCredential.js";
 import { CLAUDE_SDK_PRIVACY_ENVIRONMENT } from "@/vendors/claude/claudeSdkPrivacyEnvironment.js";
+import { spawnClaudeCodeChild } from "@/vendors/claude/impl/spawnClaudeCodeChild.js";
 
 const RIG_MCP_SERVER_NAME = "rig";
 
@@ -100,7 +101,19 @@ export function toClaudeSdkOptions(options: {
         tools: builtInToolNames,
         ...(abortController === undefined ? {} : { abortController }),
         ...thinkingOptions(options.effort),
+        ...storedSignInSpawn(options.credential),
     };
+}
+
+/**
+ * A stored Claude Code sign-in is renewed by the child itself, so stopping that child must not
+ * cut a renewal short. Tokens Happy passes in are never renewed by the child.
+ */
+function storedSignInSpawn(
+    credential: ClaudeCredential,
+): Pick<ClaudeSdkOptions, "spawnClaudeCodeProcess"> {
+    if (credential.name !== "claude-code") return {};
+    return { spawnClaudeCodeProcess: (spawnOptions) => spawnClaudeCodeChild(spawnOptions) };
 }
 
 /**

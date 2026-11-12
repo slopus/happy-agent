@@ -367,6 +367,23 @@ results. The listener is removed on normal completion, error, synchronous query-
 failure, or cancellation. The same resources are also closed by `destroy()`, or when model,
 effort, tools, prompt, or compaction mode changes.
 
+A child using a stored Claude Code sign-in renews it itself: it spends the refresh token at the
+token endpoint, then saves the new pair. The SDK stops a closed child with SIGTERM two seconds
+after closing its input, so a stop landing between those steps used to leave a spent refresh
+token in the store. The next renewal by any process was refused, and Claude Code then cleared the
+sign-in shared by every session on that account until the person signed in again.
+`impl/spawnClaudeCodeChild.ts` therefore spawns these children and holds every stop of one child
+while that child is renewing. Claude Code names the holder of `.oauth_refresh.lock` in
+`.oauth_refresh.lock.owner`, so a lock held by the terminal `claude` or another session does not
+delay the stop; until the record names a holder, the child is assumed to be it. The stops of one
+child share a single wait of 32 seconds, Claude Code 2.1.321's 30-second token request timeout plus
+a margin. Claude Code touches a held lock every five seconds, so a lock untouched for ten seconds
+counts as abandoned. The wait uses unreferenced timers and never delays daemon exit; a child left
+behind still saves its renewal and exits once it sees its input closed. Tokens Rig passes in are
+never renewed by the child, so those children use the SDK's own spawn. The Claude Code harness
+spawns its children the same way and also defers its process-tree stop with
+`afterClaudeCodeRenewal`.
+
 ## Trace and test coverage
 
 `tests/vendors/captureClaudeTrace.mjs` captures vanilla CLI behavior with real inference,

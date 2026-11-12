@@ -546,7 +546,9 @@ block_start -> replacement deltas -> block_stop -> done
 
 - `block_start` begins tentative output for an attempt.
 - `block_reset` retracts everything since the matching `block_start`.
-- `retrying` reports the next provider-owned retry and its reason.
+- `retrying` reports the next provider-owned retry and its reason. When the provider knows what
+  failed, `providerError` classifies it in the same vocabulary as a terminal error, so a UI can
+  say "signing in again" rather than "overloaded" while the provider retries.
 - `block_stop` commits the current block; its output is now safe to persist as the response.
 
 `block_reset` may also precede cancellation or a terminal error when no retry follows. It rewinds
@@ -1027,7 +1029,7 @@ type SessionEvent =
           incomplete?: boolean;
       }
     // Progress.
-    | { type: "retrying"; attempt: number; reason: string }
+    | { type: "retrying"; attempt: number; reason: string; providerError?: SessionProviderError }
     | { type: "token_usage"; usage: SessionUsage }
     // Exactly one done event ends every started stream.
     | { type: "done"; state: "cancelled" }

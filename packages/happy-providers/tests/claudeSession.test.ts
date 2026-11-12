@@ -426,6 +426,7 @@ describe("ClaudeSession", () => {
             type: "retrying",
             attempt: 1,
             reason: "Claude's response was interrupted by a server error.",
+            providerError: expect.objectContaining({ type: "internal_server_error" }),
         });
         expect(textFromSessionEvents(events)).toBe("RECOVERED");
         expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
@@ -549,6 +550,7 @@ describe("ClaudeSession", () => {
             type: "retrying",
             attempt: 1,
             reason: "Claude returned a response with zero output tokens.",
+            providerError: { type: "empty_response" },
         });
         expect(events.filter((event) => event.type === "token_usage")).toEqual([
             {
@@ -896,6 +898,10 @@ describe("ClaudeSession", () => {
             type: "retrying",
             attempt: 2,
             reason: "Claude API overloaded (HTTP 529); retrying in 1.5 s, attempt 2 of 10.",
+            providerError: {
+                type: "server_overloaded",
+                diagnostics: { attempts: 2, code: "overloaded", status: 529 },
+            },
         });
     });
 

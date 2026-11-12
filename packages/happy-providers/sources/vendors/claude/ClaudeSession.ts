@@ -337,6 +337,9 @@ export class ClaudeSession extends BaseSession {
                         type: "retrying",
                         attempt: completedMidResponseAttempts,
                         reason: "Claude's response was interrupted by a server error.",
+                        ...(terminal.state === "error" && terminal.providerError !== undefined
+                            ? { providerError: terminal.providerError }
+                            : {}),
                     };
                     try {
                         await this.retryWait(completedMidResponseAttempts, signal);
@@ -367,6 +370,7 @@ export class ClaudeSession extends BaseSession {
                         type: "retrying",
                         attempt: emptyResponseRetries,
                         reason: error.message,
+                        providerError: { type: "empty_response" },
                     };
                     try {
                         await this.retryWait(emptyResponseRetries, signal);
@@ -985,7 +989,16 @@ export class ClaudeSession extends BaseSession {
                     yield { type: "text_delta", delta: result.result };
                     yield { type: "text_end" };
                 }
-                if (result.subtype !== "success" || result.is_error) {
+                // Claude Code reports a failure it answered for itself, such as a refused login, as
+                // a synthetic assistant message carrying an error. If the result ever arrives
+                // without `is_error` after one, the error is still the outcome: treating it as an
+                // empty answer would respawn the query for every retry and end as "empty response".
+                const failedWithoutOutput =
+                    assistantError !== undefined &&
+                    !sawText &&
+                    !sawToolCall &&
+                    result.usage.output_tokens === 0;
+                if (result.subtype !== "success" || result.is_error || failedWithoutOutput) {
                     const message =
                         result.subtype === "success"
                             ? result.result.trim() || "Claude returned an unsuccessful result."

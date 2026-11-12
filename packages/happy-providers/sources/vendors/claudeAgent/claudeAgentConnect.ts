@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
 import type * as acp from "@agentclientprotocol/sdk";
@@ -26,6 +26,10 @@ import { ACP_BRIDGE_NAME } from "@/protocol/acp/impl/acpResponseEvents.js";
 import { processTreeGroups, terminateProcessTree } from "@/protocol/acp/impl/processTree.js";
 import { CLAUDE_SDK_PRIVACY_ENVIRONMENT } from "@/vendors/claude/claudeSdkPrivacyEnvironment.js";
 import { claudeUsageFromRateLimitInfo } from "@/vendors/claude/claudeUsageFromRateLimitInfo.js";
+import {
+    afterClaudeCodeRenewal,
+    spawnClaudeCodeChild,
+} from "@/vendors/claude/impl/spawnClaudeCodeChild.js";
 import { resolveClaudeCodeExecutablePath } from "@/vendors/claude/resolveClaudeCodeExecutablePath.js";
 import { AsyncInputQueue } from "@/vendors/claudeAgent/impl/AsyncInputQueue.js";
 import { claudeAgentUpdates } from "@/vendors/claudeAgent/impl/claudeAgentUpdates.js";
@@ -192,7 +196,10 @@ class ClaudeAgentConnection implements AcpAgentConnection {
             thread.input.close();
             thread.query.close();
         }
-        for (const child of this.#children) terminateProcessTree(child, groups);
+        // Claude Code may be renewing the sign-in it shares with every other session.
+        for (const child of this.#children) {
+            afterClaudeCodeRenewal(child, () => terminateProcessTree(child, groups));
+        }
         this.#exit(new Error("The Claude agent was stopped."));
     }
 
@@ -240,21 +247,16 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                     this.#stderr = (this.#stderr + data).slice(-4000);
                 },
                 spawnClaudeCodeProcess: (options) => {
-                    // A process group of its own, so stopping it reaches the commands it runs.
-                    const child = spawn(options.command, options.args, {
-                        cwd: options.cwd,
-                        env: options.env,
+                    const child = spawnClaudeCodeChild(options, {
+                        // A process group of its own, so stopping it reaches the commands it runs.
                         detached: process.platform !== "win32",
-                        stdio: ["pipe", "pipe", "pipe"],
-                        signal: options.signal,
-                        windowsHide: true,
-                    });
-                    child.stderr?.on("data", (chunk: Buffer) => {
-                        this.#stderr = (this.#stderr + chunk.toString("utf8")).slice(-4000);
+                        onStderr: (chunk) => {
+                            this.#stderr = (this.#stderr + chunk).slice(-4000);
+                        },
                     });
                     this.#children.add(child);
                     child.once("exit", () => this.#children.delete(child));
-                    return child as never;
+                    return child;
                 },
             },
         });
