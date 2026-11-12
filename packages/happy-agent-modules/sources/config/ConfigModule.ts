@@ -27,8 +27,14 @@ import type {
     AgentModule,
     AgentModuleHooks,
     AgentProviders,
+    AgentSystemRef,
 } from "@slopus/happy-agent-base";
-import { agentId as contextAgentId, cuid2Schema } from "@slopus/happy-agent-base";
+import {
+    agentDatabase,
+    agentId as contextAgentId,
+    cuid2Schema,
+    withAgentDatabase,
+} from "@slopus/happy-agent-base";
 import {
     CodexProvider,
     CodexSessionCredential,
@@ -40,6 +46,7 @@ import {
     type BaseProvider,
     type SessionReasoningEffort,
     type ProviderUsage,
+    type SessionSystemMessage,
 } from "@slopus/happy-providers";
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -1981,6 +1988,8 @@ export class ConfigModule implements AgentModule {
     readonly #accountUsageListeners = new Set<(usage: ProviderUsage) => void>();
     #harnessAsker: HarnessPermissionAsker | undefined;
     #harnessReviewer: HarnessPermissionReviewer | undefined;
+    /** The agents a foreign agent's own turn wakes, and the context that outlives any turn. */
+    #wakeTarget: { readonly agents: AgentSystemRef; readonly ctx: Context } | undefined;
     #resolvedScripted: ConfigInferenceOverride | undefined;
     #scriptedModelSnapshot: readonly AgentModel[] | undefined;
     #workspacesHome: string | undefined;
@@ -2388,7 +2397,19 @@ export class ConfigModule implements AgentModule {
         },
     };
 
-    readonly beforeStart = (): AgentModuleHooks => this.#hooks;
+    readonly beforeStart = (ctx?: Context, agents?: AgentSystemRef): AgentModuleHooks => {
+        if (ctx !== undefined && agents !== undefined) {
+            // A wake arrives from a foreign agent's own process long after the turn that started
+            // it, so it is sent on the module's own context, which keeps the database it needs.
+            const database = agentDatabase(ctx);
+            const own = detach(ctx).named("foreign-agent-wake");
+            this.#wakeTarget = {
+                agents,
+                ctx: database === undefined ? own : withAgentDatabase(own, database),
+            };
+        }
+        return this.#hooks;
+    };
 
     /**
      * Every model the configuration enables, with the configured default first.
@@ -3899,6 +3920,24 @@ export class ConfigModule implements AgentModule {
         return await asker(ctx, ask, signal);
     }
 
+    /**
+     * A foreign agent started a turn on its own, such as after a background command finished.
+     * `notice` goes to the agent it runs as like any other hidden system message, and the run it
+     * starts shows that turn. `ctx` names the agent; the turn it came from may be long over.
+     */
+    #wakeForeignAgent(ctx: Context, notice: SessionSystemMessage): void {
+        const target = this.#wakeTarget;
+        const agent = contextAgentId(ctx);
+        if (target === undefined || agent === undefined) return;
+        void target.agents
+            .send(target.ctx, agent, notice, { metadata: { hideFromUser: true } })
+            .catch((error: unknown) => {
+                target.ctx.log.warn(
+                    `Could not show a turn a foreign agent started on its own: ${String(error)}`,
+                );
+            });
+    }
+
     /** Sign-in state is bookkeeping too; a listener that throws never breaks inference. */
     #reportSignIn(providerId: string, signIn: ProviderSignInObservation): void {
         this.#report(this.#signInListeners, (listener) => listener(providerId, signIn));
@@ -4189,6 +4228,8 @@ export class ConfigModule implements AgentModule {
                     this.#accountFailures,
                     (ctx, harnessId, question, signal) =>
                         this.#askHarnessPermission(ctx, harnessId, question, signal),
+                    undefined,
+                    (ctx, notice) => this.#wakeForeignAgent(ctx, notice),
                 ),
             },
             this.configuration,
@@ -4264,6 +4305,7 @@ export class ConfigModule implements AgentModule {
                 (ctx, harnessId, question, signal) =>
                     this.#askHarnessPermission(ctx, harnessId, question, signal),
                 () => this.configuration,
+                (ctx, notice) => this.#wakeForeignAgent(ctx, notice),
             );
             // A test-owned inference registry is already authenticated. Initialize all its
             // accounts as usable, including canonical IDs whose production defaults are off. This
