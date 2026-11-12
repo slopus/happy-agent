@@ -13,7 +13,7 @@
     "devDependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",
         "@sinclair/typebox": "^0.34.49",
-        "@slopus/happy-agent-client": "0.0.163",
+        "@slopus/happy-agent-client": "0.0.164",
         "@slopus/happy-agent-gym": "workspace:*",
         "@slopus/happy-providers": "0.0.62",
         "@steve.kite/stdlib": "0.0.12",

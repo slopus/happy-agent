@@ -338,7 +338,12 @@ import {
     WebSocketDuplex,
     WebSocketTunnel,
 } from "../transport/index.js";
-import { UsageModule, type UsageCurrentContext, type UsageRunSummary } from "../usage/index.js";
+import {
+    MAX_USAGE_DAYS,
+    UsageModule,
+    type UsageCurrentContext,
+    type UsageRunSummary,
+} from "../usage/index.js";
 import {
     UserInputConflictError,
     UserInputModule,
@@ -2118,6 +2123,20 @@ export class ApiModule implements AgentModule {
             if (await this.#handleAgentRoute(ctx, request, response, url)) return;
             if (request.method === "GET" && url.pathname === "/v0/usage") {
                 sendJson(response, 200, await this.#daemonUsage(ctx));
+                return;
+            }
+            if (request.method === "GET" && url.pathname === "/v0/usage/daily") {
+                const days = url.searchParams.get("days") ?? "365";
+                const query = {
+                    days: /^\d{1,5}$/u.test(days) ? Number(days) : Number.NaN,
+                    timeZone: url.searchParams.get("tz") ?? "UTC",
+                };
+                if (!this.#usage.isDailyUsageQuery(query)) {
+                    throw invalidRequest(
+                        `Ask for 1 to ${MAX_USAGE_DAYS} days in a known IANA time zone, such as Europe/Berlin.`,
+                    );
+                }
+                sendJson(response, 200, await this.#usage.readDailyUsage(ctx, query));
                 return;
             }
             if (request.method === "POST" && url.pathname === "/v0/usage/refresh") {
@@ -10700,6 +10719,7 @@ export class ApiModule implements AgentModule {
                           vaults: true,
                       }),
                 ...(this.#nodeSearch === undefined ? {} : { search: true }),
+                dailyUsage: true,
             },
             version: {
                 protocol: API_PROTOCOL_VERSION,

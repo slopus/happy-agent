@@ -90,6 +90,12 @@ model a cost was actually spent on live on the records and are read through `rea
   or after one instant, across the whole collection. Only host code may ask, because the answer
   spans every agent. `ApiModule` builds the `GET /v0/usage` hour, day, week, and month windows
   from it.
+- `readDailyUsage(ctx, { days, timeZone })` — the same totals per calendar day in an IANA time
+  zone, for the `days` days ending today, listing only days that spent tokens, plus `since`, the
+  first such day ever. Each UTC hour counts toward the local day it starts on. The zone's offsets
+  become a few constant-offset runs, one per daylight-saving change, so one grouped pass over the
+  hourly totals answers it. `isDailyUsageQuery` tells whether a query is acceptable. `ApiModule`
+  serves it as `GET /v0/usage/daily`.
 - `readRun(ctx, agentId, runId)` — the bounded provider-then-model inference usage attributed to
   one exact run, including cache reads and writes. `costUsd` is `null` because the current provider
   contract does not report monetary cost; the module never estimates one.

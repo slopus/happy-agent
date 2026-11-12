@@ -36,6 +36,8 @@ import {
     MAX_USAGE_RUNS_PER_READ,
     MAX_USAGE_WINDOWS,
     usageAggregateQuerySchema,
+    usageDailyQuerySchema,
+    usageDailySchema,
     usageAgentIdSchema,
     usageAgentTreeSchema,
     usageIdSchema,
@@ -50,6 +52,8 @@ import {
     type UsageAgentTreeRelation,
     type UsageAgentTreeSession,
     type UsageCurrentContext,
+    type UsageDaily,
+    type UsageDailyQuery,
     type UsageInferenceRecord,
     type UsagePage,
     type UsagePageQuery,
@@ -65,6 +69,13 @@ import { getAgentTreeUsageTool } from "./tools/get_agent_tree_usage.js";
 import { getUsageTool } from "./tools/get_usage.js";
 import { assertUsageRecord, assertUsageTokens } from "./impl/assertUsageRecord.js";
 import { currentContextFromRecord } from "./impl/currentContextFromRecord.js";
+import {
+    earliestHourOf,
+    formatLocalDay,
+    isTimeZone,
+    localDay,
+    offsetSegments,
+} from "./impl/localCalendar.js";
 import { UsageDatabase } from "./impl/usageDatabase.js";
 import { migrateUsageHourlyTotals } from "./impl/usageHourlyTotalsMigration.js";
 
@@ -388,6 +399,60 @@ export class UsageModule implements AgentModule {
             }
         }
         return await new UsageDatabase().windowUsage(ctx, cutoffs);
+    }
+
+    /** Whether `readDailyUsage` accepts `query`: a bounded range in a time zone the runtime knows. */
+    isDailyUsageQuery(query: unknown): query is UsageDailyQuery {
+        return Value.Check(usageDailyQuerySchema, query) && isTimeZone(query.timeZone);
+    }
+
+    /**
+     * Read provider/model inference totals per calendar day in `timeZone`, for the `days` days
+     * ending today, across the whole collection. Only days that spent tokens are listed; `since`
+     * is the first such day ever.
+     *
+     * Totals are kept per UTC hour, and each hour counts toward the local day it starts on. The
+     * database applies the zone's offsets as a few runs, one per daylight-saving change, so the
+     * cost follows the range rather than the history. Only host code may ask.
+     */
+    async readDailyUsage(
+        ctx: Context,
+        query: UsageDailyQuery,
+        now: number = Date.now(),
+    ): Promise<UsageDaily> {
+        this.#assertAgentAccess(ctx, undefined);
+        if (!this.isDailyUsageQuery(query)) throw new Error("Daily usage query is invalid.");
+        const { days, timeZone } = query;
+        const today = localDay(timeZone, now);
+        const firstDay = today - (days - 1);
+        const from = earliestHourOf(firstDay);
+        const lastHour = now - (now % (60 * 60 * 1_000));
+        const result = await new UsageDatabase().dailyUsage(
+            ctx,
+            from,
+            offsetSegments(timeZone, from, Math.max(from, lastHour)),
+        );
+        const byDay = new Map<number, UsageRunBreakdown>();
+        for (const row of result.days) {
+            // The read starts early enough for any zone; hours outside this zone's range go.
+            if (row.day < firstDay || row.day > today) continue;
+            const breakdown = byDay.get(row.day) ?? {};
+            breakdown[row.provider] = { ...breakdown[row.provider], [row.model]: row.tokens };
+            byDay.set(row.day, breakdown);
+        }
+        const daily: UsageDaily = {
+            days: [...byDay.entries()]
+                .sort(([a], [b]) => a - b)
+                .map(([day, byProvider]) => ({ date: formatLocalDay(day), byProvider })),
+            since:
+                result.firstBucket === null
+                    ? null
+                    : formatLocalDay(localDay(timeZone, result.firstBucket)),
+        };
+        if (!Value.Check(usageDailySchema, daily)) {
+            throw new Error("Usage database returned an invalid daily breakdown.");
+        }
+        return daily;
     }
 
     /** Read lifetime provider/model inference totals for one agent. */

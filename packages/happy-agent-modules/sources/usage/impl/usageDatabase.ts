@@ -25,12 +25,14 @@ import {
 } from "../Usage.js";
 import { assertUsageRecord } from "./assertUsageRecord.js";
 import { currentContextFromRecord } from "./currentContextFromRecord.js";
+import type { OffsetSegment } from "./localCalendar.js";
 import { USAGE_BUCKET_MS, USAGE_INDEXED_STARTED_AT } from "./usageHourlyTotalsMigration.js";
 
 const RECORDS_TABLE = "happy_agent_usage_records";
 const CONTEXTS_TABLE = "happy_agent_usage_contexts";
 const MODEL_TOTALS_TABLE = "happy_agent_usage_model_totals";
 const HOURLY_TOTALS_TABLE = "happy_agent_usage_hourly_totals";
+const DAY_MS = 24 * USAGE_BUCKET_MS;
 
 /**
  * The record's own fields, read out of the stored JSON.
@@ -383,6 +385,82 @@ export class UsageDatabase {
     async windowUsage(ctx: Context, cutoffs: readonly number[]): Promise<UsageRunBreakdown[]> {
         if (cutoffs.length === 0) return [];
         return await ctx.inTx(async (txCtx) => await this.#windowUsage(txCtx, cutoffs));
+    }
+
+    /**
+     * Sum hourly totals from `from` onward into local days, and find the first hour that spent
+     * any tokens at all. Each run of `segments` shares one offset from UTC, so the database
+     * shifts every hour by its run's offset and groups by the resulting day number.
+     */
+    async dailyUsage(
+        ctx: Context,
+        from: number,
+        segments: readonly OffsetSegment[],
+    ): Promise<{
+        readonly days: readonly {
+            readonly day: number;
+            readonly provider: string;
+            readonly model: string;
+            readonly tokens: UsageRunTokens;
+        }[];
+        readonly firstBucket: number | null;
+    }> {
+        return await ctx.inTx(async (txCtx) => {
+            const offset = sql.join(
+                [
+                    sql`CASE`,
+                    ...segments
+                        .map(
+                            (segment) =>
+                                sql`WHEN bucket_start >= ${segment.start} THEN ${segment.offsetMs}`,
+                        )
+                        .reverse(),
+                    sql`ELSE ${segments[0]?.offsetMs ?? 0} END`,
+                ],
+                sql` `,
+            );
+            const spent = sql`(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) > 0`;
+            const rows = await agentDatabaseRows<Record<string, number | string | null>>(
+                txCtx.db,
+                sql`SELECT CAST((bucket_start + ${offset}) / ${sql.raw(String(DAY_MS))} AS INTEGER) AS day, provider, model,
+                           SUM(input_tokens) AS input, SUM(output_tokens) AS output,
+                           SUM(cache_read_tokens) AS cache_read,
+                           SUM(cache_write_tokens) AS cache_write,
+                           SUM(inconsistent_records) AS inconsistent_duration
+                    FROM ${sql.raw(HOURLY_TOTALS_TABLE)}
+                    WHERE bucket_start >= ${from} AND ${spent}
+                    GROUP BY day, provider, model
+                    ORDER BY day, provider, model`,
+            );
+            const first = await agentDatabaseRows<{ bucket: number | null }>(
+                txCtx.db,
+                sql`SELECT bucket_start AS bucket FROM ${sql.raw(HOURLY_TOTALS_TABLE)}
+                    WHERE ${spent} ORDER BY bucket_start LIMIT 1`,
+            );
+            const days = rows.map((row) => {
+                if (Number(row["inconsistent_duration"] ?? 0) > 0) {
+                    throw new Error(
+                        "Usage storage holds a record whose duration contradicts its span.",
+                    );
+                }
+                return {
+                    day: Number(row["day"]),
+                    provider: String(row["provider"]),
+                    model: String(row["model"]),
+                    tokens: {
+                        input: Number(row["input"] ?? 0),
+                        output: Number(row["output"] ?? 0),
+                        cacheRead: Number(row["cache_read"] ?? 0),
+                        cacheWrite: Number(row["cache_write"] ?? 0),
+                    },
+                };
+            });
+            const bucket = first[0]?.bucket;
+            return {
+                days,
+                firstBucket: bucket === null || bucket === undefined ? null : Number(bucket),
+            };
+        });
     }
 
     async #windowUsage(ctx: Context, cutoffs: readonly number[]): Promise<UsageRunBreakdown[]> {

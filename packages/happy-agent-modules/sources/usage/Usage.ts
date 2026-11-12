@@ -200,6 +200,35 @@ export const usageRunSummarySchema = Type.Object(
     { additionalProperties: false },
 );
 
+/** The longest daily read, three years, so a caller cannot widen the query itself. */
+export const MAX_USAGE_DAYS = 1_096;
+
+export const usageDailyQuerySchema = Type.Object(
+    {
+        days: Type.Integer({ minimum: 1, maximum: MAX_USAGE_DAYS }),
+        /** An IANA time zone; the module refuses one the runtime does not know. */
+        timeZone: Type.String({ minLength: 1, maxLength: 64 }),
+    },
+    { additionalProperties: false },
+);
+
+const usageCalendarDateSchema = Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" });
+
+export const usageDailySchema = Type.Object(
+    {
+        days: Type.Array(
+            Type.Object(
+                { date: usageCalendarDateSchema, byProvider: usageRunBreakdownSchema },
+                { additionalProperties: false },
+            ),
+        ),
+        since: Type.Union([usageCalendarDateSchema, Type.Null()]),
+    },
+    { additionalProperties: false },
+);
+
+export type UsageDailyQuery = Static<typeof usageDailyQuerySchema>;
+export type UsageDaily = Static<typeof usageDailySchema>;
 export type UsageRunTokens = Static<typeof usageRunTokensSchema>;
 export type UsageRunBreakdown = Static<typeof usageRunBreakdownSchema>;
 export type UsageRunSummary = Static<typeof usageRunSummarySchema>;
