@@ -32,9 +32,7 @@ export function createWorkspaceTool(workspaces: WorkspacesModule, agentId: strin
                 projectRef,
                 { ...request, nameConfigured: true },
                 agentId,
-                {
-                    operationId: call.id,
-                },
+                { operationId: call.id, reportFailureTo: agentId },
             );
             if (workspace === undefined) {
                 throw new Error(`Project "${projectRef}" was not found.`);

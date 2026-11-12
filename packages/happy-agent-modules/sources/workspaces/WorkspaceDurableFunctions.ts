@@ -4,12 +4,18 @@ import {
     durableEntityArgumentsSchema,
     durableProvisionResultSchema,
 } from "../durableFunctions/index.js";
-import { workspaceErrorSchema, workspaceIdSchema } from "./Workspace.js";
+import { workspaceAgentIdSchema, workspaceErrorSchema, workspaceIdSchema } from "./Workspace.js";
 
 export const WORKSPACE_PROVISION_FUNCTION = "workspaces.provision";
 export const WORKSPACE_ARCHIVE_FUNCTION = "workspaces.archive";
 
 export const workspaceDurableArgumentsSchema = durableEntityArgumentsSchema(workspaceIdSchema);
+
+/** Provisioning also carries the agent to tell if the checkout fails after creation returned. */
+export const workspaceProvisionArgumentsSchema = Type.Object(
+    { id: workspaceIdSchema, reportFailureTo: Type.Optional(workspaceAgentIdSchema) },
+    { additionalProperties: false },
+);
 
 export const workspaceProvisionResultSchema = durableProvisionResultSchema(workspaceErrorSchema);
 export const workspaceArchiveResultSchema = Type.Null();

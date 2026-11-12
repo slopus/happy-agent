@@ -148,6 +148,7 @@ import {
     workspaceDurableArgumentsSchema,
     workspaceLockKey,
     workspaceOperationId,
+    workspaceProvisionArgumentsSchema,
     workspaceProvisionResultSchema,
     type WorkspaceProvisionResult,
 } from "./WorkspaceDurableFunctions.js";
@@ -208,6 +209,7 @@ const WORKSPACE_REFERENCE_INSTRUCTIONS =
  * created, and every agent created under it copies them.
  */
 const taskAgentSettingsSchema = Type.Object({ task: Type.Literal(true) });
+const archivedAgentMetadataSchema = Type.Object({ archivedAt: Type.Number() });
 
 export class WorkspacesModule implements AgentModule {
     readonly name = "workspaces";
@@ -280,7 +282,7 @@ export class WorkspacesModule implements AgentModule {
 
         durableFunctions.register({
             name: WORKSPACE_PROVISION_FUNCTION,
-            argumentsSchema: workspaceDurableArgumentsSchema,
+            argumentsSchema: workspaceProvisionArgumentsSchema,
             resultSchema: workspaceProvisionResultSchema,
             executor: async (ctx, call) =>
                 await this.#provisionWorkspace(ctx, call.arguments.id, call.kv),
@@ -293,10 +295,19 @@ export class WorkspacesModule implements AgentModule {
                     ctx.afterCommit(() => this.#scheduleSync(workspace.projectRef));
                     return;
                 }
-                await this.markInitializationFailed(ctx, {
+                const workspace = await this.markInitializationFailed(ctx, {
                     workspaceId: call.arguments.id,
                     error: call.result.error,
                 });
+                if (call.arguments.reportFailureTo !== undefined) {
+                    await this.#reportInitializationFailure(
+                        ctx,
+                        workspace,
+                        call.result.error,
+                        call.arguments.reportFailureTo,
+                        call.callId,
+                    );
+                }
             },
         });
         durableFunctions.register({
@@ -1048,7 +1059,7 @@ export class WorkspacesModule implements AgentModule {
                 ...(baseRef === undefined ? {} : { baseRef }),
             },
             agentId,
-            operationId === undefined ? {} : { operationId },
+            { ...(operationId === undefined ? {} : { operationId }), reportFailureTo: agentId },
         );
         if (workspace === undefined) {
             throw new Error("The calling agent's project was not found.");
@@ -1158,7 +1169,12 @@ export class WorkspacesModule implements AgentModule {
             if (reserved.workspace.status === "initializing") {
                 await this.#durableFunctions.invoke(txCtx, {
                     function: WORKSPACE_PROVISION_FUNCTION,
-                    arguments: { id: reserved.workspace.id },
+                    arguments: {
+                        id: reserved.workspace.id,
+                        ...(options.reportFailureTo === undefined
+                            ? {}
+                            : { reportFailureTo: options.reportFailureTo }),
+                    },
                     operationId: workspaceOperationId("create", reserved.workspace.id),
                     lockKeys: [workspaceLockKey(reserved.workspace.id)],
                 });
@@ -1472,6 +1488,51 @@ export class WorkspacesModule implements AgentModule {
                 error: boundedWorkspaceError(errorToMessage(error)),
             };
         }
+    }
+
+    /**
+     * Tell the agent that asked for a workspace that its checkout failed. Creation returned before
+     * the checkout ran, so without this the agent, and any subtask waiting on the folder, would
+     * wait for a workspace that never comes. The notice commits with the failure, and the call ID
+     * keeps a repeated completion from telling it twice. An agent that is gone or archived is not
+     * told, so it can never hold the failure back.
+     */
+    async #reportInitializationFailure(
+        ctx: Context,
+        workspace: Workspace,
+        error: string,
+        agentId: string,
+        callId: string,
+    ): Promise<void> {
+        const agents = this.#agents;
+        if (agents === undefined) {
+            throw new Error("The workspaces module reported a failure before it started.");
+        }
+        const config = await agents.config(ctx, agentId);
+        if (config === undefined || Value.Check(archivedAgentMetadataSchema, config.metadata)) {
+            return;
+        }
+        const project = await this.#projects.get(ctx, workspace.projectRef);
+        const where = project === undefined ? "" : ` in project "${project.name}" (${project.id})`;
+        const resident =
+            workspace.subtaskAgentId === undefined
+                ? ""
+                : ` Agent ${workspace.subtaskAgentId}, created to work in it, will not start.`;
+        const reason = /[.!?]$/.test(error) ? error : `${error}.`;
+        await agents.steer(
+            ctx,
+            agentId,
+            {
+                role: "system",
+                content: [
+                    {
+                        type: "text",
+                        text: `The workspace "${workspace.name}" (${workspace.id})${where} that you asked for could not be created: ${reason}${resident} It is marked failed. Archive it when you no longer need it, then try again with another name or base, or tell the user what went wrong.`,
+                    },
+                ],
+            },
+            { id: callId, metadata: { hideFromUser: true } },
+        );
     }
 
     /** Everything that must happen while this project's Git lock is held. */

@@ -87,6 +87,19 @@ logs the setup error and marks the workspace ready so the person or agent can in
 Failures that prevent the folder or checkout from existing remain initialization failures, and
 archive or shutdown cancellation still stops setup without marking the workspace ready.
 
+## The agent that asked for a workspace hears when its checkout fails
+
+Creation returns as soon as the workspace is reserved, so a checkout that failed afterwards, such
+as a base that resolves to nothing, only marked the workspace failed. The agent that called
+`create_workspace`, `create_child_workspace`, or `create_subtask` was never told, and a subtask
+waiting on the folder silently never started. The creator now passes `reportFailureTo`, which
+travels in the provisioning call's arguments rather than a new column. When provisioning fails,
+that agent receives a system notice naming the workspace, its project, the reason, and any resident
+agent that will not start, in the same transaction as the failure and keyed by the call ID so it
+is sent once. Workspaces created through the API or by a person name no recipient and stay quiet;
+an archived or deleted recipient is skipped so it cannot hold the failure back. A failed setup
+command still leaves the workspace ready and is not reported.
+
 ## Parented attachment is restricted to the reserved subtask
 
 The general managed-root attachment path could make any parented agent a workspace catalog root.

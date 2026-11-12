@@ -358,7 +358,14 @@ export class SubtasksModule implements AgentModule {
                                   : { baseRef: requestedWorkspace.baseRef }),
                           },
                           parentAgentId,
-                          { operationId: agentId, subtaskAgentId: agentId },
+                          {
+                              operationId: agentId,
+                              subtaskAgentId: agentId,
+                              // The coordinator learns of a failed checkout; its subtask never starts.
+                              ...(options.unreported === true
+                                  ? {}
+                                  : { reportFailureTo: parentAgentId }),
+                          },
                       );
             if (requestedWorkspace !== undefined && workspace === undefined) {
                 throw new Error("The subtask's project was not found.");

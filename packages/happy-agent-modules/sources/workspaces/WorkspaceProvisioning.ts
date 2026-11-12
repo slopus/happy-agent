@@ -30,6 +30,8 @@ export const workspaceCreatorOptionsSchema = Type.Object(
         operationId: Type.Optional(workspaceOperationIdSchema),
         /** Resident subtask, set only by the subtask creation operation. */
         subtaskAgentId: Type.Optional(workspaceAgentIdSchema),
+        /** The agent told when the background checkout fails after creation has returned. */
+        reportFailureTo: Type.Optional(workspaceAgentIdSchema),
     },
     { additionalProperties: false },
 );
