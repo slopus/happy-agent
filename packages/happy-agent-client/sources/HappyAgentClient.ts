@@ -248,6 +248,10 @@ import {
     type UserSettingResponse,
     type UserSettingsResponse,
 } from "./protocol/userSettings.js";
+import type {
+    ReportEnvironmentRequest,
+    ReportEnvironmentResponse,
+} from "./protocol/userEnvironment.js";
 import type { MobileConnectorResponse } from "./protocol/mobileConnector.js";
 import type {
     FeedClusterResponse,
@@ -1242,6 +1246,24 @@ export class HappyAgentClient {
         return await this.#json({
             method: "PUT",
             path: userSettingPath(key),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    // User environment
+
+    /**
+     * `PUT /v0/environment` — report this device's time zone, languages, clock, week, and calendar.
+     * Fields left out keep their stored value. Older daemons answer `404`.
+     */
+    async reportEnvironment(
+        request: ReportEnvironmentRequest,
+        options: RequestOptions = {},
+    ): Promise<ReportEnvironmentResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: "v0/environment",
             json: request,
             signal: options.signal,
         });
