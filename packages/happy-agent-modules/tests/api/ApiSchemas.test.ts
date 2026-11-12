@@ -15,6 +15,10 @@ const message = {
 } as const;
 
 describe("messageSendBodySchema", () => {
+    it("accepts retired reply provenance as opaque data without requiring its former schema", () => {
+        for (const quickReply of [null, {}, { future: true }, "legacy"])
+            expect(Value.Check(messageSendBodySchema, { ...message, quickReply })).toBe(true);
+    });
     it("accepts one tool request among ordinary content, with optional exact arguments", () => {
         for (const request of [
             { type: "tool_call_request", name: "list_skills" },

@@ -102,8 +102,7 @@ fills. Screenshots from Retina displays have twice the pixels of their natural s
 `scale` from the file's recorded density, and clients use it in every layout, automatic ones
 included.
 
-## A chat UI document's media is served like any call's
+## Retired component presentations are not media attachments
 
-`show_ui` records a `ui` presentation whose `items` are the same snapshots a `media` presentation
-holds, up to 24 of them. `storedItem` and `storedItems` read either presentation, so the existing
-media route serves a document's pictures and clients reuse their media decoding.
+Chat UI was removed. Its historical presentations remain opaque on ordinary saved tool calls;
+only standard `media` presentations are resolved through `storedItem` and `storedItems`.

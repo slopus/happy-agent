@@ -730,70 +730,7 @@ as API.md specifies under "Media layouts in text". This package holds the one sp
 
 Never load a `src` yourself; show only the matched item's snapshot.
 
-## Chat UI
-
-A conversation may hold chat UI: a flat, ordered list of typed components, as API.md specifies
-under "Chat UI". The daemon writes a document in a `ui` block of an agent message; a model shows
-one with `show_ui`, whose tool call carries a `ui` presentation (`items` holds the media a `media`
-component names by index). Every label and detail is plain text: never Markdown, never linkified,
-never HTML.
-
-`sources/ui/` holds one bundle per component type: its props, and each action's strict payload,
-optional result, and permission. `uiComponents` is the only list of them; the known-component
-union, the action union, and `ui.schema.json` are derived from it.
-
-| Component          | What it shows, and the live state it is drawn from                                             |
-| ------------------ | ---------------------------------------------------------------------------------------------- |
-| `file_tree`        | Paths as a tree. Display only.                                                                 |
-| `media`            | Pictures, videos, and files from the presentation's `items`, laid out by `layoutMedia`.        |
-| `default_model`    | The default model, from `GET /v0/config` `defaults`, kept current by `config.updated`.         |
-| `provider_sign_in` | One AI's install and sign-in, from `listProviderClis`, kept current by `provider_cli.updated`. |
-
-**Drawing.** A document on the wire may hold a component type this build does not know, from a
-newer server. Draw each component through `knownUiComponent`, and show its `fallback` line when
-that returns nothing:
-
-```ts
-for (const component of document.components) {
-    const known = knownUiComponent(component);
-    if (known === undefined) drawText(component.fallback);
-    else if (known.type === "provider_sign_in") drawSignIn(known.props.provider);
-    // …one branch per type this client draws
-}
-```
-
-**Clicking.** Every click is one `sendUiAction`, built and read with the component's bundle, so
-payloads and results are typed and no client guesses a shape:
-
-```ts
-const target = { id: attemptId, messageId, uiId: document.id, componentId: component.id };
-const response = await client.sendUiAction(
-    agentId,
-    uiActionRequest(providerSignInComponent, "sign_in", {}, target),
-);
-const result = uiActionResult(providerSignInComponent, "sign_in", response);
-if (result?.connected) showConnected();
-```
-
-- `id` is the idempotency key and the ID of the attempt record. A retry of the same click reuses
-  it and gets the stored record back, with `result: null`.
-- A click never becomes the person's words. Draw the component's pending and error state from its
-  attempt records: the `service` messages whose one `action` block names this `messageId`, `uiId`,
-  and `componentId`. A module's refusal is a `200` whose record's outcome is `"rejected"`.
-- Keep an attempt in flight in state only as `redactUiAction(action)`, which leaves its secrets
-  out, as the daemon's record does. `result` in the response is the only place a secret result
-  appears; keep it in memory and drop it with the widget.
-- Disable what the viewer can't do with `uiActionAllowed(definition, props, granted)`. A standalone
-  daemon's person holds every permission in `UI_PERMISSION_IDS`. This is display only; the server
-  decides.
-
-**Quick replies.** A `quick_replies` block, or a completed `suggest_replies` call's presentation,
-holds up to six options. A tap is an ordinary `sendMessage` whose `text` is the option and whose
-`quickReply` is `{ messageId, toolCallId?, index }`.
-
-This client sends `Happy-Protocol: 35` with every request. A daemon projects chat UI to fallback
-text for a client that sends no such header. `fixtures/ui/ui.schema.json` (every schema, with
-secret fields marked `"x-happy-secret": true`) and `fixtures/ui/actions.fixtures.json`
-(conformance vectors computed by this package), shipped as `./ui.schema.json` and
-`./ui/actions.fixtures.json`, are the contract for implementations in other languages.
-Regenerate them with `pnpm write:ui-fixtures`; a test fails while they are stale.
+Historical tool calls retain their names, arguments, results, and opaque legacy presentations.
+Retired message blocks and suggested-reply provenance remain passive data. The client sends
+`Happy-Protocol: 35` so older compatible daemons preserve those calls in history. Structured
+user-input questions and permission requests continue to use their own protocol.

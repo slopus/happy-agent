@@ -58,7 +58,7 @@ import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { EventsModule } from "../events/index.js";
 import { ProjectFilesModule } from "../files/index.js";
 import { ChatMediaModule } from "../chatMedia/index.js";
-import { ChatUiModule } from "../chatUi/index.js";
+import { chatUiMigrations } from "../chatUi/ChatUiMigrations.js";
 import { CleanupModule } from "../cleanup/index.js";
 import { GeminiModule } from "../gemini/index.js";
 import { GitModule } from "../git/index.js";
@@ -171,7 +171,6 @@ export interface HappyAgentRuntimeModules {
     readonly bridges: BridgesModule;
     readonly botSettings: BotSettingsModule;
     readonly chatMedia: ChatMediaModule;
-    readonly chatUi: ChatUiModule;
     readonly cleanup: CleanupModule;
     readonly exportedBots: ExportedBotsModule;
     readonly collaboration: CollaborationModule;
@@ -467,12 +466,10 @@ export async function startHappyAgentRuntime(
         history.onAppend(observation.recordHistory);
         // The machine's tools show what they read in the chat, so chat media comes first.
         const chatMedia = new ChatMediaModule(config, history);
-        // Chat UI comes before every module that contributes a component to it.
-        const chatUi = new ChatUiModule(config, history, durableFunctions);
         const suppliedCompute = options.compute;
         const computeModule =
             suppliedCompute === undefined
-                ? new ComputeModule(config, secrets, runners, botSettings, chatMedia, chatUi)
+                ? new ComputeModule(config, secrets, runners, botSettings, chatMedia)
                 : ComputeModule.withProvider(
                       config,
                       secrets,
@@ -484,7 +481,6 @@ export async function startHappyAgentRuntime(
                       runners,
                       botSettings,
                       chatMedia,
-                      chatUi,
                   );
         const providerClis = new ProviderClisModule(config, providerScan, durableFunctions);
         const providerRoutes = new ProviderRoutesModule(config, providerClis, providerScan);
@@ -837,7 +833,6 @@ export async function startHappyAgentRuntime(
             feed,
             nodeSearch,
             teammates,
-            chatUi,
             userEnvironment,
         );
         api = apiModule;
@@ -854,7 +849,6 @@ export async function startHappyAgentRuntime(
             bridges,
             botSettings,
             chatMedia,
-            chatUi,
             cleanup,
             exportedBots,
             collaboration,
@@ -986,7 +980,10 @@ export async function startHappyAgentRuntime(
             mcp,
             search,
             chatMedia,
-            chatUi,
+            // Chat onboarding is deferred. Future UI may use settings widgets exposed by
+            // top-level tools like MCP apps, or Card/Button/Text/Column primitives like
+            // json-render, A2UI, or ChatGPT's intelligent UI. Keep only the migration ledger.
+            { name: "chat-ui", migrations: chatUiMigrations },
             gemini,
             imageGeneration,
             feed,

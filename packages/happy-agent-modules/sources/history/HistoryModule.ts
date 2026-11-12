@@ -49,7 +49,6 @@ import {
     senderAgentIdOf,
 } from "../impl/messageOrigin.js";
 import { decodeRequestProfile } from "../impl/requestProfile.js";
-import { quickReplyOf } from "../impl/quickReplyOf.js";
 import { storyQuoteOf } from "../impl/storyQuote.js";
 import type { BotSettingsModule } from "../botSettings/index.js";
 import type { DurableFunctionsModule } from "../durableFunctions/index.js";
@@ -2875,7 +2874,7 @@ export class HistoryModule implements AgentModule {
                       ? metadataUserId
                       : undefined;
             const quote = fromUser ? storyQuoteOf(accepted.metadata) : undefined;
-            const quickReply = fromUser ? quickReplyOf(accepted.metadata) : undefined;
+            const quickReply = fromUser ? accepted.metadata?.["quickReply"] : undefined;
             const sender = fromUser ? undefined : senderAgentIdOf(accepted.metadata);
             const senderExplanation =
                 sender === undefined ? undefined : senderAgentExplanationOf(accepted.metadata);

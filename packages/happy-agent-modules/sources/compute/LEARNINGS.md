@@ -261,10 +261,7 @@ only through the call's raw arguments; execution destructures the fields it uses
 the result, and the Auto review text never see it. Grok's `run_terminal_command` and Kimi's `Bash`
 already carry vendor-worded descriptions and are unchanged.
 
-## Media in chat UI is compute's component
+## Media attachments do not depend on chat UI
 
-`show_ui` shows files from the agent's machine through the `media` component. Chat UI cannot read
-a machine and must not depend on compute, which is built after it, so compute contributes the
-component: it reads the files exactly as `present_files` does, under the call's permissions and
-the same review rule. One document may hold several `media` components, so each is told where its
-first item lands in the document's one media list and stores indexes into that list.
+The retired chat UI component contribution has been removed. `present_files`, image readers,
+and generated-image snapshots retain their existing file permissions and media presentations.

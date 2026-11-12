@@ -10,7 +10,6 @@ import {
     serviceTierSchema,
     timestampSchema,
 } from "./common.js";
-import { chatUiCapabilitySchema } from "./ui.js";
 
 /**
  * The newest wire protocol this client was built for.
@@ -21,8 +20,8 @@ import { chatUiCapabilitySchema } from "./ui.js";
  * runners require protocol 26 or newer, and the mobile connector requires protocol 27
  * or newer, and agent networks require protocol 28 or newer, and pushed provider-account
  * usage requires protocol 29 or newer, and typed failures with their retry and switch actions
- * require protocol 30 or newer, and chat UI blocks, presentations, and actions require protocol
- * 35 or newer. Global skill management is additive and detected through its catalog endpoint.
+ * require protocol 30 or newer. Protocol 35 also covers passive historical message payloads.
+ * Global skill management is additive and detected through its catalog endpoint.
  */
 export const HAPPY_AGENT_PROTOCOL_VERSION = 35;
 
@@ -177,11 +176,8 @@ export const healthResponseSchema = Type.Object({
             artifactCovers: Type.Optional(Type.Boolean()),
             /** True when the daemon serves `POST /v0/search`, under Search. */
             search: Type.Optional(Type.Boolean()),
-            /**
-             * The chat UI catalog version and the components this server serves, under Chat UI.
-             * Absent on daemons without chat UI.
-             */
-            chatUi: Type.Optional(chatUiCapabilitySchema),
+            /** Passive legacy capability from older daemons; current daemons omit it. */
+            chatUi: Type.Optional(Type.Unknown()),
             /** True when the daemon serves `GET /v0/usage/daily`, under Usage. */
             dailyUsage: Type.Optional(Type.Boolean()),
             /**

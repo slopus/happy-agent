@@ -21,8 +21,6 @@ import {
 } from "./common.js";
 import { artifactDisplaySchema, artifactTitleSchema, artifactTypeSchema } from "./artifacts.js";
 import { mediaLayoutStyleSchema } from "./mediaLayoutStyle.js";
-import type { QuickRepliesBlock, QuickRepliesPresentation, QuickReply } from "./quickReplies.js";
-import type { UiActionBlock, UiBlock, UiPresentation } from "./ui.js";
 import type { UsageBreakdown } from "./usage.js";
 import { userIdSchema } from "./users.js";
 
@@ -401,7 +399,13 @@ export const userInputPresentationSchema = Type.Object({
 /** The questions a completed `request_user_input` call asked and the answers it was given. */
 export type UserInputPresentation = Static<typeof userInputPresentationSchema>;
 
-/** Every display-ready tool-call presentation the client understands. */
+/** Retired presentations remain opaque historical data, never interactive controls. */
+const legacyToolPresentationSchema = Type.Intersect([
+    Type.Object({ type: Type.Union([Type.Literal("ui"), Type.Literal("quick_replies")]) }),
+    Type.Record(Type.String(), Type.Unknown()),
+]);
+
+/** Known presentations and passive payloads retained on historical tool calls. */
 export const toolPresentationSchema = Type.Union([
     explorationPresentationSchema,
     execCommandPresentationSchema,
@@ -413,17 +417,11 @@ export const toolPresentationSchema = Type.Union([
     artifactPresentationSchema,
     pagePresentationSchema,
     userInputPresentationSchema,
+    legacyToolPresentationSchema,
 ]);
 
-/**
- * Every display-ready tool-call presentation the client understands, with `show_ui`'s `ui`
- * presentation and `suggest_replies`'s `quick_replies` presentation, whose schemas are in
- * `protocol/ui.ts` and `protocol/quickReplies.ts`.
- */
-export type ToolPresentation =
-    | Static<typeof toolPresentationSchema>
-    | UiPresentation
-    | QuickRepliesPresentation;
+/** Known presentations and passive payloads retained on historical tool calls. */
+export type ToolPresentation = Static<typeof toolPresentationSchema>;
 
 /** Stable provenance carried with a message without exposing internal module metadata. */
 export const messageMetadataSchema = Type.Object({
@@ -810,6 +808,18 @@ export const toolCallRequestBlockSchema = Type.Object(
 /** An explicit request in a user message for Agent Base to execute one tool before inference. */
 export type ToolCallRequestBlock = Static<typeof toolCallRequestBlockSchema>;
 
+/** Retired message blocks are preserved as opaque historical data. */
+const legacyMessageBlockSchema = Type.Intersect([
+    Type.Object({
+        type: Type.Union([
+            Type.Literal("ui"),
+            Type.Literal("action"),
+            Type.Literal("quick_replies"),
+        ]),
+    }),
+    Type.Record(Type.String(), Type.Unknown()),
+]);
+
 /** What is in a message, in order. */
 export type MessageBlock =
     | TextBlock
@@ -819,9 +829,7 @@ export type MessageBlock =
     | ToolCallBlock
     | ConfigurationBlock
     | CompactionBlock
-    | UiBlock
-    | UiActionBlock
-    | QuickRepliesBlock;
+    | Static<typeof legacyMessageBlockSchema>;
 
 /** Plain text. */
 export interface TextBlock {
@@ -974,8 +982,8 @@ export interface UserMessage {
     clientMetadata?: ClientMetadata;
     /** What this message replies to, shown above its content; `content` is only what was written. */
     quote?: MessageQuote;
-    /** The suggested reply this message's text is, set by the daemon from a checked `send`. */
-    quickReply?: QuickReply;
+    /** Passive provenance retained on historical messages. */
+    quickReply?: unknown;
     /** Opaque request profile; a change resets the model's private conversation context. */
     profile?: string | null;
     /** `"pending"` until inference takes the message up. */
@@ -1036,7 +1044,7 @@ export type RunReason = "completed" | "steering" | "abort" | "error";
 
 /**
  * What a run is when it is not a turn of the agent. `standalone` is a run stored already finished,
- * outside any turn, such as the run of a chat UI attempt record: it emits `run.finished` and never
+ * outside any turn: it emits `run.finished` and never
  * `run.started`, it never changes whether the agent is working, and it ends no turn.
  */
 export type RunKind = "standalone";
@@ -1078,11 +1086,8 @@ export interface SendMessageRequest {
     deviceId?: string;
     /** Optional rich blocks accompanying the text; image bytes travel inline. */
     content?: MessageBlock[];
-    /**
-     * The suggested reply `text` is. The daemon checks that the agent message holds that option
-     * and that `text` equals it exactly, and answers `400` otherwise.
-     */
-    quickReply?: QuickReply;
+    /** Retired compatibility field, accepted and ignored by current daemons. */
+    quickReply?: unknown;
     /** Defaults to `"queue"`. On an idle agent the two are identical. */
     delivery?: MessageDelivery;
     /** Opaque context profile. Omitted and `null` both select the default profile. */

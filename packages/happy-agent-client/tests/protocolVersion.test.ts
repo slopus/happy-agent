@@ -6,7 +6,7 @@ import {
 } from "../sources/protocol/daemon.js";
 
 describe("Happy Agent protocol version", () => {
-    it("advances to protocol 35 for chat UI", () => {
+    it("retains protocol 35 for historical message compatibility", () => {
         expect(HAPPY_AGENT_PROTOCOL_VERSION).toBe(35);
     });
 

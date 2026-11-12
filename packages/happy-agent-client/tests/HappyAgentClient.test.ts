@@ -4,6 +4,7 @@ import { HappyAgentApiError } from "../sources/HappyAgentApiError.js";
 import { HappyAgentClient } from "../sources/HappyAgentClient.js";
 import type { DaemonUsageResponse } from "../sources/protocol/usage.js";
 import type { CreateAgentRequest } from "../sources/protocol/agents.js";
+import type { MessageBlock, ToolCallBlock } from "../sources/protocol/messages.js";
 
 interface RecordedRequest {
     url: string;
@@ -116,30 +117,11 @@ describe("HappyAgentClient", () => {
         const request = requests[0];
         expect(request?.url).toBe("http://agent.local/prefix/v0/projects");
         expect(request?.headers.get("authorization")).toBe("Bearer a-token");
+        expect(request?.headers.get("happy-protocol")).toBe("35");
         expect(request?.method).toBe("GET");
     });
 
-    it("sends a chat UI action to its own route with the protocol header", async () => {
-        const { fetch, requests } = stubFetch(() =>
-            json({ cursor: "c1", record: {}, result: null }),
-        );
-        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
-        const request = {
-            id: "attempt1",
-            messageId: "message1",
-            uiId: "ui1",
-            componentId: "claude",
-            action: { type: "provider_sign_in.sign_in", payload: {} },
-        };
-
-        await client.sendUiAction("agent1", request);
-
-        expect(requests[0]?.url).toBe("http://agent.local/v0/agents/agent1/actions");
-        expect(requests[0]?.body).toBe(JSON.stringify(request));
-        expect(requests[0]?.headers.get("happy-protocol")).toBe("35");
-    });
-
-    it("reads the provider CLIs a sign-in component is drawn from", async () => {
+    it("reads the provider CLIs", async () => {
         const { fetch, requests } = stubFetch(() => json({ providerClis: [] }));
         const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
 
@@ -150,6 +132,93 @@ describe("HappyAgentClient", () => {
             ["GET", "http://agent.local/v0/provider-clis"],
             ["GET", "http://agent.local/v0/provider-clis/claude"],
         ]);
+    });
+
+    it("preserves historical calls and opaque legacy payloads in history and events", async () => {
+        const calls = [
+            {
+                type: "tool_call",
+                id: "show1",
+                name: "show_ui",
+                status: "completed",
+                arguments: { components: [{ type: "unrecognized_component", props: null }] },
+                result: { legacy: { value: 1 } },
+                presentation: { type: "ui", unrecognized: { nested: [null, "value"] } },
+            },
+            {
+                type: "tool_call",
+                id: "suggest1",
+                name: "suggest_replies",
+                status: "completed",
+                arguments: { options: ["Continue", "Stop"] },
+                result: { suggested: true },
+                presentation: { type: "quick_replies", unrecognized: [1, 2] },
+            },
+        ] satisfies ToolCallBlock[];
+        const legacyBlocks = [
+            { type: "ui", unrecognized: { nested: true } },
+            { type: "action", unrecognized: null },
+            { type: "quick_replies", unrecognized: ["value"] },
+        ] satisfies MessageBlock[];
+        const response = {
+            runs: [
+                {
+                    id: "run1",
+                    messages: [
+                        { id: "agentmessage1", role: "agent", content: calls },
+                        { id: "legacy1", role: "service", content: legacyBlocks },
+                        {
+                            id: "unknown1",
+                            role: "agent",
+                            content: [{ type: "unrecognized_block", payload: { nested: true } }],
+                        },
+                        {
+                            id: "usermessage1",
+                            role: "user",
+                            content: [{ type: "text", text: "Continue" }],
+                            quickReply: { unrecognized: null },
+                        },
+                    ],
+                },
+            ],
+            cursor: "cursor1",
+        };
+        const { fetch, requests } = stubFetch(() => json(response));
+        const client = new HappyAgentClient({ endpoint: "http://agent.local", token: "t", fetch });
+
+        await expect(client.getMessages("agent1")).resolves.toEqual(response);
+        expect(requests[0]?.headers.get("happy-protocol")).toBe("35");
+
+        const events = response.runs[0]!.messages.map((message, index) => ({
+            type: index % 2 === 0 ? "message.created" : "message.updated",
+            cursor: `cursor${index + 1}`,
+            payload: { agentId: "agent1", message },
+        }));
+        const eventFetch = stubFetch(
+            () =>
+                new Response(
+                    streamOf(
+                        events
+                            .map(
+                                (event) =>
+                                    `id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+                            )
+                            .join(""),
+                    ),
+                    { headers: { "content-type": "text/event-stream" } },
+                ),
+        );
+        const streamingClient = new HappyAgentClient({
+            endpoint: "http://agent.local",
+            token: "t",
+            fetch: eventFetch.fetch,
+        });
+        const frames = [];
+        for await (const frame of streamingClient.streamEvents()) frames.push(frame);
+        expect(frames).toEqual(
+            events.map((event) => ({ kind: "event", cursor: event.cursor, event })),
+        );
+        expect(eventFetch.requests[0]?.headers.get("happy-protocol")).toBe("35");
     });
 
     it("enters daemon draining through its dedicated lifecycle route", async () => {

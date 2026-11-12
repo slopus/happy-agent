@@ -20,9 +20,7 @@
             "import": "./dist/index.js",
             "default": "./dist/index.js"
         },
-        "./searchFusion.fixtures.json": "./fixtures/searchFusion.fixtures.json",
-        "./ui.schema.json": "./fixtures/ui/ui.schema.json",
-        "./ui/actions.fixtures.json": "./fixtures/ui/actions.fixtures.json"
+        "./searchFusion.fixtures.json": "./fixtures/searchFusion.fixtures.json"
     },
     "publishConfig": {
         "access": "public"
@@ -30,8 +28,7 @@
     "scripts": {
         "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json",
         "check": "tsc --noEmit",
-        "test": "vitest run --passWithNoTests",
-        "write:ui-fixtures": "node --import tsx scripts/write-ui-fixtures.ts"
+        "test": "vitest run --passWithNoTests"
     },
     "dependencies": {
         "@sinclair/typebox": "^0.34.49",

@@ -494,13 +494,13 @@ and no project now skips the refresh, as shared-filesystem subtasks already did;
 without an owner still fail. Collaboration's unit tests replace the agent collection, so the
 regression test runs archival through the real runtime.
 
-## Chat UI reaches older clients as text
+## Retired chat UI leaves ordinary tool history intact
 
-Protocol 35 adds blocks and a presentation no earlier client can read. A client that reads chat UI
-says so with the `Happy-Protocol` request header; for any other request the API projects every
-message it returns or streams, so a document reads as its fallback lines, a suggestion as one
-line, and an attempt record is left out with the run it alone is in. The projection sits at the
-API boundary only: History and the journal always hold the real blocks.
+The chat UI tools, actions route, capability, catalog, and suggested-reply validation were
+explicitly removed. The old protocol-header projection replaced saved calls with fallback text;
+that projection is gone, so every client receives their original names, arguments, status, and
+results. Historical presentation payloads remain opaque data, and legacy send provenance is
+accepted but ignored. Structured questions and permission requests are unaffected.
 
 ## A changed default model is announced whoever changed it
 

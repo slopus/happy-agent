@@ -15,6 +15,7 @@ export const nodeLaneScenarios: readonly string[] = [
     "workspace_files_transfer_fifty_mebibytes.test.ts",
     "happy_api_artifacts_serve_file_bundles.test.ts",
     "retired_stories_stay_disabled_with_saved_opt_ins.test.ts",
+    "retired_chat_ui_keeps_plain_historical_tool_calls.test.ts",
     // The event stream, bootstrap, and replica reconciliation.
     "happy_api_sync_concurrency.test.ts",
     "sync_replica_preserves_newer_nested_agents.test.ts",

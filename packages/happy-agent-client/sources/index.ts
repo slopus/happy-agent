@@ -44,7 +44,6 @@ export * from "./happyLinks.js";
 export * from "./happyServerLinks.js";
 export * from "./happyLinksInMarkdown.js";
 export * from "./mediaLayoutBlocks.js";
-export * from "./ui/index.js";
 export * from "./mediaLayoutHtml.js";
 export {
     artifactAddressPublic,
@@ -83,7 +82,6 @@ export * from "./protocol/processes.js";
 export * from "./protocol/profile.js";
 export * from "./protocol/projects.js";
 export * from "./protocol/questions.js";
-export * from "./protocol/quickReplies.js";
 export * from "./protocol/runners.js";
 export * from "./protocol/secrets.js";
 export * from "./protocol/services.js";
@@ -91,7 +89,6 @@ export * from "./protocol/skills.js";
 export * from "./protocol/plugins.js";
 export * from "./protocol/slashCommands.js";
 export * from "./protocol/terminals.js";
-export * from "./protocol/ui.js";
 export * from "./protocol/usage.js";
 export * from "./protocol/users.js";
 export * from "./protocol/userSettings.js";

@@ -4,8 +4,7 @@ const nullableString = Type.Union([Type.String(), Type.Null()]);
 
 /**
  * One assistant's command-line program on the daemon's machine; see "Provider CLIs" in API.md.
- * This is the live state the `provider_sign_in` chat UI component is drawn from. Sets that may
- * grow (`id`, `installation.source`, the sign-in `methods`) are open strings.
+ * Sets that may grow (`id`, `installation.source`, the sign-in `methods`) are open strings.
  */
 export const providerCliSchema = Type.Object({
     /** `claude`, `codex`, `grok`, `antigravity`, or newer; skip IDs you do not know. */

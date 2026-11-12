@@ -285,6 +285,13 @@ already being fixed. The reset's own transaction records the "Context reset" ser
 `kind: "context_too_long"`. Only an overflow later in the same run becomes the `context_too_long`
 failure.
 
+## Retired chat UI is opaque history, not an installed feature
+
+Removing the component schemas must not make old history unreadable or replace completed calls
+with fallback prose. History accepts the retired presentation and block discriminators as opaque
+data, keeps ordinary tool names, arguments, output, and status, and never interprets the old
+component payloads. The immutable migration remains registered without feature tools or hooks.
+
 ## A message outside a turn gets a finished run of its own
 
 Chat UI records a click as a service message while the agent may be idle or in the middle of a

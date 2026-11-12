@@ -21,6 +21,30 @@ import { toolCallResource } from "../../sources/api/ApiToolPresentation.js";
 import { historyMessageSchema, type HistoryMessage } from "../../sources/history/index.js";
 
 describe("apiResourceVersion", () => {
+    it("preserves retired tool calls as ordinary calls, including with omitted typed tool data", () => {
+        for (const [name, presentation] of [
+            ["show_ui", { type: "ui" as const, futureDocument: true }],
+            ["suggest_replies", { type: "quick_replies" as const, futureOptions: true }],
+        ] as const) {
+            const call = {
+                id: "historic-call",
+                name,
+                status: "completed" as const,
+                arguments: { original: true },
+                output: "original output",
+                presentation,
+            };
+            expect(toolCallResource(call, { omitToolData: true })).toMatchObject({
+                type: "tool_call",
+                id: call.id,
+                name,
+                status: "completed",
+                arguments: call.arguments,
+                result: { output: call.output },
+                presentation,
+            });
+        }
+    });
     it("renders a PowerShell command through the existing terminal presentation", () => {
         const call = {
             id: "ps-call",

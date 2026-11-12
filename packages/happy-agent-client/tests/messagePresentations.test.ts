@@ -9,6 +9,18 @@ import {
 } from "../sources/protocol/messages.js";
 
 describe("additive conversation presentations", () => {
+    it.each(["ui", "quick_replies"])(
+        "accepts opaque historical %s presentations without a component catalog",
+        (type) => {
+            expect(
+                Value.Check(toolPresentationSchema, {
+                    type,
+                    unknown: { nested: [null, { value: "legacy" }] },
+                }),
+            ).toBe(true);
+        },
+    );
+
     it("accepts answered choices and free text in the tool presentation union", () => {
         expect(
             Value.Check(toolPresentationSchema, {

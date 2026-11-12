@@ -3,7 +3,6 @@ import { readFile, stat } from "node:fs/promises";
 
 import { Value } from "@sinclair/typebox/value";
 import {
-    MAX_UI_MEDIA,
     mediaItemSourceSchema,
     type MediaItemSource,
     type MediaLayout,
@@ -174,16 +173,11 @@ export class ChatMediaModule implements AgentModule {
         callId: string,
         index: number,
     ): Promise<ChatMediaStoredItem | undefined> {
-        // A chat UI document may show more items than one `present_files` call.
-        if (
-            !Number.isSafeInteger(index) ||
-            index < 0 ||
-            index >= Math.max(MAX_CHAT_MEDIA_ITEMS, MAX_UI_MEDIA)
-        ) {
+        if (!Number.isSafeInteger(index) || index < 0 || index >= MAX_CHAT_MEDIA_ITEMS) {
             return undefined;
         }
         const presentation = await this.#history.toolResultPresentation(ctx, agentId, callId);
-        if (presentation?.type !== "media" && presentation?.type !== "ui") return undefined;
+        if (presentation?.type !== "media") return undefined;
         const item = presentation.items[index];
         if (item === undefined) return undefined;
         const contentPath = this.#config.chatMediaContentPath(item.sha256);
@@ -202,7 +196,7 @@ export class ChatMediaModule implements AgentModule {
         callId: string,
     ): Promise<readonly ChatMediaStoredItem[]> {
         const presentation = await this.#history.toolResultPresentation(ctx, agentId, callId);
-        if (presentation?.type !== "media" && presentation?.type !== "ui") return [];
+        if (presentation?.type !== "media") return [];
         const stored: ChatMediaStoredItem[] = [];
         for (const item of presentation.items) {
             const contentPath = this.#config.chatMediaContentPath(item.sha256);

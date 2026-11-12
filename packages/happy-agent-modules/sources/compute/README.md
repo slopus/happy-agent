@@ -158,12 +158,6 @@ media to check it before any file is read. `showReadImage` is the shared step th
 reading tool read. Both record each item's `source`, the path as the agent wrote it and as it
 resolved, so a layout block in the agent's reply can place the item later.
 
-Given the chat UI module as well, compute contributes the `media` component to it
-(`impl/mediaComponent.ts`). A model names files in a `show_ui` call; the component reads them with
-the same code and under the same permissions as `present_files`, and stores each item's index in
-the call's one media list rather than its path. Compute contributes it because only compute reads
-the agent's machine.
-
 A vendor tool's own `impl/` directory holds only what is genuinely that vendor's: parsing Claude's
 shell IDs, Codex's patch format, Grok's task IDs. Nothing there is shared across vendors.
 

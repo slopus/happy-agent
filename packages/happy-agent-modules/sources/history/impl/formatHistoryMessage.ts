@@ -1,5 +1,3 @@
-import { uiDocumentFallback } from "@slopus/happy-agent-client";
-
 import type { HistoryMessage } from "../HistoryMessage.js";
 
 /** How much of one long piece of text a reader is shown before it is cut. */
@@ -35,13 +33,14 @@ export function formatHistoryMessage(
     const sender = message.senderAgentId === undefined ? "" : ` (${message.senderAgentId})`;
     const lines = [`${position}. ${message.role.toLocaleUpperCase()}${sender}${attribution}`];
     for (const block of message.blocks) {
-        // No model reads a chat UI action.
-        if (block.type === "configuration" || block.type === "action") continue;
-        if (block.type === "ui") {
-            lines.push(`Shown: ${truncate(uiDocumentFallback(block.ui), textLimit)}`);
-        } else if (block.type === "quick_replies") {
-            lines.push(`Suggested replies: ${truncate(block.options.join(" · "), textLimit)}`);
-        } else if (block.type === "text") {
+        if (
+            block.type === "configuration" ||
+            block.type === "action" ||
+            block.type === "ui" ||
+            block.type === "quick_replies"
+        )
+            continue;
+        if (block.type === "text") {
             lines.push(`Text: ${truncate(block.text, textLimit)}`);
         } else if (block.type === "image") {
             lines.push(`[Image: ${block.mediaType}]`);
