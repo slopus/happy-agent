@@ -427,7 +427,10 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                     thread.turn = { prompt: undefined, cancelled: false, selfStarted: true };
                     await this.#client.extNotification?.(ACP_TURN_STARTED, { sessionId });
                 }
-                for (const update of updates.translate(message)) {
+                // Between turns only bookkeeping and notices arrive; a notice there belongs to no
+                // turn, and would otherwise be shown in whichever turn came next.
+                const translated = thread.turn === undefined ? [] : updates.translate(message);
+                for (const update of translated) {
                     await this.#client.sessionUpdate({ sessionId, update });
                 }
                 if (message.type !== "result") continue;
