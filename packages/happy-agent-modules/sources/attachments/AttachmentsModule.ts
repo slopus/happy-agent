@@ -12,7 +12,7 @@ import type {
 } from "@slopus/happy-agent-base";
 import { afterCommit, delay, type Context } from "@steve.kite/stdlib";
 
-import type { ChatMediaModule } from "../chatMedia/index.js";
+import type { ChatMediaDescription, ChatMediaModule } from "../chatMedia/index.js";
 import type { ComputeModule } from "../compute/index.js";
 import type { ConfigModule } from "../config/index.js";
 import type { DurableFunctionsModule } from "../durableFunctions/index.js";
@@ -22,6 +22,7 @@ import {
     AttachmentError,
     attachmentResource,
     MAX_ATTACHMENT_BYTES,
+    MAX_ATTACHMENT_CHUNKS,
     MAX_ATTACHMENT_REQUEST_BYTES,
     MAX_MESSAGE_FILES,
     uploadResource,
@@ -236,16 +237,18 @@ export class AttachmentsModule implements AgentModule {
             }
             if (range.end - range.start + 1 > MAX_ATTACHMENT_REQUEST_BYTES) throw tooLarge();
         }
-        const started = await this.#serialized(key, () =>
-            this.#start(ctx, {
+        const started = await this.#serialized(key, async () => {
+            const result = await this.#start(ctx, {
                 agentId,
                 id: attachmentId,
                 size: range.size,
                 name,
                 contentType: specificContentType(file.contentType),
                 uploader,
-            }),
-        );
+            });
+            if ("attachment" in result || range.type === "status") return result;
+            return { upload: await this.#countChunk(ctx, result.upload) };
+        });
         if ("attachment" in started || range.type === "status") return started;
         const upload = started.upload;
         const length = range.end - range.start + 1;
@@ -511,6 +514,7 @@ export class AttachmentsModule implements AgentModule {
             contentType: input.contentType,
             size: input.size,
             received: [],
+            chunks: 0,
             uploadedBy: input.uploader,
             createdAt: now,
             expiresAt: now + ATTACHMENT_LIFETIME_MS,
@@ -525,6 +529,22 @@ export class AttachmentsModule implements AgentModule {
         }
         if (upload.size === 0) return { attachment: await this.#finish(ctx, upload) };
         return { upload };
+    }
+
+    /**
+     * Count a request carrying bytes against its upload before any of them are written, refusing
+     * it once the upload has taken its 4,096. The caller holds this ID's lock.
+     */
+    async #countChunk(ctx: Context, upload: StoredUpload): Promise<StoredUpload> {
+        if (upload.chunks >= MAX_ATTACHMENT_CHUNKS) {
+            throw new AttachmentError(
+                "invalid_request",
+                `An upload takes at most ${String(MAX_ATTACHMENT_CHUNKS)} requests carrying bytes; cancel it and upload the file again.`,
+            );
+        }
+        const counted = { ...upload, chunks: upload.chunks + 1 };
+        await ctx.inTx((txCtx) => store.updateUploadChunks(txCtx, counted));
+        return counted;
     }
 
     /** Check a complete upload against its ID and make it the attachment. */
@@ -571,7 +591,12 @@ export class AttachmentsModule implements AgentModule {
             await removeFile(path);
             return held;
         }
-        const description = await this.#chatMedia.describe(path, input.name, input.size);
+        const measured = await this.#chatMedia.describe(path, input.name, input.size);
+        // Happy Cloud cannot decode AVIF, so an AVIF attachment is a plain file on every server.
+        const description: ChatMediaDescription =
+            measured.kind === "image" && measured.mimeType === "image/avif"
+                ? { kind: "file", name: measured.name, mimeType: measured.mimeType }
+                : measured;
         const now = Date.now();
         const row: StoredAttachment = {
             agentId: input.agentId,
@@ -747,7 +772,7 @@ function specificContentType(header: string | undefined): string | null {
 function tooLarge(): AttachmentError {
     return new AttachmentError(
         "attachment_too_large",
-        "An attachment is at most 2 GiB, and one request carries at most 256 MiB.",
+        "An attachment is at most 1 GiB, and one request carries at most 25 MiB.",
     );
 }
 

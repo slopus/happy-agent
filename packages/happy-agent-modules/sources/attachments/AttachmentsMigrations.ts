@@ -15,7 +15,7 @@ export const ATTACHMENT_GARBAGE_TABLE = "happy_agent_module_attachment_garbage";
  * An attachment row is one file of one conversation, keyed by the conversation and the SHA-256
  * of its bytes; `sent_at` is set by the first message that sends it, which also clears
  * `expires_at`. An upload row is a chunked upload still missing bytes; `received_json` holds its
- * merged byte ranges. A garbage row names stored content that may be unused from `not_before` on;
+ * merged byte ranges, and `chunks` counts the requests that carried bytes to it. A garbage row names stored content that may be unused from `not_before` on;
  * collection deletes the bytes only when no attachment row of any conversation holds them.
  */
 export const attachmentsMigrations: readonly AgentModuleMigration[] = [
@@ -79,6 +79,16 @@ export const attachmentsMigrations: readonly AgentModuleMigration[] = [
                     sha256 TEXT PRIMARY KEY,
                     not_before INTEGER NOT NULL
                 )`,
+            );
+        },
+    ],
+    [
+        "002-attachment-upload-chunks",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
+            await agentDatabaseRun(
+                database,
+                sql`ALTER TABLE ${sql.raw(ATTACHMENT_UPLOADS_TABLE)}
+                    ADD COLUMN chunks INTEGER NOT NULL DEFAULT 0`,
             );
         },
     ],

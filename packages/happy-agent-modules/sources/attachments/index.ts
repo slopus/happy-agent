@@ -3,6 +3,7 @@ export {
     attachmentIdSchema,
     fileRequestBlockSchema,
     MAX_ATTACHMENT_BYTES,
+    MAX_ATTACHMENT_CHUNKS,
     MAX_ATTACHMENT_REQUEST_BYTES,
     MAX_MESSAGE_FILES,
     type AttachmentChunkResult,

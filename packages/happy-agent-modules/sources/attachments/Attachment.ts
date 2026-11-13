@@ -2,10 +2,12 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import type { HistoryFileBlock } from "../history/index.js";
 
-/** The largest attachment: 2 GiB. */
-export const MAX_ATTACHMENT_BYTES = 2_147_483_648;
-/** The most bytes one upload request may carry: 256 MiB. */
-export const MAX_ATTACHMENT_REQUEST_BYTES = 268_435_456;
+/** The largest attachment: 1 GiB. */
+export const MAX_ATTACHMENT_BYTES = 1_073_741_824;
+/** The most bytes one upload request may carry: 25 MiB. */
+export const MAX_ATTACHMENT_REQUEST_BYTES = 26_214_400;
+/** The most requests carrying bytes that one chunked upload takes. */
+export const MAX_ATTACHMENT_CHUNKS = 4096;
 /** The most files one message may name. */
 export const MAX_MESSAGE_FILES = 32;
 /** How long an unsent attachment or an unfinished upload lives after it last received bytes. */
@@ -67,6 +69,8 @@ export interface StoredUpload {
     readonly size: number;
     /** Held ranges, in order and merged. */
     readonly received: readonly ByteRange[];
+    /** The requests that carried bytes to this upload, at most `MAX_ATTACHMENT_CHUNKS`. */
+    readonly chunks: number;
     readonly uploadedBy: string | null;
     readonly createdAt: number;
     readonly expiresAt: number;

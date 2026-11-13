@@ -19,7 +19,7 @@ PUT /v0/agents/:id/attachments/:sha?name=      Content-Range chunk ─▶ upload
         │   (any order, in parallel; one request at a time merges the range into the upload row)
         │ last missing byte: hash == :sha?  no ─▶ 409 hash_mismatch, upload discarded
         ▼
-  chatMedia.describe ─▶ <agentHome>/attachments/content/<sha[0..2]>/<sha>   row (agent, sha)
+  chatMedia.describe (AVIF stays a file) ─▶ <agentHome>/attachments/content/<sha[0..2]>/<sha>   row (agent, sha)
         │
 POST /v0/agents/:id/send { content: [{ type: "file", attachment: sha, name }] }
         │ send(): each must be a live attachment of this conversation ─▶ sent, never expires
@@ -35,8 +35,10 @@ DELETE /v0/agents/:id/attachments/:sha          cancel an upload or discard an u
   bytes again answers the same attachment and keeps an unsent one another 24 hours.
 - A chunk is written at its own offset with no lock, then fsynced. Only the bookkeeping, merging
   its range into the upload row and finishing, runs one request at a time per ID. A chunk whose
-  body has the wrong length counts for nothing. Each upload gets a fresh private file, so a chunk
-  still writing when its upload is cancelled lands in a file nothing reads.
+  body has the wrong length adds no bytes. Every request carrying bytes is counted against its
+  upload under that lock before it writes, and the 4,097th is refused. Each upload gets a fresh
+  private file, so a chunk still writing when its upload is cancelled lands in a file nothing
+  reads.
 - `Content-Range: bytes */size` with no body starts the upload when there is none and answers
   where it stands; any request for an ID the conversation already holds answers the attachment
   without reading the body.
@@ -74,6 +76,7 @@ written.
 - `happy_agent_module_attachments`: one row per conversation and digest. `sent_at` is null until
   a message sends it, and `expires_at` is null after.
 - `happy_agent_module_attachment_uploads`: one row per chunked upload still missing bytes, with
-  its merged byte ranges and the private file they accumulate in.
+  its merged byte ranges, how many requests carried bytes to it, and the private file they
+  accumulate in.
 - `happy_agent_module_attachment_garbage`: digests that may have become unused, and when they may
   be deleted.

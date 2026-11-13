@@ -44,6 +44,7 @@ interface UploadRow {
     readonly content_type: string | null;
     readonly size: Numeric;
     readonly received_json: string;
+    readonly chunks: Numeric;
     readonly uploaded_by: string | null;
     readonly created_at: Numeric;
     readonly expires_at: Numeric;
@@ -53,7 +54,7 @@ const ATTACHMENT_COLUMNS = sql.raw(
     "agent_id, id, name, kind, mime_type, size, width, height, thumbhash, scale, uploaded_by, created_at, sent_at, expires_at",
 );
 const UPLOAD_COLUMNS = sql.raw(
-    "agent_id, id, file_id, name, content_type, size, received_json, uploaded_by, created_at, expires_at",
+    "agent_id, id, file_id, name, content_type, size, received_json, chunks, uploaded_by, created_at, expires_at",
 );
 
 // Attachments
@@ -172,8 +173,8 @@ export async function insertUpload(ctx: Context, row: StoredUpload): Promise<voi
         ctx,
         sql`INSERT INTO ${sql.raw(ATTACHMENT_UPLOADS_TABLE)} (${UPLOAD_COLUMNS}) VALUES (
             ${row.agentId}, ${row.id}, ${row.fileId}, ${row.name}, ${row.contentType},
-            ${row.size}, ${JSON.stringify(row.received)}, ${row.uploadedBy}, ${row.createdAt},
-            ${row.expiresAt}
+            ${row.size}, ${JSON.stringify(row.received)}, ${row.chunks}, ${row.uploadedBy},
+            ${row.createdAt}, ${row.expiresAt}
         )`,
     );
 }
@@ -187,6 +188,19 @@ export async function updateUploadReceived(
         ctx,
         sql`UPDATE ${sql.raw(ATTACHMENT_UPLOADS_TABLE)}
             SET received_json = ${JSON.stringify(row.received)}, expires_at = ${row.expiresAt}
+            WHERE agent_id = ${row.agentId} AND id = ${row.id}`,
+    );
+}
+
+/** Write how many requests have carried bytes to an upload. */
+export async function updateUploadChunks(
+    ctx: Context,
+    row: Pick<StoredUpload, "agentId" | "id" | "chunks">,
+): Promise<void> {
+    await run(
+        ctx,
+        sql`UPDATE ${sql.raw(ATTACHMENT_UPLOADS_TABLE)}
+            SET chunks = ${row.chunks}
             WHERE agent_id = ${row.agentId} AND id = ${row.id}`,
     );
 }
@@ -297,6 +311,7 @@ function uploadFromRow(row: UploadRow): StoredUpload {
         contentType: row.content_type,
         size: Number(row.size),
         received: parseByteRanges(row.received_json),
+        chunks: Number(row.chunks),
         uploadedBy: row.uploaded_by,
         createdAt: Number(row.created_at),
         expiresAt: Number(row.expires_at),

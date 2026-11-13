@@ -20,9 +20,22 @@ protocol that allows parallel chunks later. Chunks are addressed by the ID the c
 before sending, placed by `Content-Range`, and recorded as merged ranges, so they may arrive in any
 order. Only the bookkeeping is serialized; the writes themselves are not.
 
+## Both servers share one set of limits
+
+The daemon first allowed 2 GiB files and 256 MiB requests while Happy Cloud allowed 1 GiB and
+25 MiB. Kirill aligned the daemon to Happy Cloud: an attachment is at most 1 GiB, one request
+carries at most 25 MiB, and an upload takes at most 4,096 requests carrying bytes, counted before
+any byte is written, so a client cannot grow an upload's bookkeeping without bound.
+
+## AVIF is a plain file
+
+Happy Cloud would need a C AV1 decoder in its API process to read AVIF. Kirill chose to treat AVIF
+attachments as plain files on both servers rather than add it, so an attachment is described the
+same wherever it is uploaded. Pictures an agent presents itself still decode AVIF.
+
 ## Attachments never reach the model as bytes
 
-A turn is replayed to the provider every time, and an attachment can be 2 GiB. The model receives
+A turn is replayed to the provider every time, and an attachment can be 1 GiB. The model receives
 one line per file and opens it with `read_attachment` when it needs it. The stored message keeps
 the `file` block, so clients show the file, while Agent Base keeps only the note.
 

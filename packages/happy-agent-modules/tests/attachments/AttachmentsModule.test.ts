@@ -11,11 +11,19 @@ import {
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { AttachmentError, AttachmentsModule } from "../../sources/attachments/index.js";
+import {
+    AttachmentError,
+    AttachmentsModule,
+    type AttachmentChunkRange,
+} from "../../sources/attachments/index.js";
 import { ChatMediaModule } from "../../sources/chatMedia/index.js";
 import type { HostCompute } from "../../sources/compute/index.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { HistoryModule } from "../../sources/history/index.js";
+import {
+    queryUpload,
+    updateUploadChunks,
+} from "../../sources/attachments/persistence/attachmentStore.js";
 import { FakeCompute } from "../compute/support/FakeCompute.js";
 import { scriptedComputeModule } from "../support/computeModule.js";
 import { temporaryTestConfig } from "../support/configModule.js";
@@ -149,6 +157,27 @@ describe("AttachmentsModule", () => {
             height: 20,
             thumbhash: expect.any(String),
         });
+        // AVIF stays a plain file, as on Happy Cloud.
+        const avif = await sharp({
+            create: { width: 40, height: 20, channels: 3, background: { r: 1, g: 2, b: 3 } },
+        })
+            .avif()
+            .toBuffer();
+        expect(
+            await attachments.upload(
+                ctx,
+                "agentone",
+                null,
+                { name: "shot.avif", contentType: "image/avif" },
+                body(avif),
+            ),
+        ).toEqual({
+            id: sha256(avif),
+            name: "shot.avif",
+            mimeType: "image/avif",
+            size: avif.byteLength,
+            kind: "file",
+        });
     });
 
     it("assembles chunks sent in any order and at the same time, and checks the digest", async () => {
@@ -250,6 +279,44 @@ describe("AttachmentsModule", () => {
                 body(),
             ),
         ).toMatchObject({ upload: { received: [] } });
+    });
+
+    it("takes at most 4,096 requests carrying bytes per upload, resent ones included", async () => {
+        const { ctx, attachments } = await world();
+        const bytes = Buffer.from("ab");
+        const id = sha256(bytes);
+        const file = { name: "ab.txt", contentType: "text/plain" };
+        const receive = (range: AttachmentChunkRange, parts: Uint8Array[]) =>
+            attachments.receive(ctx, "agentone", null, id, file, range, body(...parts));
+        const send = (start: number) =>
+            receive({ type: "bytes", start, end: start, size: 2 }, [
+                bytes.subarray(start, start + 1),
+            ]);
+        const chunks = async () =>
+            (await ctx.inTx((txCtx) => queryUpload(txCtx, "agentone", id)))?.chunks;
+
+        await send(0);
+        await send(0);
+        // Asking where it stands does not count.
+        await receive({ type: "status", size: 2 }, []);
+        expect(await chunks()).toBe(2);
+        await ctx.inTx((txCtx) =>
+            updateUploadChunks(txCtx, { agentId: "agentone", id, chunks: 4095 }),
+        );
+        // A request whose body is cut short still counts.
+        expect(await code(receive({ type: "bytes", start: 1, end: 1, size: 2 }, []))).toBe(
+            "invalid_request",
+        );
+        expect(await chunks()).toBe(4096);
+        await expect(send(1)).rejects.toThrow(/at most 4096 requests/);
+        // The refused request stored nothing.
+        expect(await receive({ type: "status", size: 2 }, [])).toMatchObject({
+            upload: { received: [{ start: 0, end: 0 }] },
+        });
+        // Cancelling lets the file start again.
+        await attachments.delete(ctx, "agentone", id);
+        await send(0);
+        expect(await send(1)).toMatchObject({ attachment: { id } });
     });
 
     it("cancels uploads and unsent attachments, but keeps a sent one", async () => {
