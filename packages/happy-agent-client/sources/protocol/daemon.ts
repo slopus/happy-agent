@@ -200,6 +200,11 @@ export const healthResponseSchema = Type.Object({
              * plugins and enable Gen UI `plugin` actions only then.
              */
             plugins: Type.Optional(Type.Boolean()),
+            /**
+             * True when the server takes payments, such as Happy Cloud's credit top-ups through
+             * Stripe Checkout; offer payments only then. Happy Agent never reports it.
+             */
+            payments: Type.Optional(Type.Boolean()),
         }),
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */

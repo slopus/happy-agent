@@ -110,4 +110,12 @@ describe("artifact actions protocol", () => {
         expect(Value.Check(capabilities, { artifactSecretActions: "yes" })).toBe(false);
         expect(Value.Check(capabilities, { plugins: 1 })).toBe(false);
     });
+
+    it("lets health advertise payments, missing meaning none", () => {
+        const capabilities = healthResponseSchema.properties.capabilities;
+        expect(Value.Check(capabilities, { payments: true })).toBe(true);
+        expect(Value.Check(capabilities, { payments: false })).toBe(true);
+        expect(Value.Check(capabilities, {})).toBe(true);
+        expect(Value.Check(capabilities, { payments: "stripe" })).toBe(false);
+    });
 });

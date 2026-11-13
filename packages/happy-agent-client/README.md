@@ -608,6 +608,10 @@ arrives during a read, keep the newer summary version, and resync on state loss 
 The client exposes the feed without automatically caching skills in `HappyReducer`. Older daemons'
 missing endpoints mean this feature is unavailable, not that no skills are installed.
 
+Payments are advertised the same way: `capabilities.payments` in `getHealth()` is `true` only on a
+server that takes payments (Happy Cloud with Stripe configured); missing or `false` means offer no
+payment. Happy Agent never reports it.
+
 Plugins are additive without a protocol bump. Detect support through `capabilities.plugins` in
 `getHealth()`: missing or `false` means unavailable, not that nothing is installed. Enable Gen UI
 `plugin` actions only with it. Clients never read a catalog themselves:

@@ -662,6 +662,10 @@ tool. A client enables `secret` actions only when health reports the capability;
 draws any action its host cannot run. Older compatible daemons omit the capability and answer the
 route with `404`.
 
+The payments capability is additive and does not increment the protocol version. A server that
+takes payments reports `capabilities.payments: true` from health; a missing or `false` capability
+means it takes none, and clients offer no payment. Happy Agent never reports it.
+
 Vault folder roles and the default vault are additive and do not increment the protocol version.
 A server that has them sends a folder's `role` and the settings' `defaultVault`; Happy Agent omits
 both today, and clients read a missing field as `null` or `false`.
@@ -1627,7 +1631,10 @@ Fields:
   for `secret` actions and the `request_secret` tool, described under Artifacts; clients enable
   `secret` actions only with it. `plugins: true` advertises the routes under `/v0/plugins` and the
   `plugins.updated` event, described under Plugins; clients show plugins, and enable Gen UI
-  `plugin` actions, only with it.
+  `plugin` actions, only with it. `payments: true` advertises that the server takes payments, such
+  as credit top-ups through Stripe Checkout; clients offer payments only with it. Only Happy Cloud
+  takes payments, and only when Stripe is configured; its own API describes them. Happy Agent never
+  reports it.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
   It is a CUID2 of exactly 24 characters matching `^[a-z][a-z0-9]{23}$`, generated once and
   persisted with the installation's data, so it survives restarts and upgrades. It is reported
