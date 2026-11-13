@@ -2975,6 +2975,9 @@ export class HistoryModule implements AgentModule {
 
         /** Keep the current inference identity durable until its completed blocks are appended. */
         beforeInferenceTransact: async (ctx, scope, inference): Promise<void> => {
+            // A response whose stream threw never reached afterInferenceTransact; its unfinished
+            // text must not be recorded as this response's own if this one is stopped.
+            this.#streamingText.delete(scope.agent.id);
             await scope.runKV.write(ctx, PENDING_INFERENCE_ID_KEY, inference.inferenceId);
             if (this.#config === undefined) return;
             const runId = this.#events?.activeRunId(scope.agent.id);
