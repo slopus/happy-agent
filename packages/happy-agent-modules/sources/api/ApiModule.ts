@@ -292,6 +292,11 @@ import {
     type SecretEvent,
 } from "../secrets/index.js";
 import {
+    SecretActionError,
+    secretActionSaveRequestSchema,
+    type SecretRequestsModule,
+} from "../secretRequests/index.js";
+import {
     TerminalError,
     TerminalsModule,
     type TerminalEvent,
@@ -692,6 +697,7 @@ export class ApiModule implements AgentModule {
     readonly #exportedBots: ExportedBotsModule | undefined;
     readonly #userSettings: UserSettingsModule | undefined;
     readonly #userEnvironment: UserEnvironmentModule | undefined;
+    readonly #secretRequests: SecretRequestsModule | undefined;
     readonly #surfaces: SurfacesModule | undefined;
     readonly #mobileConnector: MobileConnectorModule | undefined;
     readonly #providerClis: ProviderClisModule | undefined;
@@ -881,7 +887,9 @@ export class ApiModule implements AgentModule {
         nodeSearch?: NodeSearchModule,
         teammates?: TeammatesModule,
         userEnvironment?: UserEnvironmentModule,
+        secretRequests?: SecretRequestsModule,
     ) {
+        this.#secretRequests = secretRequests;
         this.#teammates = teammates;
         this.#userEnvironment = userEnvironment;
         this.#abort = abort;
@@ -8352,6 +8360,42 @@ export class ApiModule implements AgentModule {
                     target.path,
                 );
                 await sendArtifactPreview(request, response, stored, target.selector === "latest");
+                return true;
+            }
+            const actions =
+                /^\/v0\/artifacts\/([a-z][a-z0-9]*)\/versions\/([1-9][0-9]{0,15})\/actions$/.exec(
+                    url.pathname,
+                );
+            if (actions !== null && this.#secretRequests !== undefined) {
+                if (request.method !== "POST") return false;
+                const secretRequests = this.#secretRequests;
+                const body = await bodyAs(
+                    request,
+                    secretActionSaveRequestSchema,
+                    "secret action save",
+                );
+                const version = Number(actions[2]);
+                if (!Number.isSafeInteger(version)) throw notFound("The version was not found.");
+                try {
+                    const saved = await this.#withMutationId(
+                        body.mutationId,
+                        async () =>
+                            await secretRequests.saveSecretAction(
+                                ctx,
+                                actions[1] as string,
+                                version,
+                                body,
+                            ),
+                    );
+                    sendJson(response, 200, saved);
+                } catch (error: unknown) {
+                    if (error instanceof SecretActionError) {
+                        if (error.kind === "not_found") throw notFound(error.message);
+                        if (error.kind === "invalid") throw invalidRequest(error.message);
+                        throw new ApiError(409, "conflict", error.message);
+                    }
+                    throw secretMutationError(error);
+                }
                 return true;
             }
             const route =

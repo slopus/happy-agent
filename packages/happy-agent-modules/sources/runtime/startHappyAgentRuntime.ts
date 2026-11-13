@@ -82,6 +82,7 @@ import { ProviderClisModule } from "../providerClis/index.js";
 import { ProviderRoutesModule } from "../providerRoutes/index.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { SearchModule } from "../search/index.js";
+import { SecretRequestsModule } from "../secretRequests/index.js";
 import { SecretsModule } from "../secrets/index.js";
 import { SlashCommandsModule } from "../slashCommands/index.js";
 import {
@@ -788,6 +789,7 @@ export async function startHappyAgentRuntime(
             team,
             globalSkills,
         );
+        const secretRequests = new SecretRequestsModule(artifacts, secrets);
         const apiModule = new ApiModule(
             abort,
             config,
@@ -834,6 +836,7 @@ export async function startHappyAgentRuntime(
             nodeSearch,
             teammates,
             userEnvironment,
+            secretRequests,
         );
         api = apiModule;
 
@@ -971,6 +974,7 @@ export async function startHappyAgentRuntime(
             files,
             bridges,
             secrets,
+            secretRequests,
             collaboration,
             subtasks,
             exportedBots,
