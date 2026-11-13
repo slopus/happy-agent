@@ -14,6 +14,7 @@ import {
     type VaultActivity,
     type VaultActor,
     type VaultAncestor,
+    GEN_UI_RENDER_PATH,
     type VaultArtifactManifest,
     type VaultArtifactSummary,
     type VaultChangeSource,
@@ -33,6 +34,7 @@ import { Value } from "@sinclair/typebox/value";
 import { delay, type Context } from "@steve.kite/stdlib";
 
 import { mediaTypeForPath as artifactMimeTypeForPath } from "../../impl/mediaTypeForPath.js";
+import { ArtifactInputError, type ArtifactsModule } from "../../artifacts/index.js";
 import type { ConfigModule } from "../../config/index.js";
 import type { DurableFunctionsModule } from "../../durableFunctions/index.js";
 import { createUuidV7Factory } from "../../utils/createUuidV7.js";
@@ -47,7 +49,7 @@ import { SurfaceError } from "../SurfaceError.js";
 import * as searchIndex from "./persistence/vaultSearchIndex.js";
 import * as store from "./persistence/vaultStore.js";
 import { retentionTiersIncrease, selectPrunedVersions } from "./selectPrunedVersions.js";
-import { artifactManifestBytes, checkVaultBundle } from "./vaultBundle.js";
+import { artifactManifestBytes, checkVaultBundle, isGenUiDerivedPath } from "./vaultBundle.js";
 import { ContentWriter, removeFile, searchableText, storeContent } from "./vaultContentFiles.js";
 import { vaultSearchText } from "./vaultSearchText.js";
 import type { VaultEvent } from "./VaultEvent.js";
@@ -168,6 +170,7 @@ export class SurfaceVaults {
     constructor(
         readonly durable: DurableFunctionsModule,
         readonly config: ConfigModule,
+        readonly artifacts: ArtifactsModule,
     ) {
         this.uploads = new VaultUploads(
             config,
@@ -1209,6 +1212,7 @@ export class SurfaceVaults {
         files: readonly { path: string; bytes: Uint8Array }[],
         kept: readonly ArtifactFile[] = [],
         manifest?: VaultArtifactManifest,
+        derived: "refuse" | "drop" = "refuse",
     ): Promise<VaultContent> {
         const written = [];
         for (const file of files)
@@ -1224,7 +1228,62 @@ export class SurfaceVaults {
                 sha256: file.sha256,
                 utf8: file.utf8,
             });
-        return bundleContent([...byPath.values()], manifest);
+        const content = bundleContent([...byPath.values()], manifest);
+        // Written files may not name a gen_ui app's derived files; a folder's are left out.
+        const refused =
+            derived === "refuse" ? files.map((file) => file.path).filter(isGenUiDerivedPath) : [];
+        return this.#compileGenUi(ctx, content, refused, manifest);
+    }
+
+    /**
+     * A gen_ui bundle with its render document compiled into it, under every rule a gen_ui
+     * artifact version follows: the derived `.genui` files it came with are left out, the entry
+     * validated, the pictures it shows measured, and `.genui/render.json` stored beside them.
+     * Other bundles come back unchanged. `refused` are derived paths a caller wrote by name.
+     */
+    async #compileGenUi(
+        ctx: Context,
+        content: VaultContent,
+        refused: readonly string[],
+        manifest: VaultArtifactManifest | undefined,
+    ): Promise<VaultContent> {
+        if (content.kind !== "artifact" || content.summary.type !== "gen_ui") return content;
+        if (refused.length > 0)
+            throw new SurfaceError(
+                "invalid_request",
+                `"${refused[0]!}" is derived from the Gen UI document and cannot be written; change "${content.summary.entry}" instead.`,
+            );
+        const authored = content.files.filter((file) => !isGenUiDerivedPath(file.path));
+        let render: string;
+        try {
+            render = await this.artifacts.compileGenUiBundle(
+                authored.map((file) => ({ ...file, contentPath: this.contentPath(file.sha256) })),
+                content.summary.entry,
+            );
+        } catch (error) {
+            if (error instanceof ArtifactInputError)
+                throw new SurfaceError("invalid_request", error.message);
+            throw error;
+        }
+        const stored = await this.storeBytes(ctx, new TextEncoder().encode(render));
+        return bundleContent(
+            [
+                ...authored.map((file) => ({ ...file, utf8: true })),
+                {
+                    path: GEN_UI_RENDER_PATH,
+                    mimeType: artifactMimeTypeForPath(GEN_UI_RENDER_PATH),
+                    size: stored.size,
+                    sha256: stored.sha256,
+                    utf8: true,
+                },
+            ],
+            manifest ?? {
+                format: "happy.artifact",
+                formatVersion: 1,
+                type: "gen_ui",
+                entry: content.summary.entry,
+            },
+        );
     }
 
     /**
@@ -1279,7 +1338,8 @@ export class SurfaceVaults {
                 manifest,
             );
             for (const file of extracted) await this.#keep(ctx, file.writtenPath, file.sha256);
-            return content;
+            // A downloaded gen_ui app carries its render document; it is compiled again.
+            return await this.#compileGenUi(ctx, content, [], manifest);
         } finally {
             await Promise.all(extracted.map((file) => removeFile(file.writtenPath)));
         }
@@ -1830,6 +1890,8 @@ export class SurfaceVaults {
             if (text !== undefined) texts.push({ innerPath: null, text });
         } else {
             for (const file of content.files) {
+                // A gen_ui app's render document is derived data, not its text.
+                if (content.summary.type === "gen_ui" && isGenUiDerivedPath(file.path)) continue;
                 const text = await searchableText(this.contentPath(file.sha256), file.size);
                 if (text !== undefined) texts.push({ innerPath: file.path, text });
             }

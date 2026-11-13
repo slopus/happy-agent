@@ -19,7 +19,7 @@ import { quoteVisibleExact } from "../../../impl/quoteVisibleExact.js";
 import { SurfaceError } from "../../SurfaceError.js";
 import type { SurfacesModule } from "../../SurfacesModule.js";
 import type { VaultChange, VaultContent } from "../SurfaceVaults.js";
-import { MAX_MANIFEST_BYTES, parseArtifactManifest } from "../vaultBundle.js";
+import { isGenUiDerivedPath, MAX_MANIFEST_BYTES, parseArtifactManifest } from "../vaultBundle.js";
 import { readContent } from "../vaultContentFiles.js";
 import { vaultPath, vaultPathSegments } from "../vaultNames.js";
 import { writeZip } from "../zip/writeZip.js";
@@ -103,8 +103,11 @@ function describeItem(entry: VaultItem): string {
     const changed = new Date(entry.updatedAt).toISOString().replace(/\.\d{3}Z$/, "Z");
     if (entry.kind === "folder") return `${entry.name}/  folder, changed ${changed}`;
     const size = formatSize(entry.size);
-    if (entry.kind === "artifact")
-        return `${entry.name}  ${entry.artifact.type} artifact (${String(entry.artifact.fileCount)} files, ${size}), v${String(entry.latestVersion)}, changed ${changed}`;
+    if (entry.kind === "artifact") {
+        // A gen_ui app's render document is derived data the agent never sees.
+        const files = entry.artifact.fileCount - (entry.artifact.type === "gen_ui" ? 1 : 0);
+        return `${entry.name}  ${entry.artifact.type} artifact (${String(files)} files, ${size}), v${String(entry.latestVersion)}, changed ${changed}`;
+    }
     return `${entry.name}  ${entry.mediaType}, ${size}, v${String(entry.latestVersion)}, changed ${changed}`;
 }
 
@@ -202,7 +205,10 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                 if (entry?.kind === "file") return { text: `${path}: ${describeItem(entry)}` };
                 if (entry?.kind === "artifact") {
                     const latest = await vaults.version(ctx, input.surfaceId, entry.id, "latest");
-                    const files = latest.artifact?.files ?? [];
+                    const files = (latest.artifact?.files ?? []).filter(
+                        (file) =>
+                            latest.artifact?.type !== "gen_ui" || !isGenUiDerivedPath(file.path),
+                    );
                     return {
                         text: [
                             `${path}: ${describeItem(entry)}. Its files:`,
@@ -1525,7 +1531,8 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
             }
         };
         await visit(root, "");
-        return vaults.storeBundle(ctx, files, [], manifest);
+        // A folder may hold a gen_ui app's derived files from an export; they are compiled again.
+        return vaults.storeBundle(ctx, files, [], manifest, "drop");
     }
 }
 

@@ -194,7 +194,7 @@ export class SurfacesModule implements AgentModule {
         readonly config: ConfigModule,
         readonly runners: RunnersModule,
     ) {
-        this.vaults = new SurfaceVaults(durable, config);
+        this.vaults = new SurfaceVaults(durable, config, artifacts);
         this.search = new SurfaceSearch(durable);
         durable.register({
             name: "surfaces.notify",

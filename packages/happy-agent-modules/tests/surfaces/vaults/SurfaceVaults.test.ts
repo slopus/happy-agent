@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,9 +13,11 @@ import {
 import type { VaultFile, VaultItem } from "@slopus/happy-agent-client";
 import { sql } from "drizzle-orm";
 import { unzipSync, zipSync } from "fflate";
+import sharp from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ArtifactsModule } from "../../../sources/artifacts/index.js";
+import { compileGenUiBundle } from "../../../sources/artifacts/impl/genUiEntry.js";
 import type { BotsModule } from "../../../sources/bots/index.js";
 import type { ComputeModule } from "../../../sources/compute/index.js";
 import type { ConfigModule } from "../../../sources/config/index.js";
@@ -57,7 +59,7 @@ async function fixture() {
         } as unknown as TeamModule,
         { forAgent: async () => undefined } as unknown as BotsModule,
         { get: async () => undefined } as unknown as TasksModule,
-        { get: async () => undefined } as unknown as ArtifactsModule,
+        { get: async () => undefined, compileGenUiBundle } as unknown as ArtifactsModule,
         { resolve: vi.fn(async () => undefined) } as unknown as ComputeModule,
         config,
         { localExecution: true } as RunnersModule,
@@ -157,7 +159,203 @@ const unzipped = async (items: Parameters<typeof writeZip>[0]) => {
 };
 const sha = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
+/** A Gen UI document showing one picture beside a stat. */
+const genUiDocument = (value: unknown, src = "assets/coast.png") =>
+    enc(
+        JSON.stringify({
+            genui: 1,
+            fallback: "Revenue was $1.24M.",
+            root: {
+                type: "stack",
+                children: [
+                    { type: "stat", label: "Revenue", value },
+                    { type: "image", id: "coast", src, alt: "The coast" },
+                ],
+            },
+        }),
+    );
+const png = async () =>
+    new Uint8Array(
+        await sharp({
+            create: { width: 30, height: 20, channels: 3, background: { r: 30, g: 90, b: 160 } },
+        })
+            .png()
+            .toBuffer(),
+    );
+
 describe("vault Surfaces", () => {
+    it("hides a gen_ui app's render document from the vault tools and compiles every write", async () => {
+        const f = await fixture();
+        const tools = await f.hooks.tools!(f.ctx, {
+            agent: { id: "writer" },
+            kv: f.kv.scoped("writer"),
+        } as AgentModuleScope);
+        const run = (name: string, input: Record<string, unknown>) =>
+            tools
+                .find((tool) => tool.name === name)!
+                .execute(
+                    f.ctx,
+                    { surfaceId: f.vault.id, ...input } as never,
+                    {
+                        id: `${name}-${JSON.stringify(input).length}`,
+                        kv: f.kv.scoped(name),
+                        commit: async (_ctx: unknown, result: unknown) => result,
+                    } as never,
+                );
+        const document = (value: unknown) =>
+            JSON.stringify({ genui: 1, root: { type: "stat", label: "Revenue", value } });
+        await run("write_vault_artifact", {
+            path: "/q3.artifact",
+            files: [{ path: "index.genui.json", content: document("$1.24M") }],
+        });
+        const app = (await f.vaults.resolve(f.ctx, f.vault.id, "/q3.artifact")).entry;
+        expect(app).toMatchObject({ artifact: { type: "gen_ui", fileCount: 2 } });
+        const listed = (await run("list_vault", { path: "/q3.artifact" })) as { text: string };
+        expect(listed.text).toContain("gen_ui artifact (1 files");
+        expect(listed.text).toContain("index.genui.json");
+        expect(listed.text).not.toContain(".genui/");
+        await expect(
+            run("read_vault_file", { path: "/q3.artifact/.genui/render.json" }),
+        ).rejects.toMatchObject({ code: "not_found" });
+        await expect(
+            run("write_vault_file", { path: "/q3.artifact/.genui/render.json", content: "{}" }),
+        ).rejects.toThrow(/derived from the Gen UI document/);
+        await expect(
+            run("write_vault_artifact", {
+                path: "/q3.artifact",
+                files: [
+                    { path: "index.genui.json", content: document("$1.24M") },
+                    { path: ".genui/render.json", content: "{}" },
+                ],
+            }),
+        ).rejects.toThrow(/derived from the Gen UI document/);
+        await expect(
+            run("write_vault_file", {
+                path: "/q3.artifact/index.genui.json",
+                content: document(1240000),
+            }),
+        ).rejects.toThrow(/root<stat>\.value: expected string/);
+        // Writing the document again compiles a new render document into the new version.
+        await run("write_vault_file", {
+            path: "/q3.artifact/index.genui.json",
+            content: document("$1.31M"),
+        });
+        const render = await f.vaults.artifactFile(
+            f.ctx,
+            f.vault.id,
+            app!.id,
+            "latest",
+            ".genui/render.json",
+        );
+        expect(render.version).toBe(2);
+        expect(await readFile(render.contentPath, "utf8")).toContain("$1.31M");
+    });
+
+    it("compiles a gen_ui app's render document into every version and round-trips it", async () => {
+        const f = await fixture();
+        const genUiManifest = manifest({ type: "gen_ui", entry: "index.genui.json" });
+        const picture = await png();
+        // A stale render document in the upload is left out and compiled again.
+        const zip = zipSync({
+            "artifact.json": genUiManifest,
+            "index.genui.json": genUiDocument("$1.24M"),
+            "assets/coast.png": picture,
+            ".genui/render.json": enc("stale"),
+        });
+        const uploadId = await f.upload(zip);
+        const prepared = await f.vaults.prepareArtifactUpload(f.ctx, uploadId);
+        const app = asFile(
+            (
+                await f.vaults.createEntry(
+                    f.ctx,
+                    f.vault.id,
+                    {
+                        parentId: null,
+                        name: "q3.artifact",
+                        kind: "artifact",
+                        content: { type: "upload", uploadId, prepared },
+                    },
+                    person,
+                )
+            ).entry,
+        );
+        expect(app.artifact).toEqual({ type: "gen_ui", entry: "index.genui.json", fileCount: 3 });
+        const stored = await f.vaults.artifactFile(
+            f.ctx,
+            f.vault.id,
+            app.id,
+            1,
+            ".genui/render.json",
+        );
+        expect(stored.mimeType).toBe("application/json");
+        const render = JSON.parse(await readFile(stored.contentPath, "utf8")) as {
+            fallback: string;
+            elements: Record<string, { props: Record<string, unknown> }>;
+        };
+        expect(render.fallback).toBe("Revenue was $1.24M.");
+        expect(render.elements.coast?.props).toMatchObject({
+            file: "assets/coast.png",
+            width: 30,
+            height: 20,
+            thumbhash: expect.any(String),
+        });
+
+        // The download carries the render document, and uploading it again changes nothing.
+        const target = { type: "version", fileId: app.id, selector: 1 } as const;
+        const bytes = await unzipped((await f.vaults.zip(f.ctx, f.vault.id, target)).items);
+        expect(Object.keys(unzipSync(bytes))).toEqual([
+            "artifact.json",
+            ".genui/render.json",
+            "assets/coast.png",
+            "index.genui.json",
+        ]);
+        const again = await f.vaults.createVersion(
+            f.ctx,
+            f.vault.id,
+            app.id,
+            app.version,
+            {
+                type: "upload",
+                uploadId: await f.upload(bytes),
+                prepared: await f.vaults.prepareArtifactUpload(f.ctx, await f.upload(bytes)),
+            },
+            person,
+        );
+        expect(again.version).toBeNull();
+
+        // A bundle without a manifest is a gen_ui app by its entry.
+        const detected = await f.vaults.zipBundle(
+            f.ctx,
+            zipSync({ "index.genui.json": genUiDocument("$1.24M"), "assets/coast.png": picture }),
+            false,
+        );
+        expect(detected).toMatchObject({ kind: "artifact", summary: { type: "gen_ui" } });
+
+        // Invalid documents, missing and remote pictures refuse the bundle with node paths.
+        const refusal = async (files: Record<string, Uint8Array>, message: RegExp) =>
+            expect(
+                f.vaults.prepareArtifactUpload(
+                    f.ctx,
+                    await f.upload(zipSync({ "artifact.json": genUiManifest, ...files })),
+                ),
+            ).rejects.toMatchObject({
+                code: "invalid_request",
+                message: expect.stringMatching(message),
+            });
+        await refusal(
+            { "index.genui.json": genUiDocument(1240000), "assets/coast.png": picture },
+            /root<stack>\.children\[0\]<stat>\.value: expected string/,
+        );
+        await refusal(
+            { "index.genui.json": genUiDocument("$1.24M") },
+            /root<stack>\.children\[1\]<image>\.src: the artifact has no file "assets\/coast\.png"/,
+        );
+        await refusal(
+            { "index.genui.json": genUiDocument("$1.24M", "https://example.com/coast.png") },
+            /remote images are not fetched/,
+        );
+    });
+
     it("creates a vault with the Time Machine default and changes its retention", async () => {
         const f = await fixture();
         const settings = await f.vaults.settings(f.ctx, f.vault.id);

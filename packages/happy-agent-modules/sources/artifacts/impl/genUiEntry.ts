@@ -13,6 +13,12 @@ import {
     type ArtifactRecord,
     type ArtifactType,
 } from "../Artifact.js";
+import { readArtifactContent } from "./artifactContentFiles.js";
+import {
+    artifactStillFrame,
+    readArtifactPictureSize,
+    readArtifactThumbHash,
+} from "./artifactPictures.js";
 import { ARTIFACT_PICTURE_FORMATS } from "./measureArtifactMedia.js";
 import { MAX_ARTIFACT_SUMMARY_CHARACTERS } from "./normalizeArtifactSummary.js";
 
@@ -132,4 +138,67 @@ export function compileGenUiEntry(
     const over = genUiRenderLimitErrors(render);
     if (over.length > 0) throw new ArtifactInputError(describeGenUiErrors(entryPath, over));
     return `${JSON.stringify(render)}\n`;
+}
+
+/** One file of a Gen UI bundle kept outside the catalog, such as a vault app, and where its bytes are. */
+export interface GenUiBundleFile {
+    readonly path: string;
+    readonly mimeType: string;
+    readonly size: number;
+    readonly sha256: string;
+    readonly contentPath: string;
+}
+
+/** The largest picture a Gen UI bundle has read whole to measure. */
+const MAX_MEASURED_PICTURE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The render document of a Gen UI bundle kept elsewhere, as stored text: its entry validated, the
+ * pictures it shows measured, and the result compiled, under every rule a gen_ui version follows.
+ * Refuses with ArtifactInputError, naming each problem by its node path.
+ */
+export async function compileGenUiBundle(
+    files: readonly GenUiBundleFile[],
+    entryPath: string,
+): Promise<string> {
+    const entry = files.find((file) => file.path === entryPath);
+    if (entry === undefined) throw new ArtifactInputError(`The bundle has no "${entryPath}".`);
+    const document = await readGenUiEntry(entry.contentPath, entry.path);
+    const shown = new Set(
+        genUiImageSources(document).map((source) => source.src.replace(/^(?:\.\/)+/, "")),
+    );
+    const measured: ArtifactFile[] = [];
+    for (const file of files) {
+        const plain = {
+            path: file.path,
+            mimeType: file.mimeType,
+            size: file.size,
+            sha256: file.sha256,
+        };
+        const format = ARTIFACT_PICTURE_FORMATS[file.mimeType];
+        if (!shown.has(file.path) || format === undefined) {
+            measured.push(plain);
+            continue;
+        }
+        measured.push({ ...plain, ...(await measureGenUiPicture(file, format)) });
+    }
+    return compileGenUiEntry(document, measured, entryPath);
+}
+
+/** A picture's size and ThumbHash, or nothing when it cannot be decoded. */
+async function measureGenUiPicture(
+    file: GenUiBundleFile,
+    format: string,
+): Promise<{ width?: number; height?: number; thumbhash?: string }> {
+    if (file.size > MAX_MEASURED_PICTURE_BYTES) return {};
+    try {
+        const bytes = await readArtifactContent(file.contentPath, 0, file.size);
+        const size = await readArtifactPictureSize(bytes, format);
+        const still = artifactStillFrame(bytes, format);
+        const thumbhash = still === undefined ? null : await readArtifactThumbHash(still);
+        if (size === undefined || thumbhash === null) return {};
+        return { width: size.width, height: size.height, thumbhash };
+    } catch {
+        return {};
+    }
 }

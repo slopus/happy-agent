@@ -123,11 +123,13 @@ import {
 } from "./impl/measureArtifactMedia.js";
 import { normalizeArtifactSummary } from "./impl/normalizeArtifactSummary.js";
 import {
+    compileGenUiBundle,
     compileGenUiEntry,
     GEN_UI_RENDER_PATH,
     genUiFallbackSummary,
     isGenUiDerivedPath,
     readGenUiEntry,
+    type GenUiBundleFile,
 } from "./impl/genUiEntry.js";
 import type { GenUiDocument } from "../impl/genUi/validateGenUiDocument.js";
 import { ARTIFACT_COVER_INSTRUCTIONS, ARTIFACT_REFERENCE_INSTRUCTIONS } from "./tools/common.js";
@@ -430,6 +432,19 @@ export class ArtifactsModule implements AgentModule {
             throw new ArtifactNotFoundError(`The file at "${path}" has no preview.`);
         }
         return { file: stored.file, version: stored.version, preview, contentPath };
+    }
+
+    /**
+     * The render document of a Gen UI bundle kept outside the catalog, such as a gen_ui vault
+     * app, as stored text. Its entry is validated, the pictures it shows measured, and the result
+     * compiled under the rules of a gen_ui version; a refusal is an ArtifactInputError naming
+     * each problem by its node path.
+     */
+    async compileGenUiBundle(
+        files: readonly GenUiBundleFile[],
+        entryPath: string,
+    ): Promise<string> {
+        return compileGenUiBundle(files, entryPath);
     }
 
     /**

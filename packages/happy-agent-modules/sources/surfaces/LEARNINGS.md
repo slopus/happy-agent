@@ -368,3 +368,16 @@ Steve chose Time Machine's schedule as the default: every version for a day, one
 days, one a week after that, and 30 days in the Trash. Pinned versions and the newest version
 are never pruned. A vault's settings replace the whole policy, and pruning runs when a version is
 made and in the hourly maintenance pass.
+
+## A Gen UI item in a vault is a gen_ui app, a bundle like any vault app
+
+A first cut treated loose `*.genui.json` files as Gen UI documents with a media type of their
+own. Steve corrected that a vault keeps entities as bundles, as artifacts do, so a Gen UI item is
+a `gen_ui` vault app: `index.genui.json`, the pictures it shows, and `.genui/render.json`, the
+render document clients draw. Every bundle that makes a version, whether an upload, a folder, a
+zip, or a tool write, goes through the gen_ui artifact pipeline before its transaction: the
+artifacts module validates the entry, measures the pictures, and compiles it, and the vault stores
+the result beside the other files. The compiler is deterministic, so `.genui` files that arrive in
+an upload or a folder are dropped and compiled again, and a downloaded `.artifact` file still
+uploads back as the same content. Inline files and vault paths that name `.genui` are refused, and
+the vault tools never list or read it, nor does search index it.

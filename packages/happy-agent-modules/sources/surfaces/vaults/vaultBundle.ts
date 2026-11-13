@@ -1,5 +1,6 @@
 import {
     artifactPathSchema,
+    GEN_UI_RENDER_PATH,
     VAULT_ARTIFACT_MANIFEST_PATH,
     vaultArtifactManifestSchema,
     type VaultArtifactManifest,
@@ -7,16 +8,31 @@ import {
 } from "@slopus/happy-agent-client";
 import { Value } from "@sinclair/typebox/value";
 
+import { GEN_UI_LIMITS } from "../../impl/genUi/genUiSchemas.js";
 import { SurfaceError } from "../SurfaceError.js";
 
 const MIB = 1024 * 1024;
-/** The artifact html and markdown rules: 1–256 files and 256 MiB together. */
+/** The artifact html, markdown, and gen_ui rules: 1–256 files and 256 MiB together. */
 export const MAX_BUNDLE_FILES = 256;
 export const MAX_BUNDLE_BYTES = 256 * MIB;
-/** The largest entry page of each type. */
-const MAX_ENTRY_BYTES = { html: 16 * MIB, markdown: 4 * MIB } as const;
+/** The largest entry page of each type; a Gen UI document's is its catalog's limit. */
+const MAX_ENTRY_BYTES = {
+    html: 16 * MIB,
+    markdown: 4 * MIB,
+    gen_ui: GEN_UI_LIMITS.maxDocumentBytes,
+} as const;
+/** The largest file of a gen_ui app, as of a gen_ui artifact. */
+const MAX_GEN_UI_FILE_BYTES = 32 * MIB;
 /** The page each type opens. */
-const ENTRY_OF = { html: "index.html", markdown: "index.md" } as const;
+const ENTRY_OF = {
+    html: "index.html",
+    markdown: "index.md",
+    gen_ui: "index.genui.json",
+} as const;
+/** How each type is named in a message. */
+const TYPE_NAME = { html: "an HTML", markdown: "a Markdown", gen_ui: "a Gen UI" } as const;
+/** Where a gen_ui app keeps what the daemon derives from its document. */
+const GEN_UI_DERIVED_FOLDER = GEN_UI_RENDER_PATH.slice(0, GEN_UI_RENDER_PATH.indexOf("/"));
 /** More than any manifest needs; a larger `artifact.json` is refused unread. */
 export const MAX_MANIFEST_BYTES = 64 * 1024;
 
@@ -28,10 +44,15 @@ export interface BundleFile {
     readonly utf8: boolean;
 }
 
+/** Whether a path of a gen_ui app is derived data, compiled by the daemon and hidden from agents. */
+export function isGenUiDerivedPath(path: string): boolean {
+    return path === GEN_UI_DERIVED_FOLDER || path.startsWith(`${GEN_UI_DERIVED_FOLDER}/`);
+}
+
 /**
  * Check a bundle against the artifact rules and say what it is. With a manifest the type and
  * entry are the manifest's; without one the bundle is `html` when `index.html` sits at its root,
- * otherwise `markdown` when `index.md` does. Every path follows the artifact path rules,
+ * otherwise `markdown` when `index.md` does, otherwise `gen_ui` when `index.genui.json` does. Every path follows the artifact path rules,
  * `artifact.json` at the root is reserved for the manifest, no path is also a folder of another,
  * every file holds a byte, and the entry is UTF-8 within its type's limit.
  */
@@ -73,22 +94,36 @@ export function checkVaultBundle(
                 );
         }
     }
-    if (manifest?.type === "gen_ui") throw genUiUnsupported();
     const type =
         manifest?.type ??
-        (paths.has(ENTRY_OF.html) ? "html" : paths.has(ENTRY_OF.markdown) ? "markdown" : undefined);
+        (paths.has(ENTRY_OF.html)
+            ? "html"
+            : paths.has(ENTRY_OF.markdown)
+              ? "markdown"
+              : paths.has(ENTRY_OF.gen_ui)
+                ? "gen_ui"
+                : undefined);
     if (type === undefined)
         throw refused(
-            'An artifact needs "index.html" or "index.md" at its root, the page it opens.',
+            'An artifact needs "index.html", "index.md", or "index.genui.json" at its root, the page it opens.',
         );
     const entry = files.find((file) => file.path === ENTRY_OF[type]);
     if (entry === undefined)
         throw refused(
-            `The manifest says the artifact is ${type === "html" ? "an HTML" : "a Markdown"} app, but it has no "${ENTRY_OF[type]}" at its root.`,
+            `The manifest says the artifact is ${TYPE_NAME[type]} app, but it has no "${ENTRY_OF[type]}" at its root.`,
         );
+    if (type === "gen_ui") {
+        const large = files.find((file) => file.size > MAX_GEN_UI_FILE_BYTES);
+        if (large !== undefined)
+            throw refused(
+                `"${large.path}" may be at most ${String(MAX_GEN_UI_FILE_BYTES / MIB)} MiB.`,
+            );
+    }
     const limit = MAX_ENTRY_BYTES[type];
     if (entry.size > limit)
-        throw refused(`"${entry.path}" may be at most ${String(limit / MIB)} MiB.`);
+        throw refused(
+            `"${entry.path}" may be at most ${limit < MIB ? `${String(limit / 1024)} KiB` : `${String(limit / MIB)} MiB`}.`,
+        );
     if (!entry.utf8) throw refused(`"${entry.path}" must be UTF-8 text.`);
     return { type, entry: ENTRY_OF[type], fileCount: files.length };
 }
@@ -117,12 +152,11 @@ export function parseArtifactManifest(bytes: Uint8Array): VaultArtifactManifest 
         );
     if (!Value.Check(vaultArtifactManifestSchema, value))
         throw refused(
-            `"${VAULT_ARTIFACT_MANIFEST_PATH}" is not an artifact manifest: it needs "format": "happy.artifact", "formatVersion": 1, "type" of "html" or "markdown", and "entry".`,
+            `"${VAULT_ARTIFACT_MANIFEST_PATH}" is not an artifact manifest: it needs "format": "happy.artifact", "formatVersion": 1, "type" of "html", "markdown", or "gen_ui", and "entry".`,
         );
-    if (value.type === "gen_ui") throw genUiUnsupported();
     if (value.entry !== ENTRY_OF[value.type])
         throw refused(
-            `The manifest's entry must be "${ENTRY_OF[value.type]}" for ${value.type === "html" ? "an HTML" : "a Markdown"} app.`,
+            `The manifest's entry must be "${ENTRY_OF[value.type]}" for ${TYPE_NAME[value.type]} app.`,
         );
     return value;
 }
@@ -136,11 +170,6 @@ export function artifactManifestBytes(summary: VaultArtifactSummary): Uint8Array
         entry: summary.entry,
     };
     return new TextEncoder().encode(`${JSON.stringify(manifest, null, 4)}\n`);
-}
-
-/** Gen UI vault apps are specified, but this daemon does not compile them yet. */
-function genUiUnsupported(): SurfaceError {
-    return refused("Gen UI vault apps are not supported by this Happy yet.");
 }
 
 function refused(message: string): SurfaceError {

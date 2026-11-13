@@ -14,6 +14,7 @@ import type {
     VaultContentSource,
     VaultStoredFile,
 } from "../SurfaceVaults.js";
+import { isGenUiDerivedPath } from "../vaultBundle.js";
 import { readContent } from "../vaultContentFiles.js";
 import { vaultPath, vaultPathSegments } from "../vaultNames.js";
 
@@ -85,6 +86,9 @@ export async function vaultToolFile(
     if (entry.kind !== "artifact")
         throw new SurfaceError("not_found", `Nothing is at ${JSON.stringify(path)}.`);
     const innerPath = found.rest.join("/");
+    // A gen_ui app's render document is derived data the agent never reads.
+    if (entry.artifact.type === "gen_ui" && isGenUiDerivedPath(innerPath))
+        throw new SurfaceError("not_found", `Nothing is at ${JSON.stringify(path)}.`);
     const stored = await vaults.artifactFile(ctx, surfaceId, entry.id, selector, innerPath);
     return { entry, path, innerPath, version: stored.version, stored };
 }

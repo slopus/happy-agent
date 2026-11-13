@@ -88,3 +88,4 @@ export {
     type ArtifactProxy,
     type ArtifactFileChanges,
 } from "./ArtifactsModule.js";
+export type { GenUiBundleFile } from "./impl/genUiEntry.js";
