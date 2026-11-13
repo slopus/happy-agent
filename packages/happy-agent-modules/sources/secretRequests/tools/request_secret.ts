@@ -35,6 +35,7 @@ export function requestSecretTool(
 ) {
     return defineAgentTool({
         name: "request_secret",
+        defer: true,
         capabilities: [
             "Ask the user for a credential through a prefilled secret form, without seeing its values.",
         ],
