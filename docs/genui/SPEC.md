@@ -128,7 +128,7 @@ permission checks as if the model had asked for the action directly, and
 must never treat a tap as approval of something the user was not shown.
 
 **The origin agent** of an action is the agent that wrote the version
-holding it: the version's `source.agentId`. Wherever the document is shown,
+holding it: the version's `createdBy` when an agent made it. Wherever the document is shown,
 in its chat, a feed, a vault or a side panel, `message` and the secret
 actions go to that agent. When the version names no agent, or that agent is
 archived, those actions cannot run: clients draw them disabled and the

@@ -652,6 +652,11 @@ Permission requests are additive and do not increment the protocol version. Olde
 send a question's optional `permissionRequest`. A client that does not recognize it renders the
 question as an ordinary question, and answering it works the same way.
 
+Gen UI actions that need the daemon are additive and do not increment the protocol version. A
+daemon that runs them serves `POST /v0/artifacts/:artifactId/versions/:number/actions` and offers
+agents the `request_secret` tool. An older compatible daemon answers that route with `404`; a client
+then draws `secret` actions disabled, as it draws any action its host cannot run.
+
 Secret deletion through `DELETE /v0/secrets/:secretId` is additive and does not increment the
 protocol version. An older compatible daemon answers that route with `404` even for a secret that
 `GET /v0/secrets/:secretId` still returns; clients then treat deletion as unavailable. The
@@ -7940,7 +7945,7 @@ expected arguments are present:
 | `search`       | `bedrock_web_search`, `claude_web_search`, `codex_web_search`, `gemini_web_search`, `grok_web_search`, `grok_x_search`   |
 | `agent_spawn`  | `create_agent`                                                                                                           |
 | `media`        | `codex_imagegen`, `gemini_imagegen`, `present_files`, and completed image reads by `Read`, `view_image`, `ReadMediaFile` |
-| `artifact`     | `create_artifact`, `update_artifact`                                                                                     |
+| `artifact`     | `create_artifact`, `update_artifact`, `request_secret`                                                                   |
 | `user_input`   | `request_user_input`                                                                                                     |
 
 **`exploration`** — one normalized directory listing, file read, or code search. The daemon
@@ -12988,6 +12993,29 @@ the Happy Agent repository: `SPEC.md` and `catalog.json` for authoring documents
   fallback. A `gen_ui` artifact has no cover unless one is named.
 - The agent tools never list, read, or write the `.genui` files and leave them out of the file
   counts they report; agents work only with the authoring document and its images.
+- Buttons and pressable elements carry actions, specified in `docs/genui/SPEC.md`. A client runs
+  `message`, `open`, `copy`, and `plugin` itself; `message` goes to the version's origin agent, the
+  agent its `createdBy` names. A client saves a `secret` action's form through
+  `POST /v0/artifacts/:artifactId/versions/:number/actions`. It draws every other action disabled:
+  `cluster_secret`, which only a cluster serves, `tool`, which no host runs yet, any type it does not
+  know, and `message` or `secret` when the version names no agent or names an archived one.
+
+**Asking for a secret.** An agent that needs a credential calls `request_secret` instead of asking
+for a value in the chat:
+
+| Tool             | Arguments                                                | Does                                                                                        |
+| ---------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `request_secret` | `title`, `explanation`, `id`, `description`, `variables` | Publishes a `gen_ui` card whose button opens the prefilled secret form, and returns at once |
+
+`title` is the card's title, 1–100 characters. `explanation` is inline Markdown, 1–4,000
+characters, saying why the agent needs the secret and where the person finds each value. `id` is an
+optional suggested secret name under the Secrets chapter's rules; when it names an existing secret,
+the card offers to change it. `description` is the suggested secret description. `variables` lists
+1–20 objects `{ "name", "description"? }`: a variable name under the Secrets chapter's rules, unique
+ignoring case, and an optional hint of at most 2,000 characters. The card is an ordinary `gen_ui`
+artifact made by the agent, so its version's `createdBy` names that agent, and the call's
+presentation is `artifact` with `shows: "latest"`. The call never waits for the person. When they
+save the form, the agent receives a message as the actions route describes.
 
 **Sources.** `source` says where an artifact was created, as an object discriminated by `kind`:
 
@@ -13649,6 +13677,88 @@ event after commit, echoing `mutationId`. Deleting an artifact that is already d
 `200` with the tombstone and emits nothing, so a retried deletion succeeds even with the version it
 was first sent with. `404` when no such artifact exists, and the usual `409` when `If-Match` names
 an older version of an active artifact.
+
+### `POST /v0/artifacts/:artifactId/versions/:number/actions`
+
+Runs a Gen UI action that needs the daemon. A `gen_ui` version's render document holds the
+actions its buttons and pressable elements report (`docs/genui/SPEC.md`, rule 7). Most of them a
+client runs itself. A `secret` action opens a secret form on the client, and the client saves the
+form here, in one request: the daemon stores the secret, gives the version's origin agent access
+to it, and tells that agent. The client never calls the plain secret routes for this flow and
+never reports completion separately.
+
+The origin agent is the agent that made the version: its `createdBy` when that is
+`{ "kind": "agent" }`. A version a person made has no origin agent.
+
+Request:
+
+```json
+{
+    "id": "a8c3k5m7p9r1t3v5x7z9b1d3",
+    "element": "add-stripe",
+    "secret": {
+        "id": "stripe",
+        "description": "Stripe test-mode keys for the billing service",
+        "environment": {
+            "STRIPE_SECRET_KEY": "sk_test_...",
+            "STRIPE_WEBHOOK_SECRET": "whsec_..."
+        }
+    },
+    "mutationId": "..."
+}
+```
+
+- `id` — a client-chosen CUID2 for this save; the retry key. It names this one save of this one
+  element: reusing it for another artifact, version, or element is `409`.
+- `element` — the key, in the version's render document, of the `button` or `press` the person
+  tapped. The daemon reads the action from that element; the request never carries the action.
+- `secret` — the form as the person saved it. `id` is the secret's name under the Secrets
+  chapter's rules, chosen by the person and not necessarily the action's suggestion.
+  `description` is required and follows the same rules. `environment` maps variable names to
+  values. Creating, it is the whole
+  bundle, 1–256 string values. Changing, it is a patch exactly as for `PATCH /v0/secrets/:secretId`:
+  a string sets a value, `null` removes the variable, and a name left out keeps its stored value.
+- `ifMatch` — optional; the secret's `version` when the form changed an existing secret. A stale
+  one is `409` with `currentVersion` and the safe current `secret`, and so is an `ifMatch` for a
+  secret that no longer exists. Without it, saving to a name that already exists is `409` too, so
+  a form never overwrites a secret it did not show.
+- `mutationId` — optional, echo-only as usual.
+
+The daemon then, in one atomic change:
+
+1. creates the secret, available to agents, or updates it when it exists and `ifMatch` matches;
+2. attaches it to the origin agent as an exact-agent grant, unless it already is;
+3. steers one message into the origin agent's conversation, with `id` as its message ID, saying the
+   person added or changed the secret, its name, its variable names, and any variable the action
+   asked for that the secret does not hold. It never contains a value. A running agent reads it
+   after its current response; an idle agent starts a run for it.
+
+Response — `200`:
+
+```json
+{
+    "secret": {
+        /* the safe secret object; never values */
+    },
+    "outcome": "created"
+}
+```
+
+`outcome` is `"created"` or `"updated"`. A retry with the same `id` changes nothing and answers
+`200` with the secret as it now stands and the first save's `outcome`.
+
+Errors, beside the common ones:
+
+- `404` — no such artifact, version, or element, or the artifact is deleted.
+- `400` (`invalid_request`) — the element's action is not one the daemon runs (`message`, `open`,
+  `copy`, `plugin`, or anything other than `secret`), the version is not `gen_ui`, or the form
+  breaks the secret rules. Values in a rejected body are never stored, logged, or echoed.
+- `409` (`conflict`) — the version names no origin agent, or that agent is archived; a stale or
+  missing `ifMatch` as above; an `id` reused for another element; the secret exists and is managed
+  or not available to agents.
+
+The secret change emits `secret.created` or `secret.updated`, and the grant `secret.attached`,
+exactly as the Secrets chapter describes, after commit.
 
 ### Artifact data
 
