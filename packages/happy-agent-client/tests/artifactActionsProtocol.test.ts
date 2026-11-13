@@ -5,6 +5,7 @@ import { HappyAgentClient } from "../sources/HappyAgentClient.js";
 import {
     artifactSecretActionRequestSchema,
     artifactSecretActionResponseSchema,
+    healthResponseSchema,
     type ArtifactSecretActionResponse,
 } from "../sources/index.js";
 
@@ -97,5 +98,16 @@ describe("artifact actions protocol", () => {
                 body: request,
             },
         ]);
+    });
+
+    it("lets health advertise secret actions and plugins, missing meaning neither", () => {
+        const capabilities = healthResponseSchema.properties.capabilities;
+        expect(Value.Check(capabilities, { artifactSecretActions: true, plugins: true })).toBe(
+            true,
+        );
+        expect(Value.Check(capabilities, { artifactSecretActions: false })).toBe(true);
+        expect(Value.Check(capabilities, {})).toBe(true);
+        expect(Value.Check(capabilities, { artifactSecretActions: "yes" })).toBe(false);
+        expect(Value.Check(capabilities, { plugins: 1 })).toBe(false);
     });
 });

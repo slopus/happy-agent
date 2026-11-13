@@ -190,6 +190,16 @@ export const healthResponseSchema = Type.Object({
              * emits `user_environment.updated`, under User environment.
              */
             userEnvironment: Type.Optional(Type.Boolean()),
+            /**
+             * True when the daemon serves `POST /v0/artifacts/:artifactId/versions/:number/actions`
+             * for `secret` actions and offers `request_secret`; enable `secret` actions only then.
+             */
+            artifactSecretActions: Type.Optional(Type.Boolean()),
+            /**
+             * True when the daemon serves `/v0/plugins` and `plugins.updated`, under Plugins; show
+             * plugins and enable Gen UI `plugin` actions only then.
+             */
+            plugins: Type.Optional(Type.Boolean()),
         }),
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */

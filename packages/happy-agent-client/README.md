@@ -517,8 +517,8 @@ with `saveArtifactSecretAction(artifactId, version, { id, element, secret })`: `
 render element tapped, `secret` the form as the person left it, and `id` a CUID2 you choose once per
 save so a retry answers the first one. To change an existing secret, send an environment patch and
 its `version` as `ifMatch`. The daemon creates or updates the secret, attaches it to the agent that
-made the version, and tells that agent; the response's `outcome` says which. An older daemon answers
-`404`, and the button should then be disabled.
+made the version, and tells that agent; the response's `outcome` says which. Enable the button
+only when `getHealth()` reports `capabilities.artifactSecretActions`; otherwise draw it disabled.
 
 Show an artifact on a transparent slot unless its version names `background`, a lowercase hex
 colour (`#rgb`, `#rgba`, `#rrggbb`, or `#rrggbbaa`) to paint behind the content; check
@@ -608,8 +608,9 @@ arrives during a read, keep the newer summary version, and resync on state loss 
 The client exposes the feed without automatically caching skills in `HappyReducer`. Older daemons'
 missing endpoints mean this feature is unavailable, not that no skills are installed.
 
-Plugins are additive without a protocol bump. Detect support through `listPlugins()`: `404` or
-`501` means unavailable, not that nothing is installed. Clients never read a catalog themselves:
+Plugins are additive without a protocol bump. Detect support through `capabilities.plugins` in
+`getHealth()`: missing or `false` means unavailable, not that nothing is installed. Enable Gen UI
+`plugin` actions only with it. Clients never read a catalog themselves:
 `listAvailablePlugins()` returns the daemon's cached `public` and `cluster` lists, each entry
 marked `installable` with a plain-English `reason` when it is not, plus each source's sync state.
 A failed source keeps its last good entries; `unavailable` means it is not configured.
