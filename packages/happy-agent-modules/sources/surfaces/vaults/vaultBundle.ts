@@ -73,6 +73,7 @@ export function checkVaultBundle(
                 );
         }
     }
+    if (manifest?.type === "gen_ui") throw genUiUnsupported();
     const type =
         manifest?.type ??
         (paths.has(ENTRY_OF.html) ? "html" : paths.has(ENTRY_OF.markdown) ? "markdown" : undefined);
@@ -118,6 +119,7 @@ export function parseArtifactManifest(bytes: Uint8Array): VaultArtifactManifest 
         throw refused(
             `"${VAULT_ARTIFACT_MANIFEST_PATH}" is not an artifact manifest: it needs "format": "happy.artifact", "formatVersion": 1, "type" of "html" or "markdown", and "entry".`,
         );
+    if (value.type === "gen_ui") throw genUiUnsupported();
     if (value.entry !== ENTRY_OF[value.type])
         throw refused(
             `The manifest's entry must be "${ENTRY_OF[value.type]}" for ${value.type === "html" ? "an HTML" : "a Markdown"} app.`,
@@ -134,6 +136,11 @@ export function artifactManifestBytes(summary: VaultArtifactSummary): Uint8Array
         entry: summary.entry,
     };
     return new TextEncoder().encode(`${JSON.stringify(manifest, null, 4)}\n`);
+}
+
+/** Gen UI vault apps are specified, but this daemon does not compile them yet. */
+function genUiUnsupported(): SurfaceError {
+    return refused("Gen UI vault apps are not supported by this Happy yet.");
 }
 
 function refused(message: string): SurfaceError {
