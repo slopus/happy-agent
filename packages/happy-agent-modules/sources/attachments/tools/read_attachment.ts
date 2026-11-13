@@ -121,6 +121,9 @@ export function readAttachmentTool(
         computeModule.shouldReviewPath(ctx, compute, path, { write: true });
     return defineAgentTool({
         name: "read_attachment",
+        defer: true,
+        capabilities: ["Read files people attached to messages, and save copies to work on."],
+        searchKeywords: ["attached file", "open attachment", "uploaded file", "read attachment"],
         description: `Reads a file a person attached to a message in this conversation. Each attachment appears in the message as a line naming its ID, file name, type, and size. Images are shown to you. Text files come back as numbered lines: a line number, then a tab, then the line, numbered from 1. By default it reads up to ${String(MAX_LINES_TO_READ)} lines from the start; offset and limit read another stretch of a long file. Other files, such as PDFs, archives, and videos, are only described. To work on the file with your own tools, pass path to save a copy on your machine; relative paths start from your working directory, and missing folders are created. Choose a place that will not get committed, such as an ignored scratch folder. An existing file is replaced only with overwrite: true. The copy is yours: changing or deleting it does not change the attachment, and you can save it again.`,
         parameters: readAttachmentInputSchema,
         returnType: attachmentReadSchema,
