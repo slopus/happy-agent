@@ -118,6 +118,44 @@ describe("the Gen UI validator", () => {
         ).toEqual(["root<card>.actions[0]<button>.action.url: required"]);
     });
 
+    it("holds a cluster secret prefill to the public fields of its own type", () => {
+        const cluster = (secret: Record<string, unknown>) =>
+            card({
+                actions: [
+                    {
+                        type: "button",
+                        label: "Add key",
+                        action: { type: "cluster_secret", secret },
+                    },
+                ],
+            });
+        expect(
+            validateGenUiDocument(
+                JSON.stringify(
+                    cluster({
+                        type: "git_credential",
+                        name: "GitHub",
+                        uses: ["git"],
+                        public: {
+                            server: "github.com",
+                            method: { kind: "token" },
+                            operations: ["read"],
+                        },
+                    }),
+                ),
+            ).ok,
+        ).toBe(true);
+        expect(
+            errorsOf(
+                cluster({
+                    type: "ssh_key",
+                    name: "Deploy key",
+                    public: { targets: [{ host: "api.stripe.com" }] },
+                }),
+            ),
+        ).toEqual(["root<card>.actions[0]<button>.action.secret.public.targets: unknown property"]);
+    });
+
     it("refuses a secret action that carries a value or asks for no variables", () => {
         const secret = (prefill: Record<string, unknown>) =>
             card({

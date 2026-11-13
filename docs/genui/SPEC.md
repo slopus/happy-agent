@@ -166,9 +166,15 @@ the values and may change everything else first.
 
 - `secret` is for Happy Agent's secrets: a named bundle of environment
   variables. `cluster_secret` is for Happy Cloud's typed secrets: its
-  `secret` holds the secret `type`, `name`, `description`, the type's
-  `public` metadata as the cluster's create request takes it, the suggested
-  `uses` and `owner`, and an `id` only to change a secret that exists.
+  `secret` is one of four shapes chosen by its `type`, `endpoint`,
+  `ssh_key`, `git_credential` or `environment`, each with a `name`,
+  `description`, suggested `owner` and `uses`, the public metadata of that
+  type, and an `id` only to change a secret that exists. The catalog lists
+  every field.
+- A prefill that passes the schema is not necessarily a secret the host
+  accepts. The host checks the saved form by its own rules, such as host
+  syntax, path prefixes, header names, repository patterns, which `uses` fit
+  the type, and that only an SSH key may `sign`.
 - Neither carries a value. A model never writes one, and a host never
   prefills one.
 - The person may change every prefilled field before saving: the name, the

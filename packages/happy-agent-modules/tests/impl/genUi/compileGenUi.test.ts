@@ -80,7 +80,7 @@ describe("the Gen UI compiler", () => {
         }
     });
 
-    it("holds the action fixture to the catalog: four invalid actions, all disabled everywhere", () => {
+    it("holds the action fixture to the catalog: five invalid actions, all disabled everywhere", () => {
         const fixture = JSON.parse(
             readFileSync(join(spec, "render", "conformance", "actions.json"), "utf8"),
         ) as {
@@ -92,6 +92,7 @@ describe("the Gen UI compiler", () => {
             "secret-without-variables.props.action.secret.variables: required",
             "secret-with-value.props.action.secret.variables[0].value: unknown property",
             "press-unknown.props.action: matches none of the allowed shapes",
+            "cluster-secret-with-value.props.action.secret.material: unknown property",
         ]);
         expect(
             fixture.cases
@@ -102,6 +103,7 @@ describe("the Gen UI compiler", () => {
             "unknown",
             "secret-without-variables",
             "secret-with-value",
+            "cluster-secret-with-value",
             "press-unknown",
         ]);
     });
