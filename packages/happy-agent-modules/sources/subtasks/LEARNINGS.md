@@ -52,8 +52,10 @@ remain restorable.
 Coordinators were tempted to inspect or modify delegated work directly in another workspace.
 Bot and subtask instructions, together with the creation tool's guidance, now direct coordinators
 to ask the subtask agent for progress, findings, diffs, verification, and follow-up changes through
-`send_agent_message`. Subtasks keep their assigned work in their own workspace and report back
-through messaging. Direct access to another workspace often requires elevated permissions and
+`send_agent_message`. Subtasks keep their assigned work in their own workspace. Their guidance used
+to ask them to report progress through `send_agent_message`, which flooded coordinators; it now says
+the coordinator receives only their final message, so findings, diffs, verification, and open
+questions belong there. Direct access to another workspace often requires elevated permissions and
 review by the reviewer model, so messaging avoids unnecessary permission reviews and preserves
 ownership of the work.
 

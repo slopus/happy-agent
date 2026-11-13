@@ -89,6 +89,18 @@ An explicitly interrupted collaborator sends no automatic settlement report. Its
 observed the interrupt result, and any earlier commentary is incomplete progress rather than a
 final answer. The interrupted agent remains durable and can still receive a later follow-up.
 
+## Only the final message reaches the creator
+
+A collaborator's or subtask's creator should receive only its final message, not its
+progress. The settlement report kept the run's last text block, even one written before a tool
+call, so a run that said "Let me run the tests", ran them, and then failed reported that note as
+its finished answer. A tool call now forgets the kept text: only text after the run's last tool
+call is reported, and a run that stops without speaking again reports that it stopped. The
+instructions tell a reported agent that nothing it wrote before its final message reaches its
+creator, so that message must carry the whole result, what was verified, and anything still open;
+creators are told they do not see intermediate messages. `send_agent_message` remains the
+deliberate way to say something sooner.
+
 ## Subagent model availability
 
 Ordinary model availability and delegation availability are separate choices. Provider-level

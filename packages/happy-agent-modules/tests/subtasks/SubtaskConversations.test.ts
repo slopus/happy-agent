@@ -102,9 +102,11 @@ describe("conversation subtasks", () => {
             agent: { id: "conversation" },
         } as never);
         expect(conversation).toContain("holding one conversation for your parent");
-        expect(conversation).not.toContain("report progress, findings");
+        expect(conversation).not.toContain("receives only your final message");
         const delegated = await hooks.instructions!(ctx, { agent: { id: "delegated" } } as never);
-        expect(delegated).toContain("report progress, findings, diffs, and verification");
+        expect(delegated).toContain(
+            "Your parent receives only your final message when you stop, so put your findings, diffs, verification, and anything still open there.",
+        );
     });
 
     it("returns the same subtask when the same identity is created again", async () => {

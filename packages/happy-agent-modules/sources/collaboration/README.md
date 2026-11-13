@@ -57,11 +57,12 @@ addresses are rebuilt every turn from `parentOf` and `childOf`:
 Your Agent ID is b7c1.
 When a file you mention will be read outside your own chat (...), link it as
 [Foo.tsx:42](happy://agents/b7c1/files/<path from your workspace root>#L42-L50), ...
-You were created by agent a3f2. When you stop working, whatever you said last is reported to it
-automatically, so finish by stating your answer. Use send_agent_message only to tell it something
-before then.
-Collaborators you created: b7c1, b7c2. Each reports back on its own when it finishes; nothing waits
-for them.
+You were created by agent a3f2. When you stop working, only your final message is reported to it
+automatically; nothing you wrote earlier, including text between tool calls, reaches it. Make that
+final message complete: the whole result, what you verified, and anything still open. Use
+send_agent_message only when it must hear something before then.
+Collaborators you created: b7c1, b7c2. Each reports back with only its final message when it
+finishes; you do not see its intermediate messages, and nothing waits for them.
 ```
 
 That matters because the `Message from agent ...` line ages out of history on compaction, while the
@@ -122,8 +123,9 @@ under the settlement's own identity, so a retried report is the same message rat
 one.
 
 The last thing the model said is kept in the **run store** while the run is in progress — the only
-state this module keeps. That store exists only for the duration of a run and is erased by the
-transaction that settles it.
+state this module keeps. A tool call forgets it, because text followed by a tool call is progress
+rather than the final message; only text after the run's last tool call is ever reported. That
+store exists only for the duration of a run and is erased by the transaction that settles it.
 
 Reading it and delivering the report both happen inside that settling transaction, which is what
 makes the report reliable. The report uses `steer`, so an active creator receives it after its

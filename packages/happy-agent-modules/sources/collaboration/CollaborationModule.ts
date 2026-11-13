@@ -583,7 +583,7 @@ export class CollaborationModule implements AgentModule {
             if (parent !== null) {
                 lines.push(
                     reportsToCreator(scope.agent.metadata)
-                        ? `You were created by agent ${parent}. When you stop working, whatever you said last is reported to it automatically, so finish by stating your answer. Use send_agent_message only to tell it something before then.`
+                        ? `You were created by agent ${parent}. When you stop working, only your final message is reported to it automatically; nothing you wrote earlier, including text between tool calls, reaches it. Make that final message complete: the whole result, what you verified, and anything still open. Use send_agent_message only when it must hear something before then.`
                         : `You were created by agent ${parent}. What you say is not reported to it automatically; use send_agent_message when it needs to hear from you.`,
                 );
             }
@@ -591,7 +591,7 @@ export class CollaborationModule implements AgentModule {
                 // The collection's order changes across restarts; a stable prompt keeps the cache.
                 const sorted = [...children].sort();
                 lines.push(
-                    `Collaborators you created: ${sorted.join(", ")}. Each reports back on its own when it finishes; nothing waits for them.`,
+                    `Collaborators you created: ${sorted.join(", ")}. Each reports back with only its final message when it finishes; you do not see its intermediate messages, and nothing waits for them.`,
                 );
             }
             if (await this.#reachesAcrossWorkspaces(ctx, scope.agent.id)) {
@@ -655,12 +655,20 @@ export class CollaborationModule implements AgentModule {
          * Keep the last thing the model said, for as long as the run that said it. The run store is
          * the right place: it exists only while the agent is working, a crash mid-run leaves a note
          * the resumed run can still read, and a finished run leaves nothing behind.
+         *
+         * A tool call after the text makes that text progress rather than the final message, so
+         * the call forgets it. A run that then stops without speaking again reports that it
+         * stopped instead of passing a stale progress note off as its answer.
          */
         onEventTransact: async (
             ctx: Context,
             scope: AgentModuleScope,
             event: AgentBasePersistedEvent,
         ): Promise<void> => {
+            if (event.type === "toolcall_end") {
+                await scope.runKV.delete(ctx, LAST_TEXT_KEY);
+                return;
+            }
             if (event.type !== "text_end") return;
             const text = event.block.text.trim();
             if (text === "") return;
@@ -728,7 +736,9 @@ export class CollaborationModule implements AgentModule {
     };
 
     /**
-     * Pass a collaborator's answer to its creator, verbatim, when the collaborator finishes.
+     * Pass a collaborator's answer to its creator, verbatim, when the collaborator finishes. The
+     * answer is the run's final message alone; progress the model wrote before its last tool call
+     * never reaches the creator.
      *
      * This is the runtime reporting, not the model choosing to, which is what makes an answer
      * arrive at all now that nothing waits for one. A run that said nothing still reports that it

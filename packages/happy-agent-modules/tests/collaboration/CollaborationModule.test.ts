@@ -250,12 +250,23 @@ function runScope(agentId: string) {
             write: async (_ctx: Context, key: string, value: unknown) => {
                 values.set(key, value);
             },
+            delete: async (_ctx: Context, key: string) => {
+                values.delete(key);
+            },
         },
     } as never;
 }
 
 function textEnd(text: string) {
     return { type: "text_end", block: { type: "text", text } } as never;
+}
+
+function toolCallEnd(callId: string) {
+    return {
+        type: "toolcall_end",
+        callId,
+        block: { type: "tool_call", id: callId, name: "exec_command", arguments: {} },
+    } as never;
 }
 
 function settlement(settlementId: string, error?: string) {
@@ -1320,6 +1331,20 @@ describe("collaboration", () => {
         expect(instructions).toContain("send_agent_message");
     });
 
+    it("tells a collaborator that only its final message reaches its creator", async () => {
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection);
+        await module.createAgent(ctx, "parent", TASK, "child");
+
+        const instructions = await hooks.instructions!(ctx, {
+            agent: { id: "child" },
+        } as never);
+
+        expect(instructions).toContain(
+            "You were created by agent parent. When you stop working, only your final message is reported to it automatically; nothing you wrote earlier, including text between tool calls, reaches it. Make that final message complete: the whole result, what you verified, and anything still open.",
+        );
+    });
+
     it("tells an unreported agent that its creator hears from it only through messages", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
@@ -1332,7 +1357,7 @@ describe("collaboration", () => {
         expect(instructions).toContain(
             "You were created by agent parent. What you say is not reported to it automatically; use send_agent_message when it needs to hear from you.",
         );
-        expect(instructions).not.toContain("reported to it automatically, so finish");
+        expect(instructions).not.toContain("only your final message is reported");
     });
 
     it("tells an agent which collaborators it created", async () => {
@@ -1361,7 +1386,7 @@ describe("collaboration", () => {
         expect(instructions.split("\n")).toEqual([
             "Your Agent ID is parent.",
             expect.stringContaining("happy://agents/parent/files/"),
-            "Collaborators you created: child, sibling. Each reports back on its own when it finishes; nothing waits for them.",
+            "Collaborators you created: child, sibling. Each reports back with only its final message when it finishes; you do not see its intermediate messages, and nothing waits for them.",
         ]);
     });
 
@@ -1604,6 +1629,44 @@ describe("collaboration", () => {
 
         expect(collection.delivered[1]!.text).toContain("Final answer.");
         expect(collection.delivered[1]!.text).not.toContain("Thinking out loud.");
+    });
+
+    it("reports only the text after the run's last tool call", async () => {
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection);
+        await module.createAgent(ctx, "parent", TASK, "child");
+        const scope = runScope("child");
+
+        await hooks.onEventTransact!(ctx, scope, textEnd("Let me run the tests."));
+        await hooks.onEventTransact!(ctx, scope, toolCallEnd("tests"));
+        await hooks.onEventTransact!(ctx, scope, textEnd("All 12 tests pass."));
+        await hooks.afterAgentSettledTransact!(ctx, scope, settlement("s1"));
+
+        expect(collection.delivered[1]!.text).toBe(
+            "Collaborator child finished working. Its answer follows, verbatim.\n\nAll 12 tests pass.",
+        );
+    });
+
+    it("does not pass progress before a tool call off as the answer of a run that then failed", async () => {
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection);
+        await module.createAgent(ctx, "parent", TASK, "child");
+        const scope = runScope("child");
+
+        await hooks.onEventTransact!(ctx, scope, textEnd("Let me run the tests."));
+        await hooks.onEventTransact!(ctx, scope, toolCallEnd("tests"));
+        await hooks.afterAgentSettledTransact!(
+            ctx,
+            scope,
+            settlement("s1", "You've hit your Codex usage limit."),
+        );
+
+        expect(collection.delivered[1]!.text).toBe(
+            "Collaborator child stopped without answering. It failed with, verbatim.\n\nYou've hit your Codex usage limit.",
+        );
+        expect(collection.delivered[1]!.options.metadata).toMatchObject({
+            senderAgentExplanation: "Stopped without answering",
+        });
     });
 
     it("trims a completed text block and ignores unrelated persisted events", async () => {
