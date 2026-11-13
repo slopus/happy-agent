@@ -11564,13 +11564,14 @@ served as a web app, its files each named by a relative `path` under the artifac
 rules and served under one URL prefix so relative references resolve without rewriting. Its inner files are not items of the tree, and its
 versions are whole bundles. A version's `artifact` summary is `{ "type", "entry", "fileCount" }`:
 
-| `type`     | `entry`             | Rules                                               |
-| ---------- | ------------------- | --------------------------------------------------- |
-| `html`     | `index.html`, UTF-8 | 1–256 files, entry at most 16 MiB, 256 MiB together |
-| `markdown` | `index.md`, UTF-8   | 1–256 files, entry at most 4 MiB, 256 MiB together  |
+| `type`     | `entry`                   | Rules                                                             |
+| ---------- | ------------------------- | ----------------------------------------------------------------- |
+| `html`     | `index.html`, UTF-8       | 1–256 files, entry at most 16 MiB, 256 MiB together               |
+| `markdown` | `index.md`, UTF-8         | 1–256 files, entry at most 4 MiB, 256 MiB together                |
+| `gen_ui`   | `index.genui.json`, UTF-8 | 1–256 files, entry at most 256 KiB, 32 MiB each, 256 MiB together |
 
 A bundle holding `index.html` at its root is `html`, otherwise one holding `index.md` is
-`markdown`, otherwise it is refused. The type may differ between versions. `artifact.json` at a
+`markdown`, otherwise one holding `index.genui.json` is `gen_ui`, otherwise it is refused. The type may differ between versions. `artifact.json` at a
 bundle's root is reserved for its manifest and is never one of the app's files. Every file holds at
 least one byte, file media types come from the artifact extension table, paths are case-sensitive,
 and no path is also a folder of another. A single-version read carries `files`, the whole file list
@@ -11589,6 +11590,18 @@ names in the table above. Fields not described here are ignored. The manifest is
 app file: the daemon keeps `type` and `entry` on the version and writes the manifest again on
 download, so a downloaded `.artifact` file uploads back as the same content.
 
+A `gen_ui` vault app is a Gen UI document kept in a vault. Its bundle has the layout of a `gen_ui`
+artifact version, and each version goes through the same rules: the entry must be a valid
+authoring document, its images are pictures of the same bundle named by relative path and never
+fetched, every picture is measured, and the daemon compiles the render document and stores it in
+the version as `.genui/render.json`, within the same render limits. The render document is one of
+the version's `files`, counts in `fileCount`, and is written into a downloaded `.artifact` file.
+`.genui` at the bundle's root is reserved for it: files there in an uploaded `.artifact` file, a
+folder, or a zip are left out and the render document is compiled again, so a downloaded
+`.artifact` file uploads back as the same content, and inline files or a vault path naming one are
+refused. A refused document is `400 invalid_request` with a message naming each problem by its node
+path, and nothing is changed.
+
 People make artifact versions by uploading a `.artifact` file. A client uploading a file whose name
 ends in `.artifact` creates an artifact, or makes a new version of the artifact of that name,
 just as it does for a plain file. A `.zip` is always a plain file. The daemon reads the `.artifact`
@@ -11606,6 +11619,10 @@ file when the upload is placed:
 A refused `.artifact` file, including one that is not a zip or has no valid manifest, is
 `400 invalid_request` with a message saying why, and nothing is changed. Agents write artifacts
 with the tools below, file by file or as a whole.
+
+A client draws a `gen_ui` vault app natively from the version's `.genui/render.json`, read with
+the images it names through `GET /files/:fileId/versions/:number/artifact/*path` of the same
+version, as it draws a `gen_ui` artifact. Its files are still served like any other app's.
 
 An artifact is served as the artifact routes serve `html` artifacts, in the same sandbox:
 every response carries the artifact file route's `Content-Security-Policy` sandbox and
@@ -11632,7 +11649,7 @@ leaves out what an earlier one returned:
    the query as a case-insensitive substring, as `match: "content"`.
 
 The texts are the newest version of plain text files and the text files inside artifacts' newest
-versions. A file is text when it is valid UTF-8 without NUL and at most 1 MiB; larger and binary
+versions, other than a `gen_ui` app's `.genui` files. A file is text when it is valid UTF-8 without NUL and at most 1 MiB; larger and binary
 files are found by name only. An item is returned once, under its best tier. The indexes are
 updated in the same transaction as the change, so search never returns content a vault no longer
 holds, and renaming or moving a folder updates the paths below it at once. After an upgrade, a
@@ -11861,7 +11878,8 @@ such a path makes a new version of the artifact with that file added or replaced
   through 10, default 1. It lists a folder's live folders and files, folders first and marked as
   folders, with the files' kinds, sizes, newest version numbers, and change times, recursing to
   `depth`; at most 1,000 lines, saying when more were left out. Listing an artifact lists the files
-  of its newest version.
+  of its newest version. The vault tools never list, read, or write a `gen_ui` app's `.genui`
+  files.
 - `read_vault_file` accepts `surfaceId`, `path`, optional `version`, and optional `offset` and
   `limit`. It reads a file, or a file inside an artifact, exactly as `read_artifact_file` reads an
   artifact file: numbered lines, 2,000 at a time from `offset`, raster images shown to the model,
@@ -11922,7 +11940,7 @@ such a path makes a new version of the artifact with that file added or replaced
   at `path`, or makes a new version of the artifact there whose files are exactly those given. The
   bundle rules and zip rules above apply; `artifact.json` at the root of `files` is refused, and
   one in a folder or zip is read as the manifest, while a bundle without one takes its type from
-  its `index.html` or `index.md`.
+  its `index.html`, `index.md`, or `index.genui.json`.
 
 Read tools are never reviewed. Writes change shared data that keeps its history and Trash, so,
 as for artifacts an agent made, they are not reviewed: Workspace write, Auto, and Full access allow
@@ -12755,7 +12773,8 @@ story but its `canDelete` is `false`; `404 not_found` under the same conditions 
 
 An artifact is finished work published for people to see: a Markdown document or an HTML page with
 the pictures and other files it uses, a live web page reached by URL, an image, an ordered series
-of images, a video, or a document such as a PDF. Artifacts are global. One catalog holds every
+of images, a video, a document such as a PDF, or a Gen UI document, a small native view built from
+a fixed set of components. Artifacts are global. One catalog holds every
 artifact on the installation, and in team mode every member sees all of it, wherever each artifact
 was made. Each artifact remembers
 where it was created — its `source` — and who created it and who last changed it.
@@ -12786,8 +12805,10 @@ Markdown or HTML artifact, optional `content` supplies the complete UTF-8 text o
 `index.html` in the initial version. It may accompany auxiliary `files`, but cannot accompany a
 file supplied at that entry path or a live `url`, and is refused for other artifact types. The entry
 must satisfy the same non-empty and byte-size limits as any other artifact file. Without `content`
-or an entry in `files`, a Markdown or HTML artifact starts from a short entry holding its title. An
-image, image series, video, or document starts from the files the call supplies. Initial content
+or an entry in `files`, a Markdown or HTML artifact starts from a short entry holding its title. A
+Gen UI artifact needs its document: `content` supplies `index.genui.json`, and without it or an
+entry in `files` the call is refused. An image, image series, video, or document starts from the
+files the call supplies. Initial content
 and all supplied files publish together as one version 1.0; a rejected call publishes no artifact.
 `files` on `create_artifact` and `update_artifact` copies files from the agent's machine, each
 `{ "fromPath": "...", "path": "..." }`,
@@ -12907,14 +12928,15 @@ Existing `page` presentations remain readable as history.
 
 **Types.** The type decides the entry and which files a version may hold:
 
-| `type`         | Entry               | Files                                       | Size limits                    |
-| -------------- | ------------------- | ------------------------------------------- | ------------------------------ |
-| `markdown`     | `index.md`, UTF-8   | the entry plus any other files; 1–256 files | entry 4 MiB; 256 MiB together  |
-| `html`         | `index.html`, UTF-8 | the entry plus any other files; 1–256 files | entry 16 MiB; 256 MiB together |
-| `image`        | its one file        | exactly one image                           | 32 MiB                         |
-| `image_series` | the first file      | 1–64 images, shown in `path` order          | 32 MiB each, 256 MiB together  |
-| `video`        | its one file        | exactly one video                           | 256 MiB                        |
-| `document`     | its one file        | exactly one document                        | 64 MiB                         |
+| `type`         | Entry               | Files                                       | Size limits                                  |
+| -------------- | ------------------- | ------------------------------------------- | -------------------------------------------- |
+| `markdown`     | `index.md`, UTF-8   | the entry plus any other files; 1–256 files | entry 4 MiB; 256 MiB together                |
+| `html`         | `index.html`, UTF-8 | the entry plus any other files; 1–256 files | entry 16 MiB; 256 MiB together               |
+| `image`        | its one file        | exactly one image                           | 32 MiB                                       |
+| `image_series` | the first file      | 1–64 images, shown in `path` order          | 32 MiB each, 256 MiB together                |
+| `video`        | its one file        | exactly one video                           | 256 MiB                                      |
+| `document`     | its one file        | exactly one document                        | 64 MiB                                       |
+| `gen_ui`       | `index.genui.json`  | the entry plus any other files; 1–256 files | entry 256 KiB; 32 MiB each, 256 MiB together |
 
 - Images: `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/avif`, and `image/svg+xml`.
 - Videos: `video/mp4`, `video/webm`, `video/quicktime`, and `video/ogg`.
@@ -12934,6 +12956,38 @@ scripts included, in a sandboxed frame that has no access to the daemon's or the
 storage, or credentials. An artifact's type never changes. The set of types grows with the product;
 a client that meets a `type` it does not recognize shows the title and offers the entry for
 download.
+
+**Gen UI documents.** A `gen_ui` artifact is a view the client draws natively, not a page. Its
+entry is an authoring document, UTF-8 JSON in the Gen UI format, and the daemon compiles every
+version into a render document the client draws. Both formats are specified in `docs/genui/` of
+the Happy Agent repository: `SPEC.md` and `catalog.json` for authoring documents, `RENDER.md` and
+`render/catalog.json` for render documents.
+
+- Every version's entry must be a valid authoring document. Otherwise the change is
+  `400 invalid_request`, no version is made, and the message names each problem by its node path,
+  such as `root<card>.children[0]<stat>.value: expected string`.
+- An image names a picture of the same version by its path relative to the entry, such as
+  `assets/photo.jpg`. A remote URL is refused: the daemon never fetches images. The file must be a
+  PNG, JPEG, GIF, WebP, or AVIF picture the daemon can decode; a missing or undecodable one is
+  refused with the node path that names it. Every picture of a `gen_ui` version is measured as
+  "Media metadata" describes.
+- The daemon stores the render document as the version's file `.genui/render.json`
+  (`application/json`), made in the same change as the version. It is one of `files`, counts in
+  `fileCount` and `size`, and is served by the file route like any other file. `.genui` at the
+  root is reserved for files the daemon derives: a creation or update that writes or removes a
+  file there is `400 invalid_request`.
+- A render document holds at most 4,000 elements and 4 MiB. A document whose render document would
+  be larger is refused with a message saying so.
+- A client draws a `gen_ui` version from its `.genui/render.json`, never from the entry, and loads
+  the images the render document names by `file` through the file route of the same version. A
+  client that does not support the render document's `genuiRender` format version shows the
+  version's summary instead.
+- The document's optional `fallback` is plain text saying what the view shows. A version that
+  names no summary takes the fallback as its summary, within the summary rules, and a later version
+  whose summary still equals the earlier fallback follows the new one. Search covers the
+  fallback. A `gen_ui` artifact has no cover unless one is named.
+- The agent tools never list, read, or write the `.genui` files and leave them out of the file
+  counts they report; agents work only with the authoring document and its images.
 
 **Sources.** `source` says where an artifact was created, as an object discriminated by `kind`:
 
@@ -13263,8 +13317,8 @@ Fields:
 **Media metadata.** The daemon measures the files people show as pictures and videos, as it does
 for chat `media` items, so a client lays them out and shows a placeholder before any bytes load:
 
-- Every image file of an `image` or `image_series` version, and every version's cover file of any
-  type, gets `width`, `height`, and `thumbhash` when the daemon can decode it: PNG, JPEG, GIF,
+- Every image file of an `image`, `image_series`, or `gen_ui` version, and every version's cover
+  file of any type, gets `width`, `height`, and `thumbhash` when the daemon can decode it: PNG, JPEG, GIF,
   WebP, or AVIF, still or animated. SVG files get none. The size of a WebP or GIF comes from its
   container header, like a cover's.
 - The video file of a `video` artifact gets `width`, `height`, `durationMs`, and `thumbhash`, and a
