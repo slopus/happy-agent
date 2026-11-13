@@ -1,0 +1,74 @@
+{
+  "genui": 1,
+  "fallback": "Deploy in progress: build and tests done, migrating database, rollout pending.",
+  "root": {
+    "type": "card",
+    "title": "Deploy to production",
+    "subtitle": "happy-server · v2.41.0",
+    "icon": "bolt",
+    "badge": {
+      "text": "In progress",
+      "tone": "accent"
+    },
+    "children": [
+      {
+        "type": "steps",
+        "items": [
+          {
+            "title": "Build image",
+            "detail": "sha 9f3c2e1, 412 MB",
+            "status": "done",
+            "time": "1m 08s"
+          },
+          {
+            "title": "Run tests",
+            "detail": "1,284 passed, 3 skipped",
+            "status": "done",
+            "time": "3m 41s"
+          },
+          {
+            "title": "Migrate database",
+            "detail": "Applying 2 of 3 migrations",
+            "status": "active",
+            "time": "0m 22s"
+          },
+          {
+            "title": "Roll out to 10%",
+            "status": "pending"
+          },
+          {
+            "title": "Roll out to 100%",
+            "status": "pending"
+          }
+        ]
+      },
+      {
+        "type": "callout",
+        "tone": "warning",
+        "title": "Long migration",
+        "text": "`add_index_sessions_updated_at` locks writes for about 40 seconds."
+      }
+    ],
+    "actions": [
+      {
+        "type": "button",
+        "label": "Pause rollout",
+        "action": {
+          "type": "message",
+          "text": "Pause rollout"
+        },
+        "variant": "secondary"
+      },
+      {
+        "type": "button",
+        "label": "Abort",
+        "action": {
+          "type": "message",
+          "text": "Abort"
+        },
+        "tone": "danger",
+        "variant": "secondary"
+      }
+    ]
+  }
+}

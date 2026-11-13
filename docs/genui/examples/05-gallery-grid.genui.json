@@ -1,0 +1,67 @@
+{
+  "genui": 1,
+  "fallback": "7 photos from the trip.",
+  "root": {
+    "type": "card",
+    "title": "Trip photos",
+    "subtitle": "7 photos",
+    "icon": "image",
+    "children": [
+      {
+        "type": "gallery",
+        "layout": "grid",
+        "items": [
+          {
+            "image": {
+              "src": "assets/coast.jpg",
+              "alt": "Rocky coast at dusk"
+            },
+            "title": "Rocky coast at dusk"
+          },
+          {
+            "image": {
+              "src": "assets/forest.jpg",
+              "alt": "Pine forest in fog"
+            },
+            "title": "Pine forest in fog"
+          },
+          {
+            "image": {
+              "src": "assets/dunes.jpg",
+              "alt": "Sand dunes"
+            },
+            "title": "Sand dunes"
+          },
+          {
+            "image": {
+              "src": "assets/lake.jpg",
+              "alt": "Alpine lake"
+            },
+            "title": "Alpine lake"
+          },
+          {
+            "image": {
+              "src": "assets/city.jpg",
+              "alt": "City skyline at night"
+            },
+            "title": "City skyline at night"
+          },
+          {
+            "image": {
+              "src": "assets/meadow.jpg",
+              "alt": "Meadow in bloom"
+            },
+            "title": "Meadow in bloom"
+          },
+          {
+            "image": {
+              "src": "assets/canyon.jpg",
+              "alt": "Red canyon"
+            },
+            "title": "Red canyon"
+          }
+        ]
+      }
+    ]
+  }
+}

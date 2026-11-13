@@ -1,0 +1,48 @@
+{
+  "genui": 1,
+  "fallback": "Test runtime per package, before and after the cache change.",
+  "root": {
+    "type": "card",
+    "title": "Test runtime by package",
+    "subtitle": "Seconds, lower is better",
+    "children": [
+      {
+        "type": "chart",
+        "kind": "bar",
+        "labels": [
+          "agent",
+          "desktop",
+          "server",
+          "wire",
+          "cli"
+        ],
+        "series": [
+          {
+            "name": "Before",
+            "values": [
+              184,
+              142,
+              96,
+              38,
+              51
+            ]
+          },
+          {
+            "name": "After",
+            "values": [
+              92,
+              71,
+              88,
+              21,
+              27
+            ],
+            "emphasis": true
+          }
+        ],
+        "format": {
+          "suffix": " s"
+        }
+      }
+    ]
+  }
+}

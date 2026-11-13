@@ -1,0 +1,83 @@
+{
+  "genui": 1,
+  "fallback": "Benchmark results for 4 models.",
+  "root": {
+    "type": "card",
+    "title": "Benchmark results",
+    "subtitle": "SWE-task suite, 200 tasks",
+    "children": [
+      {
+        "type": "table",
+        "columns": [
+          {
+            "key": "model",
+            "label": "Model"
+          },
+          {
+            "key": "pass",
+            "label": "Pass rate",
+            "kind": "number"
+          },
+          {
+            "key": "time",
+            "label": "Median time",
+            "kind": "number"
+          },
+          {
+            "key": "cost",
+            "label": "Cost / task",
+            "kind": "number"
+          },
+          {
+            "key": "status",
+            "label": "Verdict",
+            "kind": "badge"
+          }
+        ],
+        "rows": [
+          {
+            "model": "Fable 5.2",
+            "pass": "81.5%",
+            "time": "4m 12s",
+            "cost": "$1.84",
+            "status": {
+              "text": "Best",
+              "tone": "success"
+            }
+          },
+          {
+            "model": "Opus 5.5",
+            "pass": "77.0%",
+            "time": "5m 03s",
+            "cost": "$2.31",
+            "status": {
+              "text": "Good",
+              "tone": "neutral"
+            }
+          },
+          {
+            "model": "GPT-6.1 Sol",
+            "pass": "76.5%",
+            "time": "3m 48s",
+            "cost": "$1.52",
+            "status": {
+              "text": "Fastest",
+              "tone": "accent"
+            }
+          },
+          {
+            "model": "Grok 4.7",
+            "pass": "68.0%",
+            "time": "6m 20s",
+            "cost": "$1.10",
+            "status": {
+              "text": "Cheapest",
+              "tone": "warning"
+            }
+          }
+        ],
+        "caption": "Run on Nov 11 with default effort."
+      }
+    ]
+  }
+}

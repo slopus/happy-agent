@@ -1,0 +1,80 @@
+{
+  "genui": 1,
+  "fallback": "Three stays near Big Sur: Cliffside Cabin $240, Redwood Loft $185, Dune House $310.",
+  "root": {
+    "type": "stack",
+    "children": [
+      {
+        "type": "text",
+        "text": "Three stays that fit your dates:"
+      },
+      {
+        "type": "gallery",
+        "layout": "carousel",
+        "items": [
+          {
+            "image": {
+              "src": "assets/coast.jpg",
+              "alt": "Cabin on a cliff"
+            },
+            "title": "Cliffside Cabin",
+            "subtitle": "$240 / night · 2 guests",
+            "badge": {
+              "text": "4.9",
+              "tone": "accent",
+              "icon": "star"
+            },
+            "action": {
+              "type": "message",
+              "text": "Tell me more about Cliffside Cabin"
+            }
+          },
+          {
+            "image": {
+              "src": "assets/forest.jpg",
+              "alt": "Loft among redwoods"
+            },
+            "title": "Redwood Loft",
+            "subtitle": "$185 / night · 4 guests",
+            "badge": {
+              "text": "4.7",
+              "icon": "star"
+            },
+            "action": {
+              "type": "message",
+              "text": "Tell me more about Redwood Loft"
+            }
+          },
+          {
+            "image": {
+              "src": "assets/dunes.jpg",
+              "alt": "House by the dunes"
+            },
+            "title": "Dune House",
+            "subtitle": "$310 / night · 6 guests",
+            "badge": {
+              "text": "New",
+              "tone": "success"
+            },
+            "action": {
+              "type": "message",
+              "text": "Tell me more about Dune House"
+            }
+          },
+          {
+            "image": {
+              "src": "assets/lake.jpg",
+              "alt": "Cabin by a lake"
+            },
+            "title": "Lakeside A-frame",
+            "subtitle": "$205 / night · 3 guests",
+            "action": {
+              "type": "message",
+              "text": "Tell me more about Lakeside A-frame"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

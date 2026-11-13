@@ -1,0 +1,35 @@
+{
+  "genui": 1,
+  "fallback": "Token spend this week: Fable 46%, Opus 27%, Sonnet 18%, Haiku 9%.",
+  "root": {
+    "type": "card",
+    "title": "Token spend",
+    "subtitle": "This week",
+    "children": [
+      {
+        "type": "chart",
+        "kind": "donut",
+        "labels": [
+          "Fable",
+          "Opus",
+          "Sonnet",
+          "Haiku"
+        ],
+        "series": [
+          {
+            "name": "Spend",
+            "values": [
+              412,
+              243,
+              161,
+              82
+            ]
+          }
+        ],
+        "format": {
+          "prefix": "$"
+        }
+      }
+    ]
+  }
+}

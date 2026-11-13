@@ -1,0 +1,16 @@
+{
+  "genui": 1,
+  "fallback": "Q3 revenue was $1.24M, up 18% on Q2.",
+  "root": {
+    "type": "card",
+    "title": "Q3 at a glance",
+    "badge": { "text": "On track", "tone": "success" },
+    "children": [
+      { "type": "stat", "id": "revenue", "label": "Revenue", "value": "$1.24M", "delta": "+18%", "deltaLabel": "vs Q2", "trend": "up" },
+      { "type": "image", "id": "photo", "src": "https://example.com/office.jpg", "alt": "The team at the offsite" }
+    ],
+    "actions": [
+      { "type": "button", "id": "more", "label": "Break down by plan", "action": { "type": "message", "text": "Break down Q3 revenue by plan" } }
+    ]
+  }
+}

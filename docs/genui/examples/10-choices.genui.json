@@ -1,0 +1,64 @@
+{
+  "genui": 1,
+  "fallback": "How should I fix the flaky test? Options: retry, fix the race, or quarantine.",
+  "root": {
+    "type": "card",
+    "title": "Flaky test: sync.reconnect",
+    "icon": "bug",
+    "children": [
+      {
+        "type": "keyvalue",
+        "items": [
+          {
+            "label": "Failure rate",
+            "value": "7 of 50 runs",
+            "tone": "danger"
+          },
+          {
+            "label": "First seen",
+            "value": "Nov 9",
+            "icon": "calendar"
+          },
+          {
+            "label": "Suspect",
+            "value": "a41c9d0 by steve",
+            "icon": "git-commit"
+          }
+        ]
+      },
+      {
+        "type": "choices",
+        "prompt": "How do you want to handle it?",
+        "options": [
+          {
+            "label": "Fix the race",
+            "description": "Await the socket close before reconnecting. About 30 lines.",
+            "icon": "code",
+            "action": {
+              "type": "message",
+              "text": "Fix the race"
+            }
+          },
+          {
+            "label": "Add a retry",
+            "description": "Retry up to 3 times. Hides the bug but unblocks CI.",
+            "icon": "clock",
+            "action": {
+              "type": "message",
+              "text": "Add a retry"
+            }
+          },
+          {
+            "label": "Quarantine it",
+            "description": "Skip in CI and open an issue to track it.",
+            "icon": "lock",
+            "action": {
+              "type": "message",
+              "text": "Quarantine it"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

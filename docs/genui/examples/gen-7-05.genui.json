@@ -1,0 +1,182 @@
+{
+  "genui": 1,
+  "fallback": "Weekend in Lisbon: list, text, row, table, choices.",
+  "root": {
+    "type": "card",
+    "title": "Weekend in Lisbon",
+    "subtitle": "Oct 17 – 19 · 2 travelers",
+    "icon": "map-pin",
+    "children": [
+      {
+        "type": "list",
+        "items": [
+          {
+            "title": "Dinner at Taberna da Rua",
+            "subtitle": "Bairro Alto · booked for 20:00"
+          },
+          {
+            "title": "Tram 28 to Estrela",
+            "subtitle": "40 min · buy tickets on board"
+          },
+          {
+            "title": "Sunset at Miradouro da Graça",
+            "subtitle": "Free · best around 18:40",
+            "badge": {
+              "text": "Done"
+            }
+          },
+          {
+            "title": "Day trip to Sintra",
+            "subtitle": "Train from Rossio · 45 min",
+            "badge": {
+              "text": "On track",
+              "tone": "warning"
+            },
+            "trailing": "2h",
+            "action": {
+              "type": "message",
+              "text": "Tell me more about: Day trip to Sintra"
+            }
+          },
+          {
+            "title": "Alfama walking tour",
+            "subtitle": "2 h · starts at Sé Cathedral",
+            "action": {
+              "type": "message",
+              "text": "Tell me more about: Alfama walking tour"
+            }
+          }
+        ],
+        "ordered": true
+      },
+      {
+        "type": "text",
+        "variant": "body",
+        "text": "Here is where things stand **right now**."
+      },
+      {
+        "type": "row",
+        "children": [
+          {
+            "type": "stat",
+            "label": "Rain chance",
+            "value": "27%",
+            "delta": "+3%",
+            "trend": "up"
+          },
+          {
+            "type": "stat",
+            "label": "Walking",
+            "value": "23 km",
+            "delta": "0%",
+            "trend": "flat",
+            "spark": [
+              63,
+              76,
+              83,
+              98,
+              100,
+              92,
+              96,
+              100,
+              100
+            ],
+            "tone": "accent"
+          }
+        ]
+      },
+      {
+        "type": "table",
+        "columns": [
+          {
+            "key": "name",
+            "label": "Name"
+          },
+          {
+            "key": "m0",
+            "label": "Budget",
+            "kind": "number"
+          },
+          {
+            "key": "m1",
+            "label": "Walking",
+            "kind": "number"
+          },
+          {
+            "key": "state",
+            "label": "Status",
+            "kind": "badge"
+          }
+        ],
+        "rows": [
+          {
+            "name": "Fri",
+            "m0": "$1,805",
+            "m1": "25 km",
+            "state": {
+              "text": "Watch",
+              "tone": "success"
+            }
+          },
+          {
+            "name": "Sat",
+            "m0": "$857",
+            "m1": "27 km",
+            "state": {
+              "text": "Under",
+              "tone": "accent"
+            }
+          },
+          {
+            "name": "Sun",
+            "m0": "$1,944",
+            "m1": "10 km",
+            "state": {
+              "text": "Under",
+              "tone": "accent"
+            }
+          }
+        ]
+      },
+      {
+        "type": "choices",
+        "layout": "chips",
+        "options": [
+          {
+            "label": "Show more",
+            "action": {
+              "type": "message",
+              "text": "Show more"
+            },
+            "icon": "search"
+          },
+          {
+            "label": "Chiado hotel",
+            "action": {
+              "type": "message",
+              "text": "Chiado hotel"
+            },
+            "icon": "map-pin"
+          },
+          {
+            "label": "Belém guesthouse",
+            "action": {
+              "type": "message",
+              "text": "Belém guesthouse"
+            },
+            "icon": "globe"
+          },
+          {
+            "label": "Alfama loft",
+            "action": {
+              "type": "message",
+              "text": "Alfama loft"
+            },
+            "icon": "star"
+          }
+        ],
+        "prompt": "Which stay do you prefer?"
+      }
+    ]
+  }
+}

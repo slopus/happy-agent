@@ -98,6 +98,7 @@ Read these in whatever order your task demands; each page stands alone.
 | [exported-bot-protocol.md](exported-bot-protocol.md)       | The WebSocket protocol a bridge speaks to serve an exported bot: its token, frames, durable replies, files exchanged as local paths, access requests, close codes, and security.                                                            |
 | [DESIGN.md](DESIGN.md)                                     | The Happy design system for web pages and interfaces: variables, surfaces, layout grid, typography, controls, states, and a copyable baseline. Read it for temporary pages or whenever the user asks for Happy's visual language.           |
 | [happy.md](happy.md)                                       | The Happy family: encrypted remote access to agents with Happy, the collaborative desktop workspace of Happy 2, how each connects to Happy Agent, and what an agent should know when driven through them.                                   |
+| [genui/](genui/README.md)                                  | Gen UI: native components a model writes as JSON in a `gen_ui` artifact or a `.genui.json` vault file, drawn by Happy clients. Read [USAGE.md](genui/USAGE.md) before writing one.                                                          |
 
 Installed releases also include `API.md` beside these pages. It is the authoritative Happy Agent
 HTTP, event-stream, WebSocket, and tunnel contract; in this source checkout it lives at

@@ -1,0 +1,23 @@
+{
+  "genuiRender": 1,
+  "compiler": "1.0.0",
+  "fallback": "Q3 revenue was $1.24M, up 18% on Q2.",
+  "root": "card",
+  "viewers": { "photo": [{ "file": "assets/9f2c41d0a7e3.jpg", "width": 1600, "height": 1067, "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI", "alt": "The team at the offsite" }] },
+  "elements": {
+    "card": { "type": "box", "props": { "role": "card", "gap": "blocks" }, "children": ["card.header", "revenue", "photo", "card.actions"] },
+    "card.header": { "type": "box", "props": { "role": "header", "direction": "row", "justify": "between", "align": "center" }, "children": ["card.title", "card.badge"] },
+    "card.title": { "type": "text", "props": { "role": "title", "spans": [{ "text": "Q3 at a glance" }] } },
+    "card.badge": { "type": "pill", "props": { "text": "On track", "tone": "success" } },
+    "revenue": { "type": "box", "props": { "gap": "related" }, "children": ["revenue.label", "revenue.line"] },
+    "revenue.label": { "type": "text", "props": { "role": "label", "spans": [{ "text": "Revenue" }] } },
+    "revenue.line": { "type": "box", "props": { "direction": "row", "gap": "inline", "align": "baseline", "wrap": true }, "children": ["revenue.value", "revenue.trend", "revenue.delta", "revenue.deltaLabel"] },
+    "revenue.value": { "type": "text", "props": { "role": "value", "spans": [{ "text": "$1.24M" }] } },
+    "revenue.trend": { "type": "icon", "props": { "name": "arrow-up", "tone": "success", "role": "inline" } },
+    "revenue.delta": { "type": "text", "props": { "role": "delta", "tone": "success", "spans": [{ "text": "+18%" }] } },
+    "revenue.deltaLabel": { "type": "text", "props": { "role": "note", "spans": [{ "text": "vs Q2" }] } },
+    "photo": { "type": "image", "props": { "file": "assets/9f2c41d0a7e3.jpg", "width": 1600, "height": 1067, "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI", "alt": "The team at the offsite", "shape": "landscape", "role": "figure", "viewer": { "group": "photo", "index": 0 } } },
+    "card.actions": { "type": "box", "props": { "role": "actions", "direction": "row", "gap": "inline", "wrap": true }, "children": ["more"] },
+    "more": { "type": "button", "props": { "label": "Break down by plan", "variant": "primary", "action": { "type": "message", "text": "Break down Q3 revenue by plan" } } }
+  }
+}

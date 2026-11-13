@@ -1,0 +1,94 @@
+{
+  "genui": 1,
+  "fallback": "4 open pull requests need your review.",
+  "root": {
+    "type": "card",
+    "title": "Needs your review",
+    "subtitle": "4 pull requests",
+    "icon": "git-pull-request",
+    "children": [
+      {
+        "type": "list",
+        "items": [
+          {
+            "title": "Fix reconnect loop after sleep",
+            "subtitle": "happy-agent · #2314 · kirill",
+            "icon": "git-pull-request",
+            "tone": "success",
+            "badge": {
+              "text": "Checks pass",
+              "tone": "success"
+            },
+            "trailing": "2h",
+            "action": {
+              "type": "open",
+              "url": "https://github.com/slopus/happy-agent/pull/2314"
+            }
+          },
+          {
+            "title": "Stream tool output in chunks",
+            "subtitle": "happy-agent · #2309 · steve",
+            "icon": "git-pull-request",
+            "tone": "warning",
+            "badge": {
+              "text": "2 failing",
+              "tone": "danger"
+            },
+            "trailing": "5h",
+            "action": {
+              "type": "open",
+              "url": "https://github.com/slopus/happy-agent/pull/2309"
+            }
+          },
+          {
+            "title": "New artifact cover layout",
+            "subtitle": "happy-desktop · #988 · anna",
+            "icon": "git-pull-request",
+            "tone": "success",
+            "badge": {
+              "text": "Checks pass",
+              "tone": "success"
+            },
+            "trailing": "1d",
+            "action": {
+              "type": "open",
+              "url": "https://github.com/slopus/happy-desktop/pull/988"
+            }
+          },
+          {
+            "title": "Bump Compose to 1.9",
+            "subtitle": "happy · #4120 · dependabot",
+            "icon": "git-pull-request",
+            "badge": {
+              "text": "Draft"
+            },
+            "trailing": "3d",
+            "action": {
+              "type": "open",
+              "url": "https://github.com/slopus/happy/pull/4120"
+            }
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "type": "button",
+        "label": "Review the first one",
+        "action": {
+          "type": "message",
+          "text": "Review the first one"
+        }
+      },
+      {
+        "type": "button",
+        "label": "Summarize all",
+        "action": {
+          "type": "message",
+          "text": "Summarize all"
+        },
+        "variant": "secondary"
+      }
+    ]
+  }
+}

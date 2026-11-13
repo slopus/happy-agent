@@ -1,0 +1,114 @@
+{
+  "genui": 1,
+  "fallback": "Checkout service: steps, text, gallery.",
+  "root": {
+    "type": "card",
+    "title": "Checkout service",
+    "subtitle": "Last 7 days",
+    "icon": "bolt",
+    "badge": {
+      "text": "On track",
+      "tone": "accent"
+    },
+    "children": [
+      {
+        "type": "steps",
+        "items": [
+          {
+            "title": "Reproduce",
+            "status": "done",
+            "time": "2m 10s"
+          },
+          {
+            "title": "Find root cause",
+            "status": "done",
+            "time": "2m 10s",
+            "detail": "Finished without issues"
+          },
+          {
+            "title": "Write fix",
+            "status": "done"
+          },
+          {
+            "title": "Review",
+            "status": "done"
+          },
+          {
+            "title": "Deploy",
+            "status": "active",
+            "time": "Yesterday",
+            "detail": "In progress now"
+          }
+        ]
+      },
+      {
+        "type": "text",
+        "variant": "body",
+        "text": "Here is where things stand **right now**."
+      },
+      {
+        "type": "gallery",
+        "layout": "carousel",
+        "items": [
+          {
+            "image": {
+              "src": "assets/city.jpg",
+              "alt": "City"
+            },
+            "title": "Retry storm on payment webhooks",
+            "subtitle": "checkout-api · opened by maria",
+            "action": {
+              "type": "message",
+              "text": "Tell me more about: Retry storm on payment webhooks"
+            }
+          },
+          {
+            "image": {
+              "src": "assets/coast.jpg",
+              "alt": "Coast"
+            },
+            "title": "Slow query in order history",
+            "subtitle": "orders-db · opened by li",
+            "badge": {
+              "text": "Blocked",
+              "tone": "warning",
+              "icon": "star"
+            },
+            "action": {
+              "type": "message",
+              "text": "Tell me more about: Slow query in order history"
+            }
+          },
+          {
+            "image": {
+              "src": "assets/lake.jpg",
+              "alt": "Lake"
+            },
+            "title": "Cache stampede after deploy",
+            "subtitle": "edge · opened by omar",
+            "badge": {
+              "text": "On track",
+              "tone": "warning"
+            },
+            "action": {
+              "type": "message",
+              "text": "Tell me more about: Cache stampede after deploy"
+            }
+          }
+        ],
+        "aspect": "portrait"
+      }
+    ],
+    "actions": [
+      {
+        "type": "button",
+        "label": "Open an incident",
+        "action": {
+          "type": "message",
+          "text": "Open an incident"
+        },
+        "variant": "primary"
+      }
+    ]
+  }
+}

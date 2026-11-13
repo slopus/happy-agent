@@ -1,0 +1,83 @@
+{
+  "genui": 1,
+  "fallback": "This week's issues by area: 5 in Desktop, 3 in Mobile, 2 in Daemon. Desktop opened the most issues each week.",
+  "root": {
+    "type": "card",
+    "title": "Issues by area",
+    "subtitle": "This week",
+    "icon": "bug",
+    "children": [
+      {
+        "type": "list",
+        "items": [
+          {
+            "title": "Sidebar loses its scroll position",
+            "subtitle": "#812 · opened by dana",
+            "badge": {
+              "text": "Desktop",
+              "tone": "blue"
+            },
+            "trailing": "1d"
+          },
+          {
+            "title": "Push notifications arrive twice",
+            "subtitle": "#809 · opened by sam",
+            "badge": {
+              "text": "Mobile",
+              "tone": "purple"
+            },
+            "trailing": "2d"
+          },
+          {
+            "title": "Slow start with many workspaces",
+            "subtitle": "#801 · opened by lee",
+            "badge": {
+              "text": "Daemon",
+              "tone": "teal"
+            },
+            "trailing": "4d"
+          }
+        ]
+      },
+      {
+        "type": "chart",
+        "kind": "bar",
+        "labels": [
+          "Week 1",
+          "Week 2",
+          "Week 3"
+        ],
+        "series": [
+          {
+            "name": "Desktop",
+            "values": [
+              4,
+              6,
+              5
+            ],
+            "color": "blue"
+          },
+          {
+            "name": "Mobile",
+            "values": [
+              2,
+              3,
+              3
+            ],
+            "color": "purple"
+          },
+          {
+            "name": "Daemon",
+            "values": [
+              1,
+              1,
+              2
+            ],
+            "color": "teal"
+          }
+        ],
+        "caption": "New issues per week, by area"
+      }
+    ]
+  }
+}

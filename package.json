@@ -9,6 +9,7 @@
         "check": "pnpm --filter @slopus/happy-providers build && pnpm --filter @slopus/happy-agent-modules build && pnpm --filter @slopus/happy-agent-compute build && pnpm --filter @slopus/happy-agent build && pnpm --filter happy-plugins build && pnpm --filter happy-worklets build && pnpm run check:root && pnpm --recursive --filter './packages/**' run check",
         "check:root": "tsc --noEmit -p tsconfig.json",
         "format": "oxfmt --write .",
+        "genui:build": "tsx scripts/genui/buildGenUiSpec.ts",
         "format:check": "oxfmt --check .",
         "lint": "oxlint .",
         "observability:down": "node scripts/observability.mjs down",
@@ -26,7 +27,7 @@
         "test:gym": "pnpm --filter @slopus/happy-agent-gym-tests test:gym",
         "test:gym:api": "pnpm --filter @slopus/happy-agent-gym-tests test:gym:api",
         "test:gym:node": "pnpm --filter @slopus/happy-agent-gym-tests test:gym:node",
-        "test:scripts": "TMPDIR=\"$PWD/.local\" tsx --test scripts/release/*.test.ts scripts/recipes/*.test.ts"
+        "test:scripts": "TMPDIR=\"$PWD/.local\" tsx --test scripts/release/*.test.ts scripts/recipes/*.test.ts scripts/genui/*.test.ts"
     },
     "devDependencies": {
         "@sinclair/typebox": "^0.34.49",

@@ -3,6 +3,9 @@
     "ignorePatterns": [
         "packages/rig-codemode-codex/native/**",
         "packages/happy-agent-modules/sources/artifactData/impl/artifactDiagramsScript.ts",
+        "packages/happy-agent-modules/sources/impl/genUi/genUiCatalog.ts",
+        "packages/happy-agent-modules/sources/impl/genUi/genUiRenderCatalog.ts",
+        "docs/genui/**",
         "skills/**",
         "packages/happy-agent-gym-tests/fixtures/**"
     ],

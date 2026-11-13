@@ -1,0 +1,102 @@
+{
+  "genui": 1,
+  "fallback": "Q3: revenue $1.24M (+18%), 8,412 active users (+6%), churn 2.1% (-0.4pt).",
+  "root": {
+    "type": "card",
+    "title": "Q3 at a glance",
+    "subtitle": "Jul 1 – Sep 30",
+    "icon": "chart",
+    "badge": {
+      "text": "On track",
+      "tone": "success",
+      "icon": "check"
+    },
+    "children": [
+      {
+        "type": "row",
+        "children": [
+          {
+            "type": "stat",
+            "label": "Revenue",
+            "value": "$1.24M",
+            "delta": "+18%",
+            "trend": "up",
+            "spark": [
+              62,
+              64,
+              70,
+              68,
+              75,
+              81,
+              88,
+              96,
+              104
+            ]
+          },
+          {
+            "type": "stat",
+            "label": "Active users",
+            "value": "8,412",
+            "delta": "+6%",
+            "trend": "up",
+            "spark": [
+              78,
+              79,
+              80,
+              80,
+              82,
+              81,
+              83,
+              84,
+              84
+            ]
+          },
+          {
+            "type": "stat",
+            "label": "Churn",
+            "value": "2.1%",
+            "delta": "-0.4pt",
+            "trend": "down",
+            "tone": "success",
+            "spark": [
+              30,
+              29,
+              27,
+              28,
+              25,
+              24,
+              23,
+              22,
+              21
+            ]
+          }
+        ]
+      },
+      {
+        "type": "progress",
+        "label": "Annual target",
+        "value": 0.72,
+        "detail": "$3.6M of $5M"
+      }
+    ],
+    "actions": [
+      {
+        "type": "button",
+        "label": "Break down by plan",
+        "action": {
+          "type": "message",
+          "text": "Break down by plan"
+        }
+      },
+      {
+        "type": "button",
+        "label": "Compare to Q2",
+        "action": {
+          "type": "message",
+          "text": "Compare to Q2"
+        },
+        "variant": "secondary"
+      }
+    ]
+  }
+}

@@ -1,0 +1,1164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://happy.engineering/genui/v1/genui.schema.json",
+  "title": "Gen UI document, version 1",
+  "type": "object",
+  "required": [
+    "genui",
+    "root"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "genui": {
+      "const": 1,
+      "description": "Format version."
+    },
+    "fallback": {
+      "type": "string",
+      "description": "Plain-text equivalent for clients that cannot render Gen UI, and for search, notifications and screen readers."
+    },
+    "root": {
+      "$ref": "#/$defs/node",
+      "description": "The root node."
+    }
+  },
+  "$defs": {
+    "tone": {
+      "enum": [
+        "neutral",
+        "accent",
+        "success",
+        "warning",
+        "danger",
+        "red",
+        "orange",
+        "yellow",
+        "green",
+        "teal",
+        "cyan",
+        "blue",
+        "indigo",
+        "purple",
+        "pink",
+        "brown",
+        "gray"
+      ],
+      "description": "A semantic tone for meaning (`success` good, `warning` needs attention, `danger` bad or destructive, `accent` highlighted, `neutral`), or a colour name for telling categories apart. The shared theme owns every hue."
+    },
+    "color": {
+      "enum": [
+        "red",
+        "orange",
+        "yellow",
+        "green",
+        "teal",
+        "cyan",
+        "blue",
+        "indigo",
+        "purple",
+        "pink",
+        "brown",
+        "gray"
+      ],
+      "description": "A colour name. The shared theme owns the exact hue, in light and dark; a document never names one."
+    },
+    "icon": {
+      "enum": [
+        "check",
+        "x",
+        "alert",
+        "info",
+        "clock",
+        "calendar",
+        "user",
+        "users",
+        "file",
+        "folder",
+        "code",
+        "terminal",
+        "git-branch",
+        "git-commit",
+        "git-pull-request",
+        "link",
+        "search",
+        "star",
+        "heart",
+        "download",
+        "upload",
+        "play",
+        "pause",
+        "image",
+        "chart",
+        "globe",
+        "bolt",
+        "bug",
+        "lock",
+        "sparkles",
+        "arrow-right",
+        "arrow-up-right",
+        "arrow-up",
+        "arrow-down",
+        "arrow-down-right",
+        "chevron-right",
+        "copy",
+        "dollar",
+        "map-pin"
+      ],
+      "description": "Icon name, drawn from the shared icon set in `icons/`. An unknown name draws no icon."
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "src": {
+          "type": "string",
+          "description": "Path of an image file stored with the document, relative to it (for example `assets/coast.jpg`). Remote URLs are refused in v1: add the image as a file first."
+        },
+        "alt": {
+          "type": "string",
+          "description": "Text alternative. Shown if the image fails to load and read by screen readers."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "src",
+        "alt"
+      ]
+    },
+    "badge": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Short label, shown exactly as written (no case change). Keep under 16 characters."
+        },
+        "tone": {
+          "$ref": "#/$defs/tone",
+          "description": "Colour of the label."
+        },
+        "icon": {
+          "$ref": "#/$defs/icon",
+          "description": "Small leading icon."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "text"
+      ]
+    },
+    "action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "message"
+            },
+            "text": {
+              "type": "string",
+              "description": "Sent as the user's next message in the conversation."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "open"
+            },
+            "url": {
+              "type": "string",
+              "description": "https URL, or a path the host knows how to open."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "url"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "copy"
+            },
+            "text": {
+              "type": "string",
+              "description": "Copied to the clipboard."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "tool"
+            },
+            "name": {
+              "type": "string",
+              "description": "Tool the host is asked to run."
+            },
+            "input": {
+              "type": "object",
+              "additionalProperties": {},
+              "description": "Tool input."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "name"
+          ]
+        }
+      ],
+      "description": "What happens when the user activates an interactive element. The renderer reports it; the host decides whether and how to run it, and may ask for confirmation or refuse."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$",
+      "description": "Optional stable name for a node, unique in the document. Lets a later edit or action refer to it."
+    },
+    "node": {
+      "oneOf": [
+        {
+          "type": "object",
+          "title": "card",
+          "description": "The standard root: a bordered surface with a header, content and a footer of actions.",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "card"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "title": {
+              "type": "string",
+              "description": "Header title."
+            },
+            "subtitle": {
+              "type": "string",
+              "description": "Muted line under the title."
+            },
+            "icon": {
+              "$ref": "#/$defs/icon",
+              "description": "Leading header icon."
+            },
+            "badge": {
+              "$ref": "#/$defs/badge",
+              "description": "Status label at the trailing edge of the header."
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/node"
+              }
+            },
+            "actions": {
+              "type": "array",
+              "maxItems": 3,
+              "description": "Footer buttons.",
+              "items": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/node"
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "enum": [
+                          "button"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "stack",
+          "description": "A vertical group of children with standard spacing. Use as the root when no card frame is wanted.",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "stack"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/node"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "row",
+          "description": "A horizontal group whose children share the width equally.",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "row"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/node"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "section",
+          "description": "A titled group inside a card.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "title"
+          ],
+          "properties": {
+            "type": {
+              "const": "section"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "title": {
+              "type": "string",
+              "description": "Small heading above the group."
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/node"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "text",
+          "description": "A paragraph of text with inline Markdown.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "text"
+          ],
+          "properties": {
+            "type": {
+              "const": "text"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "text": {
+              "type": "string",
+              "description": "Inline Markdown: bold, italic, inline code and links. No headings, lists, images or HTML."
+            },
+            "variant": {
+              "enum": [
+                "body",
+                "title",
+                "caption"
+              ],
+              "description": "`title` is a heading, `caption` is small and muted."
+            },
+            "tone": {
+              "$ref": "#/$defs/tone",
+              "description": "Text colour."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "badge",
+          "description": "A short status label.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "text"
+          ],
+          "properties": {
+            "type": {
+              "const": "badge"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "text": {
+              "type": "string",
+              "description": "Short label, shown exactly as written (no case change). Keep under 16 characters."
+            },
+            "tone": {
+              "$ref": "#/$defs/tone",
+              "description": "Colour of the label."
+            },
+            "icon": {
+              "$ref": "#/$defs/icon",
+              "description": "Small leading icon."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "stat",
+          "description": "One headline number with an optional change and sparkline.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "label",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "stat"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "label": {
+              "type": "string",
+              "description": "What the number is."
+            },
+            "value": {
+              "type": "string",
+              "description": "The number, already formatted by the author (`$1.24M`, `8,412`, `2.1%`)."
+            },
+            "delta": {
+              "type": "string",
+              "description": "Change, already formatted (`+18%`, `-0.4pt`)."
+            },
+            "deltaLabel": {
+              "type": "string",
+              "description": "What the change is measured against (`vs Q2`)."
+            },
+            "trend": {
+              "enum": [
+                "up",
+                "down",
+                "flat"
+              ],
+              "description": "Direction arrow next to the delta."
+            },
+            "tone": {
+              "$ref": "#/$defs/tone",
+              "description": "Colour of the delta and sparkline. Defaults from `trend`: up = success, down = danger, flat = neutral. Set it when down is good."
+            },
+            "spark": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 2,
+              "maxItems": 60,
+              "description": "Values for a small sparkline, oldest first."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "keyvalue",
+          "description": "A definition list of label/value pairs.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "items"
+          ],
+          "properties": {
+            "type": {
+              "const": "keyvalue"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string",
+                    "description": "Already formatted."
+                  },
+                  "icon": {
+                    "$ref": "#/$defs/icon",
+                    "description": "Describes the label; drawn before it."
+                  },
+                  "tone": {
+                    "$ref": "#/$defs/tone",
+                    "description": "Colours the value."
+                  },
+                  "action": {
+                    "$ref": "#/$defs/action",
+                    "description": "Makes the value tappable."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "label",
+                  "value"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 12,
+              "description": "The pairs, in order."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "callout",
+          "description": "An inline notice.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "text"
+          ],
+          "properties": {
+            "type": {
+              "const": "callout"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "text": {
+              "type": "string",
+              "description": "The message. Inline Markdown."
+            },
+            "title": {
+              "type": "string",
+              "description": "Bold lead-in."
+            },
+            "tone": {
+              "$ref": "#/$defs/tone",
+              "description": "Kind of notice. A colour name tints it and behaves as `neutral`."
+            },
+            "icon": {
+              "$ref": "#/$defs/icon",
+              "description": "Overrides the default icon for the tone (neutral, accent and colour names = info, success = check, warning and danger = alert)."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "code",
+          "description": "A block of code with a copy control.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "text"
+          ],
+          "properties": {
+            "type": {
+              "const": "code"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "text": {
+              "type": "string",
+              "description": "The code. Newlines and indentation are preserved."
+            },
+            "language": {
+              "type": "string",
+              "description": "Language id for highlighting (`ts`, `sql`, `json`, `bash`...). Unknown values render unhighlighted."
+            },
+            "title": {
+              "type": "string",
+              "description": "File name or caption in the header."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "chart",
+          "description": "A line, area, bar or donut chart.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "kind",
+            "labels",
+            "series"
+          ],
+          "properties": {
+            "type": {
+              "const": "chart"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "kind": {
+              "enum": [
+                "line",
+                "area",
+                "bar",
+                "donut"
+              ],
+              "description": "Chart type."
+            },
+            "labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "maxItems": 24,
+              "description": "X categories in order, or slice names for a donut."
+            },
+            "series": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Legend name."
+                  },
+                  "values": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 1,
+                    "maxItems": 24,
+                    "description": "One value per label."
+                  },
+                  "color": {
+                    "$ref": "#/$defs/color",
+                    "description": "Colour of this series, for telling series apart. Without it the series takes the shared chart palette in order. A donut ignores it."
+                  },
+                  "emphasis": {
+                    "type": "boolean",
+                    "description": "Highlight this series; series without it are drawn muted."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "values"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 6,
+              "description": "One or more series. A donut uses only the first."
+            },
+            "format": {
+              "type": "object",
+              "properties": {
+                "prefix": {
+                  "type": "string",
+                  "description": "Put before every number (`$`)."
+                },
+                "suffix": {
+                  "type": "string",
+                  "description": "Put after every number, including any space (` ms`, `%`)."
+                }
+              },
+              "additionalProperties": false,
+              "description": "How axis and value labels are written."
+            },
+            "stacked": {
+              "type": "boolean",
+              "description": "Stack series (bar and area only)."
+            },
+            "totalLabel": {
+              "type": "string",
+              "description": "Donut only: caption under the total in the centre."
+            },
+            "caption": {
+              "type": "string",
+              "description": "Muted note under the chart."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "table",
+          "description": "A small table of text, numbers and badges.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "columns",
+            "rows"
+          ],
+          "properties": {
+            "type": {
+              "const": "table"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "description": "Property name of this column in each row."
+                  },
+                  "label": {
+                    "type": "string",
+                    "description": "Header text."
+                  },
+                  "kind": {
+                    "enum": [
+                      "text",
+                      "number",
+                      "badge",
+                      "code"
+                    ],
+                    "description": "How cells are drawn."
+                  },
+                  "align": {
+                    "enum": [
+                      "start",
+                      "end"
+                    ],
+                    "description": "Defaults to `end` for `number`, `start` otherwise."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "label"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 6,
+              "description": "Columns in order. The first column names the row."
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "text": {
+                          "type": "string"
+                        },
+                        "tone": {
+                          "$ref": "#/$defs/tone"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "required": [
+                        "text"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "minItems": 0,
+              "maxItems": 30,
+              "description": "One object per row, keyed by column `key`. A cell is a string, or `{ text, tone }` for a badge or a tinted value."
+            },
+            "caption": {
+              "type": "string",
+              "description": "Muted note under the table."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "list",
+          "description": "Rows of rich items, optionally tappable.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "items"
+          ],
+          "properties": {
+            "type": {
+              "const": "list"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "subtitle": {
+                    "type": "string",
+                    "description": "Muted second line."
+                  },
+                  "icon": {
+                    "$ref": "#/$defs/icon",
+                    "description": "Leading icon. Ignored when `image` is set or the list is `ordered`."
+                  },
+                  "image": {
+                    "$ref": "#/$defs/image",
+                    "description": "Leading square thumbnail."
+                  },
+                  "tone": {
+                    "$ref": "#/$defs/tone",
+                    "description": "Tints the leading icon."
+                  },
+                  "badge": {
+                    "$ref": "#/$defs/badge",
+                    "description": "Status label."
+                  },
+                  "trailing": {
+                    "type": "string",
+                    "description": "Short trailing text (`2h`, `$48`). Keep under 8 characters."
+                  },
+                  "action": {
+                    "$ref": "#/$defs/action",
+                    "description": "Makes the row tappable and adds a chevron."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "title"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 20,
+              "description": "The rows, in order."
+            },
+            "ordered": {
+              "type": "boolean",
+              "description": "Number the rows instead of showing icons."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "steps",
+          "description": "A vertical timeline of steps with their status.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "items"
+          ],
+          "properties": {
+            "type": {
+              "const": "steps"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "detail": {
+                    "type": "string",
+                    "description": "Muted second line."
+                  },
+                  "status": {
+                    "enum": [
+                      "done",
+                      "active",
+                      "pending",
+                      "failed"
+                    ]
+                  },
+                  "time": {
+                    "type": "string",
+                    "description": "Short trailing text, already formatted (`1m 08s`). Shown only when given."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "title",
+                  "status"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 12,
+              "description": "Steps in order."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "progress",
+          "description": "A progress bar.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "value"
+          ],
+          "properties": {
+            "type": {
+              "const": "progress"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "value": {
+              "type": "number",
+              "description": "Fraction complete, 0 to 1. Values outside the range are clamped."
+            },
+            "label": {
+              "type": "string",
+              "description": "What is progressing."
+            },
+            "detail": {
+              "type": "string",
+              "description": "Trailing text (`42 of 60`)."
+            },
+            "tone": {
+              "$ref": "#/$defs/tone",
+              "description": "Fill colour. `neutral` uses the platform's primary ink."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "gallery",
+          "description": "A set of images as a mosaic grid or a carousel of cards.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "items"
+          ],
+          "properties": {
+            "type": {
+              "const": "gallery"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "image": {
+                    "$ref": "#/$defs/image"
+                  },
+                  "title": {
+                    "type": "string",
+                    "description": "Carousel card title; the viewer caption in a grid."
+                  },
+                  "subtitle": {
+                    "type": "string",
+                    "description": "Muted line under the title (carousel)."
+                  },
+                  "badge": {
+                    "$ref": "#/$defs/badge",
+                    "description": "Label beside the title (carousel)."
+                  },
+                  "action": {
+                    "$ref": "#/$defs/action",
+                    "description": "Carousel only: makes the card tappable."
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "image"
+                ]
+              },
+              "minItems": 1,
+              "maxItems": 24,
+              "description": "The images, in order."
+            },
+            "layout": {
+              "enum": [
+                "grid",
+                "carousel"
+              ]
+            },
+            "aspect": {
+              "enum": [
+                "landscape",
+                "square",
+                "portrait"
+              ],
+              "description": "Tile shape: 3:2, 1:1 or 3:4. Images are cropped to fill, centred."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "image",
+          "description": "A single image.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "src",
+            "alt"
+          ],
+          "properties": {
+            "type": {
+              "const": "image"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "src": {
+              "type": "string",
+              "description": "Path of an image file stored with the document, relative to it (for example `assets/coast.jpg`). Remote URLs are refused in v1: add the image as a file first."
+            },
+            "alt": {
+              "type": "string",
+              "description": "Text alternative. Shown if the image fails to load and read by screen readers."
+            },
+            "caption": {
+              "type": "string",
+              "description": "Muted text under the image."
+            },
+            "aspect": {
+              "enum": [
+                "landscape",
+                "square",
+                "portrait"
+              ],
+              "description": "3:2, 1:1 or 3:4; cropped to fill, centred."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "button",
+          "description": "A button that runs an action.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "label",
+            "action"
+          ],
+          "properties": {
+            "type": {
+              "const": "button"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "label": {
+              "type": "string",
+              "description": "Verb phrase, under 24 characters."
+            },
+            "action": {
+              "$ref": "#/$defs/action",
+              "description": "What it does."
+            },
+            "icon": {
+              "$ref": "#/$defs/icon",
+              "description": "Leading icon."
+            },
+            "variant": {
+              "enum": [
+                "primary",
+                "secondary",
+                "plain"
+              ],
+              "description": "Visual weight. In a card's `actions` slot the default is `primary` for the first button and `secondary` for the rest; elsewhere `secondary`."
+            },
+            "tone": {
+              "$ref": "#/$defs/tone",
+              "description": "`danger` marks a destructive action. A colour name only tints the button."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "title": "choices",
+          "description": "A question with tappable answers; picking one runs its action.",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "options"
+          ],
+          "properties": {
+            "type": {
+              "const": "choices"
+            },
+            "id": {
+              "$ref": "#/$defs/id"
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string",
+                    "description": "Second line (`list` layout only)."
+                  },
+                  "icon": {
+                    "$ref": "#/$defs/icon"
+                  },
+                  "action": {
+                    "$ref": "#/$defs/action"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "label",
+                  "action"
+                ]
+              },
+              "minItems": 2,
+              "maxItems": 8,
+              "description": "The answers."
+            },
+            "prompt": {
+              "type": "string",
+              "description": "The question, shown above the options."
+            },
+            "layout": {
+              "enum": [
+                "list",
+                "chips"
+              ],
+              "description": "`list`: full-width rows with descriptions. `chips`: compact buttons that wrap."
+            }
+          }
+        }
+      ]
+    }
+  }
+}

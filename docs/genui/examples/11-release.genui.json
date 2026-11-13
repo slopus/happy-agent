@@ -1,0 +1,156 @@
+{
+  "genui": 1,
+  "fallback": "Release 2.41 is ready: 1,284 tests pass, p95 latency 182 ms (-12%), 3 of 4 checks done. Ship it, canary first, or hold?",
+  "root": {
+    "type": "card",
+    "title": "Release 2.41",
+    "subtitle": "happy-server · ready to ship",
+    "icon": "bolt",
+    "badge": {
+      "text": "Ready",
+      "tone": "success",
+      "icon": "check"
+    },
+    "children": [
+      {
+        "type": "row",
+        "children": [
+          {
+            "type": "stat",
+            "label": "Tests",
+            "value": "1,284",
+            "delta": "+36",
+            "trend": "up"
+          },
+          {
+            "type": "stat",
+            "label": "p95 latency",
+            "value": "182 ms",
+            "delta": "-12%",
+            "trend": "down",
+            "tone": "success",
+            "spark": [
+              220,
+              214,
+              209,
+              211,
+              198,
+              190,
+              186,
+              182
+            ]
+          }
+        ]
+      },
+      {
+        "type": "section",
+        "title": "Latency by day",
+        "children": [
+          {
+            "type": "chart",
+            "kind": "area",
+            "labels": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri"
+            ],
+            "series": [
+              {
+                "name": "p95",
+                "values": [
+                  220,
+                  209,
+                  198,
+                  186,
+                  182
+                ]
+              },
+              {
+                "name": "p50",
+                "values": [
+                  84,
+                  82,
+                  79,
+                  77,
+                  76
+                ]
+              }
+            ],
+            "format": {
+              "suffix": " ms"
+            }
+          }
+        ]
+      },
+      {
+        "type": "section",
+        "title": "Checks",
+        "children": [
+          {
+            "type": "steps",
+            "items": [
+              {
+                "title": "Build",
+                "status": "done",
+                "time": "1m 08s"
+              },
+              {
+                "title": "Tests",
+                "detail": "1,284 passed",
+                "status": "done",
+                "time": "3m 41s"
+              },
+              {
+                "title": "Security scan",
+                "status": "done",
+                "time": "0m 52s"
+              },
+              {
+                "title": "Canary",
+                "detail": "Waiting for approval",
+                "status": "pending"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "callout",
+        "tone": "accent",
+        "text": "2 migrations run on deploy; both are backwards compatible."
+      },
+      {
+        "type": "choices",
+        "layout": "chips",
+        "options": [
+          {
+            "label": "Ship it",
+            "icon": "bolt",
+            "action": {
+              "type": "message",
+              "text": "Ship 2.41 to production"
+            }
+          },
+          {
+            "label": "Canary first",
+            "icon": "clock",
+            "action": {
+              "type": "message",
+              "text": "Roll 2.41 out to a 10% canary"
+            }
+          },
+          {
+            "label": "Hold",
+            "icon": "pause",
+            "action": {
+              "type": "message",
+              "text": "Hold the 2.41 release"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

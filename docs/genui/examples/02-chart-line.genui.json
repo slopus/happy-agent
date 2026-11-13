@@ -1,0 +1,51 @@
+{
+  "genui": 1,
+  "fallback": "Revenue grew from $310k to $452k between April and September; enterprise overtook self-serve in July.",
+  "root": {
+    "type": "card",
+    "title": "Monthly revenue",
+    "subtitle": "By segment",
+    "children": [
+      {
+        "type": "chart",
+        "kind": "line",
+        "labels": [
+          "Apr",
+          "May",
+          "Jun",
+          "Jul",
+          "Aug",
+          "Sep"
+        ],
+        "series": [
+          {
+            "name": "Enterprise",
+            "values": [
+              120000,
+              138000,
+              156000,
+              198000,
+              231000,
+              262000
+            ]
+          },
+          {
+            "name": "Self-serve",
+            "values": [
+              190000,
+              186000,
+              192000,
+              188000,
+              191000,
+              190000
+            ]
+          }
+        ],
+        "caption": "Enterprise overtook self-serve in July.",
+        "format": {
+          "prefix": "$"
+        }
+      }
+    ]
+  }
+}
