@@ -97,7 +97,12 @@ The same agents are told to mention a task as `[name](happy://agents/<agentId>)`
 agent ID, never its task ID; `create_task` and `list_tasks` give that exact link. Clients show the
 task's live name as the link text.
 
-A task's own agent receives its identity prompt from this module. `BotsModule` gives it
+A task's own agent receives its identity prompt from this module. The prompt names the task's ID,
+folder, owner, and creator, which never change, and leaves out its name, which does. The name
+arrives as a `# Task name` system notice with the next message whenever the conversation has not
+heard the current one: the first message of a task created with a name, the first message after
+automatic naming or a rename, and the first message after compaction replaced the history. An
+unnamed task's placeholder is never announced. `BotsModule` gives it
 `list_bots` and `send_bot_message` (never `create_bot`) and, when a bot created it, names that bot
 so the task reports back to it. `SubtasksModule` gives it the same coordinator guidance and
 `create_subtask` eligibility as a bot.

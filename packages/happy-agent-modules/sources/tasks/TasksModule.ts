@@ -92,6 +92,7 @@ import {
     saveTaskLeave,
 } from "./persistence/taskAutomaticMembership.js";
 import { formatTaskIdentityPrompt } from "./impl/formatTaskIdentityPrompt.js";
+import { formatTaskNameNotice } from "./impl/formatTaskNameNotice.js";
 import { taskOrderKeyBetween } from "./impl/taskOrderKeyBetween.js";
 import { archiveTaskTool } from "./tools/archive_task.js";
 import { createTaskTool } from "./tools/create_task.js";
@@ -103,6 +104,8 @@ import { requireDurableCommit } from "../impl/durableCommit.js";
 const OWNER_KEY = "owner";
 /** Marks a task agent's conversation once its first message has started naming the task. */
 const NAME_ATTEMPTED_KEY = "task-name-attempted";
+/** The task name the current conversation history was last told, kept in the history store. */
+const NAME_NOTICE_KEY = "task-name-notice";
 const NAMING_FUNCTION = "tasks.name";
 const namingArgumentsSchema = Type.Object({
     taskId: cuid2Schema,
@@ -296,6 +299,27 @@ export class TasksModule implements AgentModule {
                 listTasksTool(this, scope.kv),
                 sendTaskMessageTool(this, scope.agent.id),
                 archiveTaskTool(this, scope.agent.id),
+            ];
+        },
+        /**
+         * Tell a task its name with the next message, whenever the conversation has not heard the
+         * current one. The name is kept out of the system prompt because it changes: a new task
+         * names itself seconds into its first turn, and a system prompt that changes under a
+         * running conversation invalidates the reasoning the model already produced. Only a
+         * message boundary speaks, so a rename never lands inside the turn that was running, and
+         * several renames before the next message are one notice. A placeholder name is not a name.
+         */
+        systemNotificationsTransact: async (hookCtx, scope, boundary) => {
+            if (boundary.type !== "message") return;
+            const task = await readTaskByAgent(hookCtx, scope.agent.id);
+            if (task === undefined || !task.nameConfigured) return;
+            if ((await scope.historyKV.read(hookCtx, NAME_NOTICE_KEY)) === task.name) return;
+            await scope.historyKV.write(hookCtx, NAME_NOTICE_KEY, task.name);
+            return [
+                {
+                    role: "system",
+                    content: [{ type: "text", text: formatTaskNameNotice(task.name) }],
+                },
             ];
         },
         messageAcceptedTransact: async (hookCtx, scope, accepted) => {

@@ -476,6 +476,10 @@ export class SkillsModule implements AgentModule {
                 this.#promptStores.get(scope.agent.id)?.refreshed === true
             ) {
                 assertValue(shortlistSchema, selected, "Current skill shortlist");
+                // An agent with nothing shortlisted hears nothing about skills on its first
+                // inference, so it must hear nothing on the later ones either: the prompt may
+                // not change within a turn.
+                if (selected.length === 0) return "";
                 return formatInstructions(
                     await this.#revalidateShortlist(ctx, scope.agent.id, selected),
                 );
@@ -487,7 +491,7 @@ export class SkillsModule implements AgentModule {
             const promptStore = this.#promptStores.get(scope.agent.id);
             if (promptStore !== undefined) promptStore.refreshed = true;
             return [
-                entries.length === 0 ? "" : formatInstructions(catalog),
+                catalog.length === 0 ? "" : formatInstructions(catalog),
                 ...invocations
                     .filter((invocation) => entries.some((entry) => invokes(invocation, entry)))
                     .map(formatInvokedSkill),

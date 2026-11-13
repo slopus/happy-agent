@@ -25,6 +25,29 @@ its sender line removed. A rename, even to the same name, ends automatic naming,
 naming request that is still running. Tasks created before naming existed keep their names as
 chosen.
 
+## A task's name is a notice in the conversation, not part of the system prompt
+
+The identity prompt said `You are the persistent task named "..."`, read live on every inference.
+A new task names itself a few seconds into its first turn, so the first request of that turn went
+out under `New Task` and the second under the generated name. Claude models with preserved
+thinking (Fable 5.2 on Bedrock was where Steve hit it) bind every thinking block to the system
+prompt, tools, and messages before it, and rejected the second request with `The block is bound to
+a different conversation`; a rename by a person broke the following turn the same way. Steve
+decided the name leaves the system prompt and a rename is a system notification appended with the
+next message.
+
+The identity prompt now holds only what never changes: task ID, folder, owner, creator, and the
+workspace guidance. The name arrives as a `# Task name` system notice at a message boundary,
+through Agent Base's system-notification hook, remembered in the conversation's history store.
+Only a message boundary speaks, so a rename never lands inside the turn that was running and
+starts nothing on its own, and several renames before the next message are one notice with the
+latest name. A placeholder name is never announced. Nothing is backfilled: a task that was already
+named, or was created with a name, hears it with its next message because its history has no
+record of being told, and the same rule tells it again after compaction replaces the history.
+
+Anything else a module reads live into the system prompt has the same failure. Put what can change
+during a conversation in a message, never in the prompt.
+
 ## New naming jobs survive a failed request; existing names are left alone
 
 A one-shot attempt flag was committed before detached inference, so a temporary provider failure

@@ -11,6 +11,15 @@
   {
     "content": [
       {
+        "text": "# Task name\nThis task is named \"Quarterly review\". Use this name when referring to the work; it replaces any earlier name.",
+        "type": "text"
+      }
+    ],
+    "role": "system"
+  },
+  {
+    "content": [
+      {
         "text": "Hello.",
         "type": "text"
       }

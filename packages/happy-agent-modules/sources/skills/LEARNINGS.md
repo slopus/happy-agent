@@ -21,6 +21,16 @@ snapshots retain order without filling vacancies, but refresh selected descripti
 disabled, missing, unauthorized, or user-only entries promptly. This keeps context stable without
 turning a saved shortlist into authority to read an unavailable skill.
 
+## An empty shortlist says nothing, on every inference of a turn
+
+With nothing shortlisted, a turn's first inference added no skills section while every later one
+added the section around an empty `<available_skills>` list, because the first asks full discovery
+and the rest revalidate the stored shortlist. A system prompt that changes inside a turn costs the
+prompt cache, and Claude models with preserved thinking reject the next request outright, since
+their earlier thinking is bound to the prompt it was produced under. Both paths now add nothing
+when the shortlist is empty. That includes an agent whose only skills are user-only: the model
+could not list or read those anyway.
+
 ## Native skills ship with the product and yield to installed ones
 
 Every skill used to have to be installed into `~/.agents/skills` or a repository before any agent

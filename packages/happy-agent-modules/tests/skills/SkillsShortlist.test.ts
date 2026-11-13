@@ -214,3 +214,37 @@ it("revalidates permissions without rescanning and reconciles changed precedence
     expect(next).not.toContain("<name>skill-000</name>");
     expect(directoryRead).not.toHaveBeenCalled();
 });
+
+it("says nothing about skills on every inference of a turn when nothing is shortlisted", async () => {
+    const db = moduleDatabase([], "skill-shortlist-empty");
+    ensureAgentDatabaseConnection(db.database);
+    await db.ready;
+    cleanups.push(db.close);
+    const machine = new FakeCompute("/workspace");
+    machine.directories.add("/workspace/.git");
+    const hooks = await resolveModuleHooks(
+        db.context,
+        new SkillsModule(scriptedComputeModule(async () => machine)),
+    );
+    const store = new InMemoryPersistence();
+    const scope: AgentModuleScope = {
+        agent: { id: "bare" } as never,
+        kv: new AgentKV(store, "bare.agent."),
+        runKV: new AgentKV(store, "bare.run."),
+        historyKV: new AgentKV(store, "bare.history."),
+        sharedKV: new AgentKV(store, "shared."),
+    };
+    await hooks.messageAcceptedTransact!(db.context, scope, {
+        id: "message",
+        kind: "send",
+        profile: null,
+        message: { role: "user", content: [{ type: "text", text: "Hello." }] },
+        metadata: { messageOrigin: "user", userId: "alice" },
+    });
+    await hooks.beforeTurn!(db.context, scope, undefined as never);
+    // The first inference of a turn asks full discovery; the later ones revalidate the stored
+    // shortlist. Both must give the provider the same system prompt.
+    expect(await hooks.instructions!(db.context, scope)).toBe("");
+    expect(await hooks.instructions!(db.context, scope)).toBe("");
+    expect(await hooks.instructions!(db.context, scope)).toBe("");
+});

@@ -3,16 +3,19 @@ import type { TaskRecord } from "../Task.js";
 /**
  * Tell a task's agent which persistent task it is, where it works, and whom it belongs to.
  * `createsWorkspaces` is whether this installation lets tasks create project workspaces directly.
+ *
+ * Everything here stays the same for the task's whole life. The name does not, so it is left out
+ * and arrives as a notice in the conversation instead; see `formatTaskNameNotice`.
  */
 export function formatTaskIdentityPrompt(
-    task: Pick<TaskRecord, "id" | "name" | "path" | "creatorAgentId">,
+    task: Pick<TaskRecord, "id" | "path" | "creatorAgentId">,
     owner: string | undefined,
     createsWorkspaces: boolean,
 ): string {
     return [
         "# Task identity",
         "",
-        `You are the persistent task named ${JSON.stringify(task.name)}: one continuous conversation with a dedicated folder of its own. Use this task name when referring to the work. Happy Agent is the runtime that powers you, not your task name.`,
+        "You are a persistent task: one continuous conversation with a dedicated folder of its own. Your task name arrives as a task name notice in the conversation, and again whenever it changes; use the latest one when referring to the work. Happy Agent is the runtime that powers you, not your task name.",
         `- Task ID: \`${task.id}\``,
         `- Folder: \`${task.path}\``,
         ...(owner === undefined ? [] : [`- Owner: ${owner}`]),
