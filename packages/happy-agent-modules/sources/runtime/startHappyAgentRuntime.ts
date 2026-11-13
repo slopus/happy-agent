@@ -93,6 +93,7 @@ import {
     SkillMirrorModule,
 } from "../skills/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
+import { AccountLinkModule } from "../accountLink/index.js";
 import { TailcatModule } from "../tailcat/index.js";
 import { MobileConnectorModule } from "../mobileConnector/index.js";
 import { TasksModule } from "../tasks/index.js";
@@ -219,6 +220,7 @@ export interface HappyAgentRuntimeModules {
     readonly skillFolders: SkillFoldersModule;
     readonly systemPrompt: SystemPromptModule;
     readonly tailcat: TailcatModule;
+    readonly accountLink: AccountLinkModule;
     readonly mobileConnector: MobileConnectorModule;
     readonly tasks: TasksModule;
     readonly team: TeamModule<LibSQLDatabase>;
@@ -620,6 +622,11 @@ export async function startHappyAgentRuntime(
             await settleRuntimeShutdownTasks(shutdownCtx, shutdownTasks, ["runners"]);
             await tailcat.close(shutdownCtx);
         });
+        const accountLink = new AccountLinkModule(config, bots, node, durableFunctions);
+        registerShutdown(
+            "account-link",
+            async (shutdownCtx) => await accountLink.close(shutdownCtx),
+        );
         const mobileConnector = new MobileConnectorModule(
             config,
             team,
@@ -907,6 +914,7 @@ export async function startHappyAgentRuntime(
             skillFolders,
             systemPrompt,
             tailcat,
+            accountLink,
             mobileConnector,
             tasks,
             team,
@@ -973,6 +981,7 @@ export async function startHappyAgentRuntime(
             cleanup,
             skillFolders,
             tailcat,
+            accountLink,
             mobileConnector,
             ...(team.enabled ? [] : [happyTeams]),
             connections,

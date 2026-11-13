@@ -41,6 +41,13 @@ describe("account link configuration", () => {
             relayUrl: "http://127.0.0.1:8787",
         });
         expect(config.configuration.provenance["feature.accountLink.accountsUrl"]).toBe("global");
+        // Independent of Tailcat: turning this on leaves the accountless path as it was.
+        expect(config.tailcatEnabled).toBe(false);
+        expect(config.configuration.values.feature.tailcat).toEqual({
+            enabled: false,
+            port: 24_779,
+        });
+        expect(config.mobileConnectorEnabled).toBe(true);
         expect(config.configuration.sources.global.unknownSettings).toEqual([
             "feature.account_link.extra",
         ]);
