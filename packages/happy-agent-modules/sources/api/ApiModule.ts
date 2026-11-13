@@ -4625,8 +4625,8 @@ export class ApiModule implements AgentModule {
     /**
      * The `retrying` change a provider event makes, or nothing. A provider's own retry sets it;
      * the first output of the attempt, its terminal event, or the run's settlement clears it.
-     * Provider retry events carry no typed reason, so the kind is the generic
-     * `provider_unavailable` rather than one guessed from their prose.
+     * The kind is the failure kind of what the provider says it is retrying, never one guessed
+     * from its prose; a retry that does not say is the generic `provider_unavailable`.
      */
     async #retryingChange(
         ctx: Context,
@@ -4662,7 +4662,7 @@ export class ApiModule implements AgentModule {
                               attempt,
                               this.#config.configuration.values.settings.inferenceMaxRetries,
                           ),
-                          kind: "provider_unavailable",
+                          kind: retryingKind(event?.["providerError"]),
                       }),
                 vendorName:
                     provider === undefined
@@ -12038,6 +12038,26 @@ function teamUserResource(user: TeamUser): Record<string, unknown> {
         role: user.role ?? null,
         follows: user.follows ?? null,
     };
+}
+
+/**
+ * The failure kind a provider retry is retrying, from the typed provider error it reports: a
+ * refused sign-in the provider is refreshing is not an outage. Anything else it may retry, or a
+ * retry that names nothing, is `provider_unavailable`.
+ */
+function retryingKind(providerError: unknown): string {
+    switch (stringValue(recordValue(providerError)?.["type"])) {
+        case "authentication":
+            return "signin_missing";
+        case "out_of_tokens":
+            return "usage_limit";
+        case "rate_limit":
+            return "rate_limited";
+        case "network":
+            return "network";
+        default:
+            return "provider_unavailable";
+    }
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {

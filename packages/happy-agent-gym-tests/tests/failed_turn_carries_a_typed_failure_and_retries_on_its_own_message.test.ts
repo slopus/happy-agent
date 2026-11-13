@@ -163,3 +163,54 @@ it("reports a provider's own retries on the agent, then clears them", async () =
     expect(gym.inference.unscripted).toEqual([]);
     expect(gym.errors).toEqual([]);
 }, 30_000);
+
+it("names each provider retry by the failure it is retrying", async () => {
+    // A provider retrying a refused sign-in while it refreshes the login is not overloaded.
+    const gym = await createAgentGym({
+        inference: [
+            {
+                retries: [
+                    {
+                        attempt: 1,
+                        reason: "Claude API authentication failed (HTTP 401).",
+                        providerError: { type: "authentication" },
+                    },
+                    {
+                        attempt: 2,
+                        reason: "Claude API rate limit (HTTP 429).",
+                        providerError: { type: "rate_limit" },
+                    },
+                    {
+                        attempt: 3,
+                        reason: "Claude API unknown (connection failure).",
+                        providerError: { type: "network" },
+                    },
+                    {
+                        attempt: 4,
+                        reason: "Claude API overloaded (HTTP 529).",
+                        providerError: { type: "server_overloaded" },
+                    },
+                ],
+                content: [{ type: "text", text: "Done once the login refreshed." }],
+            },
+        ],
+    });
+    running.push(gym);
+
+    await gym.send("Answer once the provider recovers.");
+
+    const kinds = (await gym.events())
+        .filter((event) => event.type === "agent.updated")
+        .map((event) => (event.payload as { changes?: Record<string, unknown> }).changes ?? {})
+        .filter((changes) => "retrying" in changes)
+        .map((changes) => (changes["retrying"] as { kind?: string } | null)?.kind ?? null);
+    expect(kinds).toEqual([
+        "signin_missing",
+        "rate_limited",
+        "network",
+        "provider_unavailable",
+        null,
+    ]);
+    expect(gym.inference.unscripted).toEqual([]);
+    expect(gym.errors).toEqual([]);
+}, 30_000);

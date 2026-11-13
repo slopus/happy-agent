@@ -84,6 +84,8 @@ export interface GymTurn {
         readonly attempt: number;
         readonly reason: string;
         readonly delayMs?: number;
+        /** What the provider says it is retrying, as a terminal error would classify it. */
+        readonly providerError?: SessionProviderError;
     }[];
     /** Token accounting reported for the turn. Omitted usage is zeroed. */
     readonly usage?: SessionUsage;
@@ -429,7 +431,12 @@ function abortWhenClosed(
 /** Turn one scripted answer into the event stream a provider would really have produced. */
 async function* streamTurn(ctx: Context, turn: GymTurn): AsyncGenerator<SessionEvent> {
     for (const retry of turn.retries ?? []) {
-        yield { attempt: retry.attempt, reason: retry.reason, type: "retrying" };
+        yield {
+            attempt: retry.attempt,
+            reason: retry.reason,
+            type: "retrying",
+            ...(retry.providerError === undefined ? {} : { providerError: retry.providerError }),
+        };
         if (retry.delayMs !== undefined) await pause(ctx, retry.delayMs);
     }
     if (turn.delayMs !== undefined) await pause(ctx, turn.delayMs);
