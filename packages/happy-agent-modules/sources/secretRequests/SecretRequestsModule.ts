@@ -120,6 +120,10 @@ export class SecretRequestsModule {
                 type: "agent",
                 id: asked.agentId,
             });
+            // A bot limited to certain secrets cannot use one outside its list, attached or not.
+            const usable =
+                (await this.#secrets.catalogSecretForAgent(txCtx, asked.agentId, secret.id)) !==
+                undefined;
             const accepted = await agents.steer(
                 txCtx,
                 asked.agentId,
@@ -128,7 +132,13 @@ export class SecretRequestsModule {
                     content: [
                         {
                             type: "text",
-                            text: savedNotice(secret, outcome, asked.variables, asked.title),
+                            text: savedNotice(
+                                secret,
+                                outcome,
+                                asked.variables,
+                                asked.title,
+                                usable,
+                            ),
                         },
                     ],
                 },
@@ -244,12 +254,16 @@ function savedNotice(
     outcome: "created" | "updated",
     asked: readonly string[],
     title: string,
+    usable: boolean,
 ): string {
     const held = new Set(secret.environmentVariables.map((name) => name.toUpperCase()));
     const missing = asked.filter((name) => !held.has(name.toUpperCase()));
     return [
         `The user ${outcome === "created" ? "added" : "changed"} the secret ${JSON.stringify(secret.id)} from ${JSON.stringify(title)}. It holds ${secret.environmentVariables.join(", ")}.`,
         missing.length === 0 ? "" : ` It does not hold ${missing.join(", ")}, which you asked for.`,
-        " It is attached to you: name it in a shell command's secrets argument to use it. You never see its values.",
+        usable
+            ? " It is attached to you: name it in a shell command's secrets argument to use it."
+            : " It is attached to you, but your bot may use only certain secrets and this is not one of them, so you cannot use it. Tell the user it must be added to this bot's allowed secrets first.",
+        " You never see its values.",
     ].join("");
 }

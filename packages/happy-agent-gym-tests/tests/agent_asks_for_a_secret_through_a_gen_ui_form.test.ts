@@ -159,6 +159,12 @@ describe("an agent asks for a secret through a Gen UI form", () => {
         expect(said(notice, "It does not hold STRIPE_WEBHOOK_SECRET, which you asked for.")).toBe(
             true,
         );
+        expect(
+            said(
+                notice,
+                "It is attached to you: name it in a shell command's secrets argument to use it.",
+            ),
+        ).toBe(true);
 
         const retried = await gym.client.saveArtifactSecretAction(
             card.id,
@@ -278,5 +284,85 @@ describe("an agent asks for a secret through a Gen UI form", () => {
         expect(refused.status).toBe(409);
         expect(refused.text).not.toContain(STRIPE_KEY);
         expect((await gym.http.get("/v0/secrets/stripe")).status).toBe(404);
+    });
+
+    it("tells a bot limited to certain secrets that it cannot use the one saved", async () => {
+        const commands = new Map<string, { callId: string; name: string; args: unknown }>();
+        const gym = await createAgentGym({
+            timeoutMs: 20_000,
+            inference: (request) => {
+                const command = commands.get(request.sessionId);
+                if (command !== undefined && said(request, command.callId)) {
+                    commands.delete(request.sessionId);
+                    return {
+                        content: [
+                            {
+                                type: "tool_call",
+                                callId: command.callId,
+                                name: command.name,
+                                arguments: command.args as Record<string, unknown>,
+                            },
+                        ],
+                    };
+                }
+                return { content: [{ type: "text", text: "Settled." }] };
+            },
+        });
+        running.add(gym);
+        async function call(agentId: string, name: string, args: unknown) {
+            const callId = `limited_call_${String(commands.size + 1)}_${name}`;
+            commands.set(agentId, { callId, name, args });
+            await gym.send(`Please run ${name}, request ${callId}.`, { sessionId: agentId });
+            return await gym.waitUntil(
+                async () => gym.inference.toolResults().find((item) => item.callId === callId),
+                `the ${name} result`,
+            );
+        }
+
+        const worker = (await gym.client.createBot({ name: "Limited worker" })).bot;
+        const admin = (await gym.client.listBots()).bots.find(
+            (bot) => bot.isAdmin && bot.status === "active",
+        )!;
+        const locked = await call(admin.agent.id, "update_bot_settings", {
+            botId: worker.id,
+            previous: { allowedSecretIds: null, crossWorkspace: true, compute: { type: "host" } },
+            allowedSecretIds: ["github"],
+        });
+        expect(locked.text).toContain('Secrets: only "github".');
+        const asked = await call(worker.agent.id, "request_secret", {
+            title: "Stripe test keys",
+            explanation: "I need your Stripe test keys.",
+            id: "stripe",
+            description: "Stripe test-mode keys",
+            variables: [{ name: "STRIPE_SECRET_KEY" }],
+        });
+        const artifactId = /happy:\/\/artifacts\/([a-z0-9]+)/.exec(asked.text)![1]!;
+
+        const saved = await gym.client.saveArtifactSecretAction(artifactId, 1, {
+            id: "save1limitedbot0000000000",
+            element: "secret",
+            secret: {
+                id: "stripe",
+                description: "Stripe test-mode keys",
+                environment: { STRIPE_SECRET_KEY: STRIPE_KEY },
+            },
+        });
+        expect(saved.outcome).toBe("created");
+        const notice = await gym.waitUntil(
+            () =>
+                gym.inference.requests.find((request) =>
+                    said(request, 'The user added the secret \\"stripe\\"'),
+                ),
+            "the limited bot to be told the secret was added",
+        );
+        expect(notice.sessionId).toBe(worker.agent.id);
+        expect(
+            said(
+                notice,
+                "It is attached to you, but your bot may use only certain secrets and this is not one of them, so you cannot use it.",
+            ),
+        ).toBe(true);
+        expect(said(notice, "secrets argument")).toBe(false);
+        expect(JSON.stringify(gym.inference.requests)).not.toContain(STRIPE_KEY);
     });
 });

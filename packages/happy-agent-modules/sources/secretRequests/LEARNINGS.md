@@ -27,3 +27,10 @@ requests or the event journal.
 The client mints one ID per save. A retry answers the first save's outcome without saving or
 messaging again, and the ID is the steered message's ID, so the agent hears once. Reusing an ID for
 another element is a conflict rather than a silent replay.
+
+## The notice says whether the agent can use the secret
+
+A bot limited to certain secrets cannot use one outside its list, even attached. The save still
+attaches it, because the person asked for that, but the notice then says the agent cannot use it
+and should tell the user it must be added to the bot's allowed secrets, instead of telling it to
+name the secret in a shell command that would refuse it.
