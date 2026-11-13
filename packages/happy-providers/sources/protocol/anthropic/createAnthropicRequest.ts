@@ -1,4 +1,7 @@
-import type { MessageCreateParamsStreaming } from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import type {
+    BetaThinkingConfigAdaptive,
+    MessageCreateParamsStreaming,
+} from "@anthropic-ai/sdk/resources/beta/messages/messages";
 
 import type { SessionContext } from "@/core/SessionContext.js";
 import type { SessionReasoningEffort, SessionStructuredOutput } from "@/core/SessionRunRequest.js";
@@ -13,11 +16,20 @@ import {
 
 export type AnthropicRequest = MessageCreateParamsStreaming;
 
+/** The beta that makes `thinking.block_binding` a legal request field. */
+export const ANTHROPIC_THINKING_BINDING_BETA = "thinking-binding-controls-2026-08-01";
+
 export function createAnthropicRequest(options: {
     compaction?: {
         instructions?: string;
     };
     context: SessionContext;
+    /**
+     * Ask the API to drop replayed thinking blocks that fail its prefix check instead of
+     * rejecting the whole request. The caller says whether the model and endpoint accept the
+     * control; it is never sent with thinking disabled, where the API refuses the field.
+     */
+    dropMismatchedThinking?: boolean;
     effort?: SessionReasoningEffort;
     model: string;
     structuredOutput?: SessionStructuredOutput;
@@ -40,6 +52,9 @@ export function createAnthropicRequest(options: {
     if (hasToolSearch) {
         betas.push("tool-search-tool-2025-10-19");
     }
+    const dropsMismatchedThinking =
+        options.dropMismatchedThinking === true && options.effort !== "off";
+    if (dropsMismatchedThinking) betas.push(ANTHROPIC_THINKING_BINDING_BETA);
     return {
         betas,
         ...(!usesCompaction
@@ -73,7 +88,16 @@ export function createAnthropicRequest(options: {
         model: options.model,
         stream: true,
         ...(system.length === 0 ? {} : { system }),
-        thinking: options.effort === "off" ? { type: "disabled" } : { type: "adaptive" },
+        thinking:
+            options.effort === "off"
+                ? { type: "disabled" }
+                : dropsMismatchedThinking
+                  ? // The SDK does not type `block_binding` yet; the wire shape is the API's.
+                    ({
+                        type: "adaptive",
+                        block_binding: { prefix_mismatch_behavior: "drop_block" },
+                    } as BetaThinkingConfigAdaptive)
+                  : { type: "adaptive" },
         ...(options.effort === "off" && options.structuredOutput === undefined
             ? {}
             : {

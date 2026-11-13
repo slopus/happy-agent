@@ -26,6 +26,30 @@ disabled. The replay edit's trigger sits beyond the 1M context window so the pro
 compacts mid-run; only `compact()` sends the edit with a real trigger and
 `pause_after_compaction` to ask the provider for a new checkpoint.
 
+On Runtime, a request for a model that checks the prefix of replayed thinking (Fable 5.2,
+Mythos 5.2, Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5) additionally carries the
+`thinking-binding-controls-2026-08-01` beta and
+`thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } }`.
+These models tie each signed thinking block to the system prompt, the tools, and every message
+before it. When any of them changed, the API otherwise rejects the request with `Invalid signature
+in thinking block. The block is bound to a different conversation`, and the conversation cannot
+recover, because the caller's stored history still holds that thinking. A caller's system prompt
+and tools do change during a conversation, so the adapter asks the API to drop the blocks that
+fail the check, and every later thinking block, for that request. The history is sent byte for
+byte and stays the caller's; the drop is the server's own projection. It costs the prompt cache
+from the first dropped block onward and the model its earlier reasoning, so a caller should still
+keep its prefix stable. Inference and compaction both carry the control. It is left out with
+thinking disabled, where the API refuses the field, for every other model, for a model named only
+by an opaque ARN, and on Mantle.
+
+The control follows the AWS Bedrock user guide's "Preserved thinking" page, which documents it for
+`InvokeModel`, and Claude Code, which sends the same beta and field on Bedrock. It shipped without
+a live Bedrock request. If an endpoint refuses it (a gateway, region, or account that does not
+take the beta), the session resends that request once without it and leaves it out from then on,
+as Claude Code does. A refusal is a 400 that says `block_binding: Extra inputs are not permitted`,
+names the beta, or says `invalid beta flag`; those three matches come from Claude Code rather than
+from recorded responses. A prefix mismatch is never treated as a refusal.
+
 The transcript must end with a user turn, a tool result, or that native compaction checkpoint.
 Claude models from 4.6 onward reject a trailing assistant message ("This model does not support
 assistant message prefill"), and the adapter does not add or drop a turn to work around it:
@@ -201,6 +225,10 @@ session-level and selected-model tool definitions and leaves the caller's histor
 `tests/anthropicBedrockToolReferences.test.ts` replays a search result that references a tool the
 session no longer offers, with and without native tool search, through inference and compaction,
 against a scripted endpoint that rejects dangling references the way Bedrock does.
+`tests/anthropicBedrockThinkingBinding.test.ts` replays signed thinking through the real Runtime
+SDK client against a scripted endpoint: the control on inference and compaction for a
+prefix-checked model, its absence elsewhere, and the one-time renegotiation when an endpoint
+refuses it.
 `tests/anthropicBedrock.live.test.ts` performs a real preferred-endpoint turn and a real native
 compaction followed by a checkpoint-replay turn when `RIG_LIVE_TEST=1` and a bearer token are
 available.

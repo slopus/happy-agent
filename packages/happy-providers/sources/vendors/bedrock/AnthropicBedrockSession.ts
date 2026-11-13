@@ -32,8 +32,16 @@ import {
     describeAnthropicBedrockErrorMessage,
 } from "@/vendors/bedrock/errors/anthropicBedrockErrors.js";
 import { AnthropicBedrockConnection } from "@/vendors/bedrock/impl/AnthropicBedrockConnection.js";
+import {
+    carriesAnthropicThinkingBinding,
+    dropsMismatchedAnthropicBedrockThinking,
+    isAnthropicThinkingBindingRefusal,
+} from "@/vendors/bedrock/impl/anthropicBedrockThinkingBinding.js";
 import type { AnthropicBedrockClient as CreatedAnthropicBedrockClient } from "@/vendors/bedrock/impl/createAnthropicBedrockClient.js";
-import { createAnthropicRequest } from "@/protocol/anthropic/createAnthropicRequest.js";
+import {
+    createAnthropicRequest,
+    type AnthropicRequest,
+} from "@/protocol/anthropic/createAnthropicRequest.js";
 import { mapAnthropicStream } from "@/protocol/anthropic/mapAnthropicStream.js";
 import { pendingAnthropicServerTools } from "@/protocol/anthropic/anthropicServerToolContinuation.js";
 import { requestAnthropicBedrockCompaction } from "@/vendors/bedrock/impl/requestAnthropicBedrockCompaction.js";
@@ -80,6 +88,8 @@ export class AnthropicBedrockSession extends BaseSession {
         | Readonly<Record<string, SessionModelConfiguration>>
         | undefined;
     private readonly resolveInferenceMaxRetries: () => number;
+    /** Set once the endpoint refuses the thinking-binding control; it is not sent again. */
+    private thinkingBindingRefused = false;
     private readonly emptyResponseRetryWait: NonNullable<
         InferenceRetryOptions["waitForInferenceRetry"]
     >;
@@ -128,18 +138,26 @@ export class AnthropicBedrockSession extends BaseSession {
         }
         this.activeModel = model;
         try {
-            const native = await requestAnthropicBedrockCompaction({
-                client: this.connection.client(),
-                maxRetries: this.resolveInferenceMaxRetries(),
-                request: this.createRequest({
+            const compact = async (request: AnthropicRequest) =>
+                await requestAnthropicBedrockCompaction({
+                    client: this.connection.client(),
+                    maxRetries: this.resolveInferenceMaxRetries(),
+                    request,
+                    ...(signal === undefined ? {} : { signal }),
+                });
+            const createRequest = () =>
+                this.createRequest({
                     compactionInstructions: options.instructions ?? null,
                     context: original,
                     model,
                     // Use the selected model's normal tools: replayed native tool-search results
                     // reference their definitions even when generation pauses after compaction.
                     ...(this.activeEffort === undefined ? {} : { effort: this.activeEffort }),
-                }),
-                ...(signal === undefined ? {} : { signal }),
+                });
+            const request = createRequest();
+            const native = await compact(request).catch(async (error: unknown) => {
+                if (!this.refusesThinkingBinding(request, error)) throw error;
+                return await compact(createRequest());
             });
             if (signal?.aborted) return { status: "cancelled", context: original };
             if (native.block === undefined) {
@@ -234,7 +252,7 @@ export class AnthropicBedrockSession extends BaseSession {
         let attempts = 0;
         try {
             const tools = this.resolveTools(options.model, options.tools);
-            const request = this.createRequest({ ...options, tools });
+            let request = this.createRequest({ ...options, tools });
             let failedAttempts = 0;
             while (true) {
                 let responseContentStarted = false;
@@ -264,6 +282,12 @@ export class AnthropicBedrockSession extends BaseSession {
                     }
                     return;
                 } catch (error) {
+                    // An endpoint that does not take the thinking-binding control rejects the
+                    // request before it runs. Ask again without it; that is not a failed attempt.
+                    if (!responseContentStarted && this.refusesThinkingBinding(request, error)) {
+                        request = this.createRequest({ ...options, tools });
+                        continue;
+                    }
                     // A connection that drops mid-response, or a retryable error event the
                     // server sent on the open stream, is replayed through the block_reset
                     // rollback below, unless compaction output began: compaction is stateful on
@@ -345,11 +369,19 @@ export class AnthropicBedrockSession extends BaseSession {
                       instructions: modelConfiguration.instructions,
                       messages: options.context.messages,
                   };
+        const wireModel =
+            mappedBedrockModelId(this.bedrockModelIds, options.model) ??
+            resolveAnthropicBedrockModelId(options.model, this.region, this.transport);
         return createAnthropicRequest({
             context,
-            model:
-                mappedBedrockModelId(this.bedrockModelIds, options.model) ??
-                resolveAnthropicBedrockModelId(options.model, this.region, this.transport),
+            dropMismatchedThinking:
+                !this.thinkingBindingRefused &&
+                dropsMismatchedAnthropicBedrockThinking({
+                    model: options.model,
+                    transport: this.transport,
+                    wireModel,
+                }),
+            model: wireModel,
             ...(options.structuredOutput === undefined
                 ? {}
                 : { structuredOutput: options.structuredOutput }),
@@ -364,6 +396,18 @@ export class AnthropicBedrockSession extends BaseSession {
                   }),
             ...(options.effort === undefined ? {} : { effort: options.effort }),
         });
+    }
+
+    /**
+     * Whether this failure is the endpoint refusing the thinking-binding control the request
+     * carried. Remembers a refusal, so the session's later requests leave the control out.
+     */
+    private refusesThinkingBinding(request: AnthropicRequest, error: unknown): boolean {
+        if (this.thinkingBindingRefused) return false;
+        if (!carriesAnthropicThinkingBinding(request)) return false;
+        if (!isAnthropicThinkingBindingRefusal(error)) return false;
+        this.thinkingBindingRefused = true;
+        return true;
     }
 
     private resolveTools(
