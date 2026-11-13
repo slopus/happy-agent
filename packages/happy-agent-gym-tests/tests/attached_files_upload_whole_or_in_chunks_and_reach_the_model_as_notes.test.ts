@@ -15,7 +15,7 @@ function sha256(bytes: Uint8Array): string {
     return createHash("sha256").update(bytes).digest("hex");
 }
 
-// The published client does not know attachments yet, so this scenario speaks HTTP directly.
+// The wire is spoken directly so every status and header is checked; the client is checked last.
 describe("attached files", () => {
     it("upload whole or in parallel chunks, reach the model as notes, and are never echoed", async () => {
         const notes = "line one\nline two\n";
@@ -57,6 +57,15 @@ describe("attached files", () => {
             });
 
         expect((await gym.client.getHealth()).capabilities).toMatchObject({ attachments: true });
+
+        // The client sends a file past its direct limit in chunks, and the same bytes again
+        // answer the attachment without resending them.
+        const viaClient = new Uint8Array(randomBytes(10_000));
+        const clientFile = { name: "client.bin", data: viaClient };
+        const chunked = { directLimit: 1_000, chunkSize: 4_096 };
+        const attached = await gym.client.attachFile(agentId, clientFile, chunked);
+        expect(attached).toMatchObject({ id: sha256(viaClient), size: 10_000, kind: "file" });
+        expect(await gym.client.attachFile(agentId, clientFile, chunked)).toEqual(attached);
 
         // A small file goes whole, as on Happy Cloud.
         const whole = await call("PUT", "?name=notes.txt", noteBytes, {
