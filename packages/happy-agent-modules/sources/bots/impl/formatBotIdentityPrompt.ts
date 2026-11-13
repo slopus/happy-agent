@@ -1,11 +1,17 @@
 import type { BotRecord } from "../Bot.js";
 
-/** Tell a bot's agent which persistent identity it represents. */
-export function formatBotIdentityPrompt(bot: Pick<BotRecord, "id" | "name" | "username">): string {
+/**
+ * Tell a bot's agent which persistent identity it represents.
+ *
+ * Only what never changes belongs here. The bot's name is told in the conversation instead, by
+ * `formatBotNameNotice`, because a system prompt that changes with a rename invalidates everything
+ * the model was already sent under it.
+ */
+export function formatBotIdentityPrompt(bot: Pick<BotRecord, "id" | "username">): string {
     return [
         "# Bot identity",
         "",
-        `You are the persistent bot named ${JSON.stringify(bot.name)}. Use this bot identity when referring to yourself. Happy Agent is the runtime that powers you, not your bot name.`,
+        "You are a persistent bot. Your bot name arrives as a bot name notice in the conversation, and again whenever it changes; use the latest one when referring to yourself. Happy Agent is the runtime that powers you, not your bot name.",
         `- Bot ID: \`${bot.id}\``,
         `- Username: \`${bot.username}\``,
         "",

@@ -281,7 +281,7 @@ describe("TasksModule", () => {
                     "",
                     "Keep this task's own notes and files in its folder. Do repository work in workspace-bound subtasks: create_subtask with workspace: { projectId, name } is the only way this task gets a project workspace. A task cannot create a workspace directly, and should not change directories into a repository from this folder.",
                     "",
-                    `This task was created by the bot named "Planner" (bot ID \`${bot.id}\`). Its messages arrive as agent messages. Report progress, results, and blockers to it with send_bot_message.`,
+                    `This task was created by a bot (bot ID \`${bot.id}\`). Its messages arrive as agent messages. Report progress, results, and blockers to it with send_bot_message.`,
                     "",
                     BOT_REFERENCE_INSTRUCTIONS,
                 ].join("\n"),

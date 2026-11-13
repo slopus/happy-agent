@@ -55,9 +55,16 @@ Repeating the bot ID returns its current state; supplied child IDs must match th
 `createWithResult` reports whether the transaction created the bot so an API retry does not repeat
 discovery or publish creation again. Folder failure rolls the entire creation back.
 
-On every inference, the module adds the owning bot's current display name, immutable username,
-and stable bot ID to that bot agent's system instructions. It contributes nothing to ordinary
-agents, and a rename reaches the bot on its next turn without changing its agent identity.
+On every inference, the module adds the owning bot's immutable username and stable bot ID to that
+bot agent's system instructions. It contributes nothing to ordinary agents.
+
+The bot's display name is not in the system instructions, because it changes: an unnamed bot is
+named seconds into its first turn, and people and bots rename bots. A system prompt that changes
+under a running conversation invalidates the prompt cache and, on Claude models with preserved
+thinking, the thinking blocks already sent. The name arrives as a `# Bot name` system notice
+with the next message the bot receives. The history's own store remembers the name it was told,
+so several renames collapse into one notice, an unchanged name is not repeated, and a compacted
+history hears it again. A placeholder name is never announced.
 
 Every agent offered the bot tools is told to mention a bot as `[name](happy://agents/<agentId>)`
 with the bot's agent ID, never its bot ID, and `create_bot` and `list_bots` give that exact link.
@@ -90,8 +97,8 @@ instructions, its tasks lose them too, and `sendMessage` refuses it. It keeps `s
 
 Bots create tasks through the tasks module's `create_task`; bot and task identities are reserved
 against each other. A task's agent gets `list_bots` and `send_bot_message` but not `create_bot` or
-`set_bot_avatar`, and when a bot created the task its instructions name that bot as the one to
-report to.
+`set_bot_avatar`, and when a bot created the task its instructions give that bot's ID as the one
+to report to. They name it by ID alone, since the bot's display name can change.
 
 ## Permanent deletion
 

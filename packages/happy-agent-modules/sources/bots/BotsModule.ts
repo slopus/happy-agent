@@ -73,6 +73,7 @@ import {
     writeBotAvatar,
 } from "./BotStore.js";
 import { formatBotIdentityPrompt } from "./impl/formatBotIdentityPrompt.js";
+import { formatBotNameNotice } from "./impl/formatBotNameNotice.js";
 import { formatChiefOfStaffInstructions } from "./impl/formatChiefOfStaffInstructions.js";
 import { formatTaskCreatorPrompt } from "./impl/formatTaskCreatorPrompt.js";
 import { loadChiefOfStaffAvatar } from "./impl/loadChiefOfStaffAvatar.js";
@@ -86,6 +87,8 @@ import { updateBotSettingsTool } from "./tools/update_bot_settings.js";
 import { requireDurableCommit } from "../impl/durableCommit.js";
 
 const BOT_NAME_ATTEMPTED_KEY = "bot-name-attempted";
+/** The bot name the current history was last told. */
+const BOT_NAME_NOTICE_KEY = "bot-name-notice";
 const NAMING_FUNCTION = "bots.name";
 const namingArgumentsSchema = Type.Object({
     botId: cuid2Schema,
@@ -226,6 +229,28 @@ export class BotsModule implements AgentModule {
             // A subagent is offered no bot tools, so it has no bots to mention.
             if ((await this.#requireAgents().parentOf(ctx, scope.agent.id)) !== null) return "";
             return BOT_REFERENCE_INSTRUCTIONS;
+        },
+        /**
+         * Tell a bot its name with the next message it receives, and again when the name changed.
+         *
+         * The name is not in the system prompt: an unnamed bot is named seconds into its first
+         * turn, and a prompt that changes mid-turn is rejected by Claude models with preserved
+         * thinking and costs every model its prompt cache. The history remembers the name it was
+         * told, so several renames between two messages collapse into one notice, and a
+         * compacted history hears the name again. A placeholder name is never announced.
+         */
+        systemNotificationsTransact: async (ctx, scope, boundary) => {
+            if (boundary.type !== "message") return;
+            const bot = await readBotByAgent(ctx, scope.agent.id);
+            if (bot === undefined || !bot.nameConfigured) return;
+            if ((await scope.historyKV.read(ctx, BOT_NAME_NOTICE_KEY)) === bot.name) return;
+            await scope.historyKV.write(ctx, BOT_NAME_NOTICE_KEY, bot.name);
+            return [
+                {
+                    role: "system",
+                    content: [{ type: "text", text: formatBotNameNotice(bot.name) }],
+                },
+            ];
         },
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             // A bot that keeps its agents inside its own tree keeps them away from other bots.

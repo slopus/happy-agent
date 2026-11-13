@@ -1,5 +1,20 @@
 # Bots — learnings
 
+## A bot's name is a notice in the conversation, not part of the system prompt
+
+The bot identity prompt used to say `You are the persistent bot named "..."`, and a task created
+by a bot was told that bot's name. Both were rebuilt before every inference. An unnamed bot is
+named seconds into its first turn, so the system prompt changed between two requests of that turn:
+Claude models with preserved thinking bind each thinking block to the system prompt it was produced
+under and rejected the next request with "Invalid signature in thinking block", and every other
+model lost its prompt cache. The same happened whenever a bot was renamed. The direction given was
+to move everything that changes out of the system prompt, because the cache must not be lost.
+
+The identity prompt now carries only the bot ID and the immutable username. The name is a
+`# Bot name` system notice delivered with the next message: the history's store remembers the
+name it was told, so renames collapse into one notice and compaction tells it again. A bot still
+carrying the placeholder name is told nothing. A task's prompt names its creating bot by ID only.
+
 ## Retired Stories inputs do not change bots
 
 Bot PATCH still accepts the old optional Stories input for released clients, but ignores it.
@@ -46,7 +61,7 @@ delegated parts of the bot's own conversation.
 Task agents are root agents, and root agents that are not bots may create bots without admin
 status. A non-admin bot could have created bots through a task it made, so task agents receive only
 `list_bots` and `send_bot_message`. When a bot created the task, the task's instructions name that
-bot and tell it to report back with `send_bot_message`.
+bot by its ID and tell it to report back with `send_bot_message`.
 
 ## A bot nobody has spoken to takes its first sender's model
 

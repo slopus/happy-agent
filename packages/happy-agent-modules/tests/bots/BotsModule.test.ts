@@ -936,11 +936,12 @@ describe("BotsModule", () => {
             await expect(fixture.instructions("someoneelsesagent")).resolves.toBe(
                 BOT_REFERENCE_INSTRUCTIONS,
             );
-            await expect(fixture.instructions(created.agentId)).resolves.toBe(
+            const before = await fixture.instructions(created.agentId);
+            expect(before).toBe(
                 [
                     "# Bot identity",
                     "",
-                    'You are the persistent bot named "Research Assistant". Use this bot identity when referring to yourself. Happy Agent is the runtime that powers you, not your bot name.',
+                    "You are a persistent bot. Your bot name arrives as a bot name notice in the conversation, and again whenever it changes; use the latest one when referring to yourself. Happy Agent is the runtime that powers you, not your bot name.",
                     "- Bot ID: `identitybot`",
                     "- Username: `research_assistant`",
                     "",
@@ -965,9 +966,73 @@ describe("BotsModule", () => {
                 created.version,
             );
             expect(renamed.username).toBe("research_assistant");
-            await expect(fixture.instructions(created.agentId)).resolves.toContain(
-                'You are the persistent bot named "Literature Scout".',
+            // A rename leaves the system prompt exactly as it was.
+            await expect(fixture.instructions(created.agentId)).resolves.toBe(before);
+            expect(before).not.toContain("Research Assistant");
+        } finally {
+            await fixture.close();
+        }
+    });
+
+    it("tells a bot its name as a notice with a message, once per name", async () => {
+        const fixture = await started("bots-name-notice", true);
+        try {
+            const created = await fixture.bots.create(fixture.database.context, {
+                id: "noticebot",
+                name: "Research Assistant",
+            });
+            const unnamed = await fixture.bots.create(fixture.database.context, {});
+            const history = fixture.history();
+            const notice = (name: string) => [
+                {
+                    role: "system",
+                    content: [
+                        {
+                            type: "text",
+                            text: `# Bot name\nYou are the bot named ${JSON.stringify(name)}. Use this name when referring to yourself; it replaces any earlier name.`,
+                        },
+                    ],
+                },
+            ];
+
+            // Ordinary agents and bots still carrying the placeholder name are told nothing.
+            await expect(
+                fixture.notices("someoneelsesagent", "message", history),
+            ).resolves.toBeUndefined();
+            await expect(
+                fixture.notices(unnamed.agentId, "message", fixture.history()),
+            ).resolves.toBeUndefined();
+            // The name never arrives in the middle of a turn.
+            await expect(
+                fixture.notices(created.agentId, "inference", history),
+            ).resolves.toBeUndefined();
+            await expect(fixture.notices(created.agentId, "message", history)).resolves.toEqual(
+                notice("Research Assistant"),
             );
+            await expect(
+                fixture.notices(created.agentId, "message", history),
+            ).resolves.toBeUndefined();
+
+            // Several renames between two messages collapse into the latest name.
+            const first = await fixture.bots.rename(
+                fixture.database.context,
+                created.id,
+                "Literature Scout",
+                created.version,
+            );
+            await fixture.bots.rename(
+                fixture.database.context,
+                created.id,
+                "Librarian",
+                first.version,
+            );
+            await expect(fixture.notices(created.agentId, "message", history)).resolves.toEqual(
+                notice("Librarian"),
+            );
+            // Compaction empties the history's store, so the name is told again.
+            await expect(
+                fixture.notices(created.agentId, "message", fixture.history()),
+            ).resolves.toEqual(notice("Librarian"));
         } finally {
             await fixture.close();
         }
@@ -1143,6 +1208,26 @@ async function started(name: string, workspacesEnabled: boolean, script: Scripte
         instructions: async (agentId: string): Promise<string> => {
             const scope = { agent: { id: agentId } } as unknown as AgentModuleScope;
             return (await hooks.instructions?.(database.context, scope)) ?? "";
+        },
+        /** A stand-in for the store that lives as long as one history does. */
+        history: (): Map<string, unknown> => new Map(),
+        notices: async (
+            agentId: string,
+            boundary: "message" | "inference",
+            history: Map<string, unknown>,
+        ) => {
+            const scope = {
+                agent: { id: agentId },
+                historyKV: {
+                    read: async (_ctx: Context, key: string) => history.get(key),
+                    write: async (_ctx: Context, key: string, value: unknown) => {
+                        history.set(key, value);
+                    },
+                },
+            } as unknown as AgentModuleScope;
+            return await hooks.systemNotificationsTransact?.(database.context, scope, {
+                type: boundary,
+            } as never);
         },
         close: async () => {
             durable.stop();

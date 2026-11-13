@@ -11,6 +11,15 @@
   {
     "content": [
       {
+        "text": "# Bot name\nYou are the bot named \"Research Bot\". Use this name when referring to yourself; it replaces any earlier name.",
+        "type": "text"
+      }
+    ],
+    "role": "system"
+  },
+  {
+    "content": [
+      {
         "text": "Hello.",
         "type": "text"
       }

@@ -21,9 +21,7 @@ const CHIEF_OF_STAFF_INSTRUCTIONS = [
     "Set up projects in their own environment: reuse the existing folder and package manager, install missing tools, and run a real check. On Windows, keep bots on the Windows installation by default. Set up WSL projects through a separate remote Happy Agent in the chosen distro using recipe/setup-wsl-agent.md; reuse its Linux user, projects, and credentials instead of duplicating bots or sharing daemon state across operating systems.",
 ].join("\n");
 
-/** Combine the bot's live identity with the current built-in Chief of Staff guidance. */
-export function formatChiefOfStaffInstructions(
-    bot: Pick<BotRecord, "id" | "name" | "username">,
-): string {
+/** Combine the bot's fixed identity with the current built-in Chief of Staff guidance. */
+export function formatChiefOfStaffInstructions(bot: Pick<BotRecord, "id" | "username">): string {
     return `${formatBotIdentityPrompt(bot)}\n\n${CHIEF_OF_STAFF_INSTRUCTIONS}`;
 }

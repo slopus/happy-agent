@@ -2,6 +2,15 @@
   {
     "content": [
       {
+        "text": "# Bot name\nYou are the bot named \"Chief of Staff\". Use this name when referring to yourself; it replaces any earlier name.",
+        "type": "text"
+      }
+    ],
+    "role": "system"
+  },
+  {
+    "content": [
+      {
         "text": "Hello.",
         "type": "text"
       }
