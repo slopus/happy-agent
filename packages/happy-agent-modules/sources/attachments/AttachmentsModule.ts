@@ -488,23 +488,32 @@ export class AttachmentsModule implements AgentModule {
 
     // Internals
 
-    /** The conversation's attachment, kept another 24 hours when it is unsent. */
+    /**
+     * The conversation's attachment, kept another 24 hours when it is unsent. Bytes an earlier
+     * attempt failed to store are stored first, or the request fails, so an answer naming the
+     * attachment always has its bytes.
+     */
     async #holdIfPresent(
         ctx: Context,
         agentId: string,
         attachmentId: string,
     ): Promise<AttachmentResource | undefined> {
-        return await ctx.inTx(async (txCtx) => {
+        const { value, error } = await this.#recordThenStore(ctx, async (txCtx) => {
             const row = await this.#live(txCtx, agentId, attachmentId);
-            if (row === undefined) return undefined;
+            if (row === undefined) return { value: undefined, pending: [] };
             if (row.sentAt === null) {
                 await store.updateAttachmentLifetime(txCtx, {
                     ...row,
                     expiresAt: Date.now() + ATTACHMENT_LIFETIME_MS,
                 });
             }
-            return attachmentResource(row);
+            return {
+                value: attachmentResource(row),
+                pending: row.pendingFileId === null ? [] : [row],
+            };
         });
+        if (error !== undefined) throw error;
+        return value;
     }
 
     /**
@@ -634,17 +643,8 @@ export class AttachmentsModule implements AgentModule {
         const path = this.#config.attachmentUploadPath(input.fileId);
         const held = await this.#holdIfPresent(ctx, input.agentId, input.id);
         if (held !== undefined) {
-            // Bytes an earlier attempt failed to store are stored now, or the request fails.
-            try {
-                const { error } = await this.#recordThenStore(ctx, async (txCtx) => {
-                    await this.#endUpload(txCtx, input.agentId, input.id);
-                    const row = await store.queryAttachment(txCtx, input.agentId, input.id);
-                    return { value: undefined, pending: row?.pendingFileId ? [row] : [] };
-                });
-                if (error !== undefined) throw error;
-            } finally {
-                await removeFile(path);
-            }
+            await ctx.inTx((txCtx) => this.#endUpload(txCtx, input.agentId, input.id));
+            await removeFile(path);
             return held;
         }
         const measured = await this.#chatMedia.describe(path, input.name, input.size);

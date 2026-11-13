@@ -525,7 +525,7 @@ describe("AttachmentsModule", () => {
         expect(await exists(config.attachmentContentPath(sha256(bytes)))).toBe(false);
     });
 
-    it("stores the bytes again when the same file is uploaded after storing them failed", async () => {
+    it("stores the bytes when the file is asked for again after storing them failed", async () => {
         const { config, ctx, attachments, upload } = await world();
         const bytes = Buffer.from("stored on the second try");
         const id = sha256(bytes);
@@ -535,6 +535,19 @@ describe("AttachmentsModule", () => {
         await writeFile(dirname(contentPath), "in the way");
         await expect(upload("agentone", "a.txt", bytes)).rejects.toThrow();
         await rm(dirname(contentPath));
+        // Asking by ID stores them before answering the attachment.
+        expect(
+            await attachments.receive(
+                ctx,
+                "agentone",
+                null,
+                id,
+                { name: "a.txt", contentType: undefined },
+                { type: "status", size: bytes.byteLength },
+                body(),
+            ),
+        ).toMatchObject({ attachment: { id } });
+        expect(await readFile(contentPath, "utf8")).toBe("stored on the second try");
         expect(await upload("agentone", "a.txt", bytes)).toBe(id);
         expect(await readFile(contentPath, "utf8")).toBe("stored on the second try");
         expect(
