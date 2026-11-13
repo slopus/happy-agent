@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const reads = vi.hoisted(() => [] as string[]);
@@ -65,5 +65,27 @@ describe.skipIf(process.platform === "win32")("embedded asset runtime", () => {
         ]);
 
         expect(new Set([library, executable, inline]).size).toBe(3);
+    });
+
+    it("extracts a group again after its folder is deleted", async () => {
+        // A long-running agent keeps the path it extracted Tailcat, the supervisor and Claude to.
+        // When something deleted the temporary folder under it, every later spawn from that path
+        // failed with ENOENT until the agent restarted.
+        const root = await mkdtemp(join(tmpdir(), "happy-embedded-assets-test-"));
+        cleanup.push(root);
+        const source = join(root, "payload");
+        await writeFile(source, "embedded executable bytes");
+        process.env.TMPDIR = join(root, "cache");
+        await mkdir(process.env.TMPDIR);
+        const files = [{ source, relativePath: "bin/payload", executable: true }];
+
+        const first = materializeEmbeddedFiles("embedded-cleanup-test", files);
+        // The whole happy-agent-<uid> folder, as a temporary-file cleanup removes it.
+        await rm(dirname(dirname(first)), { recursive: true });
+        const second = materializeEmbeddedFiles("embedded-cleanup-test", files);
+
+        expect(second).toBe(first);
+        const extracted = await readFile(join(second, "bin/payload"), "utf8");
+        expect(extracted).toBe("embedded executable bytes");
     });
 });
