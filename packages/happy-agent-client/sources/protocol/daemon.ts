@@ -152,6 +152,11 @@ export const healthResponseSchema = Type.Object({
             chatSurfaces: Type.Optional(Type.Boolean()),
             /** True when the daemon serves vault Surfaces and `/v0/vault-uploads`. */
             vaults: Type.Optional(Type.Boolean()),
+            /**
+             * True when the daemon serves `/v0/agents/:agentId/attachments` and accepts `file`
+             * blocks in `send`, under Attachments.
+             */
+            attachments: Type.Optional(Type.Boolean()),
             /** True when the daemon can rename Surfaces and change their images. */
             surfaceEditing: Type.Optional(Type.Boolean()),
             /**

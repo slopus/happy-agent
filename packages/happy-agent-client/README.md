@@ -79,6 +79,15 @@ file, saved as `vaultArtifactDownloadName(file)`. Follow `vault.folder.*`, `vaul
 `vault.version.updated`, and `vault.settings.updated`; deleting or restoring a folder announces
 only the folder.
 
+Files attached to messages are uploaded to the conversation first when health reports
+`capabilities.attachments`. An attachment's ID is the SHA-256 of its bytes. `attachFile(agentId,
+{ name, data, contentType })` sends a file of up to 8 MiB in one request (`uploadAttachment()`)
+and a larger one in chunks (`uploadAttachmentChunk()`), asking first, so bytes the daemon already
+holds are not sent again; it answers the attachment. Name it in `send` as
+`{ type: "file", attachment: attachment.id, name }`. The stored message's `file` block describes
+the file without its bytes; show them through `attachmentUrl()` or `getAttachment()`.
+`deleteAttachment()` cancels an upload or discards an attachment no message has sent.
+
 `search({ q, types, limit })` searches everything in the node the caller can reach when health
 reports `capabilities.search`: vault files and folders, documents, conversation messages, todos,
 calendar events, artifacts, Surfaces, conversations, projects, workspaces, people, and skills,

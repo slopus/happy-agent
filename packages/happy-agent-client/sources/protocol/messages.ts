@@ -20,6 +20,7 @@ import {
     type Timestamp,
 } from "./common.js";
 import { artifactDisplaySchema, artifactTitleSchema, artifactTypeSchema } from "./artifacts.js";
+import type { FileBlock } from "./attachments.js";
 import { mediaLayoutStyleSchema } from "./mediaLayoutStyle.js";
 import type { UsageBreakdown } from "./usage.js";
 import { userIdSchema } from "./users.js";
@@ -824,6 +825,7 @@ const legacyMessageBlockSchema = Type.Intersect([
 export type MessageBlock =
     | TextBlock
     | ImageBlock
+    | FileBlock
     | ToolCallRequestBlock
     | ReasoningBlock
     | ToolCallBlock
@@ -1084,7 +1086,10 @@ export interface SendMessageRequest {
      * reports `capabilities.userEnvironment`: older daemons refuse the whole send.
      */
     deviceId?: string;
-    /** Optional rich blocks accompanying the text; image bytes travel inline. */
+    /**
+     * Optional rich blocks accompanying the text. Image bytes travel inline; a `file` block names
+     * an attachment uploaded beforehand, to a daemon reporting `capabilities.attachments`.
+     */
     content?: MessageBlock[];
     /** Retired compatibility field, accepted and ignored by current daemons. */
     quickReply?: unknown;

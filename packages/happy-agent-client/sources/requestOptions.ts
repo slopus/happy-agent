@@ -100,3 +100,32 @@ export interface ToolCallMediaContent extends BinaryContent {
     /** The served `Content-Range` when a range was requested and answered, otherwise `null`. */
     contentRange: string | null;
 }
+
+/** A file to upload whole, in one request. */
+export interface AttachmentFile {
+    /** The file name shown with it, 1–255 characters. */
+    name: string;
+    data: Uint8Array<ArrayBuffer>;
+    /** The file's media type; omitted, the daemon goes by the name. */
+    contentType?: string | undefined;
+}
+
+/**
+ * One chunk of an attachment uploaded in parts: `data` placed at `start` in a file of `size`
+ * bytes. Without `data` the request only asks where the upload stands.
+ */
+export interface AttachmentChunk {
+    name: string;
+    size: number;
+    start?: number | undefined;
+    data?: Uint8Array<ArrayBuffer> | undefined;
+    contentType?: string | undefined;
+}
+
+/** How `attachFile` sends a file. */
+export interface AttachFileOptions extends RequestOptions {
+    /** The largest file sent in one request: 8 MiB unless said otherwise. */
+    directLimit?: number | undefined;
+    /** How many bytes each chunk of a larger file carries: 8 MiB unless said otherwise. */
+    chunkSize?: number | undefined;
+}

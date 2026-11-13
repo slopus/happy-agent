@@ -12,9 +12,18 @@ import type {
     ArtifactSecretActionResponse,
 } from "./protocol/artifactActions.js";
 import type {
+    Attachment,
+    AttachmentByteRange,
+    AttachmentChunkResponse,
+    AttachmentResponse,
+} from "./protocol/attachments.js";
+import type {
     ArtifactFileContent,
     ArtifactFileRequestOptions,
     ArtifactFileUpload,
+    AttachFileOptions,
+    AttachmentChunk,
+    AttachmentFile,
     BinaryContent,
     BinaryData,
     ByteRange,
@@ -4091,6 +4100,134 @@ export class HappyAgentClient {
         return endpointUrl(this.#endpoint, toolCallMediaPath(agentId, toolCallId, index));
     }
 
+    // Attachments
+
+    /**
+     * `PUT /v0/agents/:agentId/attachments?name=` — a whole file in one request, up to 256 MiB.
+     * Bytes the conversation already holds answer the existing attachment.
+     */
+    async uploadAttachment(
+        agentId: Cuid2,
+        file: AttachmentFile,
+        options: RequestOptions = {},
+    ): Promise<AttachmentResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: attachmentsPath(agentId),
+            query: { name: file.name },
+            binary: {
+                contentType: file.contentType ?? "application/octet-stream",
+                data: file.data,
+            },
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `PUT /v0/agents/:agentId/attachments/:attachmentId?name=` — one chunk of a file uploaded in
+     * parts, named by the SHA-256 of the whole file. Chunks may go in any order or in parallel.
+     * Without `data` the request only asks where the upload stands. Answers the upload while
+     * bytes are missing, then the attachment.
+     */
+    async uploadAttachmentChunk(
+        agentId: Cuid2,
+        attachmentId: string,
+        chunk: AttachmentChunk,
+        options: RequestOptions = {},
+    ): Promise<AttachmentChunkResponse> {
+        const data = chunk.data ?? new Uint8Array(0);
+        const start = chunk.start ?? 0;
+        return await this.#json({
+            method: "PUT",
+            path: attachmentPath(agentId, attachmentId),
+            query: { name: chunk.name },
+            binary: { contentType: chunk.contentType ?? "application/octet-stream", data },
+            contentRange:
+                chunk.data === undefined
+                    ? `bytes */${String(chunk.size)}`
+                    : `bytes ${String(start)}-${String(start + data.byteLength - 1)}/${String(chunk.size)}`,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * Attach a file to a conversation and answer the attachment to name in `send`. A file up to
+     * `directLimit` goes in one request; a larger one is hashed and sent in chunks, asking first,
+     * so bytes the daemon already holds are not sent again.
+     */
+    async attachFile(
+        agentId: Cuid2,
+        file: AttachmentFile,
+        options: AttachFileOptions = {},
+    ): Promise<Attachment> {
+        const directLimit = options.directLimit ?? 8 * 1024 * 1024;
+        const chunkSize = options.chunkSize ?? 8 * 1024 * 1024;
+        if (file.data.byteLength <= directLimit) {
+            return (await this.uploadAttachment(agentId, file, options)).attachment;
+        }
+        const id = hexDigest(await globalThis.crypto.subtle.digest("SHA-256", file.data));
+        const chunk = {
+            name: file.name,
+            size: file.data.byteLength,
+            contentType: file.contentType,
+        };
+        let answer = await this.uploadAttachmentChunk(agentId, id, chunk, options);
+        let previous: number | undefined;
+        while (!("attachment" in answer)) {
+            const start = firstMissingByte(answer.upload.received);
+            if (start === previous) {
+                throw new Error(
+                    "The daemon did not keep the uploaded bytes; attach the file again.",
+                );
+            }
+            previous = start;
+            const end = Math.min(
+                nextReceivedByte(answer.upload.received, start),
+                start + chunkSize,
+            );
+            answer = await this.uploadAttachmentChunk(
+                agentId,
+                id,
+                { ...chunk, start, data: file.data.subarray(start, end) },
+                options,
+            );
+        }
+        return answer.attachment;
+    }
+
+    /**
+     * `GET /v0/agents/:agentId/attachments/:attachmentId` — an attachment's bytes, or one range of
+     * them; `null` when `ifNoneMatch` still matches.
+     */
+    async getAttachment(
+        agentId: Cuid2,
+        attachmentId: string,
+        options: ArtifactFileRequestOptions = {},
+    ): Promise<ArtifactFileContent | null> {
+        return await this.#fileContent(attachmentPath(agentId, attachmentId), options);
+    }
+
+    /** The URL of an attachment's bytes, for an element loading them through a token transport. */
+    attachmentUrl(agentId: Cuid2, attachmentId: string): string {
+        return endpointUrl(this.#endpoint, attachmentPath(agentId, attachmentId));
+    }
+
+    /**
+     * `DELETE /v0/agents/:agentId/attachments/:attachmentId` — cancels an upload still receiving
+     * bytes, or discards an attachment no message has sent.
+     */
+    async deleteAttachment(
+        agentId: Cuid2,
+        attachmentId: string,
+        options: RequestOptions = {},
+    ): Promise<void> {
+        await this.#send({
+            method: "DELETE",
+            path: attachmentPath(agentId, attachmentId),
+            signal: options.signal,
+        });
+    }
+
     /** `GET /v0/agents/:agentId/question` — the open question, or `null`. */
     async getPendingQuestion(
         agentId: Cuid2,
@@ -4653,6 +4790,31 @@ function vaultUploadPath(uploadId: Cuid2): string {
 function contentRangeHeader(chunk: VaultUploadChunk & { start: number }): string {
     const end = chunk.start + chunk.data.byteLength - 1;
     return `bytes ${String(chunk.start)}-${String(end)}/${String(chunk.size)}`;
+}
+
+function attachmentsPath(agentId: Cuid2): string {
+    return `v0/agents/${encodeURIComponent(agentId)}/attachments`;
+}
+
+function attachmentPath(agentId: Cuid2, attachmentId: string): string {
+    return `${attachmentsPath(agentId)}/${encodeURIComponent(attachmentId)}`;
+}
+
+function hexDigest(digest: ArrayBuffer): string {
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
+        "",
+    );
+}
+
+/** The first byte an upload lacks, given the ranges it holds in order. */
+function firstMissingByte(received: readonly AttachmentByteRange[]): number {
+    const first = received[0];
+    return first === undefined || first.start > 0 ? 0 : first.end + 1;
+}
+
+/** Where the next held range after `start` begins, or infinity when none does. */
+function nextReceivedByte(received: readonly AttachmentByteRange[], start: number): number {
+    return received.find((range) => range.start > start)?.start ?? Number.POSITIVE_INFINITY;
 }
 
 function toolCallMediaPath(agentId: Cuid2, toolCallId: Cuid2, index: number): string {
