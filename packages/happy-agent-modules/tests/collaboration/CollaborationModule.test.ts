@@ -7,6 +7,7 @@ import {
     type AgentMetadata,
     type AgentModel,
     type AgentModuleHooks,
+    type AgentModuleScope,
     type AgentPermissionMode,
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
@@ -1360,24 +1361,36 @@ describe("collaboration", () => {
         expect(instructions).not.toContain("only your final message is reported");
     });
 
-    it("tells an agent which collaborators it created", async () => {
+    it("tells an agent which collaborators it created as a notice, never in its instructions", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
+        const scope = historyScope("parent");
+        const before = await hooks.instructions!(ctx, scope);
         await module.createAgent(ctx, "parent", TASK, "child");
 
-        const instructions = await hooks.instructions!(ctx, {
-            agent: { id: "parent" },
-        } as never);
-
-        expect(instructions).toContain("Collaborators you created: child.");
+        // Creating a collaborator mid-turn leaves the system prompt exactly as it was.
+        expect(await hooks.instructions!(ctx, scope)).toBe(before);
+        expect(before).not.toContain("Collaborators you created");
+        expect(await hooks.systemNotificationsTransact!(ctx, scope, MESSAGE_BOUNDARY)).toEqual([
+            {
+                role: "system",
+                content: [
+                    {
+                        type: "text",
+                        text: "Collaborators you created: child. Each reports back with only its final message when it finishes; you do not see its intermediate messages, and nothing waits for them.",
+                    },
+                ],
+            },
+        ]);
     });
 
-    it("includes both creator and collaborator addresses in deterministic instruction order", async () => {
+    it("keeps creator and own addresses in the instructions and collaborators out of them", async () => {
         const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
         const collection = new Collection();
+        collection.seed("parent", "creator");
         collection.seed("sibling", "parent");
         collection.seed("child", "parent");
-        const { module, hooks, ctx } = await started(collection, config);
+        const { hooks, ctx } = await started(collection, config);
 
         const instructions = await hooks.instructions!(ctx, {
             agent: { id: "parent" },
@@ -1386,26 +1399,71 @@ describe("collaboration", () => {
         expect(instructions.split("\n")).toEqual([
             "Your Agent ID is parent.",
             expect.stringContaining("happy://agents/parent/files/"),
-            "Collaborators you created: child, sibling. Each reports back with only its final message when it finishes; you do not see its intermediate messages, and nothing waits for them.",
+            expect.stringContaining("You were created by agent creator."),
         ]);
     });
 
+    it("tells a history its collaborators once and again only when the list changes", async () => {
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection);
+        const scope = historyScope("parent");
+        const notices = async (boundary: typeof MESSAGE_BOUNDARY) =>
+            ((await hooks.systemNotificationsTransact!(ctx, scope, boundary)) ?? []).map(
+                (message) => (message.content[0] as { text: string }).text.split(". ")[0],
+            );
+
+        // An agent with no collaborators is told nothing.
+        expect(await notices(MESSAGE_BOUNDARY)).toEqual([]);
+        await module.createAgent(ctx, "parent", TASK, "child");
+        // The tool that created it already returned its ID to the running turn.
+        expect(await notices(INFERENCE_BOUNDARY)).toEqual([]);
+        expect(await notices(MESSAGE_BOUNDARY)).toEqual(["Collaborators you created: child"]);
+        expect(await notices(MESSAGE_BOUNDARY)).toEqual([]);
+        expect(await notices(INFERENCE_BOUNDARY)).toEqual([]);
+        await module.createAgent(ctx, "parent", TASK, "another");
+        expect(await notices(MESSAGE_BOUNDARY)).toEqual([
+            "Collaborators you created: another, child",
+        ]);
+    });
+
+    it("tells the collaborators again before the next inference once compaction forgot them", async () => {
+        const collection = new Collection();
+        collection.seed("child", "parent");
+        const { hooks, ctx } = await started(collection);
+        const scope = historyScope("parent");
+
+        expect(await hooks.systemNotificationsTransact!(ctx, scope, MESSAGE_BOUNDARY)).toHaveLength(
+            1,
+        );
+        // Compaction and a reset both empty the history's store.
+        scope.historyValues.clear();
+        expect(
+            await hooks.systemNotificationsTransact!(ctx, scope, INFERENCE_BOUNDARY),
+        ).toHaveLength(1);
+        expect(
+            await hooks.systemNotificationsTransact!(ctx, scope, INFERENCE_BOUNDARY),
+        ).toBeUndefined();
+    });
+
     it("lists collaborators identically whatever order the collection returns them in", async () => {
-        const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
         const collection = new Collection();
         collection.seed("zeta", "parent");
         collection.seed("alpha", "parent");
-        const { hooks, ctx } = await started(collection, config);
-        const scope = { agent: { id: "parent" } } as never;
-        const before = await hooks.instructions!(ctx, scope);
+        const { hooks, ctx } = await started(collection);
+        const scope = historyScope("parent");
+        const before = await hooks.systemNotificationsTransact!(ctx, scope, MESSAGE_BOUNDARY);
 
         // A restart rebuilds the child index in storage key order instead of creation order.
         collection.parents.delete("zeta");
         collection.parents.set("zeta", "parent");
-        const after = await hooks.instructions!(ctx, scope);
 
-        expect(after).toBe(before);
-        expect(before).toContain("Collaborators you created: alpha, zeta.");
+        // The same collaborators in another order are not news.
+        expect(
+            await hooks.systemNotificationsTransact!(ctx, scope, MESSAGE_BOUNDARY),
+        ).toBeUndefined();
+        expect((before![0]!.content[0] as { text: string }).text).toContain(
+            "Collaborators you created: alpha, zeta.",
+        );
     });
 
     it("always tells an agent its own Agent ID", async () => {
@@ -2017,6 +2075,19 @@ function memoryKV(values = new Map<string, unknown>()) {
             return values.get(key);
         },
     };
+}
+
+const MESSAGE_BOUNDARY = { type: "message" } as never;
+const INFERENCE_BOUNDARY = { type: "inference" } as never;
+
+/** A stand-in for the store that lives as long as the current history does. */
+function historyScope(agentId: string) {
+    const historyValues = new Map<string, unknown>();
+    return {
+        agent: { id: agentId },
+        historyKV: memoryKV(historyValues),
+        historyValues,
+    } as never as AgentModuleScope & { readonly historyValues: Map<string, unknown> };
 }
 
 /** A stand-in for the agent's own store, which is all the change notice keeps. */

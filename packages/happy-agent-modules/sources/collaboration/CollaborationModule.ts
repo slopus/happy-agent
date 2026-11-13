@@ -567,15 +567,14 @@ export class CollaborationModule implements AgentModule {
          * does not. Reading it from the agent collection every turn means the address is always
          * available and never stored twice.
          *
+         * Only what stays true for the agent's whole life belongs here. The collaborators it
+         * created change in the middle of a turn, so they arrive as a notice instead.
+         *
          * The same ID addresses this agent's files: a `path:line` is read against the reader's own
          * workspace, so text read in another chat links files through the agent instead.
          */
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
-            const agents = this.#requireAgents();
-            const [parent, children] = await Promise.all([
-                agents.parentOf(ctx, scope.agent.id),
-                agents.childOf(ctx, scope.agent.id),
-            ]);
+            const parent = await this.#requireAgents().parentOf(ctx, scope.agent.id);
             const lines: string[] = [
                 `Your Agent ID is ${scope.agent.id}.`,
                 `When a file you mention will be read outside your own chat (a message to another agent, a report to your creator, or files from another agent's workspace), link it as [Foo.tsx:42](happy://agents/${scope.agent.id}/files/<path from your workspace root>#L42-L50), percent-encoding spaces and other special characters. For a file elsewhere, use its agent's ID, or happy://workspaces/<workspace ID>/files/<path>. Copy happy:// and happy-file:// links you receive unchanged. Otherwise keep writing path:line.`,
@@ -587,19 +586,47 @@ export class CollaborationModule implements AgentModule {
                         : `You were created by agent ${parent}. What you say is not reported to it automatically; use send_agent_message when it needs to hear from you.`,
                 );
             }
-            if (children.length > 0) {
-                // The collection's order changes across restarts; a stable prompt keeps the cache.
-                const sorted = [...children].sort();
-                lines.push(
-                    `Collaborators you created: ${sorted.join(", ")}. Each reports back with only its final message when it finishes; you do not see its intermediate messages, and nothing waits for them.`,
-                );
-            }
             if (await this.#reachesAcrossWorkspaces(ctx, scope.agent.id)) {
                 lines.push(
                     "Cross-workspace agent messaging is enabled. You can use send_agent_message to text any existing agent when you know its Agent ID. Agent IDs are unguessable, so the user or another agent must share the recipient ID with you.",
                 );
             }
             return lines.join("\n");
+        },
+
+        /**
+         * Tell an agent which collaborators it created, as a notice in the conversation.
+         *
+         * The list changes whenever the agent creates one, which is in the middle of a turn. In
+         * the system prompt that changed the prefix under the turn's own thinking blocks, which
+         * Claude models with preserved thinking reject, and it cost every model its prompt cache.
+         * A notice is appended instead, so nothing already sent ever changes.
+         *
+         * The history remembers the list it was last told. A changed list is told again with the
+         * next message. Before an inference only a history that was told nothing hears it: that
+         * restores the addresses compaction dropped, while the tool that just created a
+         * collaborator has already returned its ID to the running turn.
+         */
+        systemNotificationsTransact: async (ctx, scope, boundary) => {
+            const told = await scope.historyKV.read(ctx, COLLABORATORS_TOLD_KEY);
+            if (boundary.type === "inference" && told !== undefined) return;
+            const children = await this.#requireAgents().childOf(ctx, scope.agent.id);
+            // The collection's order changes across restarts; one order means one notice.
+            const current = [...children].sort().join(", ");
+            if (told === current) return;
+            await scope.historyKV.write(ctx, COLLABORATORS_TOLD_KEY, current);
+            if (current === "") return;
+            return [
+                {
+                    role: "system",
+                    content: [
+                        {
+                            type: "text",
+                            text: `Collaborators you created: ${current}. Each reports back with only its final message when it finishes; you do not see its intermediate messages, and nothing waits for them.`,
+                        },
+                    ],
+                },
+            ];
         },
 
         /**
@@ -1214,6 +1241,9 @@ const AGENT_OPTIONS_KNOWN_KEY = "agentOptionsKnown";
 const AGENT_OPTIONS_PENDING_KEY = "agentOptionsChange";
 const AGENT_OPTIONS_METADATA_KEY = "agentOptions";
 const agentOptionsPendingSchema = Type.Object({ id: Type.String(), text: Type.String() });
+
+/** The collaborator list the current history was last told, joined; empty when it has none. */
+const COLLABORATORS_TOLD_KEY = "collaboratorsTold";
 
 /** Where a run keeps the last thing its model said, until the run ends. */
 const LAST_TEXT_KEY = "lastText";

@@ -50,8 +50,8 @@ opening task uses the creation's title, when it fits on one explanation line. Th
 settlement report carries a fixed one saying whether the collaborator finished with an answer or
 stopped.
 
-Every agent's own address is stated in the module's instructions. Its creator and collaborator
-addresses are rebuilt every turn from `parentOf` and `childOf`:
+Every agent's own address is stated in the module's instructions, and its creator's address is
+rebuilt every turn from `parentOf`:
 
 ```
 Your Agent ID is b7c1.
@@ -61,15 +61,27 @@ You were created by agent a3f2. When you stop working, only your final message i
 automatically; nothing you wrote earlier, including text between tool calls, reaches it. Make that
 final message complete: the whole result, what you verified, and anything still open. Use
 send_agent_message only when it must hear something before then.
-Collaborators you created: b7c1, b7c2. Each reports back with only its final message when it
-finishes; you do not see its intermediate messages, and nothing waits for them.
 ```
 
 That matters because the `Message from agent ...` line ages out of history on compaction, while the
 relationship does not — an agent that could not name its creator would have no way to answer it.
 Nothing is stored to make this work; the ancestry is read from the agent collection each turn.
+
+The collaborators an agent created are not in its instructions, because that list changes in the
+middle of a turn and the system prompt must not. They arrive as a system notice in the
+conversation, read from `childOf`:
+
+```
+Collaborators you created: b7c1, b7c2. Each reports back with only its final message when it
+finishes; you do not see its intermediate messages, and nothing waits for them.
+```
+
+The history's own store remembers the list it was last told. A changed list is told again with the
+next message the agent receives; the turn that created a collaborator already has its ID from the
+tool result. Compaction empties that store, so the list is told again before the next inference,
+which is what keeps the addresses available after the tool results that carried them are gone.
 Collaborators are listed in ID order, because the collection's own order differs before and after
-a restart and a changing system prompt would defeat prompt caching.
+a restart and the same list must not read as news.
 
 The Agent ID also addresses the agent's files. A bare `path:line` is read against the reader's own
 workspace, so a file mentioned in a message, a report, or a relay from another workspace is written

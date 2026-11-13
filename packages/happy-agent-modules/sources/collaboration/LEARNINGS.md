@@ -188,9 +188,21 @@ context, because an Auto review may lend that call Full access for one action. T
 before the spawn presentation or the child exists. A first message to a conversation that never
 ran starts it no wider than the sender's mode, since that message is the one that sets it.
 
-## The collaborator list is sorted
+## The collaborator list is a notice in the conversation, sorted
 
-The parity export showed "Collaborators you created" listing the same children in a different
-order between runs: the collection appends children in creation order while running but rebuilds
-its index in storage key order after a restart. The system prompt then changed between turns for
-no reason, breaking prompt caching and parity fixtures. The list is now sorted by agent ID.
+"Collaborators you created" used to be a line of the system prompt, rebuilt before every
+inference. An agent creates a collaborator in the middle of a turn, so the system prompt changed
+between two requests of the same turn. Claude models with preserved thinking bind each thinking
+block to the system prompt it was produced under and rejected the next request with "Invalid
+signature in thinking block"; every other model silently lost its prompt cache at that point.
+
+The list is now a system notice. The history's store remembers the list it was last told; a
+different list is told with the next message, and a history that was told nothing — a fresh or
+compacted one — is told before its next inference. The turn that creates a collaborator gets no
+notice, because the tool result already carries the new ID. The system prompt keeps only what is
+true for the agent's whole life: its own ID and its creator.
+
+The parity export once showed the list naming the same children in a different order between
+runs: the collection appends children in creation order while running but rebuilds its index in
+storage key order after a restart. The list is sorted by agent ID so the same collaborators never
+read as a change.

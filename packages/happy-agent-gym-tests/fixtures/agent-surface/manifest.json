@@ -59,7 +59,7 @@
     "flows/provider-cli-sign-in.codex.json"
   ],
   "generatedBy": "pnpm --filter @slopus/happy-agent-gym-tests export:agent-surface",
-  "happyAgentCommit": "118c3a506c2f425d216b78d631a31bd820497480",
+  "happyAgentCommit": "6779466738508a9d8d3d2b79257cec4e0926f86c",
   "protocol": 35,
   "wire": {
     "bedrock": {

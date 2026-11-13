@@ -1156,7 +1156,7 @@ function templated(
 ): string {
     // Collaborators are listed by agent ID, so two random IDs come out in either order.
     let result = text.replace(
-        /^Collaborators you created: ([a-z0-9]{24}(?:, [a-z0-9]{24})+)\./gm,
+        /\bCollaborators you created: ([a-z0-9]{24}(?:, [a-z0-9]{24})+)\./g,
         "Collaborators you created: {{collaboratorAgentIdsSortedById}}.",
     );
     for (const [path, name] of paths) result = result.split(path).join(`{{${name}}}`);

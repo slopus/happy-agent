@@ -48,6 +48,15 @@
     "role": "assistant"
   },
   {
+    "content": [
+      {
+        "text": "Collaborators you created: {{team_collaborator_agentId}}. Each reports back with only its final message when it finishes; you do not see its intermediate messages, and nothing waits for them.",
+        "type": "text"
+      }
+    ],
+    "role": "system"
+  },
+  {
     "author": {
       "description": "Collaborator {{team_collaborator_agentId}}",
       "id": "{{team_collaborator_agentId}}"
