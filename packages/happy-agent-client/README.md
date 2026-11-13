@@ -498,6 +498,14 @@ new version from the latest one's files, adding, replacing, or removing paths, a
 `listArtifactVersions()` reads the history. Follow `artifact.created`, `artifact.updated`, and
 `artifact.deleted`.
 
+A `gen_ui` button whose action is `secret` opens a secret form prefilled from the action. Save it
+with `saveArtifactSecretAction(artifactId, version, { id, element, secret })`: `element` is the
+render element tapped, `secret` the form as the person left it, and `id` a CUID2 you choose once per
+save so a retry answers the first one. To change an existing secret, send an environment patch and
+its `version` as `ifMatch`. The daemon creates or updates the secret, attaches it to the agent that
+made the version, and tells that agent; the response's `outcome` says which. An older daemon answers
+`404`, and the button should then be disabled.
+
 Show an artifact on a transparent slot unless its version names `background`, a lowercase hex
 colour (`#rgb`, `#rgba`, `#rrggbb`, or `#rrggbbaa`) to paint behind the content; check
 `artifactBackgroundSchema` again before using it, and only as a background colour. Older daemons

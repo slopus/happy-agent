@@ -8,6 +8,10 @@ import {
 } from "./protocol/connections.js";
 import type { RunnerListResponse } from "./protocol/runners.js";
 import type {
+    ArtifactSecretActionRequest,
+    ArtifactSecretActionResponse,
+} from "./protocol/artifactActions.js";
+import type {
     ArtifactFileContent,
     ArtifactFileRequestOptions,
     ArtifactFileUpload,
@@ -3489,6 +3493,25 @@ export class HappyAgentClient {
                 ...(options.source === undefined ? {} : { source: options.source }),
             },
             ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/artifacts/:artifactId/versions/:number/actions` — saves the form a `secret` action
+     * opened. The daemon stores the secret, attaches it to the version's origin agent, and tells
+     * that agent, all at once; `request.id` makes a retry answer the first save.
+     */
+    async saveArtifactSecretAction(
+        artifactId: Cuid2,
+        version: number,
+        request: ArtifactSecretActionRequest,
+        options: RequestOptions = {},
+    ): Promise<ArtifactSecretActionResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/artifacts/${encodeURIComponent(artifactId)}/versions/${String(version)}/actions`,
+            json: request,
             signal: options.signal,
         });
     }
