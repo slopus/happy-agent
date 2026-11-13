@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, readdir, utimes, writeFile } from "node:fs/promises";
+import { access, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
@@ -279,6 +279,42 @@ describe("AttachmentsModule", () => {
                 body(),
             ),
         ).toMatchObject({ upload: { received: [] } });
+    });
+
+    it("keeps stored content unchanged when a resent chunk finishes writing after the file is done", async () => {
+        const { ctx, attachments } = await world();
+        const bytes = Buffer.from("ab");
+        const id = sha256(bytes);
+        const file = { name: "ab.txt", contentType: "text/plain" };
+        const send = (start: number, parts: AsyncIterable<Uint8Array>) =>
+            attachments.receive(
+                ctx,
+                "agentone",
+                null,
+                id,
+                file,
+                { type: "bytes", start, end: start, size: 2 },
+                parts,
+            );
+        let opened!: () => void;
+        const writing = new Promise<void>((resolve) => (opened = resolve));
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => (release = resolve));
+        // A resend of byte 0 whose body arrives only once the file is complete, and differs.
+        const late = send(0, {
+            async *[Symbol.asyncIterator]() {
+                opened();
+                await released;
+                yield Buffer.from("x");
+            },
+        });
+        await writing;
+        await send(0, body(bytes.subarray(0, 1)));
+        expect(await send(1, body(bytes.subarray(1, 2)))).toMatchObject({ attachment: { id } });
+        release();
+        expect(await late).toMatchObject({ attachment: { id } });
+        const content = await attachments.content(ctx, "agentone", id);
+        expect(await readFile(content.contentPath, "utf8")).toBe("ab");
     });
 
     it("takes at most 4,096 requests carrying bytes per upload, resent ones included", async () => {

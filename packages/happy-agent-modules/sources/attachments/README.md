@@ -38,7 +38,8 @@ DELETE /v0/agents/:id/attachments/:sha          cancel an upload or discard an u
   body has the wrong length adds no bytes. Every request carrying bytes is counted against its
   upload under that lock before it writes, and the 4,097th is refused. Each upload gets a fresh
   private file, so a chunk still writing when its upload is cancelled lands in a file nothing
-  reads.
+  reads. A finished upload is checked and stored through a copy of its file, so a resent chunk
+  still writing after the last byte arrived cannot change stored content.
 - `Content-Range: bytes */size` with no body starts the upload when there is none and answers
   where it stands; any request for an ID the conversation already holds answers the attachment
   without reading the body.

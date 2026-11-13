@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, open, rename, rm, stat } from "node:fs/promises";
+import { constants, createReadStream } from "node:fs";
+import { copyFile, mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
 /** Create the empty private file an upload's bytes accumulate in. */
@@ -85,6 +85,15 @@ export async function receiveWholeFile(
         return undefined;
     }
     return { sha256: hash.digest("hex"), size };
+}
+
+/**
+ * Copy a finished upload's file to a new private file, sharing its blocks where the filesystem
+ * can. A chunk request may still hold the upload's file open, so its bytes are only ever checked
+ * and stored through such a copy, which no request writes.
+ */
+export async function snapshotUploadFile(path: string, snapshotPath: string): Promise<void> {
+    await copyFile(path, snapshotPath, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
 }
 
 /** The SHA-256 of a whole file, read as a stream. */

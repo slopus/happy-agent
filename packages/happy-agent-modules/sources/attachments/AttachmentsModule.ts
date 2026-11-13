@@ -39,6 +39,7 @@ import {
     createUploadFile,
     fileExists,
     hashFile,
+    snapshotUploadFile,
     receiveWholeFile,
     removeFile,
     storeUploadedContent,
@@ -547,19 +548,25 @@ export class AttachmentsModule implements AgentModule {
         return counted;
     }
 
-    /** Check a complete upload against its ID and make it the attachment. */
+    /**
+     * Check a complete upload against its ID and make it the attachment. A request that resent
+     * a chunk may still be writing into the upload's file, so a copy is checked and stored, and
+     * ending the upload removes the file the requests write.
+     */
     async #finish(ctx: Context, upload: StoredUpload): Promise<AttachmentResource> {
-        const path = this.#config.attachmentUploadPath(upload.fileId);
+        const fileId = createId();
+        const path = this.#config.attachmentUploadPath(fileId);
+        await snapshotUploadFile(this.#config.attachmentUploadPath(upload.fileId), path);
         if ((await hashFile(path)) !== upload.id) {
-            await ctx.inTx((txCtx) => store.deleteUpload(txCtx, upload.agentId, upload.id));
             await removeFile(path);
+            await this.#endUpload(ctx, upload.agentId, upload.id);
             throw mismatch();
         }
         return await this.#keep(ctx, {
             agentId: upload.agentId,
             id: upload.id,
             size: upload.size,
-            fileId: upload.fileId,
+            fileId,
             name: upload.name,
             contentType: upload.contentType,
             uploader: upload.uploadedBy,
@@ -636,7 +643,7 @@ export class AttachmentsModule implements AgentModule {
             if (found !== undefined) await store.deleteUpload(txCtx, agentId, attachmentId);
             return found;
         });
-        // A finished upload's file was already stored, so removing it again finds nothing.
+        // The file chunk requests write into; what was stored is a copy of it.
         if (upload !== undefined) {
             await removeFile(this.#config.attachmentUploadPath(upload.fileId));
         }
