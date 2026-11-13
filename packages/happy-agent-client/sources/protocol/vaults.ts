@@ -124,8 +124,19 @@ const vaultItemFields = {
     version: resourceVersionSchema,
 };
 
+/**
+ * What a folder is for: `"skills"` holds agent skills, `null` is an ordinary folder. Happy Agent
+ * omits a folder's role; a missing role means `null`.
+ */
+export const vaultFolderRoleSchema = Nullable(Type.Literal("skills"));
+export type VaultFolderRole = Static<typeof vaultFolderRoleSchema>;
+
 /** A folder: it holds other items, may be empty, and has no versions. */
-export const vaultFolderSchema = Type.Object({ ...vaultItemFields, kind: Type.Literal("folder") });
+export const vaultFolderSchema = Type.Object({
+    ...vaultItemFields,
+    kind: Type.Literal("folder"),
+    role: Type.Optional(vaultFolderRoleSchema),
+});
 export type VaultFolder = Static<typeof vaultFolderSchema>;
 
 /** A plain file or an artifact, with numbered versions. */
@@ -358,6 +369,11 @@ export const vaultActivitySchema = Type.Union([
         kind: Type.Union([Type.Literal("pinned"), Type.Literal("unpinned")]),
         number: Type.Integer({ minimum: 1 }),
     }),
+    Type.Object({
+        ...vaultActivityFields,
+        kind: Type.Literal("role"),
+        role: vaultFolderRoleSchema,
+    }),
 ]);
 export type VaultActivity = Static<typeof vaultActivitySchema>;
 
@@ -368,6 +384,8 @@ export const vaultActivityPageResponseSchema = Type.Object({
 export type VaultActivityPageResponse = Static<typeof vaultActivityPageResponseSchema>;
 
 export const vaultSettingsSchema = Type.Object({
+    /** The organization's default vault; Happy Agent omits it, and missing means `false`. */
+    defaultVault: Type.Optional(Type.Boolean()),
     retention: vaultRetentionSchema,
     surfaceId: surfaceIdSchema,
     updatedAt: timestampSchema,
@@ -482,6 +500,24 @@ export const updateVaultItemRequestSchema = Type.Union([
     ),
 ]);
 export type UpdateVaultItemRequest = Static<typeof updateVaultItemRequestSchema>;
+
+/**
+ * A folder's rename, move, or role change, alone or together; requires `If-Match`. Only a server
+ * that serves folder roles accepts `role`; Happy Agent answers it with `400`.
+ */
+export const updateVaultFolderRequestSchema = Type.Union([
+    ...updateVaultItemRequestSchema.anyOf,
+    Type.Object(
+        {
+            mutationId: Type.Optional(mutationIdSchema),
+            name: Type.Optional(vaultNameSchema),
+            parentId: Type.Optional(Nullable(cuid2Schema)),
+            role: vaultFolderRoleSchema,
+        },
+        strict,
+    ),
+]);
+export type UpdateVaultFolderRequest = Static<typeof updateVaultFolderRequestSchema>;
 
 /** Restores a Trash item where it was, or into another live folder and under another name. */
 export const restoreVaultItemRequestSchema = Type.Object(

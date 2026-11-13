@@ -81,6 +81,7 @@ import { Nullable } from "./common.js";
 import {
     vaultArtifactSummarySchema,
     vaultActorSchema,
+    vaultFolderRoleSchema,
     vaultFileSchema,
     vaultFolderSchema,
     vaultNameSchema,
@@ -431,7 +432,7 @@ export const vaultFolderCreatedPayloadSchema = Type.Object({
 export type VaultFolderCreatedPayload = Static<typeof vaultFolderCreatedPayloadSchema>;
 
 /**
- * Rename, move, Trash, or restore of a folder; only the changed fields, always with `updatedAt`
+ * Rename, move, role change, Trash, or restore of a folder; only the changed fields, always with `updatedAt`
  * and `updatedBy`. Deleting or restoring a folder announces the folder alone.
  */
 export const vaultFolderUpdatedPayloadSchema = Type.Object({
@@ -439,6 +440,7 @@ export const vaultFolderUpdatedPayloadSchema = Type.Object({
         deletedAt: Type.Optional(Nullable(timestampSchema)),
         name: Type.Optional(vaultNameSchema),
         parentId: Type.Optional(Nullable(cuid2Schema)),
+        role: Type.Optional(vaultFolderRoleSchema),
         updatedAt: timestampSchema,
         updatedBy: vaultActorSchema,
     }),

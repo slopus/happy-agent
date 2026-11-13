@@ -79,6 +79,11 @@ file, saved as `vaultArtifactDownloadName(file)`. Follow `vault.folder.*`, `vaul
 `vault.version.updated`, and `vault.settings.updated`; deleting or restoring a folder announces
 only the folder.
 
+A Happy Cloud cluster also marks a folder's `role`: `"skills"` for a Skills folder of agent skills,
+set with `updateVaultFolder(surfaceId, folderId, { role: "skills" }, { ifMatch })`. It marks its
+settings' `defaultVault` for the vault a team starts with. Happy Agent sends neither and refuses a
+`role` change; read a missing `role` as `null` and a missing `defaultVault` as `false`.
+
 Files attached to messages are uploaded to the conversation first when health reports
 `capabilities.attachments`. An attachment's ID is the SHA-256 of its bytes. `attachFile(agentId,
 { name, data, contentType })` sends a file of up to 8 MiB in one request (`uploadAttachment()`)

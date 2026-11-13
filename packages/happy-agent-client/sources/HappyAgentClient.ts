@@ -146,6 +146,7 @@ import type {
     CreateVaultVersionRequest,
     CreateVaultVersionResponse,
     RestoreVaultItemRequest,
+    UpdateVaultFolderRequest,
     UpdateVaultItemRequest,
     UpdateVaultSettingsRequest,
     VaultActivityPageResponse,
@@ -2968,7 +2969,7 @@ export class HappyAgentClient {
     async updateVaultFolder(
         surfaceId: SurfaceId,
         folderId: Cuid2,
-        request: UpdateVaultItemRequest,
+        request: UpdateVaultFolderRequest,
         options: VersionedRequestOptions,
     ): Promise<VaultFolderResponse> {
         return await this.#json({

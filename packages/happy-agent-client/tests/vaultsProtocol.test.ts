@@ -28,6 +28,7 @@ import {
     createVaultVersionRequestSchema,
     isVaultArtifactName,
     restoreVaultItemRequestSchema,
+    updateVaultFolderRequestSchema,
     updateVaultItemRequestSchema,
     updateVaultSettingsRequestSchema,
     vaultActivitySchema,
@@ -41,6 +42,7 @@ import {
     vaultItemSchema,
     vaultNameSchema,
     vaultResolveResponseSchema,
+    vaultSettingsSchema,
     vaultTrashPageResponseSchema,
     vaultUploadSchema,
     vaultVersionDetailSchema,
@@ -334,6 +336,48 @@ describe("vault Surface protocol", () => {
         ])
             expect(Value.Check(vaultActivitySchema, item)).toBe(true);
         expect(Value.Check(vaultActivitySchema, { ...activity, kind: "pinned" })).toBe(false);
+    });
+
+    it("reads a cluster's Skills folders and default vault, and their absence from Happy Agent", () => {
+        expect(Value.Check(vaultFolderSchema, folder)).toBe(true);
+        expect(Value.Check(vaultFolderSchema, { ...folder, role: "skills" })).toBe(true);
+        expect(Value.Check(vaultFolderSchema, { ...folder, role: null })).toBe(true);
+        expect(Value.Check(vaultFolderSchema, { ...folder, role: "notes" })).toBe(false);
+        expect(
+            Value.Check(vaultActivitySchema, {
+                id: version,
+                itemId: folder.id,
+                kind: "role",
+                role: "skills",
+                at: now,
+                actor: person,
+                source: "api",
+            }),
+        ).toBe(true);
+        const settings = {
+            surfaceId,
+            retention: DEFAULT_VAULT_RETENTION,
+            updatedAt: now,
+            version,
+        };
+        expect(Value.Check(vaultSettingsSchema, settings)).toBe(true);
+        expect(Value.Check(vaultSettingsSchema, { ...settings, defaultVault: true })).toBe(true);
+        expect(
+            Value.Check(vaultFolderUpdatedPayloadSchema, {
+                surfaceId,
+                folderId: folder.id,
+                previousVersion: version,
+                version: nextVersion,
+                changes: { role: "skills", updatedAt: now, updatedBy: person },
+            }),
+        ).toBe(true);
+        expect(Value.Check(updateVaultFolderRequestSchema, { role: "skills" })).toBe(true);
+        expect(Value.Check(updateVaultFolderRequestSchema, { role: null, name: "Skills" })).toBe(
+            true,
+        );
+        expect(Value.Check(updateVaultFolderRequestSchema, { name: "Skills" })).toBe(true);
+        expect(Value.Check(updateVaultFolderRequestSchema, { mutationId: "m" })).toBe(false);
+        expect(Value.Check(updateVaultItemRequestSchema, { role: "skills" })).toBe(false);
     });
 
     it("accepts exactly one content source and never a client-supplied author", () => {
