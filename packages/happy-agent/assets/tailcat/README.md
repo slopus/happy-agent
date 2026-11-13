@@ -1,14 +1,14 @@
 # Tailcat binary assets
 
-Happy Agent embeds Tailcat v0.7.0-happy.1, Happy's patched build of Tailcat v0.7.0, for each of
-its five release targets. Binary integrity is pinned in `v0.7.0-happy.1/SHA256SUMS` and checked
+Happy Agent embeds Tailcat v0.7.0-happy.2, Happy's patched build of Tailcat v0.7.0, for each of
+its five release targets. Binary integrity is pinned in `v0.7.0-happy.2/SHA256SUMS` and checked
 again by `scripts/resolveTailcatBinaryAsset.ts` before a Happy Agent standalone binary is compiled.
 
 ## Source
 
-All five executables are built from tag `v0.7.0-happy.1` of Happy's fork,
+All five executables are built from tag `v0.7.0-happy.2` of Happy's fork,
 [slopus/tailcat](https://github.com/slopus/tailcat) (commit
-[`1802747339966fc369fb00bbccc9a67d39f580e5`](https://github.com/slopus/tailcat/commit/1802747339966fc369fb00bbccc9a67d39f580e5)).
+[`de122ebfc8f3ec0cda0f8e72a34b6d6627240896`](https://github.com/slopus/tailcat/commit/de122ebfc8f3ec0cda0f8e72a34b6d6627240896)).
 That tag is upstream [tailscale/tailcat](https://github.com/tailscale/tailcat) `v0.7.0` (commit
 `15ab9e68bfc6534a61797d7af28cedd42b54a3a5`) plus these commits:
 
@@ -30,10 +30,17 @@ That tag is upstream [tailscale/tailcat](https://github.com/tailscale/tailcat) `
    the next, doubled, timeout, so a connection whose path dropped briefly repaired one or two
    segments per timeout. RACK no longer starts a recovery during timeout recovery, as RFC 6675
    already requires of the duplicate-ACK path.
-4. A README note describing the fork, which `tailcat readme` prints.
+4. [`593688625`](https://github.com/slopus/tailcat/commit/593688625db6efd03e9602816029a50b92a54f2d)
+   lets clients rejoin at once after the server restarts. A restarted server keeps its key but
+   loses its sessions, and it used to drop its clients' packets in silence until their own
+   timeouts made them reconnect, 5 to 15 seconds or longer. When something other than a meow
+   arrives over DERP from a client it would admit but holds no session for, it now answers with a
+   5-byte meow-again packet (`meow` then `0x03`), at most once a second per client. Clients that
+   don't know the packet ignore it.
+5. A README note describing the fork, which `tailcat readme` prints.
 
-The fork is not an official Tailscale release. It speaks the same protocol as upstream v0.7.0, so
-upstream Tailcat clients connect to it unchanged.
+The fork is not an official Tailscale release. Its only protocol addition is the meow-again reply,
+which upstream Tailcat clients ignore, so they connect to it unchanged.
 
 ## Build
 
@@ -41,7 +48,7 @@ Every executable was built with Go 1.27.1, `CGO_ENABLED=0`, the fork's `build-ta
 
 ```text
 GOOS=<os> GOARCH=<arch> go build -trimpath -buildvcs=false -tags "$(cat build-tags.txt)" \
-  -ldflags "-s -w -X main.version=v0.7.0-happy.1" ./cmd/tailcat
+  -ldflags "-s -w -X main.version=v0.7.0-happy.2" ./cmd/tailcat
 ```
 
 The build is reproducible: a fresh clone of the tag builds the same five hashes, and the same

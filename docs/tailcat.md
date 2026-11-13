@@ -1,6 +1,6 @@
 # Tailcat internet exposure
 
-Happy Agent release binaries embed Tailcat v0.7.0-happy.1 so a standalone or team daemon can be
+Happy Agent release binaries embed Tailcat v0.7.0-happy.2 so a standalone or team daemon can be
 reached from another machine through an encrypted, NAT-traversing Tailcat connection. It is
 upstream Tailcat v0.7.0 with Happy's fixes, built from the
 [slopus/tailcat](https://github.com/slopus/tailcat) fork; the patches are listed in
