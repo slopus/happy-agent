@@ -4103,7 +4103,7 @@ export class HappyAgentClient {
     // Attachments
 
     /**
-     * `PUT /v0/agents/:agentId/attachments?name=` — a whole file in one request, up to 256 MiB.
+     * `PUT /v0/agents/:agentId/attachments?name=` — a whole file in one request, up to 25 MiB.
      * Bytes the conversation already holds answer the existing attachment.
      */
     async uploadAttachment(

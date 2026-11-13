@@ -8,10 +8,12 @@ import { type Static, Type } from "@sinclair/typebox";
 
 import { timestampSchema } from "./common.js";
 
-/** The largest attachment: 2 GiB. */
-export const ATTACHMENT_MAX_SIZE = 2_147_483_648;
-/** The most bytes one upload request may carry: 256 MiB. */
-export const ATTACHMENT_MAX_REQUEST = 268_435_456;
+/** The largest attachment: 1 GiB. */
+export const ATTACHMENT_MAX_SIZE = 1_073_741_824;
+/** The most bytes one upload request may carry: 25 MiB. */
+export const ATTACHMENT_MAX_REQUEST = 26_214_400;
+/** The most requests carrying bytes that one chunked upload takes. */
+export const ATTACHMENT_MAX_CHUNKS = 4096;
 /** The most files one message may name. */
 export const MAX_MESSAGE_FILES = 32;
 
