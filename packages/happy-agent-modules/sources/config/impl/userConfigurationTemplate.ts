@@ -62,6 +62,13 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # enabled = false
 # port = 24779
 
+# Links this computer to a Happy account so its owner can reach it through the Happy Relay.
+# Nothing is linked or reachable until an admin bot is asked to do it.
+# [feature.account_link]
+# enabled = false
+# accounts_url = "https://accounts.example.com"
+# relay_url = "https://relay.accounts.example.com"
+
 # Phones pair by scanning a QR code and then connect straight to this daemon over their own
 # Tailcat socket, which is open only while a pairing is active or a phone is paired.
 # [feature.mobile_connector]
