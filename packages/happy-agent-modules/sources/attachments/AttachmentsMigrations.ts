@@ -86,13 +86,18 @@ export const attachmentsMigrations: readonly AgentModuleMigration[] = [
         },
     ],
     [
-        "002-attachment-chunks-and-publication",
+        "002-attachment-upload-chunks",
         async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
             await agentDatabaseRun(
                 database,
                 sql`ALTER TABLE ${sql.raw(ATTACHMENT_UPLOADS_TABLE)}
                     ADD COLUMN chunks INTEGER NOT NULL DEFAULT 0`,
             );
+        },
+    ],
+    [
+        "003-attachment-pending-files",
+        async (_ctx: Context, database: AgentDatabaseFacade<AgentDatabase>): Promise<void> => {
             await agentDatabaseRun(
                 database,
                 sql`ALTER TABLE ${sql.raw(ATTACHMENTS_TABLE)} ADD COLUMN pending_file_id TEXT`,

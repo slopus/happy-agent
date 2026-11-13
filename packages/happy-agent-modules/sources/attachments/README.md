@@ -56,11 +56,12 @@ DELETE /v0/agents/:id/attachments/:sha          cancel an upload or discard an u
   keeps the garbage row until the bytes are gone, so a crash or failed removal is retried.
 - Every file effect waits for the transaction it belongs to, so a caller's rollback leaves files
   as they were. A new attachment's row names its finished file in `pending_file_id`; the bytes are
-  stored after the row commits, and maintenance stores them if a crash came first. Upload files
-  are removed after the row ending them commits. Collected content is removed after the
-  collection commits, unless an attachment stored meanwhile, under the same in-process lock,
-  replaced it; its garbage row then decides again on the next pass. A rollback leaves at most an
-  unowned upload file for the stray sweep.
+  stored after the row commits, and the request fails if storing does. A retry of the same file
+  or maintenance stores them then, also only after its own transaction commits. Upload files are
+  removed after the row ending them commits. Collected content is removed after the collection
+  commits, unless any bytes were stored since its transaction began, under the same in-process
+  lock; its garbage rows then decide again on the next pass. A rollback leaves at most an unowned
+  upload file for the stray sweep.
 - `maintain` runs every hour as the durable `attachments.maintain` chain. It discards expired
   attachments and uploads, stores bytes a crash left unstored, collects garbage, and deletes upload files older than a day that no
   upload owns, such as an interrupted whole-file upload. Erasing an agent deletes its rows and

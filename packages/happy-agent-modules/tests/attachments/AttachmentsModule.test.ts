@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 
@@ -503,6 +503,62 @@ describe("AttachmentsModule", () => {
         expect(
             (await ctx.inTx((txCtx) => queryAttachment(txCtx, "agentone", id)))?.pendingFileId,
         ).toBeNull();
+    });
+
+    it("stores pending bytes only once maintenance's own transaction commits", async () => {
+        const { config, ctx, attachments } = await world();
+        const bytes = Buffer.from("rolled back with maintenance");
+        const rolledBack = new Error("rolled back");
+        await expect(
+            ctx.inTx(async (txCtx) => {
+                await attachments.upload(
+                    txCtx,
+                    "agentone",
+                    null,
+                    { name: "a.txt", contentType: undefined },
+                    body(bytes),
+                );
+                await attachments.maintain(txCtx, Date.now());
+                throw rolledBack;
+            }),
+        ).rejects.toBe(rolledBack);
+        expect(await exists(config.attachmentContentPath(sha256(bytes)))).toBe(false);
+    });
+
+    it("stores the bytes again when the same file is uploaded after storing them failed", async () => {
+        const { config, ctx, attachments, upload } = await world();
+        const bytes = Buffer.from("stored on the second try");
+        const id = sha256(bytes);
+        const contentPath = config.attachmentContentPath(id);
+        // A file where the content's folder belongs makes storing fail.
+        await mkdir(dirname(dirname(contentPath)), { recursive: true });
+        await writeFile(dirname(contentPath), "in the way");
+        await expect(upload("agentone", "a.txt", bytes)).rejects.toThrow();
+        await rm(dirname(contentPath));
+        expect(await upload("agentone", "a.txt", bytes)).toBe(id);
+        expect(await readFile(contentPath, "utf8")).toBe("stored on the second try");
+        expect(
+            (await ctx.inTx((txCtx) => queryAttachment(txCtx, "agentone", id)))?.pendingFileId,
+        ).toBeNull();
+    });
+
+    it("keeps shared bytes after a rolled-back collection of another conversation's copy", async () => {
+        const { config, ctx, attachments, upload } = await world();
+        const bytes = Buffer.from("shared after a rollback");
+        const id = await upload("agentone", "one.txt", bytes);
+        const rolledBack = new Error("rolled back");
+        await expect(
+            ctx.inTx(async (txCtx) => {
+                await attachments.delete(txCtx, "agentone", id);
+                await attachments.collect(txCtx, Date.now() + HOUR);
+                throw rolledBack;
+            }),
+        ).rejects.toBe(rolledBack);
+        await upload("agenttwo", "two.txt", bytes);
+        await attachments.collect(ctx, Date.now() + HOUR);
+        expect(await readFile(config.attachmentContentPath(id), "utf8")).toBe(
+            "shared after a rollback",
+        );
     });
 
     it("answers 404 when an upload expires or its agent is erased while its file is kept", async () => {

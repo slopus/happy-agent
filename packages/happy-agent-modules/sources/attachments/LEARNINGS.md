@@ -38,11 +38,15 @@ effect now runs after its transaction commits.
 
 Work that runs after a commit is lost in a crash and its failures are only logged, so each one
 keeps a durable record until it is done: an attachment row names its unstored file in
-`pending_file_id`, and a garbage row stays until its bytes are gone. The in-memory set that lets a
-new attachment cancel a pending removal is only a guard against the race; the garbage row is what
-decides, so a stale entry or a cancelled removal never leaks bytes. A finished file is recorded
-only after rechecking, in the recording transaction, that its upload is still live and its agent
-still exists.
+`pending_file_id`, and a garbage row stays until its bytes are gone. Recovery and retries store
+bytes only after their own transaction commits too. A collection skips its removals when any bytes
+were stored since it began; it keeps no per-digest state that a rollback could strand, and the
+garbage rows retry it. A finished file is recorded only after rechecking, in the recording
+transaction, that its upload is still live and its agent still exists.
+
+A migration, once written, keeps its name and contents even before release: Agent Base checks
+applied migration names, so renaming one breaks every database that already ran it. New columns go
+in a new migration.
 
 ## AVIF is a plain file
 

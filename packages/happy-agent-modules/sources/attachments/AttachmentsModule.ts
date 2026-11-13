@@ -96,11 +96,11 @@ export class AttachmentsModule implements AgentModule {
     #agents: AgentSystemRef | undefined;
     readonly #locks = new Map<string, Promise<unknown>>();
     /**
-     * Digests whose content a committed collection is about to delete. Publishing one of them
-     * replaces the content and cancels the deletion, so a row committed after the collection
-     * never points at deleted bytes.
+     * How many times bytes were stored. A collection removes content only when nothing was
+     * stored since its transaction began, so a row committed after it never points at bytes it
+     * deleted; skipped digests keep their garbage rows for the next pass.
      */
-    readonly #removals = new Set<string>();
+    #publications = 0;
 
     constructor(
         config: ConfigModule,
@@ -456,6 +456,7 @@ export class AttachmentsModule implements AgentModule {
         for (;;) {
             ctx.lifetime?.throwIfAborted();
             const due = await ctx.inTx(async (txCtx) => {
+                const seen = this.#publications;
                 const rows = await store.queryDueAttachmentGarbage(txCtx, now, after, BATCH);
                 const unused: string[] = [];
                 for (const { sha256, notBefore } of rows) {
@@ -469,11 +470,10 @@ export class AttachmentsModule implements AgentModule {
                     }
                 }
                 if (unused.length > 0) {
-                    for (const digest of unused) this.#removals.add(digest);
                     afterCommit(txCtx, () =>
                         this.#serialized(CONTENT_LOCK, async () => {
+                            if (this.#publications !== seen) return;
                             for (const digest of unused) {
-                                if (!this.#removals.delete(digest)) continue;
                                 await removeFile(this.#config.attachmentContentPath(digest));
                             }
                         }),
@@ -634,8 +634,17 @@ export class AttachmentsModule implements AgentModule {
         const path = this.#config.attachmentUploadPath(input.fileId);
         const held = await this.#holdIfPresent(ctx, input.agentId, input.id);
         if (held !== undefined) {
-            await ctx.inTx((txCtx) => this.#endUpload(txCtx, input.agentId, input.id));
-            await removeFile(path);
+            // Bytes an earlier attempt failed to store are stored now, or the request fails.
+            try {
+                const { error } = await this.#recordThenStore(ctx, async (txCtx) => {
+                    await this.#endUpload(txCtx, input.agentId, input.id);
+                    const row = await store.queryAttachment(txCtx, input.agentId, input.id);
+                    return { value: undefined, pending: row?.pendingFileId ? [row] : [] };
+                });
+                if (error !== undefined) throw error;
+            } finally {
+                await removeFile(path);
+            }
             return held;
         }
         const measured = await this.#chatMedia.describe(path, input.name, input.size);
@@ -666,10 +675,9 @@ export class AttachmentsModule implements AgentModule {
             expiresAt: now + ATTACHMENT_LIFETIME_MS,
             pendingFileId: input.fileId,
         };
-        // Set once the bytes were stored after the commit; a caller's transaction defers that.
-        let published: { readonly error?: unknown } | undefined;
+        let recorded: { readonly error?: unknown };
         try {
-            await ctx.inTx(async (txCtx) => {
+            recorded = await this.#recordThenStore(ctx, async (txCtx) => {
                 if (input.generation !== undefined) {
                     const upload = await store.queryUpload(txCtx, input.agentId, input.id);
                     if (upload?.fileId !== input.generation || upload.expiresAt <= Date.now()) {
@@ -687,24 +695,59 @@ export class AttachmentsModule implements AgentModule {
                 // storing after a crash; a rollback leaves the file to the stray sweep.
                 await store.insertAttachment(txCtx, row);
                 await this.#endUpload(txCtx, input.agentId, input.id);
-                afterCommit(txCtx, async () => {
-                    try {
-                        await this.#publish(input.id, path);
-                        published = {};
-                    } catch (error) {
-                        published = { error };
-                    }
-                });
+                return { value: undefined, pending: [row] };
             });
         } catch (error) {
             await removeFile(path);
             throw error;
         }
-        if (published !== undefined) {
-            if (published.error !== undefined) throw published.error;
-            await ctx.inTx((txCtx) => store.clearAttachmentPending(txCtx, row, input.fileId));
-        }
+        // The row keeps naming the file, so a retry or maintenance stores it.
+        if (recorded.error !== undefined) throw recorded.error;
         return attachmentResource(row);
+    }
+
+    /**
+     * Run `work` in a transaction and store the bytes of the pending attachments it answers once
+     * that transaction commits. As the outermost transaction, the bytes are stored by the time
+     * this returns: `error` says why storing failed, and success clears their pending records.
+     * Inside a caller's transaction storing waits for that commit, `stored` is false, and the
+     * records stay for maintenance to clear.
+     */
+    async #recordThenStore<T>(
+        ctx: Context,
+        work: (
+            txCtx: Context,
+        ) => Promise<{ readonly value: T; readonly pending: readonly StoredAttachment[] }>,
+    ): Promise<{ readonly value: T; readonly stored: boolean; readonly error?: unknown }> {
+        let outcome: { readonly error?: unknown } | undefined;
+        const { value, pending } = await ctx.inTx(async (txCtx) => {
+            const result = await work(txCtx);
+            if (result.pending.length > 0) {
+                afterCommit(txCtx, async () => {
+                    try {
+                        for (const row of result.pending) {
+                            await this.#publish(
+                                row.id,
+                                this.#config.attachmentUploadPath(row.pendingFileId!),
+                            );
+                        }
+                        outcome = {};
+                    } catch (error) {
+                        outcome = { error };
+                    }
+                });
+            }
+            return result;
+        });
+        if (pending.length === 0) return { value, stored: true };
+        if (outcome === undefined) return { value, stored: false };
+        if (outcome.error !== undefined) return { value, stored: false, error: outcome.error };
+        await ctx.inTx(async (txCtx) => {
+            for (const row of pending) {
+                await store.clearAttachmentPending(txCtx, row, row.pendingFileId!);
+            }
+        });
+        return { value, stored: true };
     }
 
     /**
@@ -713,13 +756,10 @@ export class AttachmentsModule implements AgentModule {
      */
     async #publish(id: string, path: string): Promise<void> {
         await this.#serialized(CONTENT_LOCK, async () => {
+            // A collection that saw no holder for these bytes skips its removal.
+            this.#publications += 1;
             if (!(await fileExists(path))) return;
-            const contentPath = this.#config.attachmentContentPath(id);
-            // A collection that saw no holder may be about to delete these bytes; the new copy
-            // replaces them and that deletion is skipped. The digest keeps its garbage row, so a
-            // later collection still deletes the bytes if nothing holds them then.
-            if (this.#removals.delete(id)) await removeFile(contentPath);
-            await storeUploadedContent(path, contentPath);
+            await storeUploadedContent(path, this.#config.attachmentContentPath(id));
         });
     }
 
@@ -792,13 +832,17 @@ export class AttachmentsModule implements AgentModule {
     async #finishPublishing(ctx: Context): Promise<void> {
         for (;;) {
             ctx.lifetime?.throwIfAborted();
-            const pending = await ctx.inTx((txCtx) => store.queryPendingAttachments(txCtx, BATCH));
-            for (const row of pending) {
-                const fileId = row.pendingFileId!;
-                await this.#publish(row.id, this.#config.attachmentUploadPath(fileId));
-                await ctx.inTx((txCtx) => store.clearAttachmentPending(txCtx, row, fileId));
-            }
-            if (pending.length < BATCH) return;
+            const {
+                value: count,
+                stored,
+                error,
+            } = await this.#recordThenStore(ctx, async (txCtx) => {
+                const pending = await store.queryPendingAttachments(txCtx, BATCH);
+                return { value: pending.length, pending };
+            });
+            if (error !== undefined) throw error;
+            // Inside a caller's transaction the records clear on a later pass.
+            if (!stored || count < BATCH) return;
         }
     }
 
