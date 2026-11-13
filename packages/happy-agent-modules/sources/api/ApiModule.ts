@@ -10897,6 +10897,7 @@ export class ApiModule implements AgentModule {
                 ...(this.#artifacts === undefined ? {} : { artifactCovers: true }),
                 ...(this.#userEnvironment === undefined ? {} : { userEnvironment: true }),
                 ...(this.#attachments === undefined ? {} : { attachments: true }),
+                ...(this.#secretRequests === undefined ? {} : { artifactSecretActions: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),

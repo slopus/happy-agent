@@ -59,6 +59,9 @@ describe("an agent asks for a secret through a Gen UI form", () => {
     it("gets the secret the person saved, then changed, and never a value", async () => {
         const gym = await stripeGym();
         const agentId = gym.defaultSessionId;
+        const { capabilities } = await gym.client.getHealth();
+        expect(capabilities?.artifactSecretActions).toBe(true);
+        expect(capabilities?.plugins).toBeUndefined();
         await gym.send("I want to add Stripe to the billing service.");
 
         const { artifacts } = await gym.http.ok<{
