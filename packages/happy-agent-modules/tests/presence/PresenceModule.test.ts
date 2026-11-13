@@ -169,9 +169,47 @@ answer_wait = "15m"
                 prompt: "Continue independently unless an answer is essential.",
             });
             const hooks = await resolveModuleHooks(database.context, module);
-            await expect(hooks.instructions!(database.context, {} as never)).resolves.toContain(
-                "Continue independently unless an answer is essential.",
-            );
+            // Presence reaches the model as a notice, never through the system prompt.
+            expect(hooks.instructions).toBeUndefined();
+            const history = new Map<string, unknown>();
+            const scope = {
+                historyKV: {
+                    read: async (_ctx: unknown, key: string) => history.get(key),
+                    write: async (_ctx: unknown, key: string, value: unknown) => {
+                        history.set(key, value);
+                    },
+                },
+            } as never;
+            const notices = async (type: "message" | "inference") =>
+                (
+                    (await hooks.systemNotificationsTransact!(database.context, scope, {
+                        type,
+                    } as never)) ?? []
+                ).map((message) => (message.content[0] as { text: string }).text);
+            expect(await notices("message")).toEqual([
+                "Current user presence: Focus time 🎧. Continue independently unless an answer is essential.",
+            ]);
+            // The same state is said once per history, at either boundary.
+            expect(await notices("inference")).toEqual([]);
+            expect(await notices("message")).toEqual([]);
+            // A change during work reaches the very next request.
+            await module.setPresence(database.context, { status: "away" });
+            expect(await notices("inference")).toEqual([
+                "Current user presence: Away 🌙. The user is away and cannot be reached. Do not wait for an answer. Decide with your best judgement, keep working, and record anything the user should look at later.",
+            ]);
+            // Compaction empties the history's store, so the state is told afresh.
+            history.clear();
+            expect(await notices("inference")).toHaveLength(1);
+            // A history that heard of a presence hears when it is cleared, once.
+            await module.clear(database.context);
+            expect(await notices("message")).toEqual([
+                "Current user presence: not set. The earlier presence guidance no longer applies.",
+            ]);
+            expect(await notices("message")).toEqual([]);
+            // One that never heard of any is told nothing while none is set.
+            history.clear();
+            expect(await notices("message")).toEqual([]);
+            expect(history.size).toBe(0);
 
             const persisted = {
                 id: "meeting",

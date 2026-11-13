@@ -412,9 +412,33 @@ export class PresenceModule implements AgentModule, PresenceReader {
     }
 
     readonly #hooks: AgentModuleHooks = {
-        instructions: async (ctx: Context, _scope: AgentModuleScope): Promise<string> => {
+        /**
+         * Tell the model the person's presence, and again whenever it changes, as a notice in the
+         * conversation.
+         *
+         * Presence changes while agents work: the person sets it, a temporary state expires, a
+         * schedule starts. In the system prompt each change rewrote the prefix of everything
+         * already sent, which Claude models with preserved thinking reject and which cost every
+         * model its prompt cache. A notice is appended instead.
+         *
+         * The history remembers the guidance it was last told, so the same state is said once.
+         * Both boundaries are checked: a change during work reaches the very next request, and a
+         * compacted history, whose store is empty again, is told afresh.
+         */
+        systemNotificationsTransact: async (ctx: Context, scope: AgentModuleScope) => {
             const current = await this.read(ctx);
-            return current === undefined ? "" : formatPresenceInstruction(current);
+            const guidance = current === undefined ? "" : formatPresenceInstruction(current);
+            const told = await scope.historyKV.read(ctx, PRESENCE_TOLD_KEY);
+            if (told === guidance) return;
+            // A history that heard of no presence needs no word that there is none.
+            if (told === undefined && guidance === "") return;
+            await scope.historyKV.write(ctx, PRESENCE_TOLD_KEY, guidance);
+            return [
+                {
+                    role: "system",
+                    content: [{ type: "text", text: guidance === "" ? PRESENCE_UNSET : guidance }],
+                },
+            ];
         },
 
         tools: (_ctx: Context, _scope: AgentModuleScope): readonly AnyAgentTool[] => [
@@ -788,6 +812,13 @@ function sameReference(
 function cloneCatalog(catalog: readonly PresenceDefinition[]): readonly PresenceDefinition[] {
     return catalog.map((definition) => cloneValue(definition));
 }
+
+/** The presence guidance the current history was last told; empty once told there is none. */
+const PRESENCE_TOLD_KEY = "presenceTold";
+
+/** Said only to a history that was told of a presence which has since been cleared. */
+const PRESENCE_UNSET =
+    "Current user presence: not set. The earlier presence guidance no longer applies.";
 
 /** Format the full model-facing guidance for the current effective state. */
 export function formatPresenceInstruction(state: PresenceState): string {

@@ -54,11 +54,20 @@ built-in `status` or catalog `presenceId`, plus an absolute `until` timestamp an
 The mutation tool is durable and transactional, so Agent Base commits the stored presence and
 completed tool result together without a module-owned replay ledger.
 
-The module contributes the effective state to system instructions, including its default prompt:
+The module tells every agent the effective state, including its default prompt, as a system notice
+in the conversation:
 
 ```text
 Current user presence: Away 🌙. The user is away and cannot be reached. Do not wait for an answer. Decide with your best judgement, keep working, and record anything the user should look at later.
 ```
+
+Presence is never part of the system prompt. It changes while agents work — the person sets it, a
+temporary state expires, a schedule starts — and a system prompt that changes mid-conversation
+invalidates the prompt cache and, on Claude models with preserved thinking, the thinking blocks
+already sent. The notice is appended instead: each history is told the current state before its
+next message or inference, told again only when the guidance changes, and told afresh after
+compaction. A history that was told of a presence hears when it is cleared; one that never heard
+of any is told nothing while none is set.
 
 ## Direct operations
 
