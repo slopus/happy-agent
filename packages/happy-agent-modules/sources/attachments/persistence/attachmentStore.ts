@@ -34,6 +34,7 @@ interface AttachmentRow {
     readonly created_at: Numeric;
     readonly sent_at: Numeric | null;
     readonly expires_at: Numeric | null;
+    readonly pending_file_id: string | null;
 }
 
 interface UploadRow {
@@ -51,7 +52,7 @@ interface UploadRow {
 }
 
 const ATTACHMENT_COLUMNS = sql.raw(
-    "agent_id, id, name, kind, mime_type, size, width, height, thumbhash, scale, uploaded_by, created_at, sent_at, expires_at",
+    "agent_id, id, name, kind, mime_type, size, width, height, thumbhash, scale, uploaded_by, created_at, sent_at, expires_at, pending_file_id",
 );
 const UPLOAD_COLUMNS = sql.raw(
     "agent_id, id, file_id, name, content_type, size, received_json, chunks, uploaded_by, created_at, expires_at",
@@ -103,7 +104,7 @@ export async function insertAttachment(ctx: Context, row: StoredAttachment): Pro
         sql`INSERT INTO ${sql.raw(ATTACHMENTS_TABLE)} (${ATTACHMENT_COLUMNS}) VALUES (
             ${row.agentId}, ${row.id}, ${row.name}, ${row.kind}, ${row.mimeType}, ${row.size},
             ${row.width}, ${row.height}, ${row.thumbhash}, ${row.scale}, ${row.uploadedBy},
-            ${row.createdAt}, ${row.sentAt}, ${row.expiresAt}
+            ${row.createdAt}, ${row.sentAt}, ${row.expiresAt}, ${row.pendingFileId}
         )`,
     );
 }
@@ -118,6 +119,33 @@ export async function updateAttachmentLifetime(
         sql`UPDATE ${sql.raw(ATTACHMENTS_TABLE)}
             SET sent_at = ${row.sentAt}, expires_at = ${row.expiresAt}
             WHERE agent_id = ${row.agentId} AND id = ${row.id}`,
+    );
+}
+
+/** Attachments whose bytes are still to be stored, oldest first. */
+export async function queryPendingAttachments(
+    ctx: Context,
+    limit: number,
+): Promise<readonly StoredAttachment[]> {
+    return (
+        await rows<AttachmentRow>(
+            ctx,
+            sql`SELECT ${ATTACHMENT_COLUMNS} FROM ${sql.raw(ATTACHMENTS_TABLE)}
+                WHERE pending_file_id IS NOT NULL ORDER BY created_at LIMIT ${limit}`,
+        )
+    ).map(attachmentFromRow);
+}
+
+/** Record that an attachment's bytes were stored from this file. */
+export async function clearAttachmentPending(
+    ctx: Context,
+    row: Pick<StoredAttachment, "agentId" | "id">,
+    fileId: string,
+): Promise<void> {
+    await run(
+        ctx,
+        sql`UPDATE ${sql.raw(ATTACHMENTS_TABLE)} SET pending_file_id = NULL
+            WHERE agent_id = ${row.agentId} AND id = ${row.id} AND pending_file_id = ${fileId}`,
     );
 }
 
@@ -158,12 +186,14 @@ export async function queryExpiredUploads(
     ).map(uploadFromRow);
 }
 
-/** Whether an upload still owns this private file. */
+/** Whether an upload, or an attachment whose bytes are still to be stored, owns this file. */
 export async function queryUploadFileOwned(ctx: Context, fileId: string): Promise<boolean> {
     const found = await rows<{ found: number }>(
         ctx,
-        sql`SELECT 1 AS found FROM ${sql.raw(ATTACHMENT_UPLOADS_TABLE)}
-            WHERE file_id = ${fileId} LIMIT 1`,
+        sql`SELECT 1 AS found FROM ${sql.raw(ATTACHMENT_UPLOADS_TABLE)} WHERE file_id = ${fileId}
+            UNION ALL
+            SELECT 1 AS found FROM ${sql.raw(ATTACHMENTS_TABLE)} WHERE pending_file_id = ${fileId}
+            LIMIT 1`,
     );
     return found.length > 0;
 }
@@ -260,19 +290,21 @@ export async function addAttachmentGarbage(
     }
 }
 
-/** Digests whose wait is over, oldest first. */
+/** Digests whose wait is over, in digest order after `after`. */
 export async function queryDueAttachmentGarbage(
     ctx: Context,
     now: number,
+    after: string,
     limit: number,
-): Promise<readonly string[]> {
+): Promise<readonly { readonly sha256: string; readonly notBefore: number }[]> {
     return (
-        await rows<{ sha256: string }>(
+        await rows<{ sha256: string; not_before: Numeric }>(
             ctx,
-            sql`SELECT sha256 FROM ${sql.raw(ATTACHMENT_GARBAGE_TABLE)}
-                WHERE not_before <= ${now} ORDER BY not_before LIMIT ${limit}`,
+            sql`SELECT sha256, not_before FROM ${sql.raw(ATTACHMENT_GARBAGE_TABLE)}
+                WHERE not_before <= ${now} AND sha256 > ${after}
+                ORDER BY sha256 LIMIT ${limit}`,
         )
-    ).map((row) => row.sha256);
+    ).map((row) => ({ sha256: row.sha256, notBefore: Number(row.not_before) }));
 }
 
 export async function deleteAttachmentGarbage(ctx: Context, sha256: string): Promise<void> {
@@ -299,6 +331,7 @@ function attachmentFromRow(row: AttachmentRow): StoredAttachment {
         createdAt: Number(row.created_at),
         sentAt: optional(row.sent_at),
         expiresAt: optional(row.expires_at),
+        pendingFileId: row.pending_file_id,
     };
 }
 

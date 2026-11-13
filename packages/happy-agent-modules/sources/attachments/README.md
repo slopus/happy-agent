@@ -43,23 +43,26 @@ DELETE /v0/agents/:id/attachments/:sha          cancel an upload or discard an u
 - `Content-Range: bytes */size` with no body starts the upload when there is none and answers
   where it stands; one with a body is refused. Any request for an ID the conversation already
   holds answers the attachment without reading the body. A whole file sent to an ID with an
-  upload in progress counts against that upload, and answers 404 when the upload is cancelled or
-  expires before it finishes, as a chunk does.
+  upload in progress counts against that upload. A file finishing an upload is recorded only
+  while that upload is still live and its agent exists, checked in the transaction that records
+  it, so a request whose upload was cancelled, expired, or erased meanwhile answers 404.
 - The API stores the blocks `send` returns in the pending row, which History records as the
   accepted message's blocks; Agent Base receives a text note in place of each file.
 - Unsent attachments and unfinished uploads expire 24 hours after they last received bytes.
   Anyone who may send to the agent may upload, send, and cancel; anyone who may read the
   conversation may download. Sent attachments cannot be removed yet.
 - Content is stored once per digest across conversations. Every time a digest might become unused
-  it gets a garbage row; `collect` deletes the bytes only when no attachment row still holds the
-  digest.
+  it gets a garbage row. `collect` deletes the bytes when no attachment row holds the digest, and
+  keeps the garbage row until the bytes are gone, so a crash or failed removal is retried.
 - Every file effect waits for the transaction it belongs to, so a caller's rollback leaves files
-  as they were. A new attachment's bytes are stored after its row commits; upload files are
-  removed after the row ending them commits; collected content is removed after the collection
-  commits, unless an attachment published meanwhile, under the same in-process lock, cancelled
-  the removal. A rollback leaves at most an unowned upload file for the stray sweep.
+  as they were. A new attachment's row names its finished file in `pending_file_id`; the bytes are
+  stored after the row commits, and maintenance stores them if a crash came first. Upload files
+  are removed after the row ending them commits. Collected content is removed after the
+  collection commits, unless an attachment stored meanwhile, under the same in-process lock,
+  replaced it; its garbage row then decides again on the next pass. A rollback leaves at most an
+  unowned upload file for the stray sweep.
 - `maintain` runs every hour as the durable `attachments.maintain` chain. It discards expired
-  attachments and uploads, collects garbage, and deletes upload files older than a day that no
+  attachments and uploads, stores bytes a crash left unstored, collects garbage, and deletes upload files older than a day that no
   upload owns, such as an interrupted whole-file upload. Erasing an agent deletes its rows and
   notes their digests as garbage. Archiving keeps everything.
 
@@ -81,7 +84,8 @@ written.
 ## Tables
 
 - `happy_agent_module_attachments`: one row per conversation and digest. `sent_at` is null until
-  a message sends it, and `expires_at` is null after.
+  a message sends it, and `expires_at` is null after. `pending_file_id` names the finished file
+  its bytes are still to be stored from.
 - `happy_agent_module_attachment_uploads`: one row per chunked upload still missing bytes, with
   its merged byte ranges, how many requests carried bytes to it, and the private file they
   accumulate in.

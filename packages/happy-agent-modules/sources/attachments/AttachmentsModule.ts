@@ -8,6 +8,7 @@ import type {
     AgentModuleAgentLifecycle,
     AgentModuleHooks,
     AgentModuleScope,
+    AgentSystemRef,
     AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import { afterCommit, delay, type Context } from "@steve.kite/stdlib";
@@ -92,6 +93,7 @@ export class AttachmentsModule implements AgentModule {
     readonly #durable: DurableFunctionsModule;
     readonly #chatMedia: ChatMediaModule;
     readonly #compute: ComputeModule;
+    #agents: AgentSystemRef | undefined;
     readonly #locks = new Map<string, Promise<unknown>>();
     /**
      * Digests whose content a committed collection is about to delete. Publishing one of them
@@ -150,7 +152,10 @@ export class AttachmentsModule implements AgentModule {
         },
     };
 
-    readonly beforeStart = (): AgentModuleHooks => this.#hooks;
+    readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
+        this.#agents = agents;
+        return this.#hooks;
+    };
 
     // Uploading
 
@@ -181,6 +186,7 @@ export class AttachmentsModule implements AgentModule {
                     name,
                     contentType: specificContentType(file.contentType),
                     uploader,
+                    generation: undefined,
                 }),
         );
     }
@@ -222,24 +228,20 @@ export class AttachmentsModule implements AgentModule {
                 throw mismatch();
             }
             return {
-                attachment: await this.#serialized(key, async () => {
-                    if (admitted.generation !== undefined) {
-                        const current = await this.#liveUpload(ctx, agentId, attachmentId);
-                        if (current?.fileId !== admitted.generation) {
-                            await removeFile(path);
-                            return await this.#heldOrGone(ctx, agentId, attachmentId);
-                        }
-                    }
-                    return await this.#keep(ctx, {
-                        agentId,
-                        id: attachmentId,
-                        size: received.size,
-                        fileId,
-                        name,
-                        contentType: specificContentType(file.contentType),
-                        uploader,
-                    });
-                }),
+                attachment: await this.#serialized(
+                    key,
+                    async () =>
+                        await this.#keep(ctx, {
+                            agentId,
+                            id: attachmentId,
+                            size: received.size,
+                            fileId,
+                            name,
+                            contentType: specificContentType(file.contentType),
+                            uploader,
+                            generation: admitted.generation,
+                        }),
+                ),
             };
         }
         if (range.type === "status" && !(await isEmpty(body))) {
@@ -439,27 +441,35 @@ export class AttachmentsModule implements AgentModule {
             });
             if (count < BATCH) break;
         }
+        await this.#finishPublishing(ctx);
         await this.collect(ctx, now);
         await this.#sweepStrays(ctx, now);
     }
 
     /**
-     * Delete stored content no conversation holds, once its wait is over. The bytes go only after
-     * the transaction deciding it commits, unless an attachment published since holds them again.
+     * Delete stored content no conversation holds, once its wait is over. A digest's garbage row
+     * stays until its bytes are gone, so a crash or a failed removal is retried; the bytes go
+     * after the transaction deciding it commits, unless an attachment stored since holds them.
      */
     async collect(ctx: Context, now: number): Promise<void> {
+        let after = "";
         for (;;) {
             ctx.lifetime?.throwIfAborted();
-            const count = await ctx.inTx(async (txCtx) => {
-                const digests = await store.queryDueAttachmentGarbage(txCtx, now, BATCH);
+            const due = await ctx.inTx(async (txCtx) => {
+                const rows = await store.queryDueAttachmentGarbage(txCtx, now, after, BATCH);
                 const unused: string[] = [];
-                for (const digest of digests) {
-                    if (!(await store.queryAttachmentContentHeld(txCtx, digest))) {
-                        unused.push(digest);
+                for (const { sha256, notBefore } of rows) {
+                    if (await store.queryAttachmentContentHeld(txCtx, sha256)) {
+                        await store.deleteAttachmentGarbage(txCtx, sha256);
+                    } else if (await fileExists(this.#config.attachmentContentPath(sha256))) {
+                        unused.push(sha256);
+                    } else if (notBefore <= now - DAY) {
+                        // Gone, and nothing committed a day ago is still about to store it.
+                        await store.deleteAttachmentGarbage(txCtx, sha256);
                     }
-                    await store.deleteAttachmentGarbage(txCtx, digest);
                 }
                 if (unused.length > 0) {
+                    for (const digest of unused) this.#removals.add(digest);
                     afterCommit(txCtx, () =>
                         this.#serialized(CONTENT_LOCK, async () => {
                             for (const digest of unused) {
@@ -468,11 +478,11 @@ export class AttachmentsModule implements AgentModule {
                             }
                         }),
                     );
-                    for (const digest of unused) this.#removals.add(digest);
                 }
-                return digests.length;
+                return rows;
             });
-            if (count < BATCH) return;
+            if (due.length < BATCH) return;
+            after = due[due.length - 1]!.sha256;
         }
     }
 
@@ -596,14 +606,16 @@ export class AttachmentsModule implements AgentModule {
             name: upload.name,
             contentType: upload.contentType,
             uploader: upload.uploadedBy,
+            generation: upload.fileId,
         });
     }
 
     /**
      * Make a received file, whose digest is `id`, an attachment of the conversation: measure it,
-     * store its bytes under their digest, and record it, ending any upload of the same ID. When
-     * the conversation already holds it, the file is dropped and the attachment is kept another
-     * 24 hours. The caller holds this ID's lock.
+     * record it, and store its bytes under their digest once the row commits, ending any upload of
+     * the same ID. When the conversation already holds it, the file is dropped and the attachment
+     * is kept another 24 hours. A file finishing an upload, `generation`, becomes the attachment
+     * only while that upload is live and the agent exists. The caller holds this ID's lock.
      */
     async #keep(
         ctx: Context,
@@ -615,6 +627,8 @@ export class AttachmentsModule implements AgentModule {
             readonly name: string;
             readonly contentType: string | null;
             readonly uploader: AttachmentUploader;
+            /** The upload this file finishes, which must still be live when it is recorded. */
+            readonly generation: string | undefined;
         },
     ): Promise<AttachmentResource> {
         const path = this.#config.attachmentUploadPath(input.fileId);
@@ -650,35 +664,68 @@ export class AttachmentsModule implements AgentModule {
             createdAt: now,
             sentAt: null,
             expiresAt: now + ATTACHMENT_LIFETIME_MS,
+            pendingFileId: input.fileId,
         };
+        // Set once the bytes were stored after the commit; a caller's transaction defers that.
+        let published: { readonly error?: unknown } | undefined;
         try {
             await ctx.inTx(async (txCtx) => {
+                if (input.generation !== undefined) {
+                    const upload = await store.queryUpload(txCtx, input.agentId, input.id);
+                    if (upload?.fileId !== input.generation || upload.expiresAt <= Date.now()) {
+                        throw gone();
+                    }
+                }
+                if ((await this.#started().config(txCtx, input.agentId)) === undefined) {
+                    throw gone();
+                }
                 // An expired row maintenance has not removed yet gives way to the new one.
                 if ((await store.queryAttachment(txCtx, input.agentId, input.id)) !== undefined) {
                     await store.deleteAttachment(txCtx, input.agentId, input.id);
                 }
+                // The row names the file until its bytes are stored, so maintenance finishes the
+                // storing after a crash; a rollback leaves the file to the stray sweep.
                 await store.insertAttachment(txCtx, row);
                 await this.#endUpload(txCtx, input.agentId, input.id);
-                // The bytes are stored only once the row holding them commits; a rollback leaves
-                // the file to the stray sweep.
-                afterCommit(txCtx, () => this.#publish(input.id, path));
+                afterCommit(txCtx, async () => {
+                    try {
+                        await this.#publish(input.id, path);
+                        published = {};
+                    } catch (error) {
+                        published = { error };
+                    }
+                });
             });
         } catch (error) {
             await removeFile(path);
             throw error;
         }
+        if (published !== undefined) {
+            if (published.error !== undefined) throw published.error;
+            await ctx.inTx((txCtx) => store.clearAttachmentPending(txCtx, row, input.fileId));
+        }
         return attachmentResource(row);
     }
 
-    /** Store a finished file as its digest's content, after the row holding it committed. */
+    /**
+     * Store a finished file as its digest's content, after the row holding it committed. A file
+     * already gone was stored by maintenance or an earlier attempt.
+     */
     async #publish(id: string, path: string): Promise<void> {
         await this.#serialized(CONTENT_LOCK, async () => {
+            if (!(await fileExists(path))) return;
             const contentPath = this.#config.attachmentContentPath(id);
-            // A collection that saw no holder is about to delete these bytes; the new copy
-            // replaces them and the deletion is cancelled.
+            // A collection that saw no holder may be about to delete these bytes; the new copy
+            // replaces them and that deletion is skipped. The digest keeps its garbage row, so a
+            // later collection still deletes the bytes if nothing holds them then.
             if (this.#removals.delete(id)) await removeFile(contentPath);
             await storeUploadedContent(path, contentPath);
         });
+    }
+
+    #started(): AgentSystemRef {
+        if (this.#agents === undefined) throw new Error("The attachments module has not started.");
+        return this.#agents;
     }
 
     /**
@@ -718,10 +765,7 @@ export class AttachmentsModule implements AgentModule {
     ): Promise<AttachmentResource> {
         const finished = await this.#holdIfPresent(ctx, agentId, attachmentId);
         if (finished !== undefined) return finished;
-        throw new AttachmentError(
-            "not_found",
-            "The upload was cancelled or expired; upload the file again.",
-        );
+        throw gone();
     }
 
     /** One attachment of the conversation that has not expired. */
@@ -742,6 +786,20 @@ export class AttachmentsModule implements AgentModule {
         await store.addAttachmentGarbage(ctx, digests, Date.now());
         // A crash before these run leaves the files to the stray sweep.
         for (const fileId of fileIds) this.#removeUploadFileAfterCommit(ctx, fileId);
+    }
+
+    /** Store the bytes of attachments recorded before a crash stopped their storing. */
+    async #finishPublishing(ctx: Context): Promise<void> {
+        for (;;) {
+            ctx.lifetime?.throwIfAborted();
+            const pending = await ctx.inTx((txCtx) => store.queryPendingAttachments(txCtx, BATCH));
+            for (const row of pending) {
+                const fileId = row.pendingFileId!;
+                await this.#publish(row.id, this.#config.attachmentUploadPath(fileId));
+                await ctx.inTx((txCtx) => store.clearAttachmentPending(txCtx, row, fileId));
+            }
+            if (pending.length < BATCH) return;
+        }
     }
 
     /** Files in the upload folder that no upload owns, left by an interrupted request. */
@@ -850,6 +908,13 @@ function tooLarge(): AttachmentError {
     return new AttachmentError(
         "attachment_too_large",
         "An attachment is at most 1 GiB, and one request carries at most 25 MiB.",
+    );
+}
+
+function gone(): AttachmentError {
+    return new AttachmentError(
+        "not_found",
+        "The upload was cancelled or expired; upload the file again.",
     );
 }
 

@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { access, readdir, readFile, utimes, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, mkdir, readdir, readFile, utimes, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 
 import {
     withAgentPermissionMode,
     type AgentModuleScope,
+    type AgentSystemRef,
     type AnyAgentTool,
 } from "@slopus/happy-agent-base";
 import sharp from "sharp";
@@ -21,6 +22,7 @@ import type { HostCompute } from "../../sources/compute/index.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { HistoryModule } from "../../sources/history/index.js";
 import {
+    insertAttachment,
     queryAttachment,
     queryUpload,
     updateAttachmentLifetime,
@@ -55,16 +57,33 @@ async function exists(path: string): Promise<boolean> {
     }
 }
 
+/** Chat media whose measuring waits while `hold` is set, to pause an attachment being kept. */
+class HeldChatMedia extends ChatMediaModule {
+    hold: Promise<void> | undefined;
+    measuring: (() => void) | undefined;
+
+    override async describe(path: string, name: string, size: number) {
+        this.measuring?.();
+        await this.hold;
+        return await super.describe(path, name, size);
+    }
+}
+
 async function world() {
     const config = await temporaryTestConfig();
     const history = new HistoryModule();
     const compute = new FakeCompute();
+    const chatMedia = new HeldChatMedia(config, history);
     const attachments = new AttachmentsModule(
         config,
         new DurableFunctionsModule(),
-        new ChatMediaModule(config, history),
+        chatMedia,
         scriptedComputeModule(async () => compute as unknown as HostCompute),
     );
+    const erased = new Set<string>();
+    const agents = {
+        config: async (_ctx: unknown, agentId: string) => (erased.has(agentId) ? undefined : {}),
+    } as unknown as AgentSystemRef;
     const database = moduleDatabase(
         [...history.migrations, ...attachments.migrations],
         "attachments-test",
@@ -72,7 +91,17 @@ async function world() {
     closers.push(database.close);
     await database.ready;
     const ctx = database.context;
+    const hooks = attachments.beforeStart(ctx, agents);
     return {
+        chatMedia,
+        hooks,
+        /** Erase an agent as Agent Base does, with the module's hook in its transaction. */
+        erase: async (agentId: string) => {
+            erased.add(agentId);
+            await ctx.inTx((txCtx) =>
+                hooks.agentErasedTransact!(txCtx, {} as never, { id: agentId } as never),
+            );
+        },
         config,
         compute,
         ctx,
@@ -80,7 +109,7 @@ async function world() {
         upload: async (agentId: string, name: string, bytes: Uint8Array, contentType?: string) =>
             (await attachments.upload(ctx, agentId, null, { name, contentType }, body(bytes))).id,
         tool: async (agentId: string): Promise<AnyAgentTool> => {
-            const tools = await attachments.beforeStart().tools!(ctx, {
+            const tools = await hooks.tools!(ctx, {
                 agent: { id: agentId },
             } as AgentModuleScope);
             return tools.find((tool) => tool.name === "read_attachment")!;
@@ -420,6 +449,107 @@ describe("AttachmentsModule", () => {
         expect(await exists(config.attachmentContentPath(id))).toBe(true);
     });
 
+    it("deletes bytes an attachment uploaded, deleted, and collected in one transaction left", async () => {
+        const { config, ctx, attachments } = await world();
+        const bytes = Buffer.from("short lived");
+        const id = sha256(bytes);
+        await ctx.inTx(async (txCtx) => {
+            await attachments.upload(
+                txCtx,
+                "agentone",
+                null,
+                { name: "a.txt", contentType: undefined },
+                body(bytes),
+            );
+            await attachments.delete(txCtx, "agentone", id);
+            await attachments.collect(txCtx, Date.now() + HOUR);
+        });
+        await attachments.collect(ctx, Date.now() + HOUR);
+        expect(await exists(config.attachmentContentPath(id))).toBe(false);
+    });
+
+    it("stores the bytes of an attachment recorded just before a crash", async () => {
+        const { config, ctx, attachments } = await world();
+        const bytes = Buffer.from("recorded, not stored");
+        const id = sha256(bytes);
+        const fileId = "crashedfile";
+        await mkdir(dirname(config.attachmentUploadPath(fileId)), { recursive: true });
+        await writeFile(config.attachmentUploadPath(fileId), bytes);
+        const now = Date.now();
+        await ctx.inTx((txCtx) =>
+            insertAttachment(txCtx, {
+                agentId: "agentone",
+                id,
+                name: "a.txt",
+                kind: "file",
+                mimeType: "text/plain",
+                size: bytes.byteLength,
+                width: null,
+                height: null,
+                thumbhash: null,
+                scale: null,
+                uploadedBy: null,
+                createdAt: now,
+                sentAt: null,
+                expiresAt: now + HOUR,
+                pendingFileId: fileId,
+            }),
+        );
+        await attachments.maintain(ctx, now);
+        expect(await readFile(config.attachmentContentPath(id), "utf8")).toBe(
+            "recorded, not stored",
+        );
+        expect(await exists(config.attachmentUploadPath(fileId))).toBe(false);
+        expect(
+            (await ctx.inTx((txCtx) => queryAttachment(txCtx, "agentone", id)))?.pendingFileId,
+        ).toBeNull();
+    });
+
+    it("answers 404 when an upload expires or its agent is erased while its file is kept", async () => {
+        const { config, ctx, attachments, chatMedia, erase } = await world();
+        const pause = () => {
+            let release!: () => void;
+            chatMedia.hold = new Promise<void>((resolve) => (release = resolve));
+            const measuring = new Promise<void>((resolve) => (chatMedia.measuring = resolve));
+            return { measuring, release };
+        };
+        const bytes = Buffer.from("ab");
+        const id = sha256(bytes);
+        const file = { name: "ab.txt", contentType: "text/plain" };
+        const send = (start: number) =>
+            attachments.receive(
+                ctx,
+                "agentone",
+                null,
+                id,
+                file,
+                { type: "bytes", start, end: start, size: 2 },
+                body(bytes.subarray(start, start + 1)),
+            );
+        await send(0);
+        const expiring = pause();
+        const finishing = send(1);
+        await expiring.measuring;
+        await attachments.maintain(ctx, Date.now() + 25 * HOUR);
+        expiring.release();
+        expect(await code(finishing)).toBe("not_found");
+        expect(await code(attachments.content(ctx, "agentone", id))).toBe("not_found");
+
+        const erasing = pause();
+        const uploading = attachments.upload(
+            ctx,
+            "agentone",
+            null,
+            { name: "ab.txt", contentType: undefined },
+            body(bytes),
+        );
+        await erasing.measuring;
+        await erase("agentone");
+        erasing.release();
+        expect(await code(uploading)).toBe("not_found");
+        expect(await exists(config.attachmentContentPath(id))).toBe(false);
+    });
+
     it("takes at most 4,096 requests carrying bytes per upload, resent ones included", async () => {
         const { ctx, attachments } = await world();
         const bytes = Buffer.from("ab");
@@ -546,7 +676,7 @@ describe("AttachmentsModule", () => {
     });
 
     it("keeps shared content until no conversation holds it", async () => {
-        const { config, ctx, attachments, upload } = await world();
+        const { config, ctx, attachments, upload, erase } = await world();
         const bytes = Buffer.from("the same bytes");
         const id = await upload("agentone", "one.txt", bytes);
         await upload("agenttwo", "two.txt", bytes);
@@ -559,14 +689,7 @@ describe("AttachmentsModule", () => {
         expect(await exists(content)).toBe(true);
 
         // Erasing the last conversation holding it frees it.
-        await ctx.inTx(
-            async (txCtx) =>
-                await attachments.beforeStart().agentErasedTransact!(
-                    txCtx,
-                    {} as never,
-                    { id: "agentone" } as never,
-                ),
-        );
+        await erase("agentone");
         await attachments.collect(ctx, Date.now() + HOUR);
         expect(await exists(content)).toBe(false);
     });

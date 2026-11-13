@@ -49,6 +49,8 @@ export interface StoredAttachment {
     readonly sentAt: number | null;
     /** When an unsent attachment is discarded; null once sent. */
     readonly expiresAt: number | null;
+    /** The finished upload file its bytes are still to be stored from; null once stored. */
+    readonly pendingFileId: string | null;
 }
 
 /** One inclusive byte range, as in `Content-Range`. */
