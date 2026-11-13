@@ -191,6 +191,53 @@ What a client still decides: how each token looks, the real pixel layout,
 scrolling and snapping physics, the image viewer, press and disabled states,
 motion, accessibility wiring.
 
+### Measuring
+
+A render document can sit anywhere: in a chat, in an artifact viewer, in a
+vault, beside other views in a list. A host must therefore know its height
+before drawing it, and that height must never change on its own. These rules
+are normative. They add no dimensions to the document: every number below is
+the platform's.
+
+- **M1. Width in, height out.** A document fills the width it is given and
+  has no width of its own. Its height is a pure function of the document,
+  that width, the platform's tokens, the platform's text engine, and the
+  person's text-size setting. Hosts offer at least 240pt.
+- **M2. What never changes the height.** Image loading, loaded or failed;
+  light or dark; pressed, hovered, focused, chosen or disabled elements,
+  including actions the host cannot run; animation, such as the active step;
+  scroll position inside `scroll` and `code`; time; the network.
+- **M3. Images reserve their final box.** An image's box comes from the width
+  offered, its `shape` and `role`, and for a `figure` the ratio of its stored
+  `width` and `height`, capped at the platform's figure height. The loaded
+  bitmap never resizes it.
+- **M4. Text is measured by what draws it.** Text is measured with the same
+  engine, font, spans and marks that draw it, at the person's text size.
+  `clamp` cuts at a line count the platform fixes per text role, so text
+  past that count measures the same however long it is; `truncate` is one
+  line; `wrap` is every line.
+- **M5. A `switch` picks by its own width.** It shows `compact` when the
+  width offered to the switch itself is below 560pt, and `regular` from
+  560pt. Nothing else picks the branch.
+- **M6. A `scroll` is as tall as its tallest tile.** Every tile is measured
+  at the platform's tile width, including those off screen, so scrolling
+  never changes the height.
+- **M7. A `plot` is as tall as its width says.** The plot area's height is a
+  platform function of width and `kind` alone; its legend rows are measured
+  as text. Values never change it.
+- **M8. `code` never wraps.** Long lines scroll sideways. Its height is its
+  line count, up to a platform cap, times its line height. It never expands
+  in place; a longer view opens elsewhere.
+- **M9. Measure once, then cache.** Because of M1, a host caches the measured
+  layout by artifact version, width and text-size category, and measures
+  again only when one of them changes. It never measures per frame, and it
+  can measure away from the view hierarchy and the main thread.
+
+`render/conformance/measuring.json` holds the cases every renderer must pass.
+Each one measures documents under different conditions at one width and
+expects equal heights, or a named `switch` branch. The cases check the rules,
+not any platform's numbers.
+
 ### Lowering rules
 
 | Authoring | Render |

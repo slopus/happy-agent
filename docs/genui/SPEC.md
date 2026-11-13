@@ -98,7 +98,9 @@ order and emphasis may not. Each component page says what is fixed.
 
 **4. Width.** The root is laid out at the width of the chat column. "Wide"
 in component pages means 560pt or more of available width; "phone" means
-less.
+less. A document's height follows from its width alone, never from images
+loading, theme, taps or scrolling, so a host can reserve it before drawing;
+see Measuring in `RENDER.md`.
 
 **5. Text.** Strings are shown as written: no case changes, no reformatting
 of numbers, no unit conversion. `text` and `callout.text` accept inline

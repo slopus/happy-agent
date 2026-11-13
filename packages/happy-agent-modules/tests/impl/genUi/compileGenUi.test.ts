@@ -106,6 +106,50 @@ describe("the Gen UI compiler", () => {
         ]);
     });
 
+    it("holds every document the measuring fixture measures to the render catalog", () => {
+        const fixture = JSON.parse(
+            readFileSync(join(spec, "render", "conformance", "measuring.json"), "utf8"),
+        ) as {
+            cases: {
+                rule: string;
+                expect: string;
+                measure: { document: unknown; switch?: Record<string, string> }[];
+            }[];
+        };
+        const problems: string[] = [];
+        for (const entry of fixture.cases) {
+            for (const measurement of entry.measure) {
+                const document = (
+                    typeof measurement.document === "string"
+                        ? JSON.parse(
+                              readFileSync(join(spec, "render", measurement.document), "utf8"),
+                          )
+                        : measurement.document
+                ) as { elements: Record<string, { type: string }> };
+                problems.push(...validateGenUiRenderDocument(document));
+                for (const key of Object.keys(measurement.switch ?? {})) {
+                    if (document.elements[key]?.type !== "switch")
+                        problems.push(`${key}: no switch`);
+                }
+            }
+        }
+        expect(problems).toEqual([]);
+        expect(fixture.cases.map((entry) => `${entry.rule} ${entry.expect}`)).toEqual([
+            "M2 same height per document",
+            "M2 same height per document",
+            "M2 same height per document",
+            "M2 same height per document",
+            "M3 same height",
+            "M3 same height",
+            "M4 same height",
+            "M4 same height",
+            "M5 switch branches",
+            "M6 same height",
+            "M7 same height",
+            "M8 same height",
+        ]);
+    });
+
     it("lowers a card with its header, children, and actions with resolved variants", () => {
         const copy = (text: string) => ({ type: "copy", text });
         const render = compile(
