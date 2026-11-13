@@ -4,6 +4,7 @@ import {
 } from "@/protocol/anthropic/createAnthropicRequest.js";
 import type { AnthropicBedrockTransport } from "@/vendors/bedrock/AnthropicBedrockTransport.js";
 import { resolveAnthropicBedrockErrorStatus } from "@/vendors/bedrock/impl/anthropicBedrockRetry.js";
+import { isAnthropicThinkingPrefixMismatch } from "@/vendors/bedrock/impl/anthropicBedrockThinkingHeal.js";
 
 /**
  * The models whose replayed thinking blocks get a prefix check on Bedrock: the system prompt, the
@@ -57,7 +58,7 @@ export function carriesAnthropicThinkingBinding(request: AnthropicRequest): bool
 export function isAnthropicThinkingBindingRefusal(error: unknown): boolean {
     if (resolveAnthropicBedrockErrorStatus(error) !== 400) return false;
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("bound to a different conversation")) return false;
+    if (isAnthropicThinkingPrefixMismatch(error)) return false;
     return (
         /thinking\.(adaptive|enabled)\.block_binding(\.prefix_mismatch_behavior)?: Extra inputs are not permitted/.test(
             message,

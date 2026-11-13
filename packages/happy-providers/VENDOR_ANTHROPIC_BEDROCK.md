@@ -50,6 +50,44 @@ as Claude Code does. A refusal is a 400 that says `block_binding: Extra inputs a
 names the beta, or says `invalid beta flag`; those three matches come from Claude Code rather than
 from recorded responses. A prefix mismatch is never treated as a refusal.
 
+When the rejection arrives anyway, on Runtime or Mantle and whether or not the control was sent,
+the session removes the rejected thinking from the request and asks again. That is the repair
+Anthropic documents under "Remove the invalid thinking by hand" and the third layer Claude Code
+keeps behind a stable prefix and the control. A rejection is a 400 whose message says
+`bound to a different conversation` or `not created in this conversation`; the rest of the message
+is documented as free to change and is not matched.
+
+- The first rejection of a request removes the block the API names and every `thinking` and
+  `redacted_thinking` block after it. The position comes from the
+  `anthropic-thinking-prefix-mismatch` response header (`block=messages.N.content.M` among
+  `;`-separated pairs, ignored beyond 2048 characters) and otherwise from the
+  `messages.N.content.M` path in the error message. The API counts two adjacent messages of one
+  role as one, so its position can be lower than the adapter's; a position that does not land on a
+  thinking block of the request is not used, and all thinking is removed instead, as it is when
+  the API names no position.
+- If the request is rejected the same way again, all remaining thinking is removed and it is sent
+  once more. There is no third step: one request costs at most two extra round trips, and a
+  rejection with nothing left to remove is reported as it is.
+- Every other block is sent unchanged. An assistant message that held only thinking is sent with
+  the text `[Thinking removed]`, as Claude Code does, because the API refuses an empty assistant
+  message and leaving the message out would join two user turns. The adapter requests adaptive
+  thinking, which does not require an assistant turn to start with a thinking block; manual
+  (`enabled`) thinking does, and the adapter never sends it.
+- The caller's history is never changed. The session remembers which blocks were rejected, by a
+  digest of their signature, and leaves them out of every later inference and compaction request,
+  so the failed round trip is paid once. Thinking produced after a removal is bound to the history
+  without those blocks, so they must stay out. A block is forgotten once the history no longer
+  holds it. The memory belongs to the session object: a new session for the same conversation (a
+  restarted process, or a caller that rebuilds its session) pays the failed round trip once more.
+- Neither this nor giving up the control is a failed attempt, and neither changes how ordinary
+  failures are retried. Within one request the order is fixed: a refused control is given up
+  first, at most once per session, and rejected thinking is removed after that, at most twice.
+- Nothing is removed once response content has started.
+
+Removal costs the prompt cache from the first removed block and the model that reasoning. Like the
+control, it shipped without a live Bedrock request: the matched phrases, the header, and the
+`[Thinking removed]` text follow Claude Code and Anthropic's documentation, not recorded responses.
+
 The transcript must end with a user turn, a tool result, or that native compaction checkpoint.
 Claude models from 4.6 onward reject a trailing assistant message ("This model does not support
 assistant message prefill"), and the adapter does not add or drop a turn to work around it:

@@ -37,6 +37,12 @@ import {
     dropsMismatchedAnthropicBedrockThinking,
     isAnthropicThinkingBindingRefusal,
 } from "@/vendors/bedrock/impl/anthropicBedrockThinkingBinding.js";
+import {
+    anthropicThinkingMismatchPosition,
+    anthropicThinkingToRemove,
+    isAnthropicThinkingPrefixMismatch,
+    withoutAnthropicThinking,
+} from "@/vendors/bedrock/impl/anthropicBedrockThinkingHeal.js";
 import type { AnthropicBedrockClient as CreatedAnthropicBedrockClient } from "@/vendors/bedrock/impl/createAnthropicBedrockClient.js";
 import {
     createAnthropicRequest,
@@ -90,6 +96,13 @@ export class AnthropicBedrockSession extends BaseSession {
     private readonly resolveInferenceMaxRetries: () => number;
     /** Set once the endpoint refuses the thinking-binding control; it is not sent again. */
     private thinkingBindingRefused = false;
+    /**
+     * Thinking blocks the API rejected as bound to a different conversation, by identity. They
+     * stay in the caller's history, so every later request of this session leaves them out again:
+     * thinking produced since is bound to a history without them, and putting them back would
+     * fail it too. An identity is forgotten once the history no longer holds its block.
+     */
+    private readonly removedThinking = new Set<string>();
     private readonly emptyResponseRetryWait: NonNullable<
         InferenceRetryOptions["waitForInferenceRetry"]
     >;
@@ -154,11 +167,26 @@ export class AnthropicBedrockSession extends BaseSession {
                     // reference their definitions even when generation pauses after compaction.
                     ...(this.activeEffort === undefined ? {} : { effort: this.activeEffort }),
                 });
-            const request = createRequest();
-            const native = await compact(request).catch(async (error: unknown) => {
-                if (!this.refusesThinkingBinding(request, error)) throw error;
-                return await compact(createRequest());
-            });
+            // The same bounded renegotiation as inference: the control is dropped at most once
+            // for the session, and rejected thinking is removed in at most two steps.
+            let request = createRequest();
+            let healed = 0;
+            let native: Awaited<ReturnType<typeof compact>>;
+            while (true) {
+                try {
+                    native = await compact(request);
+                    break;
+                } catch (error) {
+                    if (this.refusesThinkingBinding(request, error)) {
+                        request = createRequest();
+                        continue;
+                    }
+                    const without = this.withoutRejectedThinking(request, error, healed);
+                    if (without === undefined) throw error;
+                    healed += 1;
+                    request = without;
+                }
+            }
             if (signal?.aborted) return { status: "cancelled", context: original };
             if (native.block === undefined) {
                 return {
@@ -254,6 +282,7 @@ export class AnthropicBedrockSession extends BaseSession {
             const tools = this.resolveTools(options.model, options.tools);
             let request = this.createRequest({ ...options, tools });
             let failedAttempts = 0;
+            let healed = 0;
             while (true) {
                 let responseContentStarted = false;
                 let compactionOutputStarted = false;
@@ -286,6 +315,17 @@ export class AnthropicBedrockSession extends BaseSession {
                     // request before it runs. Ask again without it; that is not a failed attempt.
                     if (!responseContentStarted && this.refusesThinkingBinding(request, error)) {
                         request = this.createRequest({ ...options, tools });
+                        continue;
+                    }
+                    // Replayed thinking whose prefix changed is rejected before anything runs,
+                    // and the same request can never pass. Leave the rejected thinking out and
+                    // ask again; that is not a failed attempt either.
+                    const without = responseContentStarted
+                        ? undefined
+                        : this.withoutRejectedThinking(request, error, healed);
+                    if (without !== undefined) {
+                        healed += 1;
+                        request = without;
                         continue;
                     }
                     // A connection that drops mid-response, or a retryable error event the
@@ -372,7 +412,7 @@ export class AnthropicBedrockSession extends BaseSession {
         const wireModel =
             mappedBedrockModelId(this.bedrockModelIds, options.model) ??
             resolveAnthropicBedrockModelId(options.model, this.region, this.transport);
-        return createAnthropicRequest({
+        const request = createAnthropicRequest({
             context,
             dropMismatchedThinking:
                 !this.thinkingBindingRefused &&
@@ -396,6 +436,39 @@ export class AnthropicBedrockSession extends BaseSession {
                   }),
             ...(options.effort === undefined ? {} : { effort: options.effort }),
         });
+        if (this.removedThinking.size === 0) return request;
+        // Compaction and rewinding take rejected thinking out of the history for good.
+        const present = new Set(anthropicThinkingToRemove(request, undefined));
+        for (const identity of this.removedThinking) {
+            if (!present.has(identity)) this.removedThinking.delete(identity);
+        }
+        return withoutAnthropicThinking(request, this.removedThinking);
+    }
+
+    /**
+     * The request to send instead after the API rejected replayed thinking as bound to a
+     * different conversation, or `undefined` when the rejection is something else or nothing is
+     * left to remove.
+     *
+     * The first rejection of a request removes the block the API named and all thinking after
+     * it, which is the API's documented repair; when it names none, or the name does not land on
+     * a thinking block, all thinking goes. A second rejection removes whatever thinking is left.
+     * There is no third step, so one request costs at most two extra round trips. What was
+     * removed is remembered for the session, so later requests do not send it and fail again.
+     */
+    private withoutRejectedThinking(
+        request: AnthropicRequest,
+        error: unknown,
+        healed: number,
+    ): AnthropicRequest | undefined {
+        if (healed >= 2 || !isAnthropicThinkingPrefixMismatch(error)) return undefined;
+        const rejected = anthropicThinkingToRemove(
+            request,
+            healed === 0 ? anthropicThinkingMismatchPosition(error) : undefined,
+        );
+        if (rejected.length === 0) return undefined;
+        for (const identity of rejected) this.removedThinking.add(identity);
+        return withoutAnthropicThinking(request, this.removedThinking);
     }
 
     /**

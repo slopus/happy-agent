@@ -3,6 +3,7 @@ import { APIError } from "@anthropic-ai/sdk/error";
 import { describe, expect, it } from "vitest";
 
 import type { SessionContext } from "@/core/SessionContext.js";
+import type { AnthropicRequest } from "@/protocol/anthropic/createAnthropicRequest.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
 import { AnthropicBedrockProvider } from "@/vendors/bedrock/AnthropicBedrockProvider.js";
 import type { AnthropicBedrockTransport } from "@/vendors/bedrock/AnthropicBedrockTransport.js";
@@ -11,6 +12,12 @@ import {
     dropsMismatchedAnthropicBedrockThinking,
     isAnthropicThinkingBindingRefusal,
 } from "@/vendors/bedrock/impl/anthropicBedrockThinkingBinding.js";
+import {
+    anthropicThinkingMismatchPosition,
+    anthropicThinkingToRemove,
+    isAnthropicThinkingPrefixMismatch,
+    withoutAnthropicThinking,
+} from "@/vendors/bedrock/impl/anthropicBedrockThinkingHeal.js";
 import { testContext } from "./testContext.js";
 
 const BETA = "thinking-binding-controls-2026-08-01";
@@ -30,6 +37,8 @@ interface Sent {
  * The turn Steve hit: one request produced signed thinking and a tool call under one system
  * prompt, and the next request of the same turn replays it under a prompt that changed.
  */
+const OLD = "signature-made-under-the-old-system-prompt";
+
 const replayed: SessionContext = {
     instructions: 'You are the persistent task named "Release Notes".',
     messages: [
@@ -46,6 +55,33 @@ const replayed: SessionContext = {
             ],
         },
         { role: "tool", callId: "toolu_list", content: [{ type: "text", text: "No projects." }] },
+    ],
+};
+
+const FIRST = "signature-of-the-first-step";
+const SECOND = "signature-of-the-second-step";
+
+/** A turn two tool calls deep, so one thinking block has another after it. */
+const twoSteps: SessionContext = {
+    instructions: "You are a task.",
+    messages: [
+        { role: "user", content: [{ type: "text", text: "Describe the project." }] },
+        {
+            role: "assistant",
+            content: [
+                { type: "reasoning", text: "List first.", reasoning: FIRST },
+                { type: "tool_call", callId: "toolu_list", name: "list_projects", arguments: "{}" },
+            ],
+        },
+        { role: "tool", callId: "toolu_list", content: [{ type: "text", text: "One project." }] },
+        {
+            role: "assistant",
+            content: [
+                { type: "reasoning", text: "Then read it.", reasoning: SECOND },
+                { type: "tool_call", callId: "toolu_read", name: "read_project", arguments: "{}" },
+            ],
+        },
+        { role: "tool", callId: "toolu_read", content: [{ type: "text", text: "A website." }] },
     ],
 };
 
@@ -222,7 +258,10 @@ describe("Bedrock replay of thinking whose prefix changed", () => {
         } finally {
             session.destroy();
         }
-        expect(sent).toHaveLength(1);
+        // The control is never renegotiated over a mismatch: both requests carry it. The second
+        // is the one without the rejected thinking, and nothing is left to remove after it.
+        expect(sent.map((request) => request.body.thinking)).toEqual([DROP, DROP]);
+        expect(sent.map(thinkingIn)).toEqual([[OLD], []]);
         expect(isAnthropicThinkingBindingRefusal(apiError(MISMATCH))).toBe(false);
         expect(isAnthropicThinkingBindingRefusal(apiError(FIELD_REFUSED))).toBe(true);
         expect(isAnthropicThinkingBindingRefusal(apiError(FIELD_REFUSED, 500))).toBe(false);
@@ -234,6 +273,347 @@ describe("Bedrock replay of thinking whose prefix changed", () => {
             ),
         ).toBe(true);
         expect(isAnthropicThinkingBindingRefusal(apiError("Input is too long."))).toBe(false);
+    });
+});
+
+describe("Bedrock removal of thinking the API rejected", () => {
+    it("removes the block the header names and the thinking after it, then asks again", async () => {
+        const sent: Sent[] = [];
+        const history = structuredClone(twoSteps);
+        const session = await sessionWith(sent, {
+            model: "anthropic/fable-5-2",
+            // The header wins over the path in the message, which names an earlier block here.
+            answer: (request) =>
+                thinkingIn(request).includes(SECOND)
+                    ? invalidRequest(MISMATCH, `block=messages.3.content.0;kind=system`)
+                    : undefined,
+        });
+        try {
+            const first = await collect(session.run(testContext, { context: history }));
+            // Removing rejected thinking is not a failed attempt.
+            expect(first.map((event) => event.type)).not.toContain("retrying");
+            expect(first.at(-1), JSON.stringify(first)).toMatchObject({
+                type: "done",
+                state: "normal",
+            });
+            // The same session pays the failed round trip once: later requests, inference or
+            // compaction, leave the rejected block out from the start.
+            const second = await collect(session.run(testContext, { context: history }));
+            expect(second.at(-1)).toMatchObject({ type: "done", state: "normal" });
+            const compaction = await session.compact(testContext, { context: history });
+            expect(compaction).toMatchObject({ status: "completed" });
+        } finally {
+            session.destroy();
+        }
+
+        expect(sent.map(thinkingIn)).toEqual([[FIRST, SECOND], [FIRST], [FIRST], [FIRST]]);
+        // Everything that is not thinking is sent as it was.
+        expect(sent[1]!.body.messages[3].content).toEqual([
+            { type: "tool_use", id: "toolu_read", name: "read_project", input: {} },
+        ]);
+        expect(sent[1]!.body.messages[1]).toEqual(sent[0]!.body.messages[1]);
+        // The history is the caller's and still holds the block.
+        expect(history).toEqual(twoSteps);
+    });
+
+    it("reads the block from the error message when no header names it", async () => {
+        for (const transport of ["runtime", "mantle"] as const) {
+            const sent: Sent[] = [];
+            const session = await sessionWith(sent, {
+                model: "anthropic/opus-5-5",
+                transport,
+                answer: (request) =>
+                    thinkingIn(request).includes(SECOND)
+                        ? invalidRequest(MISMATCH.replace("messages.1.", "messages.3."))
+                        : undefined,
+            });
+            try {
+                const events = await collect(session.run(testContext, { context: twoSteps }));
+                expect(events.at(-1), JSON.stringify(events)).toMatchObject({
+                    type: "done",
+                    state: "normal",
+                });
+            } finally {
+                session.destroy();
+            }
+            expect(sent.map(thinkingIn), transport).toEqual([[FIRST, SECOND], [FIRST]]);
+        }
+    });
+
+    it("removes all thinking when the named position is not a thinking block", async () => {
+        const sent: Sent[] = [];
+        const session = await sessionWith(sent, {
+            model: "anthropic/fable-5-2",
+            // The API counts two adjacent messages of one role as one, so its position can be
+            // lower than ours and land on something else. That is no place to cut from.
+            answer: (request) =>
+                thinkingIn(request).length > 0
+                    ? invalidRequest(MISMATCH, "block=messages.2.content.0")
+                    : undefined,
+        });
+        try {
+            const events = await collect(session.run(testContext, { context: twoSteps }));
+            expect(events.at(-1), JSON.stringify(events)).toMatchObject({
+                type: "done",
+                state: "normal",
+            });
+        } finally {
+            session.destroy();
+        }
+        expect(sent.map(thinkingIn)).toEqual([[FIRST, SECOND], []]);
+    });
+
+    it("removes all thinking when the first removal is rejected the same way", async () => {
+        const sent: Sent[] = [];
+        const session = await sessionWith(sent, {
+            model: "anthropic/fable-5-2",
+            answer: (request) =>
+                thinkingIn(request).length > 0
+                    ? invalidRequest(MISMATCH, "block=messages.3.content.0")
+                    : undefined,
+        });
+        try {
+            const events = await collect(session.run(testContext, { context: twoSteps }));
+            expect(events.map((event) => event.type)).not.toContain("retrying");
+            expect(events.at(-1), JSON.stringify(events)).toMatchObject({
+                type: "done",
+                state: "normal",
+            });
+            await collect(session.run(testContext, { context: twoSteps }));
+        } finally {
+            session.destroy();
+        }
+        expect(sent.map(thinkingIn)).toEqual([[FIRST, SECOND], [FIRST], [], []]);
+    });
+
+    it("reports the rejection once nothing is left to remove", async () => {
+        const rejected = {
+            type: "done",
+            state: "error",
+            message: expect.stringContaining("The block is bound to a different conversation"),
+        };
+        // Two removals at most: the third rejection of one request is the caller's to see.
+        const sent: Sent[] = [];
+        const session = await sessionWith(sent, {
+            model: "anthropic/fable-5-2",
+            answer: () => invalidRequest(MISMATCH, "block=messages.3.content.0"),
+        });
+        try {
+            const events = await collect(session.run(testContext, { context: twoSteps }));
+            expect(events.at(-1)).toMatchObject(rejected);
+        } finally {
+            session.destroy();
+        }
+        expect(sent.map(thinkingIn)).toEqual([[FIRST, SECOND], [FIRST], []]);
+
+        // A history without thinking is not sent a second time.
+        const plain: Sent[] = [];
+        const without = await sessionWith(plain, {
+            model: "anthropic/fable-5-2",
+            answer: () => invalidRequest(MISMATCH),
+        });
+        try {
+            const events = await collect(
+                without.run(testContext, {
+                    context: { instructions: "", messages: [twoSteps.messages[0]!] },
+                }),
+            );
+            expect(events.at(-1)).toMatchObject(rejected);
+        } finally {
+            without.destroy();
+        }
+        expect(plain).toHaveLength(1);
+    });
+
+    it("removes rejected thinking from a compaction request too", async () => {
+        const sent: Sent[] = [];
+        const session = await sessionWith(sent, {
+            model: "anthropic/fable-5-2",
+            answer: (request) =>
+                thinkingIn(request).length > 0 ? invalidRequest(MISMATCH) : undefined,
+        });
+        try {
+            const compaction = await session.compact(testContext, { context: twoSteps });
+            expect(compaction, JSON.stringify(compaction)).toMatchObject({ status: "completed" });
+        } finally {
+            session.destroy();
+        }
+        expect(sent.map(thinkingIn)).toEqual([[FIRST, SECOND], []]);
+    });
+
+    it("gives up the control first and removes thinking second", async () => {
+        const sent: Sent[] = [];
+        const session = await sessionWith(sent, {
+            model: "anthropic/fable-5-2",
+            answer: (request) =>
+                request.body.thinking?.block_binding !== undefined
+                    ? invalidRequest(FIELD_REFUSED)
+                    : thinkingIn(request).length > 0
+                      ? invalidRequest(MISMATCH)
+                      : undefined,
+        });
+        try {
+            const events = await collect(session.run(testContext, { context: replayed }));
+            expect(events.map((event) => event.type)).not.toContain("retrying");
+            expect(events.at(-1), JSON.stringify(events)).toMatchObject({
+                type: "done",
+                state: "normal",
+            });
+        } finally {
+            session.destroy();
+        }
+        expect(sent.map((request) => request.body.thinking)).toEqual([
+            DROP,
+            { type: "adaptive" },
+            { type: "adaptive" },
+        ]);
+        expect(sent.map(thinkingIn)).toEqual([[OLD], [OLD], []]);
+    });
+
+    it("keeps an assistant message whose only content was thinking", async () => {
+        const sent: Sent[] = [];
+        const session = await sessionWith(sent, {
+            model: "anthropic/fable-5-2",
+            answer: (request) =>
+                thinkingIn(request).length > 0 ? invalidRequest(MISMATCH) : undefined,
+        });
+        const context: SessionContext = {
+            instructions: "",
+            messages: [
+                { role: "user", content: [{ type: "text", text: "Think it over." }] },
+                {
+                    role: "assistant",
+                    content: [{ type: "reasoning", text: "Thought.", reasoning: OLD }],
+                },
+                { role: "user", content: [{ type: "text", text: "And?" }] },
+            ],
+        };
+        try {
+            const events = await collect(session.run(testContext, { context }));
+            expect(events.at(-1), JSON.stringify(events)).toMatchObject({
+                type: "done",
+                state: "normal",
+            });
+        } finally {
+            session.destroy();
+        }
+        expect(sent).toHaveLength(2);
+        // The API refuses an empty assistant message, and dropping it would join two user turns.
+        expect(sent[1]!.body.messages[1]).toEqual({
+            role: "assistant",
+            content: [{ type: "text", text: "[Thinking removed]" }],
+        });
+    });
+
+    it("recognizes the rejection and reads the position the API gives", () => {
+        const withHeader = (header: string, message = MISMATCH) =>
+            new APIError(
+                400,
+                undefined,
+                message,
+                new Headers({ "anthropic-thinking-prefix-mismatch": header }),
+            );
+        expect(isAnthropicThinkingPrefixMismatch(apiError(MISMATCH))).toBe(true);
+        // The older wording for the same rejection.
+        expect(
+            isAnthropicThinkingPrefixMismatch(
+                apiError("The thinking block was NOT created in this conversation."),
+            ),
+        ).toBe(true);
+        expect(isAnthropicThinkingPrefixMismatch(apiError(MISMATCH, 500))).toBe(false);
+        expect(isAnthropicThinkingPrefixMismatch(apiError(FIELD_REFUSED))).toBe(false);
+
+        expect(anthropicThinkingMismatchPosition(apiError(MISMATCH))).toEqual({
+            message: 1,
+            content: 0,
+        });
+        expect(
+            anthropicThinkingMismatchPosition(
+                withHeader("kind=tools; block=messages.12.content.3; block=messages.0.content.0"),
+            ),
+        ).toEqual({ message: 12, content: 3 });
+        // A header that names no usable block leaves the message to answer.
+        for (const header of [
+            "kind=system",
+            "block=messages.x.content.0",
+            "block=messages.7.content.0.signature",
+            `block=messages.7.content.0;pad=${"x".repeat(2048)}`,
+        ]) {
+            expect(anthropicThinkingMismatchPosition(withHeader(header)), header).toEqual({
+                message: 1,
+                content: 0,
+            });
+        }
+        expect(
+            anthropicThinkingMismatchPosition(
+                apiError("Invalid `signature`. The block is bound to a different conversation."),
+            ),
+        ).toBeUndefined();
+    });
+
+    it("removes redacted thinking like any other and leaves the request it was given alone", () => {
+        const request = {
+            model: "claude-fable-5-2",
+            max_tokens: 1,
+            messages: [
+                { role: "user", content: "Hello." },
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "redacted_thinking", data: "opaque-one" },
+                        { type: "text", text: "Hi." },
+                    ],
+                },
+                { role: "user", content: [{ type: "text", text: "Go on." }] },
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "thinking", thinking: "Hm.", signature: "signed" },
+                        { type: "redacted_thinking", data: "opaque-two" },
+                        { type: "text", text: "Sure." },
+                    ],
+                },
+            ],
+        } as AnthropicRequest;
+        const before = structuredClone(request);
+
+        const fromSecond = anthropicThinkingToRemove(request, { message: 3, content: 1 });
+        expect(fromSecond).toHaveLength(1);
+        expect(
+            withoutAnthropicThinking(request, new Set(fromSecond)).messages.map(
+                (message) => message.content,
+            ),
+        ).toEqual([
+            "Hello.",
+            [
+                { type: "redacted_thinking", data: "opaque-one" },
+                { type: "text", text: "Hi." },
+            ],
+            [{ type: "text", text: "Go on." }],
+            [
+                { type: "thinking", thinking: "Hm.", signature: "signed" },
+                { type: "text", text: "Sure." },
+            ],
+        ]);
+
+        const all = anthropicThinkingToRemove(request, undefined);
+        expect(all).toHaveLength(3);
+        // A position outside the request, or on a user message, is not one to cut from.
+        expect(anthropicThinkingToRemove(request, { message: 9, content: 0 })).toEqual(all);
+        expect(anthropicThinkingToRemove(request, { message: 2, content: 0 })).toEqual(all);
+        expect(
+            withoutAnthropicThinking(request, new Set(all)).messages.map(
+                (message) => message.content,
+            ),
+        ).toEqual([
+            "Hello.",
+            [{ type: "text", text: "Hi." }],
+            [{ type: "text", text: "Go on." }],
+            [{ type: "text", text: "Sure." }],
+        ]);
+        expect(request).toEqual(before);
+        // Nothing to remove gives back the very request.
+        expect(withoutAnthropicThinking(request, new Set(["unknown"]))).toBe(request);
     });
 });
 
@@ -297,10 +677,29 @@ async function collect(stream: AsyncIterable<SessionEvent>): Promise<SessionEven
     return events;
 }
 
-function invalidRequest(message: string): Response {
+function invalidRequest(message: string, mismatch?: string): Response {
     return new Response(
         JSON.stringify({ type: "error", error: { type: "invalid_request_error", message } }),
-        { status: 400, headers: { "content-type": "application/json" } },
+        {
+            status: 400,
+            headers: {
+                "content-type": "application/json",
+                ...(mismatch === undefined
+                    ? {}
+                    : { "anthropic-thinking-prefix-mismatch": mismatch }),
+            },
+        },
+    );
+}
+
+/** The signatures of the thinking a request carries, in order. */
+function thinkingIn(request: Sent): string[] {
+    return (request.body.messages as { content: unknown }[]).flatMap((message) =>
+        Array.isArray(message.content)
+            ? message.content.flatMap((block: { type: string; signature?: string }) =>
+                  block.type === "thinking" ? [block.signature ?? ""] : [],
+              )
+            : [],
     );
 }
 
