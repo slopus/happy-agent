@@ -1,0 +1,112 @@
+{
+  "capabilities": [
+    "Read files people attached to messages, and save copies to work on."
+  ],
+  "defer": true,
+  "description": "Reads a file a person attached to a message in this conversation. Each attachment appears in the message as a line naming its ID, file name, type, and size. Images are shown to you. Text files come back as numbered lines: a line number, then a tab, then the line, numbered from 1. By default it reads up to 2000 lines from the start; offset and limit read another stretch of a long file. Other files, such as PDFs, archives, and videos, are only described. To work on the file with your own tools, pass path to save a copy on your machine; relative paths start from your working directory, and missing folders are created. Choose a place that will not get committed, such as an ignored scratch folder. An existing file is replaced only with overwrite: true. The copy is yours: changing or deleting it does not change the attachment, and you can save it again.",
+  "durable": false,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "attachment_id": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "limit": {
+        "description": "The number of lines to read. Only provide if the file is too large to read at once.",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer"
+      },
+      "offset": {
+        "description": "The line number to start reading from. Only provide if the file is too large to read at once",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "overwrite": {
+        "description": "Replace a file that already exists at path. Defaults to false.",
+        "type": "boolean"
+      },
+      "path": {
+        "description": "Where to save a copy of the file on your machine, relative to your working directory or absolute. Omit it to only look at the file.",
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "attachment_id"
+    ],
+    "type": "object"
+  },
+  "name": "read_attachment",
+  "reloadable": true,
+  "returnType": {
+    "properties": {
+      "attachmentId": {
+        "type": "string"
+      },
+      "image": {
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "mimeType"
+        ],
+        "type": "object"
+      },
+      "mimeType": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "nextOffset": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "note": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "returnedLines": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "size": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "startLine": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "text": {
+        "type": "string"
+      },
+      "totalLines": {
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "attachmentId"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "attached file",
+    "open attachment",
+    "uploaded file",
+    "read attachment"
+  ]
+}

@@ -158,6 +158,7 @@ Tool capabilities:
 - Discover and use configured MCP servers, resources, prompts, and tools.
 - Configure Happy Agent MCP servers and reload them without restarting the daemon.
 - Search the web and fetch individual web pages.
+- Read files people attached to messages, and save copies to work on.
 - Generate new images and edit existing images.
 - Discover and read installed agent skills.
 - Read and modify files, run shell commands, inspect images, and manage background processes.

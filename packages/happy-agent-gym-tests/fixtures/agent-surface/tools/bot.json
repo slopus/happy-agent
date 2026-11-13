@@ -120,6 +120,7 @@
   "bedrock_web_search.8bef2207d2d7",
   "grok_web_search.dcc94132e495",
   "grok_x_search",
+  "read_attachment",
   "codex_imagegen",
   "list_skills",
   "read_skill",
