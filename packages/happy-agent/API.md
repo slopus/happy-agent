@@ -657,6 +657,10 @@ daemon that runs them serves `POST /v0/artifacts/:artifactId/versions/:number/ac
 agents the `request_secret` tool. An older compatible daemon answers that route with `404`; a client
 then draws `secret` actions disabled, as it draws any action its host cannot run.
 
+Vault folder roles and the default vault are additive and do not increment the protocol version.
+A server that has them sends a folder's `role` and the settings' `defaultVault`; Happy Agent omits
+both today, and clients read a missing field as `null` or `false`.
+
 Secret deletion through `DELETE /v0/secrets/:secretId` is additive and does not increment the
 protocol version. An older compatible daemon answers that route with `404` even for a secret that
 `GET /v0/secrets/:secretId` still returns; clients then treat deletion as unavailable. The
@@ -11523,6 +11527,14 @@ Both have:
 - `version` — the UUIDv7 resource version. It covers every field and advances on every change to
   the item. It is unrelated to a file's numbered content versions below.
 
+A folder may also have:
+
+- `role` — what the folder is for, beyond holding files: `"skills"` for a Skills folder, whose
+  items are agent skills (a folder holding `SKILL.md`, or a pack: a folder holding `PACK.md` and
+  skill folders), or `null` for an ordinary folder. Happy Agent omits it today; a Happy Cloud
+  cluster always sends it. A missing `role` means `null`. The set of roles may grow; a client
+  treats a role it does not recognize as `null`.
+
 A file also has:
 
 - `latestVersion` — the number of its newest version.
@@ -11701,6 +11713,7 @@ Every folder and file keeps an append-only activity log of what happened to it, 
 - `version_created` — `number` and `restoredFrom`, for files only. The version may since have been
   pruned. Creating a file records `created` only; its version 1 is implied.
 - `pinned`, `unpinned` — `number`, for files only.
+- `role` — `role`, the folder's new role or `null`, for folders only.
 
 The set of kinds may grow; a client shows a kind it does not recognize as "changed". Activity is
 removed only with its item.
@@ -11849,7 +11862,10 @@ it is placed. Placing an upload that is still receiving is `409 conflict`.
 #### Settings
 
 A vault's settings are `{ "surfaceId": "...", "retention": {...}, "updatedAt": 1755400000000,
-"version": "..." }`, a version-chained resource of their own.
+"version": "..." }`, a version-chained resource of their own. A server may add `defaultVault`:
+`true` for the organization's default vault, the one a Happy Cloud team starts with, and `false`
+for every other. It stays `true` when that vault is renamed and is never changed through the
+settings route. Happy Agent omits it today; a missing `defaultVault` means `false`.
 
 - `GET /v0/surfaces/vault/:surfaceId/settings` returns `200 { "settings": {...}, "cursor": "..." }`.
 - `PATCH /v0/surfaces/vault/:surfaceId/settings` accepts `{ "retention": {...}, "mutationId":
@@ -11931,6 +11947,11 @@ Changing:
   the root). They return `200 { "folder": {...} }` or `200 { "file": {...} }`. A change records
   `moved` and emits `vault.folder.updated` or `vault.file.updated`; the same name and folder is a
   no-op.
+- On a server that serves folder roles, `PATCH /folders/:folderId` also accepts `role`,
+  `"skills"` or `null`, with or without `name` and `parentId`. A new role records `role` and emits
+  `vault.folder.updated`; the same role is a no-op. `role` on a file is `400 invalid_request`.
+  Happy Agent does not serve roles today and answers a body carrying `role` with
+  `400 invalid_request`, as for any unsupported field.
 - `POST /folders/:folderId/delete` and `POST /files/:fileId/delete` accept `{}` or
   `{ "mutationId": "..." }`, move the item to the Trash, record `deleted`, and return the item as
   above, emitting its `updated` event. Deleting an item that is already deleted is a no-op after the
@@ -11993,8 +12014,8 @@ All vault events are shared and follow commit.
 - `vault.folder.created` carries the full `folder`, and `vault.file.created` the full `file`, each
   with optional `mutationId`.
 - `vault.folder.updated` carries `surfaceId`, `folderId`, `previousVersion`, `version`, `changes`,
-  and optional `mutationId`. `changes` holds the changed fields among `name`, `parentId`, and
-  `deletedAt`, always with `updatedAt` and `updatedBy`.
+  and optional `mutationId`. `changes` holds the changed fields among `name`, `parentId`,
+  `deletedAt`, and `role`, always with `updatedAt` and `updatedBy`.
 - `vault.file.updated` carries `surfaceId`, `fileId`, `previousVersion`, `version`, `changes`, and
   optional `mutationId`. `changes` holds the changed fields among `name`, `parentId`,
   `latestVersion`, `size`, `sha256`, `mediaType`, `artifact`, and `deletedAt`, always with
