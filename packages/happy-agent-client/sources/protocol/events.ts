@@ -19,6 +19,7 @@ import {
     timestampSchema,
 } from "./common.js";
 import type { Agent, AgentDraftSnapshot, AgentProfile } from "./agents.js";
+import { clusterSecretGrantTargetSchema } from "./clusterSecrets.js";
 import type { DaemonDrain } from "./daemon.js";
 import {
     artifactAuthorSchema,
@@ -206,6 +207,51 @@ export const secretRemovedPayloadSchema = Type.Object({
     secretId: cuid2Schema,
 });
 export type SecretRemovedPayload = Static<typeof secretRemovedPayloadSchema>;
+
+/** A member created their own cluster secret; only that member receives it. */
+export const clusterSecretCreatedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    secretId: cuid2Schema,
+    version: resourceVersionSchema,
+});
+export type ClusterSecretCreatedPayload = Static<typeof clusterSecretCreatedPayloadSchema>;
+
+/** A member's own cluster secret changed; read it again for the new metadata. */
+export const clusterSecretUpdatedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    secretId: cuid2Schema,
+    version: resourceVersionSchema,
+});
+export type ClusterSecretUpdatedPayload = Static<typeof clusterSecretUpdatedPayloadSchema>;
+
+/** A member's own cluster secret was granted to one agent or workspace. */
+export const clusterSecretAttachedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    secretId: cuid2Schema,
+    target: clusterSecretGrantTargetSchema,
+    version: resourceVersionSchema,
+});
+export type ClusterSecretAttachedPayload = Static<typeof clusterSecretAttachedPayloadSchema>;
+
+/** A member's own cluster secret's grant was revoked. */
+export const clusterSecretDetachedPayloadSchema = clusterSecretAttachedPayloadSchema;
+export type ClusterSecretDetachedPayload = Static<typeof clusterSecretDetachedPayloadSchema>;
+
+/** A member's own cluster secret was deleted, by them or by a manager. */
+export const clusterSecretRemovedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+    previousVersion: resourceVersionSchema,
+    secretId: cuid2Schema,
+});
+export type ClusterSecretRemovedPayload = Static<typeof clusterSecretRemovedPayloadSchema>;
+
+/** Some team secret changed. It names no secret, so a hidden one never leaks; read the list again. */
+export const clusterSecretsChangedPayloadSchema = Type.Object({
+    mutationId: Type.Optional(mutationIdSchema),
+});
+export type ClusterSecretsChangedPayload = Static<typeof clusterSecretsChangedPayloadSchema>;
 
 /** A bot was created together with its dedicated workspace and one agent. */
 export const botCreatedPayloadSchema = Type.Object({
@@ -760,6 +806,12 @@ export type HappyAgentEvent =
     | EventEnvelope<"secret.attached", SecretAttachedPayload>
     | EventEnvelope<"secret.detached", SecretDetachedPayload>
     | EventEnvelope<"secret.removed", SecretRemovedPayload>
+    | EventEnvelope<"cluster_secret.created", ClusterSecretCreatedPayload>
+    | EventEnvelope<"cluster_secret.updated", ClusterSecretUpdatedPayload>
+    | EventEnvelope<"cluster_secret.attached", ClusterSecretAttachedPayload>
+    | EventEnvelope<"cluster_secret.detached", ClusterSecretDetachedPayload>
+    | EventEnvelope<"cluster_secret.removed", ClusterSecretRemovedPayload>
+    | EventEnvelope<"cluster_secrets.changed", ClusterSecretsChangedPayload>
     | EventEnvelope<"bot.created", BotCreatedPayload>
     | EventEnvelope<"bot.updated", BotUpdatedPayload>
     | EventEnvelope<"bot.removed", BotRemovedPayload>

@@ -17,7 +17,17 @@ import {
     createClusterSecretRequestSchema,
     updateClusterSecretRequestSchema,
 } from "../sources/protocol/clusterSecrets.js";
+import {
+    clusterSecretAttachedPayloadSchema,
+    clusterSecretCreatedPayloadSchema,
+    clusterSecretDetachedPayloadSchema,
+    clusterSecretRemovedPayloadSchema,
+    clusterSecretsChangedPayloadSchema,
+    clusterSecretUpdatedPayloadSchema,
+    type HappyAgentEvent,
+} from "../sources/protocol/events.js";
 import { clusterSecretSchema as publicClusterSecretSchema } from "../sources/index.js";
+import { readEventStream } from "../sources/readEventStream.js";
 
 const version = "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e";
 const nextVersion = "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f";
@@ -281,6 +291,89 @@ describe("cluster secrets protocol", () => {
         ).toBe(true);
     });
 
+    it("parses every cluster secret event, with team changes naming no secret", async () => {
+        const target = { id: "agentone", type: "agent" } as const;
+        const events: HappyAgentEvent[] = [
+            {
+                cursor: "01991f3a-7d2f-7000-8000-3a0b2c4d5e70",
+                occurredAt: createdAt,
+                payload: { mutationId: "create-1", secretId: deployKey.id, version },
+                type: "cluster_secret.created",
+            },
+            {
+                cursor: "01991f3a-7d2f-7000-8000-3a0b2c4d5e71",
+                occurredAt: createdAt + 1,
+                payload: { previousVersion: version, secretId: deployKey.id, version: nextVersion },
+                type: "cluster_secret.updated",
+            },
+            {
+                cursor: "01991f3a-7d2f-7000-8000-3a0b2c4d5e72",
+                occurredAt: createdAt + 2,
+                payload: {
+                    mutationId: "grant-1",
+                    previousVersion: version,
+                    secretId: deployKey.id,
+                    target,
+                    version: nextVersion,
+                },
+                type: "cluster_secret.attached",
+            },
+            {
+                cursor: "01991f3a-7d2f-7000-8000-3a0b2c4d5e73",
+                occurredAt: createdAt + 3,
+                payload: {
+                    previousVersion: version,
+                    secretId: deployKey.id,
+                    target,
+                    version: nextVersion,
+                },
+                type: "cluster_secret.detached",
+            },
+            {
+                cursor: "01991f3a-7d2f-7000-8000-3a0b2c4d5e74",
+                occurredAt: createdAt + 4,
+                payload: { previousVersion: nextVersion, secretId: deployKey.id },
+                type: "cluster_secret.removed",
+            },
+            {
+                cursor: "01991f3a-7d2f-7000-8000-3a0b2c4d5e75",
+                occurredAt: createdAt + 5,
+                payload: { mutationId: "update-2" },
+                type: "cluster_secrets.changed",
+            },
+        ];
+
+        expect(Value.Check(clusterSecretCreatedPayloadSchema, events[0]!.payload)).toBe(true);
+        expect(Value.Check(clusterSecretUpdatedPayloadSchema, events[1]!.payload)).toBe(true);
+        expect(Value.Check(clusterSecretAttachedPayloadSchema, events[2]!.payload)).toBe(true);
+        expect(Value.Check(clusterSecretDetachedPayloadSchema, events[3]!.payload)).toBe(true);
+        expect(Value.Check(clusterSecretRemovedPayloadSchema, events[4]!.payload)).toBe(true);
+        expect(Value.Check(clusterSecretsChangedPayloadSchema, events[5]!.payload)).toBe(true);
+        expect(Value.Check(clusterSecretsChangedPayloadSchema, {})).toBe(true);
+        expect(
+            Value.Check(clusterSecretAttachedPayloadSchema, {
+                ...(events[2]!.payload as object),
+                target: { id: "projectone", type: "project" },
+            }),
+        ).toBe(false);
+        expect(Value.Check(clusterSecretCreatedPayloadSchema, { secret: deployKey })).toBe(false);
+
+        const frames = [];
+        for await (const frame of readEventStream(
+            streamOf(
+                events
+                    .map(
+                        (event) =>
+                            `id: ${event.cursor}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+                    )
+                    .join(""),
+            ),
+        )) {
+            frames.push(frame);
+        }
+        expect(frames.map((frame) => frame.kind === "event" && frame.event)).toEqual(events);
+    });
+
     it("calls every cluster secret route with encoded paths, bodies, and If-Match", async () => {
         const list = { nextCursor: null, secrets: [stripe] };
         const response = { secret: stripe };
@@ -450,5 +543,14 @@ function json(body: unknown, status = 200): Response {
     return new Response(JSON.stringify(body), {
         headers: { "content-type": "application/json" },
         status,
+    });
+}
+
+function streamOf(text: string): ReadableStream<Uint8Array<ArrayBuffer>> {
+    return new ReadableStream<Uint8Array<ArrayBuffer>>({
+        start(controller) {
+            controller.enqueue(new TextEncoder().encode(text));
+            controller.close();
+        },
     });
 }
