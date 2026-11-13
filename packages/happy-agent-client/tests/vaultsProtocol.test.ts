@@ -278,6 +278,13 @@ describe("vault Surface protocol", () => {
             expect(Value.Check(vaultArtifactManifestSchema, { ...manifest, ...invalid })).toBe(
                 false,
             );
+        expect(
+            Value.Check(vaultArtifactManifestSchema, {
+                ...manifest,
+                type: "gen_ui",
+                entry: "index.genui.json",
+            }),
+        ).toBe(true);
     });
 
     it("models versions, manifests, and activity", () => {

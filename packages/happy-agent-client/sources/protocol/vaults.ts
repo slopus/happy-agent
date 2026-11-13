@@ -54,12 +54,26 @@ export function isVaultArtifactName(name: string): boolean {
     return name.toLowerCase().endsWith(VAULT_ARTIFACT_SUFFIX);
 }
 
-/** A vault app's kind: `html` when `index.html` sits at its root, otherwise `markdown`. */
-export const vaultArtifactTypeSchema = Type.Union([Type.Literal("html"), Type.Literal("markdown")]);
+/**
+ * A vault app's kind: `html` when `index.html` sits at its root, otherwise `markdown` when
+ * `index.md` does, otherwise `gen_ui` when `index.genui.json` does.
+ */
+export const vaultArtifactTypeSchema = Type.Union([
+    Type.Literal("html"),
+    Type.Literal("markdown"),
+    Type.Literal("gen_ui"),
+]);
 export type VaultArtifactType = Static<typeof vaultArtifactTypeSchema>;
 
+/** The file a vault app opens, the one its type names. */
+export const vaultArtifactEntrySchema = Type.Union([
+    Type.Literal("index.html"),
+    Type.Literal("index.md"),
+    Type.Literal("index.genui.json"),
+]);
+
 export const vaultArtifactSummarySchema = Type.Object({
-    entry: Type.Union([Type.Literal("index.html"), Type.Literal("index.md")]),
+    entry: vaultArtifactEntrySchema,
     fileCount: Type.Integer({ minimum: 1, maximum: 256 }),
     type: vaultArtifactTypeSchema,
 });
@@ -76,11 +90,11 @@ export type VaultArtifactContents = Static<typeof vaultArtifactContentsSchema>;
 export const VAULT_ARTIFACT_MANIFEST_PATH = "artifact.json";
 
 /**
- * `artifact.json` in a `.artifact` file. `entry` is the file `type` names, `index.html` or
- * `index.md`; fields not described here are ignored.
+ * `artifact.json` in a `.artifact` file. `entry` is the file `type` names, `index.html`,
+ * `index.md`, or `index.genui.json`; fields not described here are ignored.
  */
 export const vaultArtifactManifestSchema = Type.Object({
-    entry: Type.Union([Type.Literal("index.html"), Type.Literal("index.md")]),
+    entry: vaultArtifactEntrySchema,
     format: Type.Literal("happy.artifact"),
     formatVersion: Type.Literal(1),
     type: vaultArtifactTypeSchema,

@@ -24,8 +24,15 @@ export const artifactTypeSchema = Type.Union([
     Type.Literal("image_series"),
     Type.Literal("video"),
     Type.Literal("document"),
+    Type.Literal("gen_ui"),
 ]);
 export type ArtifactType = Static<typeof artifactTypeSchema>;
+
+/**
+ * Where a `gen_ui` artifact version or vault app keeps the render document the daemon compiled
+ * from its `index.genui.json`, the document a client draws.
+ */
+export const GEN_UI_RENDER_PATH = ".genui/render.json";
 
 /** A human display title: nonblank, bounded, and free of ASCII control characters. */
 export const artifactTitleSchema = Type.String({

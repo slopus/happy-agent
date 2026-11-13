@@ -14,6 +14,7 @@ import {
     artifactVersionSchema,
     createArtifactRequestSchema,
     deleteArtifactRequestSchema,
+    GEN_UI_RENDER_PATH,
     updateArtifactRequestSchema,
     type Artifact,
     type ArtifactVersion,
@@ -280,6 +281,18 @@ describe("artifacts protocol", () => {
             Value.Check(artifactSchema, { ...artifact, source: { agentId: null, kind: "agent" } }),
         ).toBe(false);
         expect(Value.Check(artifactSchema, { ...artifact, source: null })).toBe(true);
+        // A Gen UI document keeps its compiled render document as one of its files.
+        expect(
+            Value.Check(artifactVersionSchema, {
+                ...firstVersion,
+                entry: { ...entry, mimeType: "application/json", path: "index.genui.json" },
+                files: [
+                    { ...chart, mimeType: "application/json", path: GEN_UI_RENDER_PATH },
+                    { ...entry, mimeType: "application/json", path: "index.genui.json" },
+                ],
+            }),
+        ).toBe(true);
+        expect(Value.Check(artifactSchema, { ...artifact, type: "gen_ui" })).toBe(true);
         expect(Value.Check(artifactSchema, { ...artifact, title: " " })).toBe(false);
         expect(Value.Check(artifactSchema, { ...artifact, entry: { ...entry, size: 0 } })).toBe(
             false,
