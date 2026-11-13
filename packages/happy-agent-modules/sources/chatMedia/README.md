@@ -35,6 +35,9 @@ item then carries its displayed width and height after EXIF orientation, the dec
 media type, and a base64 ThumbHash. Anything else that claims to be an image is a `file`.
 `video/*` names are videos, PDFs are documents, and everything else is a file. Content already
 held under its digest is not written again; new content is published by rename.
+`describe(path, name, size)` classifies and measures a file already on disk the same way without
+storing it; Attachments uses it for a finished upload, which it stores itself. An image too large
+to decode is described as a `file`.
 `source`, `{ path, absolutePath }`, records the file the bytes came from as the agent wrote it and
 as it resolved, so a layout block in the agent's reply can name the item; generated images use the
 generated file's path for both. A path too long for the protocol leaves the item without one.

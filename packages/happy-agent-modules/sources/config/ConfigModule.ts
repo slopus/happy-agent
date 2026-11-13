@@ -2082,6 +2082,27 @@ export class ConfigModule implements AgentModule {
         return join(this.vaultsHome, "uploads", uploadId);
     }
 
+    /** The private root holding the files people attach to their messages, beside the database. */
+    get attachmentsHome(): string {
+        return join(this.configuration.paths.agentHome, "attachments");
+    }
+
+    /** One attachment's stored bytes, named by their SHA-256 and shared by every conversation. */
+    attachmentContentPath(sha256: string): string {
+        if (!/^[0-9a-f]{64}$/.test(sha256)) {
+            throw new Error("The attachment content digest cannot name a file.");
+        }
+        return join(this.attachmentsHome, "content", sha256.slice(0, 2), sha256);
+    }
+
+    /** Where one upload's bytes accumulate, or a whole-file upload is received, before storing. */
+    attachmentUploadPath(fileId: string): string {
+        if (!Value.Check(cuid2Schema, fileId)) {
+            throw new Error("The attachment upload file cannot be named.");
+        }
+        return join(this.attachmentsHome, "uploads", fileId);
+    }
+
     /**
      * The still WebP preview of one stored artifact file, named by the SHA-256 of the source
      * file's bytes, so every version and artifact holding those bytes shares it.

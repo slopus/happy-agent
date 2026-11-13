@@ -205,6 +205,33 @@ export const historyImageBlockSchema = Type.Object(
     { additionalProperties: false },
 );
 
+/**
+ * A file a person attached to their message, as it was when the message was sent. `attachment`
+ * is the SHA-256 of its bytes, which the Attachments module serves; the block never holds them.
+ */
+export const historyFileBlockSchema = Type.Object(
+    {
+        type: Type.Literal("file"),
+        attachment: Type.String({ pattern: "^[0-9a-f]{64}$" }),
+        name: Type.String({ minLength: 1, maxLength: 255 }),
+        mimeType: Type.String({ minLength: 1, maxLength: 255, pattern: "^[^\\u0000\\r\\n]+$" }),
+        size: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+        kind: Type.Union([
+            Type.Literal("image"),
+            Type.Literal("video"),
+            Type.Literal("document"),
+            Type.Literal("file"),
+        ]),
+        width: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+        height: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+        thumbhash: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        scale: Type.Optional(Type.Number({ exclusiveMinimum: 1, maximum: 4 })),
+    },
+    { additionalProperties: false },
+);
+
+export type HistoryFileBlock = Static<typeof historyFileBlockSchema>;
+
 const historyToolCallFields = {
     type: Type.Literal("tool_call"),
     callId: cuid2Schema,
@@ -511,6 +538,7 @@ export const historyBlockSchema = Type.Union([
     historyTextBlockSchema,
     historyThinkingBlockSchema,
     historyImageBlockSchema,
+    historyFileBlockSchema,
     historyToolCallBlockSchema,
     historyToolResultBlockSchema,
     historyCompactionBlockSchema,

@@ -1,0 +1,469 @@
+import { createHash } from "node:crypto";
+import { access, readdir, utimes, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+
+import {
+    withAgentPermissionMode,
+    type AgentModuleScope,
+    type AnyAgentTool,
+} from "@slopus/happy-agent-base";
+import sharp from "sharp";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { AttachmentError, AttachmentsModule } from "../../sources/attachments/index.js";
+import { ChatMediaModule } from "../../sources/chatMedia/index.js";
+import type { HostCompute } from "../../sources/compute/index.js";
+import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
+import { HistoryModule } from "../../sources/history/index.js";
+import { FakeCompute } from "../compute/support/FakeCompute.js";
+import { scriptedComputeModule } from "../support/computeModule.js";
+import { temporaryTestConfig } from "../support/configModule.js";
+import { moduleDatabase } from "../support/moduleDatabase.js";
+
+const HOUR = 60 * 60 * 1000;
+const closers: (() => void)[] = [];
+
+afterEach(() => {
+    for (const close of closers.splice(0)) close();
+});
+
+function sha256(bytes: Uint8Array): string {
+    return createHash("sha256").update(bytes).digest("hex");
+}
+
+function body(...parts: Uint8Array[]): Readable {
+    return Readable.from(parts);
+}
+
+async function exists(path: string): Promise<boolean> {
+    try {
+        await access(path);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function world() {
+    const config = await temporaryTestConfig();
+    const history = new HistoryModule();
+    const compute = new FakeCompute();
+    const attachments = new AttachmentsModule(
+        config,
+        new DurableFunctionsModule(),
+        new ChatMediaModule(config, history),
+        scriptedComputeModule(async () => compute as unknown as HostCompute),
+    );
+    const database = moduleDatabase(
+        [...history.migrations, ...attachments.migrations],
+        "attachments-test",
+    );
+    closers.push(database.close);
+    await database.ready;
+    const ctx = database.context;
+    return {
+        config,
+        compute,
+        ctx,
+        attachments,
+        upload: async (agentId: string, name: string, bytes: Uint8Array, contentType?: string) =>
+            (await attachments.upload(ctx, agentId, null, { name, contentType }, body(bytes))).id,
+        tool: async (agentId: string): Promise<AnyAgentTool> => {
+            const tools = await attachments.beforeStart().tools!(ctx, {
+                agent: { id: agentId },
+            } as AgentModuleScope);
+            return tools.find((tool) => tool.name === "read_attachment")!;
+        },
+    };
+}
+
+async function code(work: Promise<unknown>): Promise<string | undefined> {
+    try {
+        await work;
+        return undefined;
+    } catch (error) {
+        if (!(error instanceof AttachmentError)) throw error;
+        return error.code;
+    }
+}
+
+describe("AttachmentsModule", () => {
+    it("names a whole upload by its digest and answers the same attachment for the same bytes", async () => {
+        const { ctx, attachments } = await world();
+        const bytes = Buffer.from("hello");
+        const first = await attachments.upload(
+            ctx,
+            "agentone",
+            null,
+            { name: "a.txt", contentType: "text/markdown; charset=utf-8" },
+            body(bytes),
+        );
+        expect(first).toEqual({
+            id: sha256(bytes),
+            name: "a.txt",
+            mimeType: "text/markdown",
+            size: 5,
+            kind: "file",
+        });
+        // A generic type goes by the name, and the first upload's details stay.
+        const again = await attachments.upload(
+            ctx,
+            "agentone",
+            null,
+            { name: "b.bin", contentType: "application/octet-stream" },
+            body(bytes),
+        );
+        expect(again).toEqual(first);
+        expect(
+            await code(
+                attachments.upload(
+                    ctx,
+                    "agentone",
+                    null,
+                    { name: "\u0001 ", contentType: undefined },
+                    body(bytes),
+                ),
+            ),
+        ).toBe("invalid_request");
+    });
+
+    it("measures a picture from its bytes", async () => {
+        const { ctx, attachments } = await world();
+        const picture = await sharp({
+            create: { width: 40, height: 20, channels: 3, background: { r: 1, g: 2, b: 3 } },
+        })
+            .png()
+            .toBuffer();
+        const attachment = await attachments.upload(
+            ctx,
+            "agentone",
+            null,
+            { name: "shot.png", contentType: "image/jpeg" },
+            body(picture),
+        );
+        expect(attachment).toMatchObject({
+            kind: "image",
+            mimeType: "image/png",
+            width: 40,
+            height: 20,
+            thumbhash: expect.any(String),
+        });
+    });
+
+    it("assembles chunks sent in any order and at the same time, and checks the digest", async () => {
+        const { ctx, attachments } = await world();
+        const bytes = Buffer.from("0123456789");
+        const id = sha256(bytes);
+        const file = { name: "digits.txt", contentType: "text/plain" };
+        const chunk = (start: number, end: number) =>
+            attachments.receive(
+                ctx,
+                "agentone",
+                null,
+                id,
+                file,
+                { type: "bytes", start, end, size: 10 },
+                body(bytes.subarray(start, end + 1)),
+            );
+        const status = await attachments.receive(
+            ctx,
+            "agentone",
+            null,
+            id,
+            file,
+            { type: "status", size: 10 },
+            body(),
+        );
+        expect(status).toMatchObject({ upload: { id, size: 10, received: [] } });
+        expect(await chunk(6, 9)).toMatchObject({ upload: { received: [{ start: 6, end: 9 }] } });
+        // The status answers what is held; a wrong total or range is refused.
+        expect(
+            await attachments.receive(
+                ctx,
+                "agentone",
+                null,
+                id,
+                file,
+                { type: "status", size: 10 },
+                body(),
+            ),
+        ).toMatchObject({ upload: { received: [{ start: 6, end: 9 }] } });
+        expect(
+            await code(
+                attachments.receive(
+                    ctx,
+                    "agentone",
+                    null,
+                    id,
+                    file,
+                    { type: "status", size: 11 },
+                    body(),
+                ),
+            ),
+        ).toBe("invalid_request");
+        expect(
+            await code(
+                attachments.receive(
+                    ctx,
+                    "agentone",
+                    null,
+                    id,
+                    file,
+                    { type: "bytes", start: 0, end: 3, size: 10 },
+                    body(Buffer.from("01")),
+                ),
+            ),
+        ).toBe("invalid_request");
+        const [first, second] = await Promise.all([chunk(0, 2), chunk(3, 5)]);
+        const answers = [first, second];
+        expect(answers.filter((answer) => "attachment" in answer)).toHaveLength(1);
+        expect(answers.find((answer) => "attachment" in answer)).toEqual({
+            attachment: { id, name: "digits.txt", mimeType: "text/plain", size: 10, kind: "file" },
+        });
+        // Done: any further request answers the attachment without its body.
+        expect(await chunk(0, 2)).toMatchObject({ attachment: { id } });
+
+        // Bytes that do not match the ID discard the upload.
+        const wrong = sha256(Buffer.from("something else"));
+        expect(
+            await code(
+                attachments.receive(
+                    ctx,
+                    "agentone",
+                    null,
+                    wrong,
+                    file,
+                    { type: "bytes", start: 0, end: 9, size: 10 },
+                    body(bytes),
+                ),
+            ),
+        ).toBe("hash_mismatch");
+        expect(
+            await attachments.receive(
+                ctx,
+                "agentone",
+                null,
+                wrong,
+                file,
+                { type: "status", size: 10 },
+                body(),
+            ),
+        ).toMatchObject({ upload: { received: [] } });
+    });
+
+    it("cancels uploads and unsent attachments, but keeps a sent one", async () => {
+        const { ctx, attachments, upload } = await world();
+        const bytes = Buffer.from("abcdef");
+        const id = sha256(bytes);
+        const file = { name: "a.txt", contentType: undefined };
+        await attachments.receive(
+            ctx,
+            "agentone",
+            null,
+            id,
+            file,
+            { type: "bytes", start: 0, end: 2, size: 6 },
+            body(bytes.subarray(0, 3)),
+        );
+        await attachments.delete(ctx, "agentone", id);
+        expect(await code(attachments.delete(ctx, "agentone", id))).toBe("not_found");
+        expect(
+            await attachments.receive(
+                ctx,
+                "agentone",
+                null,
+                id,
+                file,
+                { type: "status", size: 6 },
+                body(),
+            ),
+        ).toMatchObject({ upload: { received: [] } });
+
+        const unsent = await upload("agentone", "u.txt", Buffer.from("unsent"));
+        await attachments.delete(ctx, "agentone", unsent);
+        expect(await code(attachments.content(ctx, "agentone", unsent))).toBe("not_found");
+
+        const sent = await upload("agentone", "s.txt", Buffer.from("sent"));
+        await attachments.send(ctx, "agentone", [
+            { type: "file", attachment: sent, name: "s.txt" },
+        ]);
+        expect(await code(attachments.delete(ctx, "agentone", sent))).toBe("conflict");
+    });
+
+    it("resolves a message's files, and refuses ones the conversation does not hold", async () => {
+        const { ctx, attachments, upload } = await world();
+        const id = await upload("agentone", "a.txt", Buffer.from("hello"));
+        const blocks = await attachments.send(ctx, "agentone", [
+            { type: "file", attachment: id, name: "renamed.txt" },
+            { type: "file", attachment: id, name: "\u0000" },
+        ]);
+        expect(blocks).toEqual([
+            {
+                type: "file",
+                attachment: id,
+                name: "renamed.txt",
+                mimeType: "text/plain",
+                size: 5,
+                kind: "file",
+            },
+            {
+                type: "file",
+                attachment: id,
+                name: "a.txt",
+                mimeType: "text/plain",
+                size: 5,
+                kind: "file",
+            },
+        ]);
+        expect(attachments.note(blocks[0]!)).toBe(
+            `[Attachment ${id}: "renamed.txt", text/plain, 5 bytes. Open it with read_attachment.]`,
+        );
+        expect(
+            await code(
+                attachments.send(ctx, "agenttwo", [{ type: "file", attachment: id, name: "a" }]),
+            ),
+        ).toBe("attachment_not_found");
+        expect(
+            await code(
+                attachments.send(
+                    ctx,
+                    "agentone",
+                    Array.from({ length: 33 }, () => ({
+                        type: "file" as const,
+                        attachment: id,
+                        name: "a",
+                    })),
+                ),
+            ),
+        ).toBe("invalid_request");
+    });
+
+    it("keeps shared content until no conversation holds it", async () => {
+        const { config, ctx, attachments, upload } = await world();
+        const bytes = Buffer.from("the same bytes");
+        const id = await upload("agentone", "one.txt", bytes);
+        await upload("agenttwo", "two.txt", bytes);
+        await attachments.send(ctx, "agentone", [
+            { type: "file", attachment: id, name: "one.txt" },
+        ]);
+        const content = config.attachmentContentPath(id);
+        await attachments.delete(ctx, "agenttwo", id);
+        await attachments.collect(ctx, Date.now() + HOUR);
+        expect(await exists(content)).toBe(true);
+
+        // Erasing the last conversation holding it frees it.
+        await ctx.inTx(
+            async (txCtx) =>
+                await attachments.beforeStart().agentErasedTransact!(
+                    txCtx,
+                    {} as never,
+                    { id: "agentone" } as never,
+                ),
+        );
+        await attachments.collect(ctx, Date.now() + HOUR);
+        expect(await exists(content)).toBe(false);
+    });
+
+    it("discards unsent attachments and uploads a day after their last bytes, with stray files", async () => {
+        const { config, ctx, attachments, upload } = await world();
+        const ready = await upload("agentone", "ready.txt", Buffer.from("ready"));
+        const sent = await upload("agentone", "sent.txt", Buffer.from("sent"));
+        await attachments.send(ctx, "agentone", [
+            { type: "file", attachment: sent, name: "sent.txt" },
+        ]);
+        const partial = sha256(Buffer.from("partial!!!"));
+        await attachments.receive(
+            ctx,
+            "agentone",
+            null,
+            partial,
+            { name: "partial.bin", contentType: undefined },
+            { type: "bytes", start: 0, end: 3, size: 10 },
+            body(Buffer.from("part")),
+        );
+        const uploads = join(config.attachmentsHome, "uploads");
+        const stray = join(uploads, "strayuploadfile");
+        await writeFile(stray, "left behind");
+        const old = new Date(Date.now() - 2 * 24 * HOUR);
+        await utimes(stray, old, old);
+
+        await attachments.maintain(ctx, Date.now() + 25 * HOUR);
+        expect(await code(attachments.content(ctx, "agentone", ready))).toBe("not_found");
+        expect(await exists(config.attachmentContentPath(ready))).toBe(false);
+        expect((await attachments.content(ctx, "agentone", sent)).sha256).toBe(sent);
+        expect(await readdir(uploads)).toEqual([]);
+    });
+
+    it("shows images fitted and text a page at a time, and saves a copy only where asked", async () => {
+        const { compute, ctx, attachments, upload, tool } = await world();
+        const picture = await sharp({
+            create: { width: 3000, height: 100, channels: 3, background: { r: 1, g: 2, b: 3 } },
+        })
+            .png()
+            .toBuffer();
+        const image = await upload("agentone", "wide.png", picture);
+        const lines = Array.from({ length: 30 }, (_, index) => `line ${String(index + 1)}`);
+        const text = await upload("agentone", "log.txt", Buffer.from(lines.join("\n")));
+        const binary = await upload("agentone", "b.bin", Buffer.from([0, 1, 2, 0]));
+        const unsent = await upload("agentone", "unsent.txt", Buffer.from("secret"));
+        await attachments.send(
+            ctx,
+            "agentone",
+            [image, text, binary].map((id) => ({
+                type: "file" as const,
+                attachment: id,
+                name: "f",
+            })),
+        );
+        const read = await tool("agentone");
+        const filesBefore = compute.files.size;
+
+        const shown = await read.execute(ctx, { attachment_id: image }, {} as never);
+        expect(shown.path).toBeUndefined();
+        const metadata = await sharp(Buffer.from(shown.image.data, "base64")).metadata();
+        expect(Math.max(metadata.width!, metadata.height!)).toBeLessThanOrEqual(2000);
+        const page = await read.execute(
+            withAgentPermissionMode(ctx, "read_only"),
+            { attachment_id: text, offset: 10, limit: 5 },
+            {} as never,
+        );
+        expect(page).toMatchObject({
+            text: "10\tline 10\n11\tline 11\n12\tline 12\n13\tline 13\n14\tline 14",
+            totalLines: 30,
+            nextOffset: 15,
+        });
+        expect(compute.files.size).toBe(filesBefore);
+
+        const saved = await read.execute(
+            ctx,
+            { attachment_id: binary, path: "scratch/in/b.bin" },
+            {} as never,
+        );
+        expect(saved).toMatchObject({ path: "/workspace/scratch/in/b.bin" });
+        expect(compute.files.get(saved.path)?.bytes).toEqual(new Uint8Array([0, 1, 2, 0]));
+        compute.write("/workspace/scratch/in/b.bin", "the agent's own edit");
+        await expect(
+            read.execute(ctx, { attachment_id: binary, path: "scratch/in/b.bin" }, {} as never),
+        ).rejects.toThrow(/already exists\. Pass overwrite: true/u);
+
+        const review = (path?: string) =>
+            read.shouldReviewInAutoMode(
+                { attachment_id: text, ...(path === undefined ? {} : { path }) },
+                ctx,
+            );
+        expect(await review()).toBe(false);
+        expect(await review("notes/log.txt")).toBe(false);
+        expect(await review("/elsewhere/log.txt")).toBe(true);
+
+        // Unsent and other conversations' attachments do not exist for the model.
+        for (const [agentId, id] of [
+            ["agentone", unsent],
+            ["agenttwo", text],
+        ] as const) {
+            expect(
+                await (await tool(agentId)).execute(ctx, { attachment_id: id }, {} as never),
+            ).toMatchObject({ note: "No attachment with this ID was sent in this conversation." });
+        }
+    });
+});

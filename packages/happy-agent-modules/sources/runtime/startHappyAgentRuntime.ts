@@ -57,6 +57,7 @@ import { ContextWindowModule } from "../contextWindow/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { EventsModule } from "../events/index.js";
 import { ProjectFilesModule } from "../files/index.js";
+import { AttachmentsModule } from "../attachments/index.js";
 import { ChatMediaModule } from "../chatMedia/index.js";
 import { chatUiMigrations } from "../chatUi/ChatUiMigrations.js";
 import { CleanupModule } from "../cleanup/index.js";
@@ -171,6 +172,7 @@ export interface HappyAgentRuntimeModules {
     readonly bots: BotsModule;
     readonly bridges: BridgesModule;
     readonly botSettings: BotSettingsModule;
+    readonly attachments: AttachmentsModule;
     readonly chatMedia: ChatMediaModule;
     readonly cleanup: CleanupModule;
     readonly exportedBots: ExportedBotsModule;
@@ -756,6 +758,12 @@ export async function startHappyAgentRuntime(
             await codeMode.close();
         });
         const teammates = new TeammatesModule(tasks, team);
+        const attachments = new AttachmentsModule(
+            config,
+            durableFunctions,
+            chatMedia,
+            compute.computeModule,
+        );
         const live = new LiveModule(
             config,
             durableFunctions,
@@ -837,6 +845,7 @@ export async function startHappyAgentRuntime(
             teammates,
             userEnvironment,
             secretRequests,
+            attachments,
         );
         api = apiModule;
 
@@ -847,6 +856,7 @@ export async function startHappyAgentRuntime(
             api: apiModule,
             artifacts,
             artifactData,
+            attachments,
             auto: autoModule,
             bots,
             bridges,
@@ -984,6 +994,7 @@ export async function startHappyAgentRuntime(
             mcp,
             search,
             chatMedia,
+            attachments,
             // Chat onboarding is deferred. Future UI may use settings widgets exposed by
             // top-level tools like MCP apps, or Card/Button/Text/Column primitives like
             // json-render, A2UI, or ChatGPT's intelligent UI. Keep only the migration ledger.

@@ -230,6 +230,7 @@ function historyBlocks(
         .map((block): Record<string, unknown> => {
             if (block.type === "configuration") return structuredClone(block);
             if (block.type === "tool_call_request") return structuredClone(block);
+            if (block.type === "file") return structuredClone(block);
             if (block.type === "ui" || block.type === "action" || block.type === "quick_replies") {
                 return structuredClone(block);
             }

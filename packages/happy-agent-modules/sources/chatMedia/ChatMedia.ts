@@ -52,6 +52,13 @@ export const chatMediaItemSchema = Type.Union([
 
 export type ChatMediaItem = Static<typeof chatMediaItemSchema>;
 
+/** What a file is shown as and its measurements, without the snapshot that would serve it. */
+export type ChatMediaDescription = ChatMediaItem extends infer Item
+    ? Item extends ChatMediaItem
+        ? Omit<Item, "size" | "sha256" | "source">
+        : never
+    : never;
+
 /** What a tool result carries so History records the items with the call that showed them. */
 export const chatMediaPresentationSchema = Type.Object(
     {

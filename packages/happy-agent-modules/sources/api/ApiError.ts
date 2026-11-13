@@ -1,6 +1,8 @@
 import { Type, type Static } from "@sinclair/typebox";
 
 export const apiErrorCodeSchema = Type.Union([
+    Type.Literal("attachment_not_found"),
+    Type.Literal("attachment_too_large"),
     Type.Literal("cloud_not_authenticated"),
     Type.Literal("cloud_unauthorized"),
     Type.Literal("cloud_unavailable"),

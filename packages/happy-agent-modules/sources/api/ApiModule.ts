@@ -351,6 +351,12 @@ import {
     type UserInputEvent,
 } from "../userInput/index.js";
 import {
+    AttachmentError,
+    type AttachmentChunkRange,
+    type AttachmentsModule,
+    type FileRequestBlock,
+} from "../attachments/index.js";
+import {
     STANDALONE_USER_ENVIRONMENT_OWNER,
     UserEnvironmentError,
     UserEnvironmentModule,
@@ -698,6 +704,7 @@ export class ApiModule implements AgentModule {
     readonly #userSettings: UserSettingsModule | undefined;
     readonly #userEnvironment: UserEnvironmentModule | undefined;
     readonly #secretRequests: SecretRequestsModule | undefined;
+    readonly #attachments: AttachmentsModule | undefined;
     readonly #surfaces: SurfacesModule | undefined;
     readonly #mobileConnector: MobileConnectorModule | undefined;
     readonly #providerClis: ProviderClisModule | undefined;
@@ -888,10 +895,12 @@ export class ApiModule implements AgentModule {
         teammates?: TeammatesModule,
         userEnvironment?: UserEnvironmentModule,
         secretRequests?: SecretRequestsModule,
+        attachments?: AttachmentsModule,
     ) {
         this.#secretRequests = secretRequests;
         this.#teammates = teammates;
         this.#userEnvironment = userEnvironment;
+        this.#attachments = attachments;
         this.#abort = abort;
         this.#config = config;
         this.#events = events;
@@ -5487,6 +5496,25 @@ export class ApiModule implements AgentModule {
             });
             return true;
         }
+        const attachment = /^\/v0\/agents\/([a-z][a-z0-9]*)\/attachments(?:\/([^/]+))?$/.exec(
+            url.pathname,
+        );
+        if (attachment !== null && this.#attachments !== undefined) {
+            try {
+                return await this.#handleAttachmentRoute(
+                    ctx,
+                    request,
+                    response,
+                    url,
+                    this.#attachments,
+                    attachment[1] as string,
+                    attachment[2],
+                );
+            } catch (error) {
+                if (!(error instanceof AttachmentError)) throw error;
+                throw attachmentApiError(error);
+            }
+        }
         const storyFrame =
             /^\/v0\/agents\/([a-z][a-z0-9]*)\/messages\/([a-z][a-z0-9]{0,255})\/story-frame$/.exec(
                 url.pathname,
@@ -5669,6 +5697,62 @@ export class ApiModule implements AgentModule {
         return false;
     }
 
+    /** `/v0/agents/:agentId/attachments` routes; attachment errors map in the caller. */
+    async #handleAttachmentRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+        attachments: AttachmentsModule,
+        agentId: string,
+        attachmentId: string | undefined,
+    ): Promise<boolean> {
+        if (attachmentId !== undefined && !/^[0-9a-f]{64}$/.test(attachmentId)) {
+            throw notFound("The attachment was not found.");
+        }
+        if (request.method === "GET" && attachmentId !== undefined) {
+            await this.#requireAgentResource(ctx, agentId);
+            const stored = await attachments.content(ctx, agentId, attachmentId);
+            await sendStoredFile(request, response, {
+                ...stored,
+                disposition: "attachment",
+                // An attachment is named by its digest, so the same URL never names other bytes.
+                cacheControl: "private, max-age=31536000, immutable",
+            });
+            return true;
+        }
+        if (request.method === "DELETE" && attachmentId !== undefined) {
+            await this.#assertUserControlledAgent(ctx, agentId);
+            await attachments.delete(ctx, agentId, attachmentId);
+            sendJson(response, 200, {});
+            return true;
+        }
+        if (request.method !== "PUT") return false;
+        await this.#assertUserControlledAgent(ctx, agentId);
+        const uploader = this.#team.enabled ? (teamUser(ctx)?.id ?? null) : null;
+        const file = {
+            name: url.searchParams.get("name") ?? "",
+            contentType: request.headers["content-type"],
+        };
+        if (attachmentId === undefined) {
+            sendJson(response, 201, {
+                attachment: await attachments.upload(ctx, agentId, uploader, file, request),
+            });
+            return true;
+        }
+        const result = await attachments.receive(
+            ctx,
+            agentId,
+            uploader,
+            attachmentId,
+            file,
+            attachmentChunkRange(request.headers["content-range"]),
+            request,
+        );
+        sendJson(response, "attachment" in result ? 201 : 200, result);
+        return true;
+    }
+
     async #handleAgentSend(
         ctx: Context,
         request: IncomingMessage,
@@ -5725,7 +5809,17 @@ export class ApiModule implements AgentModule {
             if (serviceTier === undefined) {
                 throw invalidRequest("The selected service tier is unavailable.");
             }
-            const content = [{ type: "text" as const, text: body.text }, ...(body.content ?? [])];
+            const requested = [{ type: "text" as const, text: body.text }, ...(body.content ?? [])];
+            const files = requested.filter(
+                (block): block is FileRequestBlock => block.type === "file",
+            );
+            if (files.length > 0 && this.#attachments === undefined) {
+                throw invalidRequest("This daemon does not accept attached files.");
+            }
+            let content = requested.filter(
+                (block): block is Exclude<(typeof requested)[number], FileRequestBlock> =>
+                    block.type !== "file",
+            );
             const userId = this.#team.enabled ? teamUser(ctx)?.id : undefined;
             const profile = decodeRequestProfile(body.profile);
             const options: AgentBaseMessageOptions = {
@@ -5752,7 +5846,7 @@ export class ApiModule implements AgentModule {
             const agents = this.#agentSystem();
             const createdAt = Date.now();
             const delivery = body.delivery ?? "queue";
-            const pending: HistoryPendingMessage = {
+            let pending: HistoryPendingMessage = {
                 id,
                 agentId,
                 role: "user",
@@ -5780,6 +5874,25 @@ export class ApiModule implements AgentModule {
             try {
                 await ctx.inTx(async (txCtx) => {
                     await this.#assertUserControlledAgent(txCtx, agentId);
+                    if (files.length > 0) {
+                        // The files are checked and marked sent atomically with the message. The
+                        // stored message keeps each file's block; the model reads a note instead.
+                        const sent = await this.#attachments!.send(txCtx, agentId, files);
+                        let next = 0;
+                        const blocks: HistoryPendingMessage["blocks"][number][] = [];
+                        content = [];
+                        for (const block of requested) {
+                            if (block.type !== "file") {
+                                blocks.push(...this.#history.inputBlocks([block]));
+                                content.push(block);
+                                continue;
+                            }
+                            const file = sent[next++]!;
+                            blocks.push(file);
+                            content.push({ type: "text", text: this.#attachments!.note(file) });
+                        }
+                        pending = { ...pending, blocks };
+                    }
                     await this.#history.queuePending(txCtx, pending);
                     // A person writing in a task joins the teammates they mention and marks the
                     // task unread for everyone else in it, atomically with the message.
@@ -5812,7 +5925,7 @@ export class ApiModule implements AgentModule {
                 this.#announcedPendingMessages.delete(id);
                 this.#apiPendingMessageIds.delete(id);
                 this.#finishPendingMessageAnnouncement(id);
-                throw error;
+                throw error instanceof AttachmentError ? attachmentApiError(error) : error;
             }
             const accepted = await this.#history.message(ctx, agentId, id);
             const message =
@@ -10783,6 +10896,7 @@ export class ApiModule implements AgentModule {
                 ...(this.#feed === undefined ? {} : { feed: true, feedSubjectFilter: true }),
                 ...(this.#artifacts === undefined ? {} : { artifactCovers: true }),
                 ...(this.#userEnvironment === undefined ? {} : { userEnvironment: true }),
+                ...(this.#attachments === undefined ? {} : { attachments: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),
@@ -11736,6 +11850,35 @@ async function sendVaultZip(
         "x-content-type-options": "nosniff",
     });
     await streamToOutgoing(Readable.from(writeZip(zip.items)), response);
+}
+
+/** An attachment refusal as the HTTP error its routes and `send` answer with. */
+function attachmentApiError(error: AttachmentError): ApiError {
+    const status = {
+        not_found: 404,
+        conflict: 409,
+        hash_mismatch: 409,
+        invalid_request: 400,
+        attachment_not_found: 400,
+        attachment_too_large: 413,
+    }[error.code];
+    return new ApiError(status, error.code, error.message);
+}
+
+// Where a chunk's body goes, from its `Content-Range`: `bytes start-end/size` places it,
+// `bytes */size` asks where the upload stands, and none makes it the whole file.
+function attachmentChunkRange(header: string | undefined): AttachmentChunkRange {
+    if (header === undefined) return { type: "whole" };
+    const status = /^bytes \*\/(\d{1,15})$/.exec(header.trim());
+    if (status !== null) return { type: "status", size: Number(status[1]) };
+    const parsed = /^bytes (\d{1,15})-(\d{1,15})\/(\d{1,15})$/.exec(header.trim());
+    if (parsed === null) throw invalidRequest("The Content-Range header is invalid.");
+    return {
+        type: "bytes",
+        start: Number(parsed[1]),
+        end: Number(parsed[2]),
+        size: Number(parsed[3]),
+    };
 }
 
 /** A Surface failure as the HTTP error its routes answer with. */

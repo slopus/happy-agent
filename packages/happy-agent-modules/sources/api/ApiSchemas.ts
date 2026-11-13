@@ -17,6 +17,7 @@ export {
     startCloudAuthorizationRequestSchema,
 } from "@slopus/happy-agent-client";
 
+import { fileRequestBlockSchema } from "../attachments/index.js";
 import { createTerminalInputSchema, resizeTerminalInputSchema } from "../terminals/index.js";
 import { userSettingValueSchema } from "../userSettings/index.js";
 
@@ -201,19 +202,26 @@ const messageSendImageBlockSchema = Type.Object(
 );
 
 /**
- * Ordinary content is text and images. A message may add at most one tool request. The two
+ * Ordinary content is text, images, and attached files. A message may add at most one tool
+ * request. The two
  * shapes are separate arrays because TypeBox rejects any `contains` array with zero matches
  * even when `minContains` is 0, which would refuse every plain text or image message.
  */
 const messageSendContentSchema = Type.Union([
-    Type.Array(Type.Union([messageSendTextBlockSchema, messageSendImageBlockSchema]), {
-        maxItems: 64,
-    }),
+    Type.Array(
+        Type.Union([
+            messageSendTextBlockSchema,
+            messageSendImageBlockSchema,
+            fileRequestBlockSchema,
+        ]),
+        { maxItems: 64 },
+    ),
     Type.Array(
         Type.Union([
             toolCallRequestBlockSchema,
             messageSendTextBlockSchema,
             messageSendImageBlockSchema,
+            fileRequestBlockSchema,
         ]),
         {
             maxItems: 64,

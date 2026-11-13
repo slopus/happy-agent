@@ -142,7 +142,9 @@ The module also implements the `AgentModule` lifecycle hooks that do the recordi
 block into the durable assistant message, roll over to a continuation assistant message when
 `MAX_HISTORY_BLOCKS_PER_MESSAGE` or message byte bounds would be exceeded, and idempotently record
 provider-executed `toolcall_result_end` blocks on the message owning that call),
-`messageAcceptedTransact` (records an accepted user message),
+`messageAcceptedTransact` (records an accepted user message, with the pending row's blocks when
+the message was queued through History, so a `file` block is stored even though Agent Base received
+a text note in its place),
 `beforeToolCallTransact`/`afterToolCallTransact` (record one tool result per local call on the
 message containing that call, including its one-line display summary),
 `afterInferenceTransact` (flushes any remaining buffered blocks or configuration records and, if

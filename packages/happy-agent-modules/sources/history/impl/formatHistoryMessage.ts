@@ -44,6 +44,10 @@ export function formatHistoryMessage(
             lines.push(`Text: ${truncate(block.text, textLimit)}`);
         } else if (block.type === "image") {
             lines.push(`[Image: ${block.mediaType}]`);
+        } else if (block.type === "file") {
+            lines.push(
+                `[Attachment ${block.attachment}: ${JSON.stringify(block.name)}, ${block.mimeType}, ${String(block.size)} bytes]`,
+            );
         } else if (block.type === "thinking") {
             lines.push(
                 block.redacted === true

@@ -2982,10 +2982,16 @@ export class HistoryModule implements AgentModule {
             // A message from another agent may carry the reasoning that agent exposed. It is
             // recorded as thinking, the way this module records any other reasoning; reasoning
             // that is only an opaque provider payload has nothing to show and is left out.
-            const blocks = accepted.message.content.flatMap((block): HistoryBlock[] => {
-                if (block.type !== "reasoning") return [toHistoryInputBlock(block)];
-                return block.text === undefined ? [] : [{ type: "thinking", thinking: block.text }];
-            });
+            // A pending row is authoritative here too: it holds what the person sent, such as
+            // their attached files, where the model was given a note about each one instead.
+            const blocks =
+                pending?.blocks ??
+                accepted.message.content.flatMap((block): HistoryBlock[] => {
+                    if (block.type !== "reasoning") return [toHistoryInputBlock(block)];
+                    return block.text === undefined
+                        ? []
+                        : [{ type: "thinking", thinking: block.text }];
+                });
             await this.#append(ctx, scope.agent.id, {
                 at: acceptedAt,
                 blocks,

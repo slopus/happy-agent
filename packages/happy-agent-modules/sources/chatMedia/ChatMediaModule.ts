@@ -17,6 +17,7 @@ import {
     chatMediaPresentationSchema,
     MAX_CHAT_MEDIA_CALL_BYTES,
     MAX_CHAT_MEDIA_ITEMS,
+    type ChatMediaDescription,
     type ChatMediaItem,
     type ChatMediaPresentation,
     type ChatMediaStoredItem,
@@ -110,7 +111,6 @@ export class ChatMediaModule implements AgentModule {
             );
         }
         const base = {
-            name: displayName,
             size,
             sha256,
             // A path too long to record only means a layout block cannot name the item.
@@ -118,19 +118,38 @@ export class ChatMediaModule implements AgentModule {
                 ? {}
                 : { source }),
         };
-        let item: ChatMediaItem;
-        if (candidate.kind === "image") {
-            const bytes = content instanceof Uint8Array ? content : await readFile(content.path);
-            const image = await measureChatImage(bytes, candidate.mimeType);
-            item =
-                image === undefined
-                    ? { kind: "file", mimeType: candidate.mimeType, ...base }
-                    : { kind: "image", ...base, ...image };
-        } else {
-            item = { kind: candidate.kind, mimeType: candidate.mimeType, ...base };
-        }
+        const item: ChatMediaItem = { ...(await this.#describe(content, displayName)), ...base };
         await writeChatMediaContent(this.#config.chatMediaContentPath(sha256), content);
         return item;
+    }
+
+    /**
+     * What a file kept elsewhere, such as a message attachment, is shown as, measured exactly as
+     * a presented item is but without a snapshot of it. A picture too large to present, or one
+     * that does not decode, is a plain file.
+     */
+    async describe(path: string, name: string, size: number): Promise<ChatMediaDescription> {
+        const displayName = chatMediaName(name);
+        const candidate = chatMediaCandidate(displayName);
+        if (candidate.kind === "image" && size > candidate.maxBytes) {
+            return { kind: "file", name: displayName, mimeType: candidate.mimeType };
+        }
+        return await this.#describe({ path, size }, displayName);
+    }
+
+    async #describe(
+        content: Uint8Array | { readonly path: string; readonly size: number },
+        displayName: string,
+    ): Promise<ChatMediaDescription> {
+        const candidate = chatMediaCandidate(displayName);
+        if (candidate.kind !== "image") {
+            return { kind: candidate.kind, name: displayName, mimeType: candidate.mimeType };
+        }
+        const bytes = content instanceof Uint8Array ? content : await readFile(content.path);
+        const image = await measureChatImage(bytes, candidate.mimeType);
+        return image === undefined
+            ? { kind: "file", name: displayName, mimeType: candidate.mimeType }
+            : { kind: "image", name: displayName, ...image };
     }
 
     /**
