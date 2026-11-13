@@ -5334,6 +5334,295 @@ Response — `200`:
 A removed grant emits `secret.detached`; a no-op returns `detached: false`, `attachment: null`, and
 emits nothing.
 
+## Cluster secrets
+
+Cluster secrets are Happy Cloud's typed secret catalog. **Only a cluster serves this chapter.** The
+Happy Agent daemon does not implement these routes and answers them with `404`. A cluster does not
+serve `/v0/secrets`; it answers `404`. The environment bundles in the Secrets chapter above are the
+daemon's, and the catalog below is the cluster's. A client picks the chapter by the server it talks
+to.
+
+This chapter is additive and does not change the protocol version, which describes the daemon. It
+adds nothing to any daemon request, response, or event.
+
+Each organization has one catalog. A secret has one of four types: `endpoint`, `ssh_key`,
+`git_credential`, or `environment`. The cluster keeps other kinds of secrets, such as provider
+credentials and plugin secrets, outside this catalog. To these routes their IDs are unknown.
+
+Secret values are **write-only**. They go in the `material` field of create and update requests.
+No response or conflict body contains them. The rest of a secret is metadata, which people who
+cannot open the secret may still see.
+
+### The cluster secret object
+
+```json
+{
+    "id": "c1k2s3e4c5r6e7t8i9d0a1b2",
+    "type": "endpoint",
+    "name": "Stripe API",
+    "description": "Live key for billing agents",
+    "public": {
+        "targets": [
+            { "host": "api.stripe.com", "pathPrefixes": ["/v1"], "methods": ["GET", "POST"] }
+        ],
+        "algorithm": {
+            "kind": "headers",
+            "headers": [{ "name": "Authorization", "prefix": "Bearer " }]
+        }
+    },
+    "uses": ["egress"],
+    "owner": "team",
+    "access": { "use": true, "manage": true, "attach": true },
+    "roles": { "member": { "level": "use", "hidden": false } },
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "createdAt": 1755400000000,
+    "updatedAt": 1755400000000
+}
+```
+
+- `id` — a 24-character CUID2 the cluster generates. Clients never choose one.
+- `type` — `endpoint`, `ssh_key`, `git_credential`, or `environment`. It never changes.
+- `name` — what people see: 1–100 characters after trimming, without control characters. Names
+  need not be unique.
+- `description` — 0–2,000 characters after trimming.
+- `public` — the type's metadata, described below.
+- `uses` — the parts of the system that may open the value, sorted and unique. An `endpoint` allows
+  `egress` and `mcp`, an `ssh_key` allows `ssh`, a `git_credential` allows `git`, and an
+  `environment` allows `environment` and `mcp`.
+- `owner` — `"me"` for the caller's own secret, which no one else sees or uses; `"team"` for the
+  organization's.
+- `access` — what the caller may do. `use`: runs acting for the caller may receive it. `manage`:
+  the caller may change, delete, and grant it. `attach`: the caller may grant it.
+- `roles` — present only on a team secret the caller manages. It maps a role ID to that role's
+  rule, `{ "level": "none" | "use" | "manage", "hidden": boolean }`. Roles without a rule hold
+  `level: "none"` and `hidden: false`.
+- `version` — the UUIDv7 used by `If-Match`. Every change to the secret, its rules, or its grants
+  advances it.
+- `createdAt`, `updatedAt` — timestamps. Replacing `material` changes `updatedAt` even when no
+  metadata changes.
+
+#### Public metadata by type
+
+**`endpoint`** — `{ targets, algorithm }`. The cluster's egress proxy applies the value to matching
+requests.
+
+- `targets` — 1–16 objects of `{ host, ports?, pathPrefixes?, methods? }`. `host` is a name, an
+  address, or `*.` and a name of at least two labels; a wildcard matches subdomains only. `ports`
+  holds at most 16 ports and defaults to 443. `pathPrefixes` holds at most 16 paths starting with
+  `/`; `/v1` admits `/v1` and `/v1/…`. `methods` holds at most 9 HTTP method names. An absent list
+  means any path or any method.
+- `algorithm` — `{ "kind": "headers", "headers": [{ "name", "prefix"? }] }` with 1–8 distinct
+  headers. The proxy sets each header to `prefix` followed by the value. `prefix` is at most 32
+  printable ASCII bytes.
+
+**`ssh_key`** — `{ publicKey, fingerprint, hosts, ports?, knownHosts? }`. The cluster signs with the
+key; the key never reaches a node.
+
+- `publicKey`, `fingerprint` — derived from the private key. A request may omit them; a request
+  that sends them must match the key.
+- `hosts` — 1–16 names, addresses, or `*.name` patterns.
+- `ports` — at most 8 ports besides 22.
+- `knownHosts` — at most 32 plain `known_hosts` lines.
+
+**`git_credential`** — `{ server, port?, method, repos?, operations }`. It authenticates git to one
+server.
+
+- `server` — one host name or address, never a pattern. `port` only when the server is not on 22
+  (SSH) or 443 (HTTPS).
+- `method` — one of:
+    - `{ "kind": "ssh_key", "publicKey", "fingerprint", "knownHosts"? }`. The key fields are derived
+      as for an `ssh_key` secret.
+    - `{ "kind": "password", "username" }` for HTTPS basic authentication.
+    - `{ "kind": "token", "username"? }` for an access token, as basic authentication with
+      `username` or as a bearer token without one.
+- `repos` — at most 64 patterns such as `owner/repo` or `owner/*`. An absent list means every
+  repository on the server.
+- `operations` — any of `read`, `write`, and `sign`. Only the `ssh_key` method may `sign`.
+
+**`environment`** — `{ variables }`: the bundle's variable names, sorted. Derived from `material`; a
+request may omit `public` entirely.
+
+#### Material by type
+
+- `endpoint` — an object with one string per header in `algorithm.headers`, keyed by header name.
+  Each value is 16–4,096 printable ASCII bytes without `[` or `]`.
+- `ssh_key`, and a `git_credential` with the `ssh_key` method — `{ "privateKey", "passphrase"? }`.
+  The key is an OpenSSH private key of at most 16 KiB. `passphrase` is a string or `null`.
+- `git_credential` with the `password` method — `{ "password" }`; with the `token` method —
+  `{ "token" }`. Each is 16–4,096 printable ASCII bytes without `[` or `]`.
+- `environment` — 1–256 variables, as in the Secrets chapter: names match
+  `[A-Za-z_][A-Za-z0-9_]*` and are case-insensitively unique, and each value is at most 65,536
+  characters without NUL.
+
+### Visibility and errors
+
+Lists and reads show only what the caller may see. A secret the caller may not see, an ID that is
+malformed or unknown, and a provider or plugin secret's ID all answer the same `404`. The routes add
+these errors to the common ones:
+
+- `403 forbidden` — the caller sees the secret but lacks the access the mutation needs.
+- `409 conflict` — a stale `If-Match`, carrying `currentVersion` and the current `secret` and never
+  its values; or a grant to an archived target.
+- `503` — the cluster cannot seal values.
+
+### `GET /v0/cluster/secrets`
+
+Lists the secrets the caller may see.
+
+Query parameters: `cursor` (optional, the previous page's `nextCursor`), `limit` (optional,
+`1`–`100`, default `50`). Any other parameter is `400`.
+
+Response — `200`:
+
+```json
+{
+    "secrets": [
+        /* cluster secret objects; never values */
+    ],
+    "nextCursor": null
+}
+```
+
+`nextCursor` is an opaque string when another page exists, otherwise `null`. A cursor stays valid
+when the secret it ended on is deleted.
+
+### `GET /v0/cluster/secrets/:secretId`
+
+Response — `200`: `{ "secret": { ... } }`.
+
+### `POST /v0/cluster/secrets`
+
+Creates a secret. A team secret needs the `secrets.manage` permission; the caller's own secret needs
+`secrets.own`.
+
+Request:
+
+```json
+{
+    "type": "git_credential",
+    "name": "GitLab deploy token",
+    "description": "Read access to infrastructure repositories",
+    "public": {
+        "server": "gitlab.com",
+        "method": { "kind": "token", "username": "oauth2" },
+        "repos": ["acme/infra/*"],
+        "operations": ["read"]
+    },
+    "uses": ["git"],
+    "owner": "team",
+    "roles": { "member": { "level": "use" }, "viewer": { "hidden": true } },
+    "material": { "token": "glpat-…" },
+    "mutationId": "optional-client-value"
+}
+```
+
+`type`, `name`, `uses`, and `material` are required; `public` is required for every type except
+`environment`. `description` defaults to `""`. `owner` is `"me"` or `"team"` and defaults to
+`"team"`. `roles` is optional and names at most 64 existing roles; in each rule, `level` defaults
+to `"none"` and `hidden` to `false`. The caller's own secret takes no `roles`. Unknown fields are
+`400`.
+
+Response — `201`: `{ "secret": { ... } }`, with the new `id`.
+
+### `PATCH /v0/cluster/secrets/:secretId`
+
+Changes a secret the caller manages. Requires `If-Match` with the secret's version.
+
+Request — at least one of `name`, `description`, `public`, `uses`, `roles`, and `material`:
+
+```json
+{
+    "name": "Stripe API (live)",
+    "public": {
+        "targets": [{ "host": "api.stripe.com" }],
+        "algorithm": {
+            "kind": "headers",
+            "headers": [{ "name": "Authorization", "prefix": "Bearer " }]
+        }
+    },
+    "material": { "Authorization": "sk_live_…" },
+    "mutationId": "optional-client-value"
+}
+```
+
+Omitted fields stay unchanged. `public` replaces the whole metadata and must come with `material`,
+so a value is entered again wherever it goes. `material` alone replaces the value and keeps
+`public`, deriving its derived fields again. `uses` must suit the resulting `public`. `roles`
+replaces every rule. Unknown fields, including `type`, are `400`.
+
+Response — `200`: `{ "secret": { ... } }`.
+
+### `DELETE /v0/cluster/secrets/:secretId`
+
+Deletes a secret with its rules and grants. The optional JSON body is `{ "mutationId": "..." }`; an
+empty body is equivalent to `{}`.
+
+A manager of the secret sends `If-Match` with its version. A caller holding `secrets.manage` may
+also delete another member's own secret, which it cannot see, without `If-Match`.
+
+Response — `200`:
+
+```json
+{ "secretId": "c1k2s3e4c5r6e7t8i9d0a1b2", "deleted": true }
+```
+
+### Grants
+
+A grant gives one secret to one `agent` or `workspace`. Each grant is identified by its secret,
+target type, and target ID:
+
+```json
+{
+    "secretId": "c1k2s3e4c5r6e7t8i9d0a1b2",
+    "target": { "type": "workspace", "id": "w9x8y7z6" },
+    "grantedBy": "u1s2e3r4",
+    "createdAt": 1755400000000
+}
+```
+
+Granting needs `access.attach`. Revoking needs `access.use` or `access.manage`. A target the caller
+cannot see answers `404`, the same as one that does not exist. Any other target type is `400`.
+Grants need no `If-Match`, and both mutations are idempotent. Their optional JSON body is
+`{ "mutationId": "..." }`; an empty body is equivalent to `{}`.
+
+#### `GET /v0/cluster/secrets/:secretId/grants`
+
+Lists the secret's grants to targets the caller may see, without paging.
+
+Response — `200`: `{ "grants": [ /* grant objects */ ] }`.
+
+#### `PUT /v0/cluster/secrets/:secretId/grants/:targetType/:targetId`
+
+Response — `201` for a new grant or `200` when it already existed:
+
+```json
+{
+    "grant": {
+        /* grant object */
+    },
+    "created": true,
+    "version": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f"
+}
+```
+
+`version` is the secret's version after the request. Granting to an archived target is `409`.
+
+#### `DELETE /v0/cluster/secrets/:secretId/grants/:targetType/:targetId`
+
+Response — `200`:
+
+```json
+{
+    "revoked": true,
+    "grant": {
+        /* the grant that was removed */
+    },
+    "version": "01991f3a-6d2f-7000-8000-3a0b2c4d5e6f"
+}
+```
+
+A request that finds no grant returns `revoked: false` and `grant: null`.
+
 ## Projects and workspaces
 
 A project is where work lives: a folder on this machine, registered with the daemon, or a
