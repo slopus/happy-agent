@@ -27,6 +27,15 @@ The daemon first allowed 2 GiB files and 256 MiB requests while Happy Cloud allo
 carries at most 25 MiB, and an upload takes at most 4,096 requests carrying bytes, counted before
 any byte is written, so a client cannot grow an upload's bookkeeping without bound.
 
+## Late writes and rollbacks must not reach stored content
+
+The pre-merge review found two ways stored bytes could disagree with their digest or their rows.
+A resent chunk could hold the upload's file open after the last byte arrived and write into the
+content stored under its digest, so a finished upload is now copied, and the copy is checked and
+stored. Filesystem effects also ran inside transactions a caller could roll back, so a rollback
+could leave stored bytes nothing held or remove bytes a restored row still needed; every file
+effect now runs after its transaction commits.
+
 ## AVIF is a plain file
 
 Happy Cloud would need a C AV1 decoder in its API process to read AVIF. Kirill chose to treat AVIF

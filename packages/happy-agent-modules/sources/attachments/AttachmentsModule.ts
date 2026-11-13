@@ -93,6 +93,12 @@ export class AttachmentsModule implements AgentModule {
     readonly #chatMedia: ChatMediaModule;
     readonly #compute: ComputeModule;
     readonly #locks = new Map<string, Promise<unknown>>();
+    /**
+     * Digests whose content a committed collection is about to delete. Publishing one of them
+     * replaces the content and cancels the deletion, so a row committed after the collection
+     * never points at deleted bytes.
+     */
+    readonly #removals = new Set<string>();
 
     constructor(
         config: ConfigModule,
@@ -197,36 +203,50 @@ export class AttachmentsModule implements AgentModule {
         const key = uploadKey(agentId, attachmentId);
         const name = fileName(file.name);
         if (range.type === "whole") {
-            const held = await this.#serialized(key, () =>
-                this.#holdIfPresent(ctx, agentId, attachmentId),
-            );
-            if (held !== undefined) return { attachment: held };
+            // A whole file sent to an upload in progress belongs to that upload: it counts
+            // against it, and cancelling or expiring the upload ends it too.
+            const admitted = await this.#serialized(key, async () => {
+                const held = await this.#holdIfPresent(ctx, agentId, attachmentId);
+                if (held !== undefined) return { attachment: held };
+                const upload = await this.#liveUpload(ctx, agentId, attachmentId);
+                if (upload === undefined) return { generation: undefined };
+                return { generation: (await this.#countChunk(ctx, upload)).fileId };
+            });
+            if ("attachment" in admitted) return { attachment: admitted.attachment };
             const fileId = createId();
-            const received = await receiveWholeFile(
-                this.#config.attachmentUploadPath(fileId),
-                MAX_ATTACHMENT_REQUEST_BYTES,
-                body,
-            );
+            const path = this.#config.attachmentUploadPath(fileId);
+            const received = await receiveWholeFile(path, MAX_ATTACHMENT_REQUEST_BYTES, body);
             if (received === undefined) throw tooLarge();
             if (received.sha256 !== attachmentId) {
-                await removeFile(this.#config.attachmentUploadPath(fileId));
+                await removeFile(path);
                 throw mismatch();
             }
             return {
-                attachment: await this.#serialized(
-                    key,
-                    async () =>
-                        await this.#keep(ctx, {
-                            agentId,
-                            id: attachmentId,
-                            size: received.size,
-                            fileId,
-                            name,
-                            contentType: specificContentType(file.contentType),
-                            uploader,
-                        }),
-                ),
+                attachment: await this.#serialized(key, async () => {
+                    if (admitted.generation !== undefined) {
+                        const current = await this.#liveUpload(ctx, agentId, attachmentId);
+                        if (current?.fileId !== admitted.generation) {
+                            await removeFile(path);
+                            return await this.#heldOrGone(ctx, agentId, attachmentId);
+                        }
+                    }
+                    return await this.#keep(ctx, {
+                        agentId,
+                        id: attachmentId,
+                        size: received.size,
+                        fileId,
+                        name,
+                        contentType: specificContentType(file.contentType),
+                        uploader,
+                    });
+                }),
             };
+        }
+        if (range.type === "status" && !(await isEmpty(body))) {
+            throw new AttachmentError(
+                "invalid_request",
+                "A Content-Range of bytes */size asks where the upload stands and carries no body.",
+            );
         }
         if (range.size > MAX_ATTACHMENT_BYTES) throw tooLarge();
         if (range.type === "bytes") {
@@ -266,17 +286,9 @@ export class AttachmentsModule implements AgentModule {
             );
         }
         return await this.#serialized(key, async () => {
-            const current = await ctx.inTx((txCtx) =>
-                store.queryUpload(txCtx, agentId, attachmentId),
-            );
+            const current = await this.#liveUpload(ctx, agentId, attachmentId);
             if (current?.fileId !== upload.fileId) {
-                // Another chunk may have finished the file meanwhile.
-                const finished = await this.#holdIfPresent(ctx, agentId, attachmentId);
-                if (finished !== undefined) return { attachment: finished };
-                throw new AttachmentError(
-                    "not_found",
-                    "The upload was cancelled or expired; upload the file again.",
-                );
+                return { attachment: await this.#heldOrGone(ctx, agentId, attachmentId) };
             }
             const next: StoredUpload = {
                 ...current,
@@ -306,7 +318,7 @@ export class AttachmentsModule implements AgentModule {
      */
     async delete(ctx: Context, agentId: string, attachmentId: string): Promise<void> {
         await this.#serialized(uploadKey(agentId, attachmentId), async () => {
-            const cancelled = await ctx.inTx(async (txCtx) => {
+            await ctx.inTx(async (txCtx) => {
                 const attachment = await store.queryAttachment(txCtx, agentId, attachmentId);
                 if (attachment?.sentAt !== null && attachment?.sentAt !== undefined) {
                     throw new AttachmentError(
@@ -322,12 +334,11 @@ export class AttachmentsModule implements AgentModule {
                     await store.deleteAttachment(txCtx, agentId, attachmentId);
                     await store.addAttachmentGarbage(txCtx, [attachmentId], Date.now());
                 }
-                if (upload !== undefined) await store.deleteUpload(txCtx, agentId, attachmentId);
-                return upload;
+                if (upload !== undefined) {
+                    await store.deleteUpload(txCtx, agentId, attachmentId);
+                    this.#removeUploadFileAfterCommit(txCtx, upload.fileId);
+                }
             });
-            if (cancelled !== undefined) {
-                await removeFile(this.#config.attachmentUploadPath(cancelled.fileId));
-            }
         });
     }
 
@@ -418,36 +429,49 @@ export class AttachmentsModule implements AgentModule {
         }
         for (;;) {
             ctx.lifetime?.throwIfAborted();
-            const expired = await ctx.inTx(async (txCtx) => {
+            const count = await ctx.inTx(async (txCtx) => {
                 const rows = await store.queryExpiredUploads(txCtx, now, BATCH);
-                for (const row of rows) await store.deleteUpload(txCtx, row.agentId, row.id);
-                return rows;
+                for (const row of rows) {
+                    await store.deleteUpload(txCtx, row.agentId, row.id);
+                    this.#removeUploadFileAfterCommit(txCtx, row.fileId);
+                }
+                return rows.length;
             });
-            for (const row of expired) {
-                await removeFile(this.#config.attachmentUploadPath(row.fileId));
-            }
-            if (expired.length < BATCH) break;
+            if (count < BATCH) break;
         }
         await this.collect(ctx, now);
         await this.#sweepStrays(ctx, now);
     }
 
-    /** Delete stored content no conversation holds, once its wait is over. */
+    /**
+     * Delete stored content no conversation holds, once its wait is over. The bytes go only after
+     * the transaction deciding it commits, unless an attachment published since holds them again.
+     */
     async collect(ctx: Context, now: number): Promise<void> {
         for (;;) {
             ctx.lifetime?.throwIfAborted();
-            const count = await this.#serialized(CONTENT_LOCK, async () =>
-                ctx.inTx(async (txCtx) => {
-                    const digests = await store.queryDueAttachmentGarbage(txCtx, now, BATCH);
-                    for (const digest of digests) {
-                        if (!(await store.queryAttachmentContentHeld(txCtx, digest))) {
-                            await removeFile(this.#config.attachmentContentPath(digest));
-                        }
-                        await store.deleteAttachmentGarbage(txCtx, digest);
+            const count = await ctx.inTx(async (txCtx) => {
+                const digests = await store.queryDueAttachmentGarbage(txCtx, now, BATCH);
+                const unused: string[] = [];
+                for (const digest of digests) {
+                    if (!(await store.queryAttachmentContentHeld(txCtx, digest))) {
+                        unused.push(digest);
                     }
-                    return digests.length;
-                }),
-            );
+                    await store.deleteAttachmentGarbage(txCtx, digest);
+                }
+                if (unused.length > 0) {
+                    afterCommit(txCtx, () =>
+                        this.#serialized(CONTENT_LOCK, async () => {
+                            for (const digest of unused) {
+                                if (!this.#removals.delete(digest)) continue;
+                                await removeFile(this.#config.attachmentContentPath(digest));
+                            }
+                        }),
+                    );
+                    for (const digest of unused) this.#removals.add(digest);
+                }
+                return digests.length;
+            });
             if (count < BATCH) return;
         }
     }
@@ -504,8 +528,10 @@ export class AttachmentsModule implements AgentModule {
             return { upload: existing };
         }
         if (existing !== undefined) {
-            await ctx.inTx((txCtx) => store.deleteUpload(txCtx, input.agentId, input.id));
-            await removeFile(this.#config.attachmentUploadPath(existing.fileId));
+            await ctx.inTx(async (txCtx) => {
+                await store.deleteUpload(txCtx, input.agentId, input.id);
+                this.#removeUploadFileAfterCommit(txCtx, existing.fileId);
+            });
         }
         const upload: StoredUpload = {
             agentId: input.agentId,
@@ -559,7 +585,7 @@ export class AttachmentsModule implements AgentModule {
         await snapshotUploadFile(this.#config.attachmentUploadPath(upload.fileId), path);
         if ((await hashFile(path)) !== upload.id) {
             await removeFile(path);
-            await this.#endUpload(ctx, upload.agentId, upload.id);
+            await ctx.inTx((txCtx) => this.#endUpload(txCtx, upload.agentId, upload.id));
             throw mismatch();
         }
         return await this.#keep(ctx, {
@@ -594,7 +620,7 @@ export class AttachmentsModule implements AgentModule {
         const path = this.#config.attachmentUploadPath(input.fileId);
         const held = await this.#holdIfPresent(ctx, input.agentId, input.id);
         if (held !== undefined) {
-            await this.#endUpload(ctx, input.agentId, input.id);
+            await ctx.inTx((txCtx) => this.#endUpload(txCtx, input.agentId, input.id));
             await removeFile(path);
             return held;
         }
@@ -625,28 +651,77 @@ export class AttachmentsModule implements AgentModule {
             sentAt: null,
             expiresAt: now + ATTACHMENT_LIFETIME_MS,
         };
-        await this.#serialized(CONTENT_LOCK, async () => {
-            // Noted first, so content stored by an attempt that fails before its row is written is
-            // still collected; the row then holds it.
-            await ctx.inTx((txCtx) => store.addAttachmentGarbage(txCtx, [input.id], now));
-            await storeUploadedContent(path, this.#config.attachmentContentPath(input.id));
-            await ctx.inTx((txCtx) => store.insertAttachment(txCtx, row));
-        });
-        await this.#endUpload(ctx, input.agentId, input.id);
+        try {
+            await ctx.inTx(async (txCtx) => {
+                // An expired row maintenance has not removed yet gives way to the new one.
+                if ((await store.queryAttachment(txCtx, input.agentId, input.id)) !== undefined) {
+                    await store.deleteAttachment(txCtx, input.agentId, input.id);
+                }
+                await store.insertAttachment(txCtx, row);
+                await this.#endUpload(txCtx, input.agentId, input.id);
+                // The bytes are stored only once the row holding them commits; a rollback leaves
+                // the file to the stray sweep.
+                afterCommit(txCtx, () => this.#publish(input.id, path));
+            });
+        } catch (error) {
+            await removeFile(path);
+            throw error;
+        }
         return attachmentResource(row);
     }
 
-    /** End an upload of this ID that the attachment now replaces, with its private file. */
-    async #endUpload(ctx: Context, agentId: string, attachmentId: string): Promise<void> {
-        const upload = await ctx.inTx(async (txCtx) => {
-            const found = await store.queryUpload(txCtx, agentId, attachmentId);
-            if (found !== undefined) await store.deleteUpload(txCtx, agentId, attachmentId);
-            return found;
+    /** Store a finished file as its digest's content, after the row holding it committed. */
+    async #publish(id: string, path: string): Promise<void> {
+        await this.#serialized(CONTENT_LOCK, async () => {
+            const contentPath = this.#config.attachmentContentPath(id);
+            // A collection that saw no holder is about to delete these bytes; the new copy
+            // replaces them and the deletion is cancelled.
+            if (this.#removals.delete(id)) await removeFile(contentPath);
+            await storeUploadedContent(path, contentPath);
         });
-        // The file chunk requests write into; what was stored is a copy of it.
-        if (upload !== undefined) {
-            await removeFile(this.#config.attachmentUploadPath(upload.fileId));
-        }
+    }
+
+    /**
+     * End an upload of this ID that the attachment now replaces, in the caller's transaction,
+     * with the file its chunk requests write into; what was stored is a copy of that file.
+     */
+    async #endUpload(txCtx: Context, agentId: string, attachmentId: string): Promise<void> {
+        const upload = await store.queryUpload(txCtx, agentId, attachmentId);
+        if (upload === undefined) return;
+        await store.deleteUpload(txCtx, agentId, attachmentId);
+        this.#removeUploadFileAfterCommit(txCtx, upload.fileId);
+    }
+
+    /** Remove an upload's private file once the transaction ending that upload commits. */
+    #removeUploadFileAfterCommit(txCtx: Context, fileId: string): void {
+        afterCommit(txCtx, () => removeFile(this.#config.attachmentUploadPath(fileId)));
+    }
+
+    /** The upload of this ID still receiving bytes, unless it expired. */
+    async #liveUpload(
+        ctx: Context,
+        agentId: string,
+        attachmentId: string,
+    ): Promise<StoredUpload | undefined> {
+        const upload = await ctx.inTx((txCtx) => store.queryUpload(txCtx, agentId, attachmentId));
+        return upload !== undefined && upload.expiresAt > Date.now() ? upload : undefined;
+    }
+
+    /**
+     * What a request answers when the upload it was sending to has ended: the attachment, when
+     * another request finished the file meanwhile, else 404, since it was cancelled or expired.
+     */
+    async #heldOrGone(
+        ctx: Context,
+        agentId: string,
+        attachmentId: string,
+    ): Promise<AttachmentResource> {
+        const finished = await this.#holdIfPresent(ctx, agentId, attachmentId);
+        if (finished !== undefined) return finished;
+        throw new AttachmentError(
+            "not_found",
+            "The upload was cancelled or expired; upload the file again.",
+        );
     }
 
     /** One attachment of the conversation that has not expired. */
@@ -665,13 +740,8 @@ export class AttachmentsModule implements AgentModule {
     async #erase(ctx: Context, agentId: string): Promise<void> {
         const { digests, fileIds } = await store.deleteAgentAttachments(ctx, agentId);
         await store.addAttachmentGarbage(ctx, digests, Date.now());
-        if (fileIds.length === 0) return;
-        // A crash before this runs leaves the files to the stray sweep.
-        afterCommit(ctx, async () => {
-            for (const fileId of fileIds) {
-                await removeFile(this.#config.attachmentUploadPath(fileId));
-            }
-        });
+        // A crash before these run leaves the files to the stray sweep.
+        for (const fileId of fileIds) this.#removeUploadFileAfterCommit(ctx, fileId);
     }
 
     /** Files in the upload folder that no upload owns, left by an interrupted request. */
@@ -788,4 +858,10 @@ function mismatch(): AttachmentError {
         "hash_mismatch",
         "The bytes do not match the attachment's SHA-256; the upload was discarded.",
     );
+}
+
+/** Whether a request body holds no bytes, reading no further than its first byte. */
+async function isEmpty(body: AsyncIterable<Uint8Array>): Promise<boolean> {
+    for await (const chunk of body) if (chunk.byteLength > 0) return false;
+    return true;
 }

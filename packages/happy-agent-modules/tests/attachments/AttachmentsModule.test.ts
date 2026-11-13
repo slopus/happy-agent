@@ -21,7 +21,9 @@ import type { HostCompute } from "../../sources/compute/index.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { HistoryModule } from "../../sources/history/index.js";
 import {
+    queryAttachment,
     queryUpload,
+    updateAttachmentLifetime,
     updateUploadChunks,
 } from "../../sources/attachments/persistence/attachmentStore.js";
 import { FakeCompute } from "../compute/support/FakeCompute.js";
@@ -315,6 +317,107 @@ describe("AttachmentsModule", () => {
         expect(await late).toMatchObject({ attachment: { id } });
         const content = await attachments.content(ctx, "agentone", id);
         expect(await readFile(content.contentPath, "utf8")).toBe("ab");
+    });
+
+    it("answers 404 to a whole file still arriving when its upload is cancelled", async () => {
+        const { ctx, attachments } = await world();
+        const bytes = Buffer.from("whole");
+        const id = sha256(bytes);
+        const file = { name: "whole.txt", contentType: "text/plain" };
+        await attachments.receive(
+            ctx,
+            "agentone",
+            null,
+            id,
+            file,
+            { type: "status", size: 5 },
+            body(),
+        );
+        let opened!: () => void;
+        const arriving = new Promise<void>((resolve) => (opened = resolve));
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => (release = resolve));
+        const slow = attachments.receive(
+            ctx,
+            "agentone",
+            null,
+            id,
+            file,
+            { type: "whole" },
+            {
+                async *[Symbol.asyncIterator]() {
+                    opened();
+                    await released;
+                    yield bytes;
+                },
+            },
+        );
+        await arriving;
+        await attachments.delete(ctx, "agentone", id);
+        release();
+        expect(await code(slow)).toBe("not_found");
+        expect(await code(attachments.content(ctx, "agentone", id))).toBe("not_found");
+    });
+
+    it("refuses a status request that carries a body", async () => {
+        const { ctx, attachments } = await world();
+        const id = sha256(Buffer.from("ab"));
+        expect(
+            await code(
+                attachments.receive(
+                    ctx,
+                    "agentone",
+                    null,
+                    id,
+                    { name: "ab.txt", contentType: undefined },
+                    { type: "status", size: 2 },
+                    body(Buffer.from("ab")),
+                ),
+            ),
+        ).toBe("invalid_request");
+    });
+
+    it("takes the same bytes again after they expired, before maintenance runs", async () => {
+        const { ctx, attachments, upload } = await world();
+        const bytes = Buffer.from("again");
+        const id = await upload("agentone", "again.txt", bytes);
+        const row = await ctx.inTx((txCtx) => queryAttachment(txCtx, "agentone", id));
+        await ctx.inTx((txCtx) =>
+            updateAttachmentLifetime(txCtx, { ...row!, expiresAt: Date.now() - 1 }),
+        );
+        expect(await code(attachments.content(ctx, "agentone", id))).toBe("not_found");
+        expect(await upload("agentone", "again.txt", bytes)).toBe(id);
+        expect((await attachments.content(ctx, "agentone", id)).sha256).toBe(id);
+    });
+
+    it("leaves files as they were when the caller's transaction rolls back", async () => {
+        const { config, ctx, attachments, upload } = await world();
+        const rolledBack = new Error("rolled back");
+        const fresh = Buffer.from("never committed");
+        await expect(
+            ctx.inTx(async (txCtx) => {
+                await attachments.upload(
+                    txCtx,
+                    "agentone",
+                    null,
+                    { name: "a.txt", contentType: undefined },
+                    body(fresh),
+                );
+                throw rolledBack;
+            }),
+        ).rejects.toBe(rolledBack);
+        expect(await exists(config.attachmentContentPath(sha256(fresh)))).toBe(false);
+
+        const id = await upload("agentone", "kept.txt", Buffer.from("kept"));
+        await expect(
+            ctx.inTx(async (txCtx) => {
+                await attachments.delete(txCtx, "agentone", id);
+                await attachments.collect(txCtx, Date.now() + HOUR);
+                throw rolledBack;
+            }),
+        ).rejects.toBe(rolledBack);
+        expect((await attachments.content(ctx, "agentone", id)).sha256).toBe(id);
+        expect(await exists(config.attachmentContentPath(id))).toBe(true);
     });
 
     it("takes at most 4,096 requests carrying bytes per upload, resent ones included", async () => {

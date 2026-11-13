@@ -41,8 +41,10 @@ DELETE /v0/agents/:id/attachments/:sha          cancel an upload or discard an u
   reads. A finished upload is checked and stored through a copy of its file, so a resent chunk
   still writing after the last byte arrived cannot change stored content.
 - `Content-Range: bytes */size` with no body starts the upload when there is none and answers
-  where it stands; any request for an ID the conversation already holds answers the attachment
-  without reading the body.
+  where it stands; one with a body is refused. Any request for an ID the conversation already
+  holds answers the attachment without reading the body. A whole file sent to an ID with an
+  upload in progress counts against that upload, and answers 404 when the upload is cancelled or
+  expires before it finishes, as a chunk does.
 - The API stores the blocks `send` returns in the pending row, which History records as the
   accepted message's blocks; Agent Base receives a text note in place of each file.
 - Unsent attachments and unfinished uploads expire 24 hours after they last received bytes.
@@ -50,8 +52,12 @@ DELETE /v0/agents/:id/attachments/:sha          cancel an upload or discard an u
   conversation may download. Sent attachments cannot be removed yet.
 - Content is stored once per digest across conversations. Every time a digest might become unused
   it gets a garbage row; `collect` deletes the bytes only when no attachment row still holds the
-  digest. Storing and collecting share one in-process lock, so a digest is never deleted between
-  storing it and recording the row that holds it.
+  digest.
+- Every file effect waits for the transaction it belongs to, so a caller's rollback leaves files
+  as they were. A new attachment's bytes are stored after its row commits; upload files are
+  removed after the row ending them commits; collected content is removed after the collection
+  commits, unless an attachment published meanwhile, under the same in-process lock, cancelled
+  the removal. A rollback leaves at most an unowned upload file for the stray sweep.
 - `maintain` runs every hour as the durable `attachments.maintain` chain. It discards expired
   attachments and uploads, collects garbage, and deletes upload files older than a day that no
   upload owns, such as an interrupted whole-file upload. Erasing an agent deletes its rows and
