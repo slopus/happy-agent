@@ -8,6 +8,7 @@ import type {
     ArtifactSource,
 } from "../Artifact.js";
 import { ARTIFACT_TYPE_RULES, formatBytes } from "../ArtifactTypes.js";
+import { modelArtifactFileCount } from "./genUiEntry.js";
 
 /** The ready-to-paste Markdown link to an artifact, or to one of its versions, labeled with `title`. */
 export function formatArtifactLink(id: string, title: string, version?: number): string {
@@ -27,7 +28,7 @@ export function formatArtifactLine(artifact: ArtifactRecord): string {
         ARTIFACT_TYPE_RULES[artifact.type].label,
         JSON.stringify(artifact.title),
         formatArtifactVersion(artifact),
-        `${formatFileCount(artifact.fileCount)} (${formatBytes(artifact.size)}) opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${formatArtifactCover(artifact)}`,
+        `${formatFileCount(modelArtifactFileCount(artifact))} (${formatBytes(artifact.size)}) opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${formatArtifactCover(artifact)}`,
         `${artifact.status === "deleted" ? "deleted" : "updated"} ${new Date(artifact.updatedAt).toISOString()} by ${formatArtifactAuthor(artifact.updatedBy)}`,
     ];
     if (artifact.source !== undefined)

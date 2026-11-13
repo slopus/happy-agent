@@ -23,7 +23,9 @@ import {
     formatArtifactLink,
     formatArtifactSource,
     formatArtifactVersion,
+    formatFileCount,
 } from "../impl/formatArtifact.js";
+import { modelArtifactFileCount } from "../impl/genUiEntry.js";
 import {
     describeArtifactSources,
     shouldReviewArtifactSources,
@@ -54,7 +56,7 @@ const createArtifactToolInputSchema = Type.Object(
         content: Type.Optional(
             Type.String({
                 description:
-                    "The complete initial UTF-8 text of index.md (Markdown) or index.html (HTML), published in version 1.0. May accompany auxiliary files, but not an entry in files or a live URL.",
+                    "The complete initial UTF-8 text of index.md (Markdown), index.html (HTML), or index.genui.json (Gen UI), published in version 1.0. May accompany auxiliary files, but not an entry in files or a live URL.",
             }),
         ),
         files: Type.Optional(
@@ -121,11 +123,14 @@ export function createArtifactTool(
             "pdf",
             "artifact cover",
             "feed image",
+            "gen ui",
+            "native ui card",
         ],
         description: [
             "Create an artifact: a titled, versioned item in this installation's shared catalog, visible to everyone who uses it. It is recorded as made by you, in the bot, task, project, or workspace you are working in. The call gives you its ID.",
             'For markdown or html, pass content to publish the complete entry (index.md or index.html) in this call. Prefer this when you already have the text; supply supporting text files inline, such as files: [{ "path": "style.css", "content": "body { color: inherit; }" }], so the entry and all assets appear together in version 1.0. Mix inline files with local copies as needed. Each file supplies either content with a required path, or fromPath with an optional path, never both. Every destination path must be unique; do not also supply the entry in files when using top-level content. Without content or an entry in files, it starts with a short entry holding its title. Make later changes with write_artifact_file and edit_artifact_file. An image, image series, video, or document needs its file from the start: pass it in files, such as { "fromPath": "out/chart.png" }. A copy keeps its own name unless you give it a path, so to publish a document you already wrote, copy it in as the entry: { "fromPath": "notes/plan.md", "path": "index.md" }.',
             ARTIFACT_FILES_GUIDANCE,
+            GEN_UI_GUIDANCE,
             `${ARTIFACT_COVER_GUIDANCE} For example: files: [{ "fromPath": "out/cover.webp", "path": "cover.webp" }], cover: "cover.webp", summary: "Q3 revenue grew 18%, driven by enterprise seats.\\nSelf-serve was flat, and churn fell to 2.1%."`,
             "Change its title, background, display, cover, or summary later with update_artifact.",
             'For a running web page, use { type: "html", title, url, display? } without content or files. The URL is the content, never downloaded by the daemon. The client opens it through your network in a browser profile isolated to this artifact; cookies and storage are never shared with the workspace browser or other artifacts. Change the URL with update_artifact; its original network stays fixed and its fallback files cannot be edited. A live page holds no files, so it cannot have a cover; give it a summary.',
@@ -175,8 +180,15 @@ export function createArtifactTool(
                     "A live URL requires type html and cannot be combined with content or files.",
                 );
             }
-            if (input.content !== undefined && input.type !== "markdown" && input.type !== "html") {
-                throw new ArtifactInputError("Initial content requires type markdown or html.");
+            if (
+                input.content !== undefined &&
+                input.type !== "markdown" &&
+                input.type !== "html" &&
+                input.type !== "gen_ui"
+            ) {
+                throw new ArtifactInputError(
+                    "Initial content requires type markdown, html, or gen_ui.",
+                );
             }
             const url = input.url === undefined ? undefined : normalizeArtifactUrl(input.url);
             const id = await call.kv.getOrCreate(ctx, "artifactId", () => createId());
@@ -228,6 +240,11 @@ export function createArtifactTool(
                     );
                 }
                 if (entry !== undefined && !sources.some((file) => file.path === entry.path)) {
+                    if (input.content === undefined && input.type === "gen_ui") {
+                        throw new ArtifactInputError(
+                            "A gen_ui artifact needs its document: pass it as content.",
+                        );
+                    }
                     const text = input.content ?? seededEntry(input.type, input.title);
                     sources.push({
                         path: entry.path,
@@ -256,7 +273,7 @@ export function createArtifactTool(
             {
                 type: "text",
                 text: [
-                    `Artifact created: ${JSON.stringify(artifact.title)} — id ${artifact.id}, ${artifact.type}, ${formatArtifactVersion(artifact)}, ${String(artifact.fileCount)} ${artifact.fileCount === 1 ? "file" : "files"}, opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${artifact.display === undefined ? "" : `, shown ${artifact.display}`}${formatArtifactCover(artifact)}.`,
+                    `Artifact created: ${JSON.stringify(artifact.title)} — id ${artifact.id}, ${artifact.type}, ${formatArtifactVersion(artifact)}, ${formatFileCount(modelArtifactFileCount(artifact))}, opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${artifact.display === undefined ? "" : `, shown ${artifact.display}`}${formatArtifactCover(artifact)}.`,
                     ...(artifact.cover === undefined && artifact.live === undefined
                         ? [
                               "It has no cover. If people would want to see it in the Feed, add one with update_artifact's cover.",
@@ -275,6 +292,10 @@ export function createArtifactTool(
         ],
     });
 }
+
+/** How a model writes a gen_ui artifact; USAGE.md and the component pages carry the detail. */
+const GEN_UI_GUIDANCE =
+    'A "gen_ui" artifact is a Gen UI document: native components such as stats, charts, tables, lists, steps, galleries, choices, and buttons that Happy clients draw with their own widgets. Use it when structure helps the reader, such as numbers to compare, options to pick from, things with a status, or a chart; keep explanations in prose. Pass the document as content; it becomes "index.genui.json". Nodes nest, with each node\'s props beside its type: { "genui": 1, "fallback": "the same in one or two plain sentences", "root": { "type": "card", "title": "Q3", "children": [{ "type": "stat", "label": "Revenue", "value": "$1.24M" }], "actions": [{ "type": "button", "label": "Break down by plan", "action": { "type": "message", "text": "Break down Q3 revenue by plan" } }] } }. Only containers take children, only a card takes actions, and an optional id names a node. A document that does not validate fails the call with each reason and the node it is about, such as "root<card>.children[0]<stat>.value"; fix them and call again. Pictures it shows must be files of the artifact, added with files and referred to by relative path such as "assets/photo.jpg"; remote image URLs are refused. Read genui/USAGE.md beside the Happy Agent documentation README before writing one, and genui/components/<type>.md for each component\'s props.';
 
 /** Only copied files read the agent's machine or need filesystem permission review. */
 function copiedFiles(files: CreateArtifactToolInput["files"]) {

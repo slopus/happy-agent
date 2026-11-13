@@ -369,3 +369,36 @@ newest version's entry (Markdown as written, HTML without its markup), so a matc
 reads as a line of its own, and the index changes in the same transaction as
 the version or deletion, so a deleted artifact is never found. Older artifacts are indexed after
 upgrade by a bounded durable backfill rather than at startup.
+
+## Gen UI documents are validated on write, and their fallback is their text
+
+A `gen_ui` artifact holds a Gen UI document, `index.genui.json`, and the images it shows beside it
+under relative paths such as `assets/coast.jpg`. Clients draw it with native components, so a
+document that fails the catalog in `docs/genui/catalog.json` is refused in the call that writes it,
+whether `create_artifact`, `update_artifact`, `write_artifact_file`, or `edit_artifact_file`, and
+the refusal lists each reason with its element key and prop path so the model can fix it. The
+daemon validates strictly; renderers stay lenient, as `docs/genui/SPEC.md` asks. There is no seeded
+entry, because no seed would say anything: creation needs the document as `content`.
+
+The user then split Gen UI into two schemas: the nested authoring document the model writes, and a
+flat render document of primitives (`docs/genui/RENDER.md`) that clients draw. Every version that
+writes the document compiles it and stores the result as `.genui/render.json` in the same version,
+so clients read it through the ordinary file route and need to know nothing of the components. The
+compiler is a pure function of the document and its pictures' measurements, so the version is
+staged before its transaction and compiled again inside it; a mismatch means the files moved
+underneath and the change is refused. Pictures must be files of the artifact: every picture of a
+`gen_ui` version is measured like a cover, and a missing, undecodable, or remote `src` fails the
+write with its node path. Steve decided the daemon never fetches remote images: that would be
+egress the model could trigger, so there is no fetch code and no setting. The model never sees
+`.genui/`: the tools leave it out of listings and counts, refuse to read it, and refuse to write
+or remove it. A render document over the render catalog's limits (4,000 elements, 4 MiB) refuses
+the write rather than storing something clients may not draw.
+
+The entry is ordinary `application/json`. A Gen UI-specific media type was tried for loose vault
+files named `*.genui.json`, but Steve corrected that a vault keeps entities as bundles: a Gen UI
+item in a vault is a `gen_ui` vault app with this same layout, so clients recognise Gen UI by the
+artifact or vault app `type`, never by a file's media type.
+
+The document's `fallback` is what it says in plain text. Search indexes it instead of the JSON,
+and a version that names no summary shows the fallback as its summary, so the Feed has text. Once
+someone writes a summary of their own it stays, and later documents no longer replace it.

@@ -99,6 +99,7 @@ import {
     updateArtifactUploadReceived,
 } from "./ArtifactStore.js";
 import {
+    ARTIFACT_TYPE_RULES,
     ARTIFACT_UPLOAD_LIFETIME_MS,
     artifactMimeTypeForPath,
     checkArtifactFiles,
@@ -121,6 +122,14 @@ import {
     type ArtifactMediaKind,
 } from "./impl/measureArtifactMedia.js";
 import { normalizeArtifactSummary } from "./impl/normalizeArtifactSummary.js";
+import {
+    compileGenUiEntry,
+    GEN_UI_RENDER_PATH,
+    genUiFallbackSummary,
+    isGenUiDerivedPath,
+    readGenUiEntry,
+} from "./impl/genUiEntry.js";
+import type { GenUiDocument } from "../impl/genUi/validateGenUiDocument.js";
 import { ARTIFACT_COVER_INSTRUCTIONS, ARTIFACT_REFERENCE_INSTRUCTIONS } from "./tools/common.js";
 import { connectArtifactNetwork, describeArtifactNetworkExposure } from "./impl/artifactNetwork.js";
 import {
@@ -574,15 +583,19 @@ export class ArtifactsModule implements AgentModule {
                 "The artifact creation request is invalid. Check its title, type, and file paths.",
             );
         }
+        refuseGenUiDerivedPaths(input.type, input.files);
+        const placed = input.live === undefined ? await this.#placedFiles(ctx, input.files) : [];
         const media =
             input.live === undefined
                 ? await this.#measureMedia(
                       ctx,
                       input.type,
-                      await this.#placedFiles(ctx, input.files),
+                      placed,
                       typeof input.cover === "string" ? input.cover : undefined,
                   )
                 : new Map<string, ArtifactFileMedia>();
+        const render = await this.#stageGenUiRender(ctx, input.type, placed, media);
+        const placements = render === undefined ? input.files : [...input.files, render];
         return await ctx.inTx(async (txCtx) => {
             if (input.id !== undefined) {
                 const existing = await queryArtifact(txCtx, input.id);
@@ -590,11 +603,11 @@ export class ArtifactsModule implements AgentModule {
                     return { artifact: structuredClone(existing), created: false };
                 }
             }
-            const { files, entry } = await this.#placeFiles(
+            const { files, entry, document } = await this.#placeFiles(
                 txCtx,
                 input.type,
                 [],
-                input.files,
+                placements,
                 media,
             );
             if (input.live !== undefined) {
@@ -612,8 +625,13 @@ export class ArtifactsModule implements AgentModule {
             }
             const background = input.background?.toLowerCase();
             const display = input.display;
+            // A Gen UI document's fallback is its text wherever it is not drawn, the Feed included.
             const summary =
-                input.summary == null ? undefined : normalizeArtifactSummary(input.summary);
+                input.summary == null
+                    ? input.summary === undefined && document !== undefined
+                        ? genUiFallbackSummary(document)
+                        : undefined
+                    : normalizeArtifactSummary(input.summary);
             const cover = await this.#resolveCover(
                 input.type,
                 input.live !== undefined,
@@ -711,7 +729,9 @@ export class ArtifactsModule implements AgentModule {
             );
         }
         const url = input.url === undefined ? undefined : normalizeArtifactUrl(input.url);
-        const media = await this.#measureUpdateMedia(ctx, input);
+        const { media, type, files: candidates } = await this.#measureUpdateMedia(ctx, input);
+        refuseGenUiDerivedPaths(type, input.files ?? [], input.remove);
+        const render = await this.#stageGenUiRender(ctx, type, candidates, media);
         return await ctx.inTx(async (txCtx) => {
             const current = await this.#required(txCtx, input.artifactId);
             if (
@@ -783,11 +803,11 @@ export class ArtifactsModule implements AgentModule {
                     throw new ArtifactInputError(`The artifact has no file at "${path}".`);
                 }
             }
-            const { files, entry } = await this.#placeFiles(
+            const { files, entry, document } = await this.#placeFiles(
                 txCtx,
                 current.type,
                 [...kept.values()],
-                input.files ?? [],
+                [...(input.files ?? []), ...(render === undefined ? [] : [render])],
                 media,
             );
             const now = Math.max(Date.now(), current.updatedAt + 1);
@@ -800,7 +820,7 @@ export class ArtifactsModule implements AgentModule {
                 input.display === undefined ? current.display : (input.display ?? undefined);
             const summary =
                 input.summary === undefined
-                    ? current.summary
+                    ? await this.#keptSummary(current, document)
                     : input.summary === null
                       ? undefined
                       : normalizeArtifactSummary(input.summary);
@@ -1242,27 +1262,70 @@ export class ArtifactsModule implements AgentModule {
      * version's and the placed ones. What it reads here is only a guess at what the transaction
      * will see, so a change that races it may leave a file unmeasured, never wrong.
      */
+    /**
+     * What an update's version would hold, before its transaction: the latest files kept, less
+     * those removed, with the staged ones placed over them, and their measurements.
+     */
     async #measureUpdateMedia(
         ctx: Context,
         input: UpdateArtifactInput,
-    ): Promise<ReadonlyMap<string, ArtifactFileMedia>> {
+    ): Promise<{
+        readonly media: ReadonlyMap<string, ArtifactFileMedia>;
+        readonly type: ArtifactType | undefined;
+        readonly files: readonly ArtifactFile[];
+    }> {
         const current = await queryArtifact(ctx, input.artifactId);
         if (current === undefined || current.status === "deleted" || current.live !== undefined) {
-            return new Map();
+            return { media: new Map(), type: current?.type, files: [] };
         }
         const latest = await queryArtifactVersion(ctx, current.id, current.latestVersion);
-        const kept = input.replaceAll === true ? [] : (latest?.files ?? []);
+        const removed = new Set(input.remove ?? []);
+        const byPath = new Map(
+            (input.replaceAll === true ? [] : (latest?.files ?? []))
+                .filter((file) => !removed.has(file.path))
+                .map((file) => [file.path, file]),
+        );
+        for (const file of await this.#placedFiles(ctx, input.files ?? [])) {
+            byPath.set(file.path, file);
+        }
+        const files = [...byPath.values()];
         const coverPath =
             input.cover === null
                 ? undefined
                 : (input.cover ??
                   (latest?.coverDefault === true ? undefined : latest?.cover?.path));
-        return await this.#measureMedia(
-            ctx,
-            current.type,
-            [...kept, ...(await this.#placedFiles(ctx, input.files ?? []))],
-            coverPath,
+        return {
+            media: await this.#measureMedia(ctx, current.type, files, coverPath),
+            type: current.type,
+            files,
+        };
+    }
+
+    /**
+     * Compile a gen_ui version's document before its transaction and stage the render document
+     * as an upload placed with the version's own files. Nothing is staged when the version keeps
+     * the render document it already has, or has no entry for `#placeFiles` to refuse it over.
+     * The transaction compiles again and refuses a render document that no longer matches.
+     */
+    async #stageGenUiRender(
+        ctx: Context,
+        type: ArtifactType | undefined,
+        candidates: readonly ArtifactFile[],
+        media: ReadonlyMap<string, ArtifactFileMedia>,
+    ): Promise<ArtifactPlacement | undefined> {
+        if (type !== "gen_ui") return undefined;
+        const files = candidates.map((file) => ({ ...file, ...media.get(mediaKey(file)) }));
+        const entryPath = ARTIFACT_TYPE_RULES.gen_ui.entry!.path;
+        const entry = files.find((file) => file.path === entryPath);
+        if (entry === undefined) return undefined;
+        const document = await readGenUiEntry(
+            this.#config.artifactContentPath(entry.sha256),
+            entry.path,
         );
+        const render = compileGenUiEntry(document, files, entry.path);
+        const kept = files.find((file) => file.path === GEN_UI_RENDER_PATH);
+        if (kept?.sha256 === createHash("sha256").update(render).digest("hex")) return undefined;
+        return { path: GEN_UI_RENDER_PATH, uploadId: (await this.stageText(ctx, render)).id };
     }
 
     /** The files staged uploads would become at their paths, for the uploads still there. */
@@ -1335,7 +1398,11 @@ export class ArtifactsModule implements AgentModule {
         kept: readonly ArtifactFile[],
         placements: readonly ArtifactPlacement[],
         media: ReadonlyMap<string, ArtifactFileMedia>,
-    ): Promise<{ readonly files: ArtifactFile[]; readonly entry: ArtifactFile }> {
+    ): Promise<{
+        readonly files: ArtifactFile[];
+        readonly entry: ArtifactFile;
+        readonly document?: GenUiDocument;
+    }> {
         if (new Set(placements.map((placement) => placement.path)).size !== placements.length) {
             throw new ArtifactInputError("Each path can be written only once per version.");
         }
@@ -1372,11 +1439,45 @@ export class ArtifactsModule implements AgentModule {
             })
             .sort((left, right) => compareArtifactPaths(left.path, right.path));
         const entry = checkArtifactFiles(type, files, notUtf8);
+        const document =
+            type === "gen_ui"
+                ? await readGenUiEntry(this.#config.artifactContentPath(entry.sha256), entry.path)
+                : undefined;
+        if (document !== undefined) {
+            const render = compileGenUiEntry(document, files, entry.path);
+            const stored = files.find((file) => file.path === GEN_UI_RENDER_PATH);
+            if (stored?.sha256 !== createHash("sha256").update(render).digest("hex")) {
+                throw new ArtifactInputError(
+                    "The artifact's files changed while its Gen UI document was compiled; repeat the change.",
+                );
+            }
+        }
         for (const placement of placements) {
             await deleteArtifactUpload(ctx, placement.uploadId);
             await this.#durableFunctions.cancel(ctx, uploadOperationId(placement.uploadId));
         }
-        return { files, entry };
+        return { files, entry, ...(document === undefined ? {} : { document }) };
+    }
+
+    /**
+     * The summary a version keeps when its change names none. A Gen UI document's summary follows
+     * its fallback, unless someone wrote a summary of their own.
+     */
+    async #keptSummary(
+        current: ArtifactRecord,
+        document: GenUiDocument | undefined,
+    ): Promise<string | undefined> {
+        if (document === undefined) return current.summary;
+        if (current.summary !== undefined) {
+            const previous = await readGenUiEntry(
+                this.#config.artifactContentPath(current.entry.sha256),
+                current.entry.path,
+            ).catch(() => undefined);
+            if (previous === undefined || genUiFallbackSummary(previous) !== current.summary) {
+                return current.summary;
+            }
+        }
+        return genUiFallbackSummary(document);
     }
 
     /**
@@ -1575,7 +1676,27 @@ function mediaKindOf(
 ): ArtifactMediaKind | undefined {
     if (type === "video" && file.mimeType.startsWith("video/")) return "video";
     if (ARTIFACT_PICTURE_FORMATS[file.mimeType] === undefined) return undefined;
-    return coversByDefault(type) || file.path === coverPath ? "image" : undefined;
+    // A Gen UI document may show any picture beside it, and its render document carries each
+    // picture's size and ThumbHash.
+    return coversByDefault(type) || type === "gen_ui" || file.path === coverPath
+        ? "image"
+        : undefined;
+}
+
+/** Refuse writing or removing the files a gen_ui version derives from its document. */
+function refuseGenUiDerivedPaths(
+    type: ArtifactType | undefined,
+    files: readonly { readonly path: string }[],
+    remove: readonly string[] = [],
+): void {
+    if (type === undefined) return;
+    for (const path of [...files.map((file) => file.path), ...remove]) {
+        if (isGenUiDerivedPath(type, path)) {
+            throw new ArtifactInputError(
+                `"${path}" is derived from the Gen UI document and cannot be written or removed; change "index.genui.json" instead.`,
+            );
+        }
+    }
 }
 
 /** Measurements belong to bytes read as one media type. */

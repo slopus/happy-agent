@@ -11,6 +11,7 @@ import {
 import type { ArtifactsModule } from "../ArtifactsModule.js";
 import { ARTIFACT_TYPE_RULES, formatBytes } from "../ArtifactTypes.js";
 import { decodeArtifactText } from "../impl/decodeArtifactText.js";
+import { modelArtifactFiles } from "../impl/genUiEntry.js";
 import {
     formatArtifactAuthor,
     formatArtifactBackground,
@@ -47,7 +48,7 @@ export function readArtifactTool(artifacts: ArtifactsModule) {
         defer: true,
         capabilities: [ARTIFACT_TOOL_CAPABILITY],
         searchKeywords: ["read artifact", "open artifact", "artifact files", "artifact history"],
-        description: `Read one version of an artifact, the latest unless you name one: its title, who made it, where, and when, and every file it holds with its path, media type, and size. For markdown and html the entry's text follows, up to ${formatBytes(MAX_ENTRY_TEXT_BYTES)}. Read any single file, including images, with read_artifact_file.`,
+        description: `Read one version of an artifact, the latest unless you name one: its title, who made it, where, and when, and every file it holds with its path, media type, and size. For markdown, html, and gen_ui the entry's text follows, up to ${formatBytes(MAX_ENTRY_TEXT_BYTES)}. Read any single file, including images, with read_artifact_file.`,
         parameters: readArtifactToolInputSchema,
         returnType: artifactReadSchema,
         durable: false,
@@ -58,11 +59,13 @@ export function readArtifactTool(artifacts: ArtifactsModule) {
             const artifact = await artifacts.get(ctx, input.artifactId);
             if (artifact === undefined) throw new ArtifactNotFoundError();
             if (artifact.status === "deleted") return { artifact };
-            const version = await artifacts.getVersion(
+            const stored = await artifacts.getVersion(
                 ctx,
                 artifact.id,
                 input.version ?? artifact.latestVersion,
             );
+            // What the daemon derives from a Gen UI document is for clients, not the model.
+            const version = { ...stored, files: modelArtifactFiles(artifact.type, stored.files) };
             if (ARTIFACT_TYPE_RULES[artifact.type].entry === undefined) {
                 return { artifact, version };
             }

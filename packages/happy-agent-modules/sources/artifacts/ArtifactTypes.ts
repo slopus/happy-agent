@@ -1,3 +1,4 @@
+import { GEN_UI_LIMITS } from "../impl/genUi/genUiSchemas.js";
 import { mediaTypeForPath } from "../impl/mediaTypeForPath.js";
 import { ArtifactInputError, type ArtifactFile, type ArtifactType } from "./Artifact.js";
 
@@ -109,6 +110,15 @@ export const ARTIFACT_TYPE_RULES: Readonly<Record<ArtifactType, ArtifactTypeRule
         maxFiles: 1,
         maxFileBytes: 64 * MIB,
         maxTotalBytes: 64 * MIB,
+    },
+    gen_ui: {
+        label: "Gen UI document",
+        article: "a",
+        entry: { path: "index.genui.json", maxBytes: GEN_UI_LIMITS.maxDocumentBytes },
+        minFiles: 1,
+        maxFiles: 256,
+        maxFileBytes: 32 * MIB,
+        maxTotalBytes: 256 * MIB,
     },
 };
 

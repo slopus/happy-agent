@@ -9,6 +9,7 @@ const artifactTypes = [
     Type.Literal("image_series"),
     Type.Literal("video"),
     Type.Literal("document"),
+    Type.Literal("gen_ui"),
 ];
 export const artifactTypeSchema = Type.Union(artifactTypes);
 export const artifactStatusSchema = Type.Union([Type.Literal("active"), Type.Literal("deleted")]);

@@ -20,7 +20,9 @@ import {
     formatArtifactCover,
     formatArtifactLink,
     formatArtifactVersion,
+    formatFileCount,
 } from "../impl/formatArtifact.js";
+import { modelArtifactFileCount } from "../impl/genUiEntry.js";
 import { normalizeArtifactUrl, requireFileArtifact } from "../impl/liveArtifact.js";
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
 import {
@@ -203,7 +205,7 @@ export function updateArtifactTool(
             {
                 type: "text",
                 text: [
-                    `Artifact ${artifact.id} is now at ${formatArtifactVersion(artifact)}: ${JSON.stringify(artifact.title)}, ${String(artifact.fileCount)} ${artifact.fileCount === 1 ? "file" : "files"}, opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${artifact.display === undefined ? "" : `, shown ${artifact.display}`}${formatArtifactCover(artifact)}.`,
+                    `Artifact ${artifact.id} is now at ${formatArtifactVersion(artifact)}: ${JSON.stringify(artifact.title)}, ${formatFileCount(modelArtifactFileCount(artifact))}, opening ${JSON.stringify(artifact.entry.path)}${formatArtifactBackground(artifact.background)}${artifact.display === undefined ? "" : `, shown ${artifact.display}`}${formatArtifactCover(artifact)}.`,
                     ARTIFACT_PRESENTED_NOTICE,
                     ...(artifact.live === undefined
                         ? []

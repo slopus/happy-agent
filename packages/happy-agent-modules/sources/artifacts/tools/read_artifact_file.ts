@@ -6,10 +6,16 @@ import type { Context } from "@steve.kite/stdlib";
 import { ImageProcessingError } from "../../impl/images/ImageProcessingError.js";
 import { prepareImageForPrompt } from "../../impl/images/prepareImageForPrompt.js";
 import { MAX_PROMPT_IMAGE_INPUT_BYTES } from "../../impl/images/referenceImageLimits.js";
-import { artifactCounterSchema, artifactFileSchema, artifactPathSchema } from "../Artifact.js";
+import {
+    ArtifactNotFoundError,
+    artifactCounterSchema,
+    artifactFileSchema,
+    artifactPathSchema,
+} from "../Artifact.js";
 import { MAX_ARTIFACT_TEXT_BYTES, type ArtifactsModule } from "../ArtifactsModule.js";
 import { formatBytes } from "../ArtifactTypes.js";
 import { decodeArtifactText } from "../impl/decodeArtifactText.js";
+import { isGenUiDerivedPath } from "../impl/genUiEntry.js";
 import { ARTIFACT_TOOL_CAPABILITY } from "./common.js";
 
 /** How many lines one read returns when the model does not ask for fewer. */
@@ -90,6 +96,10 @@ export function readArtifactFileTool(artifacts: ArtifactsModule) {
             input: ReadArtifactFileToolInput,
         ): Promise<ArtifactFileRead> => {
             const selector = input.version ?? "latest";
+            const artifact = await artifacts.get(ctx, input.artifactId);
+            if (artifact !== undefined && isGenUiDerivedPath(artifact.type, input.path)) {
+                throw new ArtifactNotFoundError(`The version has no file at "${input.path}".`);
+            }
             const stored = await artifacts.storedFile(ctx, input.artifactId, selector, input.path);
             const base = {
                 artifactId: input.artifactId,
