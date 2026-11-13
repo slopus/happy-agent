@@ -118,6 +118,27 @@ describe("the Gen UI validator", () => {
         ).toEqual(["root<card>.actions[0]<button>.action.url: required"]);
     });
 
+    it("refuses a secret action that carries a value or asks for no variables", () => {
+        const secret = (prefill: Record<string, unknown>) =>
+            card({
+                actions: [
+                    {
+                        type: "button",
+                        label: "Add key",
+                        action: { type: "secret", secret: prefill },
+                    },
+                ],
+            });
+        expect(
+            errorsOf(secret({ variables: [{ name: "STRIPE_SECRET_KEY", value: "sk_test_1" }] })),
+        ).toEqual([
+            "root<card>.actions[0]<button>.action.secret.variables[0].value: unknown property",
+        ]);
+        expect(errorsOf(secret({ id: "stripe", variables: [] }))).toEqual([
+            "root<card>.actions[0]<button>.action.secret.variables: 0 items, allowed 1..64",
+        ]);
+    });
+
     it("refuses unknown types, children where none are taken, and non-node children", () => {
         expect(
             errorsOf(

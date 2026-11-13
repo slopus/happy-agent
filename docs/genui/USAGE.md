@@ -77,7 +77,8 @@ frame is needed.
 - **Tables are for comparing.** With more than 3 columns a phone shows each row as a block, so put the name in the first column. For one item's facts use `keyvalue`.
 - **Charts need few, round series.** Up to 3 series reads well. Use `emphasis: true` on the one series that matters when the others are context. Labels are short (`Apr`, `Q3`, `api`).
 - **Buttons are verbs.** `Review the first one`, not `OK`. At most 3 in a card; the first is the primary. Mark a destructive one with `tone: "danger"`.
-- **Actions.** `message` sends text as if the user typed it; write it as a full instruction (`Roll 2.41 out to a 10% canary`), not just the label. `open` opens a link. `copy` copies. `tool` asks the host to run a tool and may be refused.
+- **Actions.** `message` sends text as if the user typed it; write it as a full instruction (`Roll 2.41 out to a 10% canary`), not just the label. `open` opens a link. `copy` copies. `plugin` opens a plugin's page so the person can install it. `tool` is reserved: no host runs it yet, so do not use it.
+- **Ask for a credential with `secret`.** Never ask for a key, token or password in text, and never put a value in a document. Give a `secret` button the name, description and variables you need; the person types the values, may change the rest, and you get a message when it is saved. The variables are attached to you from then on. On Happy Cloud the action is `cluster_secret`.
 - **Ask with `choices`.** Use `layout: "list"` when options need a line of description, `chips` for short labels. Do not add a button that repeats an option.
 - **Images always have `alt`.** Describe what is in the picture.
 - **No Markdown blocks.** `text` takes inline Markdown only. Use `section` for a heading, `list` for bullets, `code` for code.

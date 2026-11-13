@@ -221,9 +221,154 @@ export const GEN_UI_RENDER_CATALOG = {
                             "description": "Tool input."
                         }
                     }
+                },
+                {
+                    "object": {
+                        "type": {
+                            "type": {
+                                "const": "secret"
+                            },
+                            "description": "",
+                            "required": true
+                        },
+                        "secret": {
+                            "type": {
+                                "object": {
+                                    "id": {
+                                        "type": "string",
+                                        "description": "Suggested secret name: 2–32 characters, a lowercase letter followed by lowercase letters, digits, `_` or `-`. When it names an existing secret, the form changes that secret instead of creating one."
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "description": "Suggested description of the secret, at most 2,000 characters."
+                                    },
+                                    "variables": {
+                                        "type": {
+                                            "array": {
+                                                "object": {
+                                                    "name": {
+                                                        "type": "string",
+                                                        "description": "Environment variable name, `[A-Za-z_][A-Za-z0-9_]*`, unique ignoring case.",
+                                                        "required": true
+                                                    },
+                                                    "description": {
+                                                        "type": "string",
+                                                        "description": "What the value is or where to find it, at most 2,000 characters."
+                                                    }
+                                                }
+                                            },
+                                            "min": 1,
+                                            "max": 64
+                                        },
+                                        "description": "The variables the agent needs, in order.",
+                                        "required": true
+                                    }
+                                }
+                            },
+                            "description": "What the Happy Agent secret form starts with. The person may change every field before saving. It never holds a value: values are typed by the person.",
+                            "required": true
+                        }
+                    }
+                },
+                {
+                    "object": {
+                        "type": {
+                            "type": {
+                                "const": "cluster_secret"
+                            },
+                            "description": "",
+                            "required": true
+                        },
+                        "secret": {
+                            "type": {
+                                "object": {
+                                    "id": {
+                                        "type": "string",
+                                        "description": "An existing cluster secret to change. Absent: the form creates one."
+                                    },
+                                    "type": {
+                                        "type": {
+                                            "enum": [
+                                                "endpoint",
+                                                "ssh_key",
+                                                "git_credential",
+                                                "environment"
+                                            ]
+                                        },
+                                        "description": "The cluster secret type. Fixed once the secret exists.",
+                                        "required": true
+                                    },
+                                    "name": {
+                                        "type": "string",
+                                        "description": "Suggested name, 1–100 characters.",
+                                        "required": true
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "description": "Suggested description, at most 2,000 characters."
+                                    },
+                                    "public": {
+                                        "type": {
+                                            "map": "any"
+                                        },
+                                        "description": "The type's public metadata, exactly as the cluster's create request takes it. Never material."
+                                    },
+                                    "uses": {
+                                        "type": {
+                                            "array": {
+                                                "enum": [
+                                                    "egress",
+                                                    "mcp",
+                                                    "ssh",
+                                                    "git",
+                                                    "environment"
+                                                ]
+                                            }
+                                        },
+                                        "description": "Suggested parts of the system that may open the value, among those the type allows."
+                                    },
+                                    "owner": {
+                                        "type": {
+                                            "enum": [
+                                                "me",
+                                                "team"
+                                            ]
+                                        },
+                                        "description": "Suggested owner: `me` for the person's own secret, `team` for the organization's."
+                                    }
+                                }
+                            },
+                            "description": "What the Happy Cloud secret form starts with. The person may change every field before saving. It never holds material: values are typed by the person.",
+                            "required": true
+                        }
+                    }
+                },
+                {
+                    "object": {
+                        "type": {
+                            "type": {
+                                "const": "plugin"
+                            },
+                            "description": "",
+                            "required": true
+                        },
+                        "plugin": {
+                            "type": {
+                                "object": {
+                                    "id": {
+                                        "type": "string",
+                                        "description": "The plugin's ID.",
+                                        "required": true
+                                    }
+                                }
+                            },
+                            "description": "The plugin whose page the host opens. Installing happens there; the tap installs nothing.",
+                            "required": true
+                        }
+                    }
                 }
             ],
-            "description": "What happens when the user activates an interactive element. The renderer reports it; the host decides whether and how to run it, and may ask for confirmation or refuse."
+            "description": "What happens when the user activates an interactive element. The renderer reports it; the host decides whether and how to run it, and may ask for confirmation or refuse. An action a host cannot run leaves its element disabled."
         },
         "icon": {
             "enum": [
@@ -769,7 +914,7 @@ export const GEN_UI_RENDER_CATALOG = {
             }
         },
         "button": {
-            "summary": "A button.",
+            "summary": "A button. With an action the host cannot run, because it does not know or does not serve it, the button is drawn disabled with its label.",
             "children": false,
             "slots": {},
             "props": {
@@ -832,7 +977,7 @@ export const GEN_UI_RENDER_CATALOG = {
             }
         },
         "press": {
-            "summary": "Makes its child tappable. With a missing or invalid action the child is drawn and is not tappable.",
+            "summary": "Makes its child tappable. With a missing or invalid action, or one the host cannot run, the child is drawn and is not tappable.",
             "children": true,
             "slots": {},
             "props": {

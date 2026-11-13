@@ -56,7 +56,7 @@ Shared value types, defined in `catalog.json` under `definitions`:
 - `icon`: one of 39 names, each drawn from the shared icon set in `icons/`.
 - `image`: `{ src, alt }`.
 - `badge`: `{ text, tone?, icon? }`.
-- `action`: `message`, `open`, `copy` or `tool`.
+- `action`: `message`, `open`, `copy`, `tool`, `secret`, `cluster_secret` or `plugin`.
 
 The vocabulary is closed. A document cannot define components, and has no
 props for colour values, size in points, font, padding or alignment.
@@ -80,6 +80,7 @@ throws, crashes or shows a raw error for a bad document.
 | A `root` that is itself skipped | Show `fallback` |
 | Two nodes with the same `id` | Render both; the `id` refers to the first |
 | Children on a component that takes none | Ignore them |
+| An action the host cannot run | Draw the element disabled (see rule 7) |
 
 Validation is strict; rendering is lenient. `genui.schema.json` rejects
 everything in this table, so authors and tools catch mistakes, while a
@@ -112,14 +113,76 @@ tinted placeholder while loading, and keeps the placeholder on failure.
 
 | Action | Host does |
 |---|---|
-| `message` | Sends `text` as the user's next message |
+| `message` | Sends `text` as the user's next message to the origin agent |
 | `open` | Opens the URL or path; non-https schemes are refused |
 | `copy` | Copies `text` to the clipboard |
-| `tool` | Asks to run the named tool with `input`, under the host's normal permission rules |
+| `tool` | Reserved: no host runs it yet, so it is drawn disabled |
+| `secret` | Happy Agent only. Opens the native secret form prefilled from `secret`, and saves it as described under Secret actions |
+| `cluster_secret` | Happy Cloud only. Opens the native cluster secret form prefilled from `secret`, and saves it the same way |
+| `plugin` | Opens the page of the plugin `plugin.id`, where the person may install it. The tap itself installs nothing |
 
 Actions are untrusted input from the model. A host must apply the same
 permission checks as if the model had asked for the action directly, and
 must never treat a tap as approval of something the user was not shown.
+
+**The origin agent** of an action is the agent that wrote the version
+holding it: the version's `source.agentId`. Wherever the document is shown,
+in its chat, a feed, a vault or a side panel, `message` and the secret
+actions go to that agent. When the version names no agent, or that agent is
+archived, those actions cannot run: clients draw them disabled and the
+server refuses them.
+
+**An action the host cannot run is disabled.** A host that does not know an
+action's `type`, does not serve it (a Happy Agent host and `cluster_secret`,
+a cluster and `secret`), or has no origin agent for it, draws the button
+disabled with its label and a pressable element as not tappable. It never
+substitutes another action.
+
+**Action types are versioned by name.** The shape and meaning of an action
+type never change. A change an existing host would misread gets a new type
+name; adding a type or an optional field does not bump `genui`.
+
+### Secret actions
+
+A secret action lets an agent ask the person for a credential without ever
+seeing it. The action holds what the form starts with; the person fills in
+the values and may change everything else first.
+
+```json
+{
+  "type": "secret",
+  "secret": {
+    "id": "stripe",
+    "description": "Stripe test-mode keys for the billing service",
+    "variables": [
+      { "name": "STRIPE_SECRET_KEY", "description": "Dashboard → Developers → API keys, the secret key" },
+      { "name": "STRIPE_WEBHOOK_SECRET" }
+    ]
+  }
+}
+```
+
+- `secret` is for Happy Agent's secrets: a named bundle of environment
+  variables. `cluster_secret` is for Happy Cloud's typed secrets: its
+  `secret` holds the secret `type`, `name`, `description`, the type's
+  `public` metadata as the cluster's create request takes it, the suggested
+  `uses` and `owner`, and an `id` only to change a secret that exists.
+- Neither carries a value. A model never writes one, and a host never
+  prefills one.
+- The person may change every prefilled field before saving: the name, the
+  description, and which variables there are and what they are called. The
+  form says whether it creates a secret or changes one.
+- When `id` names a secret that exists, the form opens on that secret to
+  change it, and a value left empty keeps what is stored. Tapping the same
+  button after saving therefore changes the secret just made.
+- On save, the client sends the element key and the form to the server in
+  one request, never the action itself; the server reads the action from
+  the stored render document. In one change it stores the secret, gives the
+  origin agent access to it, and tells the origin agent in a message which
+  secret was added or changed and its variable names, never its values. The
+  agent learns of it then; it does not wait on the tap.
+- What the view shows after saving, such as that the secret was added,
+  comes from that request's response and stays local to the view.
 
 **8. Accessibility.** Every interactive element is reachable and labelled.
 Images expose `alt`. Charts expose a text summary built from their labels and
@@ -129,7 +192,8 @@ series. Motion (the active step) respects reduced-motion settings.
 
 Reserved for later versions; documents must not rely on them.
 
-- Input fields and forms (text field, toggle, select, date) with a submit action.
+- Input fields and forms (text field, toggle, select, date) with a submit action. The secret
+  actions open a form the host owns; the document still has no inputs.
 - Patching a node already on screen by its `id`.
 - State binding and conditional visibility.
 - `presentation` other than inline (fullscreen, picture-in-picture).

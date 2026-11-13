@@ -175,7 +175,7 @@ Rules that settle what three renderers each had to guess:
 - **Alignment in grids** comes from the column only.
 - **Leading column.** `leading` is set on the list box and on every row, including compact key/value rows.
 - **Defaults for enums** an old client may not know: button `secondary`, shape `landscape`, marker `pending`, plot `line`.
-- **A `press` without a valid action** draws its child, not tappable.
+- **A `press` without a valid action**, or with one the host cannot run, draws its child, not tappable. **A `button` with an action the host cannot run** is drawn disabled with its label. A host cannot run an action whose `type` it does not know, a secret action of the other server (`secret` on a cluster, `cluster_secret` on Happy Agent), a `tool` action, which no host runs yet, or a `message` or secret action whose version names no origin agent or names an archived one.
 - **The image viewer is not an action.** A tap on an image with `viewer` is reported to the host separately as (element key, group, index).
 - **A step rail** runs from its marker to the next marker in the same box, across the gap.
 

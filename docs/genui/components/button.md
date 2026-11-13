@@ -23,6 +23,7 @@ Group: input.
 
 - The platform's standard medium button. One line; the label truncates rather than wraps.
 - After activation the button shows a pressed or done state and cannot be triggered twice while the host is handling the action.
+- A button whose action the host cannot run, because it does not know the action or does not serve it, is drawn disabled with its label.
 
 ## Example
 

@@ -80,6 +80,32 @@ describe("the Gen UI compiler", () => {
         }
     });
 
+    it("holds the action fixture to the catalog: four invalid actions, all disabled everywhere", () => {
+        const fixture = JSON.parse(
+            readFileSync(join(spec, "render", "conformance", "actions.json"), "utf8"),
+        ) as {
+            document: unknown;
+            cases: { element: string; enabled: Record<string, boolean> }[];
+        };
+        expect(validateGenUiRenderDocument(fixture.document)).toEqual([
+            "unknown.props.action: matches none of the allowed shapes",
+            "secret-without-variables.props.action.secret.variables: required",
+            "secret-with-value.props.action.secret.variables[0].value: unknown property",
+            "press-unknown.props.action: matches none of the allowed shapes",
+        ]);
+        expect(
+            fixture.cases
+                .filter((entry) => Object.values(entry.enabled).every((enabled) => !enabled))
+                .map((entry) => entry.element),
+        ).toEqual([
+            "tool",
+            "unknown",
+            "secret-without-variables",
+            "secret-with-value",
+            "press-unknown",
+        ]);
+    });
+
     it("lowers a card with its header, children, and actions with resolved variants", () => {
         const copy = (text: string) => ({ type: "copy", text });
         const render = compile(
