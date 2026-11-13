@@ -125,6 +125,17 @@ describe("user-wide MCP servers", () => {
     it("reach projects, bots, tasks, subtasks, collaborators, and exported-bot conversations", async () => {
         const { gym, run, echoed } = await harness();
         const expected = (kind: string) => ({ offered: true, answer: `shared:${kind}` });
+        // Servers start in the background and their tools reach a later request, so the first
+        // question waits until the shared one is connected.
+        await gym.waitUntil(
+            async () =>
+                (await run(gym.defaultSessionId, "list_mcp_servers", {})).includes(
+                    "shared\tconnected",
+                )
+                    ? true
+                    : undefined,
+            "the shared server to connect",
+        );
 
         await gym.send(`${ASK}project`, { permissionMode: "full_access" });
         expect(await echoed("project")).toEqual(expected("project"));
