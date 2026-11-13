@@ -1,6 +1,8 @@
 import { createAgentGym } from "@slopus/happy-agent-gym";
 import { expect, it } from "vitest";
 
+import { instructionsInForce } from "./support/instructionsInForce.js";
+
 it("searches and reads beyond the shortlist and preserves the shortlist across use and restart", async () => {
     const files = Object.fromEntries(
         Array.from({ length: 257 }, (_, index) => {
@@ -65,7 +67,8 @@ it("searches and reads beyond the shortlist and preserves the shortlist across u
             const messages = await gym.client.getMessages(gym.defaultSessionId);
             return JSON.stringify(messages).includes("Invoked the final skill.") ? true : undefined;
         }, "the final skill invocation to complete");
-        expect(gym.inference.requests.at(-1)?.instructions).toContain(
+        // The conversation already had its prompt, so the invoked skill arrives as a change to it.
+        expect(instructionsInForce(gym.inference.requests.at(-1)!)).toContain(
             "Complete instructions for skill-0256.",
         );
         expect(gym.errors).toEqual([]);

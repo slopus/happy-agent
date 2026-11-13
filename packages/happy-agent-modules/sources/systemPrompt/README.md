@@ -101,6 +101,13 @@ instruction snapshot in `runKV`; every inference in that turn uses that same sna
 after the turn boundary is therefore delivered coherently on the following turn rather than
 mixing one notice version with another system-prompt version.
 
+The prompt a provider is actually sent is fixed for the life of a history by the
+[stable prompt](../stablePrompt/README.md) module: this module's instructions are the prompt of a
+history's first request, and later differences reach the model as notices. The AGENTS.md
+replacement notice above is one of them and stays this module's own, so
+`agentsMdDocumentsInPrompt(ctx, scope)` returns the documents exactly as they are written in the
+current instructions for the stable prompt module to leave out of its comparison.
+
 ## Tools, storage, and concurrency
 
 The module exposes no tools and owns no database or filesystem. Its durable Agent Base KV state is

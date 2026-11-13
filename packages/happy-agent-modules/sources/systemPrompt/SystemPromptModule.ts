@@ -138,6 +138,17 @@ export class SystemPromptModule implements AgentModule {
         return await this.#agentsMd.readFormatted(ctx, agentId);
     }
 
+    /**
+     * The AGENTS.md documents inside the prompt this agent would be sent now, exactly as they are
+     * written there, or an empty string when it has none.
+     *
+     * Those documents have a superseding notice of their own whenever they change, so whoever
+     * reports other changes to the prompt asks for this part in order to leave it alone.
+     */
+    async agentsMdDocumentsInPrompt(ctx: Context, scope: AgentModuleScope): Promise<string> {
+        return await this.#agentsMd.documentsInPrompt(ctx, scope);
+    }
+
     async #instructions(ctx: Context, scope: AgentModuleScope): Promise<string> {
         const prompt = this.promptFor({
             model: scope.agent.model,

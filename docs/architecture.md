@@ -189,6 +189,14 @@ extended by Happy Agent with the environment description, project instructions, 
 content of the project's `AGENTS.md` files. Happy Agent discovers those files,
 fingerprints them, and re-delivers their content to the model when they change.
 
+The prompt a conversation was first sent stays its prompt. Instructions that change later, such
+as the permission mode or the model in force, reach the model as an "Instructions changed"
+notice after the next message, naming the lines that no longer apply and the ones that do. A
+provider caches the prompt with everything after it, and Claude models with preserved thinking
+reject a conversation whose prompt changed under earlier thinking, so the prompt is taken again
+from the current instructions only when compaction or an incompatible model change rebuilds the
+history.
+
 ### Compaction
 
 Compaction is a message, not a side effect. Happy Agent decides _when_; the provider

@@ -6,6 +6,8 @@ import {
 } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { instructionsInForce } from "./support/instructionsInForce.js";
+
 const gyms = new Set<AgentGym>();
 
 afterEach(async () => {
@@ -165,7 +167,7 @@ describe("public activity and process API matrix", () => {
                 if (call === 0) return background("abortnotice");
                 if (call === 1) return text("The process is running.");
                 followUpNotices.push(
-                    request.instructions.includes(
+                    instructionsInForce(request).includes(
                         "The previous abort hard-killed 1 background process tree",
                     ),
                 );

@@ -92,6 +92,7 @@ import {
     SkillFoldersModule,
     SkillMirrorModule,
 } from "../skills/index.js";
+import { StablePromptModule } from "../stablePrompt/index.js";
 import { SystemPromptModule } from "../systemPrompt/index.js";
 import { TailcatModule } from "../tailcat/index.js";
 import { MobileConnectorModule } from "../mobileConnector/index.js";
@@ -1011,6 +1012,9 @@ export async function startHappyAgentRuntime(
             // Complete replacement modules must remain last so their overrides see and replace
             // every ordinary contribution and every earlier override.
             codeMode,
+            // The prompt a history keeps is the one every module and override above produced, so
+            // this follows even the complete replacements.
+            new StablePromptModule(systemPrompt),
         ]
             .map(checkModuleToolParameters)
             .map(instrumentModuleLogging);

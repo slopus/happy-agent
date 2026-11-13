@@ -6,6 +6,8 @@ import {
 } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { instructionsInForce } from "./support/instructionsInForce.js";
+
 const running = new Set<AgentGym>();
 afterEach(async () => {
     await Promise.all([...running].map((gym) => gym.dispose()));
@@ -63,7 +65,7 @@ async function harness() {
             `the ${name} result`,
         );
     }
-    /** The instructions an ordinary agent's next inference is given. */
+    /** The instructions in force for an ordinary agent's next inference. */
     async function instructionsOfNextTurn(agentId: string): Promise<string> {
         const before = gym.inference.requests.length;
         await gym.send("What should I know?", { sessionId: agentId });
@@ -78,7 +80,7 @@ async function harness() {
                     ),
             "the agent's next inference",
         );
-        return request.instructions;
+        return instructionsInForce(request);
     }
     return {
         gym,

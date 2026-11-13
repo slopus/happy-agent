@@ -11,6 +11,8 @@ import {
 } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { instructionsInForce } from "./support/instructionsInForce.js";
+
 const TOKEN = "424242:AAGymTelegramSecretTokenValue_0123456789";
 const SECRET = TOKEN.slice(TOKEN.indexOf(":") + 1);
 /** A second Telegram bot's token, for exporting a second Happy bot. */
@@ -679,7 +681,9 @@ describe("a bot exported to Telegram", () => {
             expect(told).toContain("Scout");
             expect(told).toContain(scout.id);
             expect(told).not.toContain("quarterly numbers");
-            expect(request.instructions).toContain("# Exported bot access requests");
+            // The Chief of Staff's prompt is older than the request, so the guidance is a change to it.
+            expect(request.instructions).not.toContain("# Exported bot access requests");
+            expect(instructionsInForce(request)).toContain("# Exported bot access requests");
             const waiting = await chiefRuns("get_exported_bot_status", {});
             expect(waiting).toContain("Waiting to be let in since");
             expect(waiting).toContain("Mallory (@mallory), Telegram user 333.");

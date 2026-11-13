@@ -250,6 +250,17 @@ export class AgentsMdInstructions {
     };
 
     /**
+     * The documents part of what `instructions` contributes for this turn, without the fixed
+     * explanation of the convention that precedes it. It is the text a change notice replaces.
+     */
+    readonly documentsInPrompt = async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
+        const loaded = await this.#loadInstructionsForPrompt(ctx, scope);
+        const formatted = formatInstructions(loaded.snapshot, this.#compute.paths(ctx));
+        const prefix = `${AGENTS_MD_SPEC}\n\n`;
+        return formatted.startsWith(prefix) ? formatted.slice(prefix.length) : "";
+    };
+
+    /**
      * Queue a replacement/removal notice after an instruction file changes.
      *
      * Agent Base's steering queue is the durable equivalent of the legacy internal message
