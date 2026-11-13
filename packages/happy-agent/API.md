@@ -486,8 +486,10 @@ protocol-22 capabilities remain usable without it.
 
 Plugins are additive and do not increment the protocol version: the routes under `/v0/plugins`,
 the `plugins.updated` event, and the optional `plugin` attribution on global skill summaries.
-Clients detect plugins through `GET /v0/plugins`: `404` or `501` means plugins are unavailable,
-not that nothing is installed. Older daemons never emit the event and omit the attribution.
+A daemon that serves them reports `capabilities.plugins: true` from health. Clients detect plugins
+through that capability alone: a missing or `false` capability means plugins are unavailable, not
+that nothing is installed. Daemons without it answer the routes with `404` or `501`, never emit the
+event, and omit the attribution.
 
 Authentication discovery, JWT team authentication, and the `authentication` field on `401`
 bodies are additive and do not increment the protocol version. `404` from
@@ -653,9 +655,12 @@ send a question's optional `permissionRequest`. A client that does not recognize
 question as an ordinary question, and answering it works the same way.
 
 Gen UI actions that need the daemon are additive and do not increment the protocol version. A
-daemon that runs them serves `POST /v0/artifacts/:artifactId/versions/:number/actions` and offers
-agents the `request_secret` tool. An older compatible daemon answers that route with `404`; a client
-then draws `secret` actions disabled, as it draws any action its host cannot run.
+daemon that runs them reports `capabilities.artifactSecretActions: true` from health, serves
+`POST /v0/artifacts/:artifactId/versions/:number/actions`, and offers agents the `request_secret`
+tool. A client enables `secret` actions only when health reports the capability; a missing or
+`false` capability means the daemon cannot run them, and the client draws them disabled, as it
+draws any action its host cannot run. Older compatible daemons omit the capability and answer the
+route with `404`.
 
 Vault folder roles and the default vault are additive and do not increment the protocol version.
 A server that has them sends a folder's `role` and the settings' `defaultVault`; Happy Agent omits
@@ -1618,6 +1623,11 @@ Fields:
   `GET /v0/usage/daily`, described under Usage.
   `userEnvironment: true` advertises `PUT /v0/environment`, `deviceId` on agent sends, and the
   `user_environment.updated` event, described under User environment.
+  `artifactSecretActions: true` advertises `POST /v0/artifacts/:artifactId/versions/:number/actions`
+  for `secret` actions and the `request_secret` tool, described under Artifacts; clients enable
+  `secret` actions only with it. `plugins: true` advertises the routes under `/v0/plugins` and the
+  `plugins.updated` event, described under Plugins; clients show plugins, and enable Gen UI
+  `plugin` actions, only with it.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
   It is a CUID2 of exactly 24 characters matching `^[a-z][a-z0-9]{23}$`, generated once and
   persisted with the installation's data, so it survives restarts and upgrades. It is reported
@@ -2516,9 +2526,10 @@ whose manifest sets `multiInstance: true` may be installed several times. In tea
 members may read both lists, but only the configured owner may install or uninstall
 (`403 forbidden` for another member).
 
-Clients learn about plugins only from the daemon; they never read a catalog themselves. Clients
-detect plugin support through `GET /v0/plugins`: `404` or `501` means plugins are unavailable,
-not that nothing is installed.
+Clients learn about plugins only from the daemon; they never read a catalog themselves. A daemon
+that serves plugins reports `capabilities.plugins: true` from health, and clients detect plugin
+support through that capability: missing or `false` means plugins are unavailable, not that nothing
+is installed. A daemon without it answers the routes with `404` or `501`.
 
 ### Catalog sources
 
@@ -13849,7 +13860,9 @@ actions its buttons and pressable elements report (`docs/genui/SPEC.md`, rule 7)
 client runs itself. A `secret` action opens a secret form on the client, and the client saves the
 form here, in one request: the daemon stores the secret, gives the version's origin agent access
 to it, and tells that agent. The client never calls the plain secret routes for this flow and
-never reports completion separately.
+never reports completion separately. A daemon that serves this route reports
+`capabilities.artifactSecretActions: true` from health; a client enables `secret` actions only
+then.
 
 The origin agent is the agent that made the version: its `createdBy` when that is
 `{ "kind": "agent" }`. A version a person made has no origin agent.

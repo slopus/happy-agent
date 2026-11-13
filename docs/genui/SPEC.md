@@ -140,6 +140,13 @@ a cluster and `secret`), or has no origin agent for it, draws the button
 disabled with its label and a pressable element as not tappable. It never
 substitutes another action.
 
+**The server says which actions it serves.** A client enables the secret
+action of its server only when the server's health reports
+`capabilities.artifactSecretActions: true`, and `plugin` only when it reports
+`capabilities.plugins: true`. A missing or `false` capability means the
+server cannot run them, so they are drawn disabled. A client never probes a
+route to find out.
+
 **Action types are versioned by name.** The shape and meaning of an action
 type never change. A change an existing host would misread gets a new type
 name; adding a type or an optional field does not bump `genui`.
@@ -183,6 +190,8 @@ the values and may change everything else first.
 - When `id` names a secret that exists, the form opens on that secret to
   change it, and a value left empty keeps what is stored. Tapping the same
   button after saving therefore changes the secret just made.
+- The button is enabled only on a server that reports
+  `capabilities.artifactSecretActions: true` (rule 7).
 - On save, the client sends the element key and the form to the server in
   one request, never the action itself; the server reads the action from
   the stored render document. In one change it stores the secret, gives the
