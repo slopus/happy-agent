@@ -1,39 +1,59 @@
 # Tailcat binary assets
 
-Happy Agent embeds Tailcat v0.7.0 for each of its five release targets. Binary integrity is pinned
-in `v0.7.0/SHA256SUMS` and checked again by `scripts/resolveTailcatBinaryAsset.ts` before a Happy
-Agent standalone binary is compiled. No target carries a Happy-specific patch.
+Happy Agent embeds Tailcat v0.7.0-happy.1, Happy's patched build of Tailcat v0.7.0, for each of
+its five release targets. Binary integrity is pinned in `v0.7.0-happy.1/SHA256SUMS` and checked
+again by `scripts/resolveTailcatBinaryAsset.ts` before a Happy Agent standalone binary is compiled.
 
-The Linux x64 and arm64 executables are extracted unchanged from Tailcat's official v0.7.0 release
-archives. The downloaded archives were verified against the release's official `checksums.txt`:
+## Source
 
-- `tailcat_0.7.0_linux_amd64.tar.gz`:
-  `23c0b1887a5ec422f0d18a9c52b4f5357815febdaae738a1eb54036d10bd9ee6`
-- `tailcat_0.7.0_linux_arm64.tar.gz`:
-  `bbb1ab50f24f00effe1e1fd86d0501803fb80793a90785a2a16ff3428f03d8ef`
+All five executables are built from tag `v0.7.0-happy.1` of Happy's fork,
+[slopus/tailcat](https://github.com/slopus/tailcat) (commit
+[`1802747339966fc369fb00bbccc9a67d39f580e5`](https://github.com/slopus/tailcat/commit/1802747339966fc369fb00bbccc9a67d39f580e5)).
+That tag is upstream [tailscale/tailcat](https://github.com/tailscale/tailcat) `v0.7.0` (commit
+`15ab9e68bfc6534a61797d7af28cedd42b54a3a5`) plus these commits:
 
-Tailcat v0.7.0 publishes no macOS artifacts. The Darwin x64 and arm64 executables were built from
-Go module `github.com/tailscale/tailcat@v0.7.0` (tag commit
-`15ab9e68bfc6534a61797d7af28cedd42b54a3a5`, module sum
-`h1:iMNaCvDAUZ3LKZh0nEDGCVSHWTjbpSdzdYv8g2nvZQI=`) with Go 1.27.1, `CGO_ENABLED=0`, the upstream
-`build-tags.txt`, and these release flags:
+1. [`612a1d156`](https://github.com/slopus/tailcat/commit/612a1d156ccc34fa4f932375bc22a748580b0bd5)
+   stops a client that resets its connection right after the handshake from crashing the whole
+   server. Netstack then hands the exec handler a connection whose remote address is nil, and
+   building the peer environment from it panicked. The handler now closes such a connection, and
+   a panic in any one connection's handler is recovered and closes only that connection.
+2. [`4e70535e4`](https://github.com/slopus/tailcat/commit/4e70535e4f5e6d757dd6900c9f84f1a2a78f2bbc)
+   adds a test that downloads 2 MB between two gVisor stacks over a 70 ms round trip with a 300 ms
+   blackout. On upstream's gVisor it stalls for over 30 seconds; with the fix below it finishes in
+   about 1.5 seconds.
+3. [`0cdfe71ce`](https://github.com/slopus/tailcat/commit/0cdfe71cee5e63e0d053cd5c0189be8683c77c96)
+   replaces `gvisor.dev/gvisor` with Happy's fork
+   [slopus/gvisor](https://github.com/slopus/gvisor), branch `tailcat-rto-recovery`: the gVisor
+   commit upstream v0.7.0 pins (`a6f909f08a7250c080b5b70f3513e8b27b75f64a`) plus
+   [`81dfea2b6`](https://github.com/slopus/gvisor/commit/81dfea2b6e59310e06b52216bfbdeae1affc7c5b).
+   After a retransmission timeout, RACK used to start a SACK fast recovery that sent nothing until
+   the next, doubled, timeout, so a connection whose path dropped briefly repaired one or two
+   segments per timeout. RACK no longer starts a recovery during timeout recovery, as RFC 6675
+   already requires of the duplicate-ACK path.
+4. A README note describing the fork, which `tailcat readme` prints.
+
+The fork is not an official Tailscale release. It speaks the same protocol as upstream v0.7.0, so
+upstream Tailcat clients connect to it unchanged.
+
+## Build
+
+Every executable was built with Go 1.27.1, `CGO_ENABLED=0`, the fork's `build-tags.txt`, and:
 
 ```text
-go build -trimpath -buildvcs=false -tags <upstream-build-tags> \
-  -ldflags "-s -w -X main.version=v0.7.0" ./cmd/tailcat
+GOOS=<os> GOARCH=<arch> go build -trimpath -buildvcs=false -tags "$(cat build-tags.txt)" \
+  -ldflags "-s -w -X main.version=v0.7.0-happy.1" ./cmd/tailcat
 ```
 
-The official Linux and Windows binaries were built from the same commit with the same Go version,
-tags, and linker flags. Building the Darwin arm64 executable a second time from a Git checkout of
-the tag produced byte-identical output.
+The build is reproducible: a fresh clone of the tag builds the same five hashes, and the same
+command run against upstream `v0.7.0` with `main.version=v0.7.0` reproduces the previously
+embedded Darwin executables byte for byte. Upstream's official Linux and Windows archives were
+built by GoReleaser without `-trimpath` and with VCS stamping, so the fork builds all five targets
+with the command above instead.
+
+## Signing and license
 
 The checked-in executables are unsigned. The Happy Agent release workflow signs the selected
 Darwin Tailcat executable with Happy's Developer ID before embedding it, then submits both the
-exact signed Tailcat and Happy Agent executables to Apple's notary service. The BSD-3-Clause
-license is in `LICENSE` and is materialized beside Tailcat at runtime.
-
-The Windows x64 executable is extracted unchanged from the official
-`tailcat_0.7.0_windows_amd64.zip`, verified against archive SHA-256
-`f04cac07e3bf6c700b0b543df0d3315a3b312cd5a05ee76714e1cc848e9b2dff` from the same
-`checksums.txt`. Its executable hash is recorded in `v0.7.0/SHA256SUMS`. Windows release signing
-must run before embedding the executable.
+exact signed Tailcat and Happy Agent executables to Apple's notary service. Windows release signing
+must run before embedding the executable. Tailcat's BSD-3-Clause license is in `LICENSE` and is
+materialized beside Tailcat at runtime.

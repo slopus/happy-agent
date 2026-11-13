@@ -1,7 +1,11 @@
 # Tailcat internet exposure
 
-Happy Agent release binaries embed Tailcat v0.7.0 so a standalone or team daemon can be reached
-from another machine through an encrypted, NAT-traversing Tailcat connection.
+Happy Agent release binaries embed Tailcat v0.7.0-happy.1 so a standalone or team daemon can be
+reached from another machine through an encrypted, NAT-traversing Tailcat connection. It is
+upstream Tailcat v0.7.0 with Happy's fixes, built from the
+[slopus/tailcat](https://github.com/slopus/tailcat) fork; the patches are listed in
+[the asset README](../packages/happy-agent/assets/tailcat/README.md). Upstream Tailcat clients
+connect to it unchanged.
 
 Tailcat is its own account-free transport. Despite living in the `tailscale/tailcat` GitHub
 repository, using it does not require the Tailscale app, a Tailscale account, a tailnet, or

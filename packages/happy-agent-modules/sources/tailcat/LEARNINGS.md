@@ -5,9 +5,22 @@
 Both incoming exposure and outgoing SOCKS helpers launch with hidden Windows consoles. Their
 captured output and existing supervision remain authoritative; reconnecting cannot flash a terminal.
 
+## Happy ships its own patched Tailcat
+
+The bundled Tailcat is v0.7.0-happy.1, built from Happy's fork `slopus/tailcat`: upstream v0.7.0
+plus fixes Happy needs before upstream ships them. A client that reset its connection right after
+the handshake made netstack hand the exec handler a connection with a nil remote address, and the
+resulting panic killed the server and every exposure on it. After a brief path blackout, gVisor's
+RACK started a SACK recovery during timeout recovery that sent nothing until the next doubled
+timeout, so a phone's download crawled for a minute or more; the fork pins `slopus/gvisor` with
+that fixed. The fork's patches, source commits, and reproducible build command are recorded in
+`packages/happy-agent/assets/tailcat/README.md`. The fork stays wire-compatible with upstream, so
+upstream clients and every argument Happy Agent passes keep working. Fix Tailcat bugs in the fork
+with a test, and rebuild all five targets together.
+
 ## New identities carry a pre-shared key
 
-The bundled Tailcat is v0.7.0. Since v0.6.0, `genkey` adds a WireGuard pre-shared key to new
+The bundled Tailcat is based on v0.7.0. Since v0.6.0, `genkey` adds a WireGuard pre-shared key to new
 server identities and their addresses. Happy Agent keeps that upstream default and does not pass
 `--psk=false`, because the key makes the address itself a secret that is needed to connect. A
 persisted identity created by v0.4.0 has no pre-shared key, and `serve` keeps using it as it is,
