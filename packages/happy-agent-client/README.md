@@ -323,6 +323,13 @@ update request bodies. Project, workspace, and exact-agent attachment targets ar
 versioned secret changes and immutable attachment creation/removal without introducing a value-
 bearing response or event type.
 
+Happy Cloud's typed secret catalog is a separate, cluster-only API under `/v0/cluster/secrets`; a
+daemon answers it with `404`, and a cluster answers `/v0/secrets` with `404`. `listClusterSecrets`,
+`getClusterSecret`, `createClusterSecret`, `updateClusterSecret`, and `deleteClusterSecret` manage
+endpoint, SSH key, git credential, and environment secrets, whose `public` metadata and write-only
+`material` are typed per `type`. `listClusterSecretGrants`, `grantClusterSecret`, and
+`revokeClusterSecret` give a secret to an agent or workspace. No response type carries `material`.
+
 ```ts
 const reducer = new HappyReducer(client);
 const hideAgent = reducer.agentVisible(agentId);

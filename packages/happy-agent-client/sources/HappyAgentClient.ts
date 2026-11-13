@@ -300,6 +300,19 @@ import type {
     UpdateSecretRequest,
 } from "./protocol/secrets.js";
 import type {
+    ClusterSecretDeleteResponse,
+    ClusterSecretGrantListResponse,
+    ClusterSecretGrantResponse,
+    ClusterSecretGrantTarget,
+    ClusterSecretListQuery,
+    ClusterSecretListResponse,
+    ClusterSecretMutationRequest,
+    ClusterSecretResponse,
+    ClusterSecretRevokeResponse,
+    CreateClusterSecretRequest,
+    UpdateClusterSecretRequest,
+} from "./protocol/clusterSecrets.js";
+import type {
     OpenTerminalRequest,
     ResizeTerminalRequest,
     TerminalListResponse,
@@ -992,6 +1005,121 @@ export class HappyAgentClient {
         return await this.#json({
             method: "DELETE",
             path: secretAttachmentPath(secretId, target),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    // Cluster secrets: Happy Cloud's typed catalog. A daemon answers these routes with `404`.
+
+    /** `GET /v0/cluster/secrets` — the secrets the caller may see, as metadata only. */
+    async listClusterSecrets(
+        query: ClusterSecretListQuery = {},
+        options: RequestOptions = {},
+    ): Promise<ClusterSecretListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/cluster/secrets",
+            query: { cursor: query.cursor, limit: query.limit },
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/cluster/secrets/:secretId` — metadata only. */
+    async getClusterSecret(
+        secretId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<ClusterSecretResponse> {
+        return await this.#json({
+            method: "GET",
+            path: clusterSecretPath(secretId),
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/cluster/secrets` — stores write-only material; the cluster makes the ID. */
+    async createClusterSecret(
+        request: CreateClusterSecretRequest,
+        options: RequestOptions = {},
+    ): Promise<ClusterSecretResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/cluster/secrets",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `PATCH /v0/cluster/secrets/:secretId` — changes metadata, rules, or write-only material. */
+    async updateClusterSecret(
+        secretId: Cuid2,
+        request: UpdateClusterSecretRequest,
+        options: VersionedRequestOptions,
+    ): Promise<ClusterSecretResponse> {
+        return await this.#json({
+            method: "PATCH",
+            path: clusterSecretPath(secretId),
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `DELETE /v0/cluster/secrets/:secretId` — removes the secret with its rules and grants. A
+     * manager deleting another member's own secret cannot read its version and omits `ifMatch`.
+     */
+    async deleteClusterSecret(
+        secretId: Cuid2,
+        request: ClusterSecretMutationRequest = {},
+        options: OptionallyVersionedRequestOptions = {},
+    ): Promise<ClusterSecretDeleteResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: clusterSecretPath(secretId),
+            json: request,
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/cluster/secrets/:secretId/grants` — grants to targets the caller may see. */
+    async listClusterSecretGrants(
+        secretId: Cuid2,
+        options: RequestOptions = {},
+    ): Promise<ClusterSecretGrantListResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `${clusterSecretPath(secretId)}/grants`,
+            signal: options.signal,
+        });
+    }
+
+    /** Grants one cluster secret to an agent or workspace; idempotent. */
+    async grantClusterSecret(
+        secretId: Cuid2,
+        target: ClusterSecretGrantTarget,
+        request: ClusterSecretMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<ClusterSecretGrantResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: clusterSecretGrantPath(secretId, target),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** Revokes one cluster secret grant; idempotent. */
+    async revokeClusterSecret(
+        secretId: Cuid2,
+        target: ClusterSecretGrantTarget,
+        request: ClusterSecretMutationRequest = {},
+        options: RequestOptions = {},
+    ): Promise<ClusterSecretRevokeResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: clusterSecretGrantPath(secretId, target),
             json: request,
             signal: options.signal,
         });
@@ -4521,6 +4649,14 @@ function rangeHeader(range: ByteRange): string {
 function requestedMode<T extends MessageMode>(mode: T): Omit<T, "account" | "providerType"> {
     const { account: _account, providerType: _providerType, ...requested } = mode;
     return requested;
+}
+
+function clusterSecretPath(secretId: Cuid2): string {
+    return `v0/cluster/secrets/${encodeURIComponent(secretId)}`;
+}
+
+function clusterSecretGrantPath(secretId: Cuid2, target: ClusterSecretGrantTarget): string {
+    return `${clusterSecretPath(secretId)}/grants/${encodeURIComponent(target.type)}/${encodeURIComponent(target.id)}`;
 }
 
 function secretAttachmentPath(secretId: Cuid2, target: SecretAttachmentTarget): string {
