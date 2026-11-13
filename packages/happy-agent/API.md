@@ -5623,6 +5623,28 @@ Response — `200`:
 
 A request that finds no grant returns `revoked: false` and `grant: null`.
 
+### Cluster secret events
+
+The cluster publishes these events on its event stream after the change commits. Each payload
+carries the request's `mutationId` when one was sent. No event carries a name, `public`, or
+`material`, so clients read the secret or the list again for metadata. The daemon's `secret.*`
+events are unrelated and unchanged.
+
+A change to a team secret publishes only `cluster_secrets.changed`, with the payload
+`{ "mutationId"?: "..." }`. It names no secret, so a secret hidden from a role, or the catalog
+hidden from a member without `secrets.view`, is never revealed by an event. Clients read
+`GET /v0/cluster/secrets` again.
+
+A change to a member's own secret publishes one of these events to that member only, including
+when a manager deletes it:
+
+- `cluster_secret.created` — `{ "secretId", "version" }`.
+- `cluster_secret.updated` — `{ "secretId", "previousVersion", "version" }`.
+- `cluster_secret.attached`, `cluster_secret.detached` — `{ "secretId", "previousVersion",
+"version", "target": { "type", "id" } }`. A grant or revoke that changes nothing publishes
+  nothing.
+- `cluster_secret.removed` — `{ "secretId", "previousVersion" }`.
+
 ## Projects and workspaces
 
 A project is where work lives: a folder on this machine, registered with the daemon, or a
