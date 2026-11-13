@@ -1,4 +1,4 @@
 {
   "method": "POST",
-  "target": "/bedrock_anthropic_mantle?route=fixture%2Fv1%2Fmessages%3Fbeta%3Dtrue"
+  "target": "/bedrock_anthropic_mantle/v1/messages?beta=true&route=fixture"
 }

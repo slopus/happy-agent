@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Find shared Surfaces and their members."
   ],

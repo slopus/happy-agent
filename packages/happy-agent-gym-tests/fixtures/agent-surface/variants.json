@@ -4,7 +4,7 @@
     "auto_review": {
       "added": [],
       "changed": [
-        "read_agent_history.da71fa098a62"
+        "read_agent_history.d804ec882ab1"
       ],
       "removed": [
         "ToolSearch",
@@ -91,6 +91,7 @@
         "update_secret",
         "attach_secret",
         "detach_secret",
+        "request_secret",
         "create_agent",
         "agent_options",
         "send_agent_message",
@@ -482,9 +483,9 @@
         "get_mcp_prompt"
       ],
       "changed": [
-        "create_task.0061a30e82d0",
-        "create_agent.c52420926ff2",
-        "create_subtask.4fd405795daa"
+        "create_task.6778bf8de36b",
+        "create_agent.b19623ec7cbc",
+        "create_subtask.7ba379f98cf1"
       ],
       "removed": []
     },
@@ -507,9 +508,9 @@
         "view_image"
       ],
       "changed": [
-        "create_task.0061a30e82d0",
-        "create_agent.c52420926ff2",
-        "create_subtask.4fd405795daa",
+        "create_task.6778bf8de36b",
+        "create_agent.b19623ec7cbc",
+        "create_subtask.7ba379f98cf1",
         "claude_web_search.9989aa9ab6a5",
         "codex_web_search.0f216625d177"
       ],
@@ -615,6 +616,7 @@
         "update_secret",
         "attach_secret",
         "detach_secret",
+        "request_secret",
         "create_agent",
         "agent_options",
         "send_agent_message",
@@ -728,7 +730,7 @@
     "team.auto_review": {
       "added": [],
       "changed": [
-        "read_agent_history.da71fa098a62"
+        "read_agent_history.d804ec882ab1"
       ],
       "removed": [
         "ToolSearch",
@@ -815,6 +817,7 @@
         "update_secret",
         "attach_secret",
         "detach_secret",
+        "request_secret",
         "create_agent",
         "agent_options",
         "send_agent_message",
@@ -1152,6 +1155,7 @@
         "update_secret",
         "attach_secret",
         "detach_secret",
+        "request_secret",
         "create_agent",
         "agent_options",
         "send_agent_message",

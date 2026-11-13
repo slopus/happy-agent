@@ -1,6 +1,6 @@
 {
   "capabilities": [
-    "Publish Markdown documents and HTML pages with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them."
+    "Publish Markdown documents, HTML pages, and Gen UI documents with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them."
   ],
   "defer": true,
   "description": "Writes a whole text file of an artifact, straight in this installation's artifact catalog, adding the file or replacing the one at that path. The call makes the artifact's next version, keeping every other file and every earlier version, and records the change as made by you.\nUsage:\n- Prefer edit_artifact_file to change part of a file that exists; write a whole file only when it is new or most of it changes.\n- Write a page in this order: its CSS first, then its HTML, then its JavaScript at the very end.\n- The content is UTF-8 text. Publish images and other binary files, or files you built with the shell, with the fromPath files of update_artifact.\n- Writing a file exactly as it already is makes no version.",
@@ -704,6 +704,10 @@
           },
           {
             "const": "document",
+            "type": "string"
+          },
+          {
+            "const": "gen_ui",
             "type": "string"
           }
         ]

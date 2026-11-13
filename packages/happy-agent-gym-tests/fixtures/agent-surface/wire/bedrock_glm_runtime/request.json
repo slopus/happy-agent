@@ -1,4 +1,4 @@
 {
   "method": "POST",
-  "target": "/bedrock_glm_runtime?route=fixture%2Fchat%2Fcompletions"
+  "target": "/bedrock_glm_runtime/chat/completions?route=fixture"
 }

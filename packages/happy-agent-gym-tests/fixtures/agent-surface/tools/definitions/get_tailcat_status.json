@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Enable, disable, and inspect Tailcat internet exposure."
   ],

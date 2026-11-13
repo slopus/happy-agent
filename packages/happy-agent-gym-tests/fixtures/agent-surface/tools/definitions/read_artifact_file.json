@@ -1,6 +1,7 @@
 {
+  "autoReview": "never",
   "capabilities": [
-    "Publish Markdown documents and HTML pages with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them."
+    "Publish Markdown documents, HTML pages, and Gen UI documents with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them."
   ],
   "defer": true,
   "description": "Reads one file of an artifact by its path, from the latest version unless you name one. Text files, such as Markdown, HTML, CSS, scripts, and SVG, come back as numbered lines: a line number, then a tab, then the line, numbered from 1. By default it reads up to 2000 lines from the start; offset and limit read another stretch of a long file. Images are shown to you. Other files, such as videos and PDFs, are described without their bytes. List an artifact's files with read_artifact.",

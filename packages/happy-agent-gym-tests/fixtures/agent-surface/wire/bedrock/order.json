@@ -84,6 +84,7 @@
   "update_secret",
   "attach_secret",
   "detach_secret",
+  "request_secret",
   "create_agent",
   "agent_options",
   "send_agent_message",

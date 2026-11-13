@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "List, mark, and unmark this installation's important documents."
   ],

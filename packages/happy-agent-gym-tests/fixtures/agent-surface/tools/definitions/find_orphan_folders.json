@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Find, inspect, and clean up stale bots, tasks, subtasks, projects, workspaces, and folders on this installation."
   ],

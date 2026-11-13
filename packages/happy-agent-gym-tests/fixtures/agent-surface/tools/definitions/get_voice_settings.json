@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Read and change this installation's voice settings."
   ],

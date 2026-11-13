@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Read a shared document Surface as Markdown, now or at an earlier version."
   ],

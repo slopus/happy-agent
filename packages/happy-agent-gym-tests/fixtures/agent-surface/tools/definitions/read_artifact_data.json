@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Read and change the live data that HTML artifact apps share between their viewers."
   ],

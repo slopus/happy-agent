@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "description": "Search the deferred Happy Agent tool catalog with BM25 and make the best matching tools callable. Use this when the capability summary says an appropriate tool exists but its definition is not currently loaded.",
   "inputSchema": {
     "additionalProperties": false,

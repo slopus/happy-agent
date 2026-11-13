@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Read active, completed, or deleted todos in a Surface."
   ],

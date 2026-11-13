@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Inspect local peer configuration, session status, and diagnostics."
   ],

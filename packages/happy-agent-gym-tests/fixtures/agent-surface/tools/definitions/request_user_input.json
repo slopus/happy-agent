@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Ask the user structured questions and manage pending requests."
   ],
@@ -218,8 +219,16 @@
                 "type": "string"
               },
               "source": {
-                "const": "mcp_elicitation",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "const": "mcp_elicitation",
+                    "type": "string"
+                  },
+                  {
+                    "const": "harness",
+                    "type": "string"
+                  }
+                ]
               }
             },
             "required": [
@@ -546,8 +555,16 @@
                 "type": "string"
               },
               "source": {
-                "const": "mcp_elicitation",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "const": "mcp_elicitation",
+                    "type": "string"
+                  },
+                  {
+                    "const": "harness",
+                    "type": "string"
+                  }
+                ]
               }
             },
             "required": [
@@ -838,8 +855,16 @@
                 "type": "string"
               },
               "source": {
-                "const": "mcp_elicitation",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "const": "mcp_elicitation",
+                    "type": "string"
+                  },
+                  {
+                    "const": "harness",
+                    "type": "string"
+                  }
+                ]
               }
             },
             "required": [
@@ -1044,8 +1069,16 @@
                 "type": "string"
               },
               "source": {
-                "const": "mcp_elicitation",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "const": "mcp_elicitation",
+                    "type": "string"
+                  },
+                  {
+                    "const": "harness",
+                    "type": "string"
+                  }
+                ]
               }
             },
             "required": [
@@ -1287,8 +1320,16 @@
                 "type": "string"
               },
               "source": {
-                "const": "mcp_elicitation",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "const": "mcp_elicitation",
+                    "type": "string"
+                  },
+                  {
+                    "const": "harness",
+                    "type": "string"
+                  }
+                ]
               }
             },
             "required": [

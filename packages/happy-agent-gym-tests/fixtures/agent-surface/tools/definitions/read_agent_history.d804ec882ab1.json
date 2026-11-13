@@ -1,8 +1,9 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Read the agent's durable conversation and tool history."
   ],
-  "defer": true,
+  "defer": false,
   "description": "Read or search the durable low-level history of any agent. The response lists the agents it concerns with their stable IDs, message counts, paths, and statuses; any stable Agent ID may be read, including one that has recorded nothing yet. Use this to investigate prior requests, decisions, reasoning, tool activity, and subagent work after a model change or whenever earlier context matters. This is not a user-facing chat export. Search examines stored block content, but each response is simplified and capped at 80,000 characters: provider-hidden reasoning is unavailable, only exposed thinking is readable, tool calls are summarized, tool outputs are truncated, and images are represented only by metadata. A requested message limit may therefore return fewer messages; continue with next_cursor or previous_cursor.",
   "durable": true,
   "inputSchema": {
@@ -364,5 +365,5 @@
     "previous tool calls",
     "agent conversation history"
   ],
-  "transactional": true
+  "transactional": false
 }

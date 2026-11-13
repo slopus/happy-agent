@@ -10,6 +10,7 @@
   "Grep",
   "Read",
   "read_user_input",
+  "request_secret",
   "request_user_input",
   "DeferredToolPlaceholder",
   "Write"

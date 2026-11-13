@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "List, add, and remove this installation's extra skill folders."
   ],

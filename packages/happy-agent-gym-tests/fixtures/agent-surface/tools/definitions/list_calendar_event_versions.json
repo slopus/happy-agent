@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Read a calendar event's permanent revisions and who made them."
   ],

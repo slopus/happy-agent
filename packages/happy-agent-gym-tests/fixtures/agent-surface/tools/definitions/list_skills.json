@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Discover and read installed agent skills."
   ],

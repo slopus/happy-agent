@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Read and change what each bot and the agents under it may reach."
   ],

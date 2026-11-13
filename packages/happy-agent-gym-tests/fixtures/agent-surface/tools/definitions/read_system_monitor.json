@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Read live host CPU, GPU, memory, disk, and process usage."
   ],

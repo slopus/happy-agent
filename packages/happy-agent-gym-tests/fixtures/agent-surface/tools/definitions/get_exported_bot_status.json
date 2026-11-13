@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Export bots to Telegram or other chat services and choose who may talk to them."
   ],

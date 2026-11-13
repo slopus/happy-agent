@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Inspect agent token and timing usage."
   ],

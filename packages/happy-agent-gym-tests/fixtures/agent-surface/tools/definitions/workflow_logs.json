@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Run, inspect, pause, resume, and cancel multi-agent workflows."
   ],

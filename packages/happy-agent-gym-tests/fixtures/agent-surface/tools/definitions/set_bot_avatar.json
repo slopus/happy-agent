@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Choose bot avatar pictures; admin bots can update any bot."
   ],

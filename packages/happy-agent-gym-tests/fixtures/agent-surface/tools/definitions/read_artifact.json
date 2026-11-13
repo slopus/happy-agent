@@ -1,9 +1,10 @@
 {
+  "autoReview": "never",
   "capabilities": [
-    "Publish Markdown documents and HTML pages with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them."
+    "Publish Markdown documents, HTML pages, and Gen UI documents with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them."
   ],
   "defer": true,
-  "description": "Read one version of an artifact, the latest unless you name one: its title, who made it, where, and when, and every file it holds with its path, media type, and size. For markdown and html the entry's text follows, up to 64.0 KiB. Read any single file, including images, with read_artifact_file.",
+  "description": "Read one version of an artifact, the latest unless you name one: its title, who made it, where, and when, and every file it holds with its path, media type, and size. For markdown, html, and gen_ui the entry's text follows, up to 64.0 KiB. Read any single file, including images, with read_artifact_file.",
   "durable": false,
   "inputSchema": {
     "additionalProperties": false,
@@ -686,6 +687,10 @@
               },
               {
                 "const": "document",
+                "type": "string"
+              },
+              {
+                "const": "gen_ui",
                 "type": "string"
               }
             ]

@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
   ],

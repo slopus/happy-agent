@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept."
   ],
@@ -339,6 +340,10 @@
                       {
                         "const": "index.md",
                         "type": "string"
+                      },
+                      {
+                        "const": "index.genui.json",
+                        "type": "string"
                       }
                     ]
                   },
@@ -355,6 +360,10 @@
                       },
                       {
                         "const": "markdown",
+                        "type": "string"
+                      },
+                      {
+                        "const": "gen_ui",
                         "type": "string"
                       }
                     ]

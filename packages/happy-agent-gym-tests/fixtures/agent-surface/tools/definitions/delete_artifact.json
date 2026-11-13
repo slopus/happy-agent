@@ -1,6 +1,6 @@
 {
   "capabilities": [
-    "Publish Markdown documents and HTML pages with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them."
+    "Publish Markdown documents, HTML pages, and Gen UI documents with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them."
   ],
   "defer": true,
   "description": "Delete an artifact for everyone using this installation. Its title and history of who made and changed it stay listed as deleted, but none of its versions or files can be opened again, and it cannot be restored. Deleting an artifact that is already deleted changes nothing.",
@@ -678,6 +678,10 @@
           },
           {
             "const": "document",
+            "type": "string"
+          },
+          {
+            "const": "gen_ui",
             "type": "string"
           }
         ]

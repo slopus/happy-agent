@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "See who is on the team and loop a teammate into this task."
   ],

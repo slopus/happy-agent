@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Wait and schedule durable messages for future delivery."
   ],

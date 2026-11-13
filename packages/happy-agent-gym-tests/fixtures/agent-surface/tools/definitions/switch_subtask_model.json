@@ -1,4 +1,5 @@
 {
+  "autoReview": "never",
   "capabilities": [
     "Switch a direct subtask to another model, effort, or provider."
   ],

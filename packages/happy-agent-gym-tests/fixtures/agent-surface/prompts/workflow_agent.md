@@ -139,11 +139,12 @@ Tool capabilities:
 - Delete a calendar event series while preserving its history.
 - Read a calendar event's permanent revisions and who made them.
 - Read, search, write, and organize files, folders, and vault apps in shared vault Surfaces, with every earlier version kept.
-- Publish Markdown documents and HTML pages with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them.
+- Publish Markdown documents, HTML pages, and Gen UI documents with their images and other files, images, image series, videos, and documents as versioned artifacts, and list, read, update, and delete them.
 - Read and change the live data that HTML artifact apps share between their viewers.
 - Read the errors, warnings, and sync problems HTML artifact apps reported while people used them.
 - List and attach registered secret references without revealing values.
 - Create, update, list, and attach registered secret references without revealing values.
+- Ask the user for a credential through a prefilled secret form, without seeing its values.
 - Create, message, and coordinate coding subagents.
 - Message agents by Agent ID across workspaces.
 - Create user-interactive subtasks for a bot or task, sharing its folder or using a new project workspace.
