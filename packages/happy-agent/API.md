@@ -816,8 +816,10 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   configured), `local_execution_disabled` (409, runners are configured, so nothing runs on the
   daemon's own machine),
   `method_not_allowed` (405, a withdrawn write method on a resource that remains readable),
-  `too_large` (413), `range_not_satisfiable` (416, an artifact or vault file `Range` outside the
-  file), `name_taken` (409, a vault folder or file name already used in its folder),
+  `too_large` (413), `range_not_satisfiable` (416, an artifact, vault, or attachment file `Range`
+  outside the file), `attachment_too_large` (413, an attachment or one upload request over its
+  limit), `attachment_not_found` (400, a sent `file` block naming no attachment of the
+  conversation), `name_taken` (409, a vault folder or file name already used in its folder),
   `settings_full` (409, a person's user settings are at their limit), `unsupported` (501),
   `internal` (500).
 
@@ -7791,6 +7793,8 @@ absent, archived, cannot authenticate, or cannot perform the repair.
 - `text` — `{ "type": "text", "text": "..." }`
 - `configuration` — the before/after execution snapshot described above, only in a service message.
 - `image` — `{ "type": "image", "mimeType": "...", "data": "<base64>" }`
+- `file` — a file a person attached to their message, only in a user message, as described under
+  Attachments. It names the attachment and describes it; its bytes are never in the block.
 - `tool_call_request` — an explicit request in a user message for Agent Base to execute one
   ordinary tool before inference:
 
@@ -8811,6 +8815,139 @@ parsers, so every surface agrees on exactly what a file link names.
 
 File links are additive and do not increment the protocol version. Request and response schemas
 are unchanged.
+
+### Attachments
+
+A person attaches a file to a message by uploading its bytes to the conversation first and then
+naming it in `send`. An attachment's ID is the lowercase hexadecimal SHA-256 of its bytes, so the
+same bytes uploaded to the same conversation are the same attachment. Attachments belong to one
+agent's conversation: the same file uploaded to another agent is a separate attachment there. The
+object and the one-request upload are those of Happy Cloud's conversation attachments, so a client
+written against either works with both.
+
+```json
+{
+    "id": "4b2f0f6f3b1d0f8c1e9a7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3928",
+    "name": "IMG_0042.jpg",
+    "mimeType": "image/jpeg",
+    "size": 2000000,
+    "kind": "image",
+    "width": 4032,
+    "height": 3024,
+    "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI"
+}
+```
+
+`name` is the file name the upload gave, 1–255 characters with control characters removed.
+`mimeType` is the upload's `Content-Type`; when that is missing, `application/octet-stream`, or not
+a media type, it comes from the name. `kind` is `"image"`, `"video"`, `"document"`, or `"file"`,
+as for a `media` item, and clients render an unknown kind as a file. A file is an `"image"` only
+when the daemon decodes it as PNG, JPEG, GIF, WebP, or AVIF; it then takes the decoded format's
+`mimeType` and has `width`, `height`, `thumbhash`, and optional `scale`, measured as for a `media`
+image item. Another file named as an image is a `"file"`. Happy Cloud may omit `kind` and the image
+fields, so clients treat them as optional.
+
+An attachment is at most 2 GiB (2,147,483,648 bytes), and one request carries at most 256 MiB;
+either limit exceeded is `413 attachment_too_large`. An attachment no message has sent yet, and an
+upload still receiving bytes, is discarded 24 hours after it last received bytes; uploading the
+same file again restarts that time. A sent attachment stays as long as the conversation. Anyone who
+may send messages to the agent may upload, send, and cancel its attachments, and anyone who may
+read the conversation may download them. An agent that takes no messages refuses uploads as it
+refuses `send`. Uploads emit no events and are not listed.
+
+A client uploads a file of a few megabytes in one request, and a larger one in chunks, which
+survive a broken connection and may be sent in parallel.
+
+#### `PUT /v0/agents/:agentId/attachments?name=<file name>`
+
+The whole file in one request. The body is the raw bytes, and `Content-Type` is the file's media
+type. Returns `201 { "attachment": {...} }`. Bytes the conversation already holds answer the
+existing attachment unchanged. A missing or empty `name` is `400 invalid_request`.
+
+#### `PUT /v0/agents/:agentId/attachments/:attachmentId?name=<file name>`
+
+One chunk of a file uploaded in parts. The client hashes the whole file first, so the upload is
+named by the attachment's ID before any byte is sent. `Content-Range: bytes start-end/size` places
+the body, which must hold exactly `end - start + 1` bytes; `size` is the whole file's length and is
+the same on every request of one upload. Every request carries `name`; the one that starts the
+upload names the file, and its `Content-Type` is the file's media type. While bytes are missing the
+request answers `200 { "upload": {...} }`:
+
+```json
+{
+    "id": "4b2f0f6f3b1d0f8c1e9a7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3928",
+    "name": "IMG_0042.jpg",
+    "size": 20000000,
+    "received": [{ "start": 0, "end": 8388607 }],
+    "expiresAt": 1755386400000
+}
+```
+
+`received` lists the byte ranges the daemon holds, inclusive as in `Content-Range`, in order and
+merged. Chunks may arrive in any order, may overlap, and may be sent in parallel. A chunk counts
+only once its whole body has arrived: after a broken connection the client sends that chunk again.
+When the last missing byte arrives, the daemon checks the bytes against the ID. Matching bytes
+become the attachment and the request answers `201 { "attachment": {...} }`; otherwise the upload
+is discarded and the request answers `409 hash_mismatch`.
+
+`Content-Range: bytes */size` with an empty body asks where an upload stands without sending bytes,
+and starts the upload when there is none. Without `Content-Range` the body is the whole file, as in
+the one-request route, and is checked against the ID. Whenever the conversation already holds the
+attachment, a request answers `201 { "attachment": {...} }` and ignores its body, so asking first
+lets a client skip sending a file the conversation already has.
+
+A range past `size`, a `size` that differs from the upload's, or a body of the wrong length is
+`400 invalid_request`. An ID that is not 64 lowercase hexadecimal digits is `404 not_found`.
+
+#### `GET /v0/agents/:agentId/attachments/:attachmentId`
+
+The attachment's bytes, served exactly as a tool call's media item, except that
+`Content-Disposition` is always `attachment`. `ETag` is the quoted ID, and the URL never names
+other bytes, so responses are cached as immutable. `404` when the conversation holds no such
+attachment, including one still uploading.
+
+#### `DELETE /v0/agents/:agentId/attachments/:attachmentId`
+
+Cancels an upload still receiving bytes, or discards an attachment no message has sent, together
+with its bytes, and returns `200 {}`. A request for that upload still running fails, and its bytes
+are not kept. An attachment a message has sent stays with that message: deleting it is
+`409 conflict`. `404` when there is neither.
+
+#### Sending attachments
+
+`send` names an attachment in `content`:
+
+```json
+{ "type": "file", "attachment": "4b2f0f6f…5b4a3928", "name": "IMG_0042.jpg" }
+```
+
+`name` is how this message shows the file, 1–255 characters; control characters are removed, and
+a name left empty takes the attachment's own. A message names at most 32 files. An ID that is not
+an attachment of this conversation, including one still uploading, cancelled, or expired, is
+`400 attachment_not_found`, and nothing is sent. The same attachment may be sent in any number of
+messages, and sending it ends its 24 hours.
+
+The message stores the block with the attachment's details, so the send response,
+`message.created`, and history carry them and never the bytes:
+
+```json
+{
+    "type": "file",
+    "attachment": "4b2f0f6f…5b4a3928",
+    "name": "IMG_0042.jpg",
+    "mimeType": "image/jpeg",
+    "size": 2000000,
+    "kind": "image",
+    "width": 4032,
+    "height": 3024,
+    "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI"
+}
+```
+
+The model is not given the bytes. It reads one line per file naming its ID, name, type, and size,
+and opens the file with its `read_attachment` tool: an image is shown, text is read a page at a
+time, and other files are described. Given a path, the tool also saves a copy there on the agent's
+machine, under the turn's own permissions.
 
 ### `POST /v0/agents/:agentId/send`
 
