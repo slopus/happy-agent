@@ -8842,13 +8842,15 @@ written against either works with both.
 `mimeType` is the upload's `Content-Type`; when that is missing, `application/octet-stream`, or not
 a media type, it comes from the name. `kind` is `"image"`, `"video"`, `"document"`, or `"file"`,
 as for a `media` item, and clients render an unknown kind as a file. A file is an `"image"` only
-when the daemon decodes it as PNG, JPEG, GIF, WebP, or AVIF; it then takes the decoded format's
+when the daemon decodes it as PNG, JPEG, GIF, or WebP; it then takes the decoded format's
 `mimeType` and has `width`, `height`, `thumbhash`, and optional `scale`, measured as for a `media`
-image item. Another file named as an image is a `"file"`. Happy Cloud may omit `kind` and the image
-fields, so clients treat them as optional.
+image item. Another file named as an image, including AVIF, or one larger than 32 MiB, is a
+`"file"`. Attachments
+Happy Cloud stored before it measured them have no `kind` or image fields, so clients treat them as
+optional.
 
-An attachment is at most 2 GiB (2,147,483,648 bytes), and one request carries at most 256 MiB;
-either limit exceeded is `413 attachment_too_large`. An attachment no message has sent yet, and an
+An attachment is at most 1 GiB (1,073,741,824 bytes), and one request carries at most 25 MiB
+(26,214,400 bytes); either limit exceeded is `413 attachment_too_large`. An attachment no message has sent yet, and an
 upload still receiving bytes, is discarded 24 hours after it last received bytes; uploading the
 same file again restarts that time. A sent attachment stays as long as the conversation. Anyone who
 may send messages to the agent may upload, send, and cancel its attachments, and anyone who may
@@ -8896,8 +8898,12 @@ the one-request route, and is checked against the ID. Whenever the conversation 
 attachment, a request answers `201 { "attachment": {...} }` and ignores its body, so asking first
 lets a client skip sending a file the conversation already has.
 
-A range past `size`, a `size` that differs from the upload's, or a body of the wrong length is
-`400 invalid_request`. An ID that is not 64 lowercase hexadecimal digits is `404 not_found`.
+An upload takes at most 4,096 requests that carry bytes, counting chunks sent again and requests
+that broke off; the next one stores nothing and is `400 invalid_request`, and the client cancels the
+upload and starts again. Asking where an upload stands does not count. A range past `size`, a
+`size` that differs from the upload's, or a body of the wrong length is `400 invalid_request`. A
+request still sending when its upload is cancelled or expires is `404 not_found`, and its bytes are
+not kept. An ID that is not 64 lowercase hexadecimal digits is `404 not_found`.
 
 #### `GET /v0/agents/:agentId/attachments/:attachmentId`
 
@@ -8909,8 +8915,8 @@ attachment, including one still uploading.
 #### `DELETE /v0/agents/:agentId/attachments/:attachmentId`
 
 Cancels an upload still receiving bytes, or discards an attachment no message has sent, together
-with its bytes, and returns `200 {}`. A request for that upload still running fails, and its bytes
-are not kept. An attachment a message has sent stays with that message: deleting it is
+with its bytes, and returns `200 {}`. A request for that upload still running is `404 not_found`,
+and its bytes are not kept. An attachment a message has sent stays with that message: deleting it is
 `409 conflict`. `404` when there is neither.
 
 #### Sending attachments
