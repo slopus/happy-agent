@@ -418,6 +418,52 @@ describe("TitlesModule user-message lifecycle", () => {
         );
     });
 
+    it("titles a chat from its first message when the naming request fails", async () => {
+        const test = await titles([
+            [
+                {
+                    type: "done",
+                    state: "error",
+                    kind: "unknown",
+                    message: "Unexpected server response: 426",
+                },
+            ],
+        ]);
+        let metadata: Record<string, unknown> = {};
+        const agents = {
+            config: () => Promise.resolve({ metadata }),
+            updateMetadata: (_ctx: unknown, _agentId: string, update: Record<string, unknown>) => {
+                metadata = { ...metadata, ...update };
+                return Promise.resolve();
+            },
+        } as unknown as AgentSystemRef;
+        const hooks = await resolveModuleHooks(lifecycleDatabase.context, test.module, agents);
+        const persistence = new InMemoryPersistence();
+        const scope = {
+            agent: { id: "failed-naming-agent", metadata: undefined, provider: "scripted" },
+            historyKV: new AgentKV(persistence, "history."),
+            kv: new AgentKV(persistence, "agent."),
+            runKV: new AgentKV(persistence, "run."),
+            sharedKV: new AgentKV(persistence, "shared."),
+        } as AgentModuleScope;
+
+        await lifecycleDatabase.context.inTx(async (txCtx) => {
+            await hooks.messageAcceptedTransact?.(txCtx, scope, {
+                id: "user-message",
+                kind: "send",
+                message: {
+                    role: "user",
+                    content: [{ type: "text", text: "Fix the **login** redirect loop on Safari" }],
+                },
+                profile: null,
+            });
+        });
+        await vi.waitFor(() => expect(metadata["title"]).toBe("Fix the login redirect loop on"));
+        await test.module.close();
+
+        expect(test.provider.sessions).toHaveLength(1);
+    });
+
     it("never generates over or refines a title chosen before the conversation", async () => {
         const test = await titles([textTurn("<title>A model replacement</title>")]);
         const metadata: Record<string, unknown> = { title: "Deliberate title" };

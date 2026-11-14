@@ -306,6 +306,11 @@ In `auto` transport mode, SSE becomes the persistent fallback when WebSocket is 
 the shared retry budget still has room for the fallback attempt. A zero retry budget therefore
 disables fallback. Once activated, later runs in the same Rig session continue with SSE.
 
+A WebSocket handshake answered with `426 Upgrade Required` is the exception. OpenAI uses that
+status to mean "use HTTP", and native Codex switches to HTTP at once for the rest of the session
+without retrying. Rig does the same: the switch spends no retry budget, emits no `retrying`
+event, and works with a zero budget. No request reached the model, so nothing is replayed.
+
 ## WebSocket
 
 WebSocket optimization has two independent pieces:
