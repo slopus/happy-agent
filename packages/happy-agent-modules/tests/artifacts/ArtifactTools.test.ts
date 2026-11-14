@@ -598,6 +598,10 @@ describe("the artifact tools", () => {
             "[](happy://artifacts/<artifactId>) with nothing between the brackets",
         );
         expect(instructions).toContain("?version=N");
+        // A label belongs inside artifact content only; chat keeps empty labels.
+        expect(instructions).toContain(
+            "Inside an artifact's own content, such as a document or HTML page you write, a Happy link may carry a label",
+        );
     });
 
     it("creates an artifact with an entry to start from and the files copied in", async () => {
