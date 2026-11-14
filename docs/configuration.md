@@ -146,6 +146,22 @@ address unnecessarily. A project `happy.toml` cannot enable Tailcat. An active a
 `get_tailcat_status` to read the live address and port. See [tailcat.md](tailcat.md) for the
 complete Tailcat setup and client commands.
 
+## Happy account link
+
+`[feature.account_link]` lets an admin bot link this computer to a Happy account and make it
+reachable through the Happy Relay. It is off by default and has no default origins:
+
+```toml
+[feature.account_link]
+enabled = true
+accounts_url = "https://accounts.example.com"
+relay_url = "https://relay.accounts.example.com"
+```
+
+Both values are HTTPS origins without a path. A project `happy.toml` cannot set this section.
+See [happy-account-link.md](happy-account-link.md) for linking, reachability, and what the daemon
+verifies on every relayed request.
+
 ## Exported bots
 
 Exporting a bot lets people reach it from a chat service. There are two kinds: `telegram`, built

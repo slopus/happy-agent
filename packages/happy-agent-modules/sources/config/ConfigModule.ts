@@ -187,6 +187,7 @@ const MAX_TOOL_RESULT_RETENTION_DAYS = 36_500;
 const MAX_MCP_TIMEOUT_SECONDS = 600;
 const MAX_LOCAL_CREDENTIAL_FILE_BYTES = 256 * 1024;
 const DEFAULT_TAILCAT_PORT = 24_779;
+const accountLinkUrlSchema = Type.String({ maxLength: 2_048, minLength: 1 });
 const DEFAULT_MOBILE_CONNECTOR_PORT = 24_781;
 const TAILCAT_EXPOSURE_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/u;
 const PROVIDER_CREDENTIAL_REFRESH_INTERVAL_MS = 3 * 60 * 60 * 1_000;
@@ -695,6 +696,16 @@ const partialValuesSchema = Type.Object(
                             { additionalProperties: false },
                         ),
                     ),
+                    account_link: Type.Optional(
+                        Type.Object(
+                            {
+                                accounts_url: Type.Optional(accountLinkUrlSchema),
+                                enabled: Type.Optional(Type.Boolean()),
+                                relay_url: Type.Optional(accountLinkUrlSchema),
+                            },
+                            { additionalProperties: false },
+                        ),
+                    ),
                     mobile_connector: Type.Optional(
                         Type.Object(
                             {
@@ -1142,6 +1153,14 @@ const resolvedValuesSchema = Type.Object(
                     { enabled: Type.Boolean(), engine: codeModeEngineSchema },
                     { additionalProperties: false },
                 ),
+                accountLink: Type.Object(
+                    {
+                        accountsUrl: Type.Optional(accountLinkUrlSchema),
+                        enabled: Type.Boolean(),
+                        relayUrl: Type.Optional(accountLinkUrlSchema),
+                    },
+                    { additionalProperties: false },
+                ),
                 mobileConnector: Type.Object(
                     {
                         enabled: Type.Boolean(),
@@ -1574,6 +1593,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         workspaces: true,
     },
     feature: {
+        accountLink: { enabled: false },
         codemode: { enabled: false, engine: "monty" },
         mobileConnector: {
             enabled: true,
@@ -2801,6 +2821,21 @@ export class ConfigModule implements AgentModule {
             keyPath: join(home, `${name}.private.json`),
             portPath: join(home, `${name}.port`),
         };
+    }
+
+    /**
+     * The Happy account service and relay this machine may link to, or `undefined` unless
+     * `[feature.account_link]` is enabled with both origins. Machine configuration only.
+     */
+    get accountLink(): { readonly accountsUrl: string; readonly relayUrl: string } | undefined {
+        const { accountsUrl, enabled, relayUrl } = this.configuration.values.feature.accountLink;
+        if (!enabled || accountsUrl === undefined || relayUrl === undefined) return undefined;
+        return { accountsUrl, relayUrl };
+    }
+
+    /** The private file holding this machine's Happy account link and its refresh token. */
+    get accountLinkCredentialsPath(): string {
+        return join(this.configuration.paths.agentHome, "account-link", "credentials.json");
     }
 
     /** Whether phones may pair and connect directly; machine configuration only. */
@@ -4736,6 +4771,22 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         if (partial.feature?.codemode !== undefined) {
             Object.assign(merged.feature.codemode, partial.feature.codemode);
         }
+        if (partial.feature?.account_link !== undefined) {
+            const link = partial.feature.account_link;
+            if (link.enabled !== undefined) merged.feature.accountLink.enabled = link.enabled;
+            if (link.accounts_url !== undefined) {
+                merged.feature.accountLink.accountsUrl = normalizeAccountLinkOrigin(
+                    link.accounts_url,
+                    "feature.account_link.accounts_url",
+                );
+            }
+            if (link.relay_url !== undefined) {
+                merged.feature.accountLink.relayUrl = normalizeAccountLinkOrigin(
+                    link.relay_url,
+                    "feature.account_link.relay_url",
+                );
+            }
+        }
         if (partial.feature?.mobile_connector !== undefined) {
             Object.assign(merged.feature.mobileConnector, partial.feature.mobile_connector);
         }
@@ -4902,6 +4953,7 @@ function normalizeFeatures(value: NonNullable<PartialValues["features"]>): Recor
 
 function normalizeFeature(value: NonNullable<PartialValues["feature"]>): Record<string, unknown> {
     return {
+        ...(value.account_link === undefined ? {} : { account_link: { ...value.account_link } }),
         ...(value.codemode === undefined ? {} : { codemode: { ...value.codemode } }),
         ...(value.mobile_connector === undefined
             ? {}
@@ -5554,6 +5606,8 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
     } = values;
     const { permission_mode: _permissionMode, ...projectDefaults } = defaults ?? {};
     const {
+        // A repository must not link this machine to an account or point it at another relay.
+        account_link: _accountLink,
         // A repository must not open, move, or close this machine's phone connection socket.
         mobile_connector: _mobileConnector,
         tailcat: _tailcat,
@@ -5656,6 +5710,18 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
                     }
                     if (feature.codemode.engine !== undefined) {
                         result["feature.codemode.engine"] = name;
+                    }
+                }
+                if (feature?.account_link !== undefined) {
+                    result["feature.accountLink"] = name;
+                    if (feature.account_link.enabled !== undefined) {
+                        result["feature.accountLink.enabled"] = name;
+                    }
+                    if (feature.account_link.accounts_url !== undefined) {
+                        result["feature.accountLink.accountsUrl"] = name;
+                    }
+                    if (feature.account_link.relay_url !== undefined) {
+                        result["feature.accountLink.relayUrl"] = name;
                     }
                 }
                 if (feature?.mobile_connector !== undefined) {
@@ -5798,6 +5864,24 @@ function readFeature(
     assertTableSize(value, "feature");
     const result: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
+        if (key === "account_link") {
+            if (!isTable(item)) throw new Error("feature.account_link must be a TOML table.");
+            assertTableSize(item, "feature.account_link");
+            const accountLink: Record<string, unknown> = {};
+            for (const [linkKey, linkValue] of Object.entries(item)) {
+                if (
+                    linkKey !== "accounts_url" &&
+                    linkKey !== "enabled" &&
+                    linkKey !== "relay_url"
+                ) {
+                    unknown(`feature.account_link.${linkKey}`);
+                    continue;
+                }
+                accountLink[linkKey] = linkValue;
+            }
+            result.account_link = accountLink;
+            continue;
+        }
         if (key === "mobile_connector") {
             if (!isTable(item)) throw new Error("feature.mobile_connector must be a TOML table.");
             assertTableSize(item, "feature.mobile_connector");
@@ -6698,4 +6782,32 @@ function normalizeLocalBaseUrl(baseUrl: string): string {
         .trim()
         .replace(/\/+$/u, "")
         .replace(/^(https?:\/\/)localhost(?=[:/]|$)/u, "$1127.0.0.1");
+}
+
+/**
+ * An account-link origin without path, query, credentials, or trailing slash. Tokens are compared
+ * against it exactly, so it must be HTTPS; plain HTTP is accepted only on loopback for local runs.
+ */
+function normalizeAccountLinkOrigin(value: string, setting: string): string {
+    let url: URL;
+    try {
+        url = new URL(value);
+    } catch {
+        throw new Error(`${setting} must be an absolute URL.`);
+    }
+    const loopback =
+        url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+        throw new Error(`${setting} must use HTTPS, or HTTP on a loopback address.`);
+    }
+    if (
+        url.username !== "" ||
+        url.password !== "" ||
+        url.search !== "" ||
+        url.hash !== "" ||
+        (url.pathname !== "/" && url.pathname !== "")
+    ) {
+        throw new Error(`${setting} must be an origin without a path, query, or credentials.`);
+    }
+    return url.origin;
 }
