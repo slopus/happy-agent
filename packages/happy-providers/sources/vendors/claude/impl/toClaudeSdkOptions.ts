@@ -295,6 +295,7 @@ function withoutClaudeCredentials(
 function thinkingOptions(
     effort: SessionReasoningEffort | undefined,
 ): Partial<Pick<ClaudeSdkOptions, "effort" | "thinking">> {
+    if (effort === "ultra") throw new Error("Claude SDK does not support Ultra reasoning effort.");
     // Left to the SDK, which already thinks adaptively; the capture shows the native client sends
     // no thinking configuration of its own when the caller states no preference.
     if (effort === undefined) return {};

@@ -790,7 +790,15 @@ interface SessionRunRequest {
     structuredOutput?: SessionStructuredOutput;
 }
 
-type SessionReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+type SessionReasoningEffort =
+    | "off"
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh"
+    | "max"
+    | "ultra";
 
 type SessionServiceTier = string;
 
@@ -804,6 +812,11 @@ Providers map `effort` onto whatever their protocol supports. A service tier is 
 provider-owned identifier at the shared session boundary: the selected provider validates it
 against its own typed schema and maps it onto its own wire contract. Omitting `serviceTier` selects
 ordinary provider behavior.
+
+The Codex CLI adapter preserves `"ultra"` when the selected model advertises it. Its fallback
+catalog does not assume Ultra support, and other foreign-agent catalogs do not opt into it.
+The native Responses, Anthropic Messages, and Claude SDK routes reject Ultra. A configurable
+OpenAI-compatible model must explicitly list Ultra among its supported efforts to send it.
 
 Codex accepts `"priority"` (Fast) and `"ultrafast"` (Ultrafast); omit the tier for Regular.
 Ultrafast requires a supported model such as GPT-6 Astra and an eligible account and region.

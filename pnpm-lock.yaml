@@ -17,6 +17,9 @@ patchedDependencies:
   '@parcel/watcher@2.6.0':
     hash: a595e20a32e8eff3ee4484f4fcb3c627b188f13e7dbd03be03547caf54ae4bbd
     path: patches/@parcel__watcher@2.6.0.patch
+  '@slopus/happy-providers@0.0.62':
+    hash: 40f463d5b4c1bc946f3fbae271321060df0913e5ea9f8dd55c26fde9bfb2bfbb
+    path: patches/@slopus__happy-providers@0.0.62.patch
   libsql@0.5.29:
     hash: b0b8f583a51a91e4873f7198c6d8aa4679534b7f0bfe9674ab52edd05ac943c7
     path: patches/libsql@0.5.29.patch
@@ -102,7 +105,7 @@ importers:
         version: 0.0.20
       '@slopus/happy-providers':
         specifier: 0.0.62
-        version: 0.0.62(ws@8.21.1)(zod@4.4.3)
+        version: 0.0.62(patch_hash=40f463d5b4c1bc946f3fbae271321060df0913e5ea9f8dd55c26fde9bfb2bfbb)(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -142,7 +145,7 @@ importers:
         version: 0.34.49
       '@slopus/happy-providers':
         specifier: 0.0.62
-        version: 0.0.62(ws@8.21.1)(zod@4.4.3)
+        version: 0.0.62(patch_hash=40f463d5b4c1bc946f3fbae271321060df0913e5ea9f8dd55c26fde9bfb2bfbb)(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -257,7 +260,7 @@ importers:
         version: link:../happy-agent-modules
       '@slopus/happy-providers':
         specifier: 0.0.62
-        version: 0.0.62(ws@8.21.1)(zod@4.4.3)
+        version: 0.0.62(patch_hash=40f463d5b4c1bc946f3fbae271321060df0913e5ea9f8dd55c26fde9bfb2bfbb)(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -294,7 +297,7 @@ importers:
         version: link:../happy-agent-gym
       '@slopus/happy-providers':
         specifier: 0.0.62
-        version: 0.0.62(ws@8.21.1)(zod@4.4.3)
+        version: 0.0.62(patch_hash=40f463d5b4c1bc946f3fbae271321060df0913e5ea9f8dd55c26fde9bfb2bfbb)(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -387,7 +390,7 @@ importers:
         version: 0.1.30
       '@slopus/happy-providers':
         specifier: 0.0.62
-        version: 0.0.62(ws@8.21.1)(zod@4.4.3)
+        version: 0.0.62(patch_hash=40f463d5b4c1bc946f3fbae271321060df0913e5ea9f8dd55c26fde9bfb2bfbb)(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib':
         specifier: 0.0.12
         version: 0.0.12
@@ -5272,7 +5275,7 @@ snapshots:
       '@libsql/client': 0.18.0(patch_hash=90434d5ce5f0f99730247b66b6916a4a40d3019cdf938903efa57e36177f75f8)
       '@paralleldrive/cuid2': 3.3.0
       '@sinclair/typebox': 0.34.49
-      '@slopus/happy-providers': 0.0.62(ws@8.21.1)(zod@4.4.3)
+      '@slopus/happy-providers': 0.0.62(patch_hash=40f463d5b4c1bc946f3fbae271321060df0913e5ea9f8dd55c26fde9bfb2bfbb)(ws@8.21.1)(zod@4.4.3)
       '@steve.kite/stdlib': 0.0.12
       drizzle-orm: 0.45.2(@electric-sql/pglite@0.5.5)(@libsql/client@0.18.0(patch_hash=90434d5ce5f0f99730247b66b6916a4a40d3019cdf938903efa57e36177f75f8))(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(postgres@3.4.9)(sql.js@1.14.1)
       postgres: 3.4.9
@@ -5357,7 +5360,7 @@ snapshots:
   '@slopus/happy-agent-supervisor@0.0.20-win32-x64':
     optional: true
 
-  '@slopus/happy-providers@0.0.62(ws@8.21.1)(zod@4.4.3)':
+  '@slopus/happy-providers@0.0.62(patch_hash=40f463d5b4c1bc946f3fbae271321060df0913e5ea9f8dd55c26fde9bfb2bfbb)(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@agentclientprotocol/sdk': 1.9.0(zod@4.4.3)
       '@anthropic-ai/bedrock-sdk': 0.32.0(zod@4.4.3)

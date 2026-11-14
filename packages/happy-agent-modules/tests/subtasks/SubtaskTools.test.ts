@@ -3,6 +3,7 @@ import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it, vi } from "vitest";
 
 import { SubtasksModule } from "../../sources/subtasks/index.js";
+import { subtaskStartSchema } from "../../sources/subtasks/Subtask.js";
 import { archiveSubtaskTool } from "../../sources/subtasks/tools/archive_subtask.js";
 import { createSubtaskTool } from "../../sources/subtasks/tools/create_subtask.js";
 
@@ -41,6 +42,25 @@ describe("subtask creation tool", () => {
             }),
         ).toBe(true);
     });
+
+    it.each(["max", "ultra"])(
+        "accepts effort %s through the tool and durable start boundary",
+        (effort) => {
+            const input = {
+                title: "Review calculation",
+                text: "Check the calculation and report the result.",
+                model: "test-ultra-model",
+                effort,
+            };
+            expect(Value.Check(tool.parameters!, input)).toBe(true);
+
+            const persisted = JSON.parse(
+                JSON.stringify({ agentId: "child", parentAgentId: "parent", input }),
+            );
+            const resumed = Value.Decode(subtaskStartSchema, persisted);
+            expect(resumed.input.effort).toBe(effort);
+        },
+    );
 });
 
 describe("subtask instructions", () => {

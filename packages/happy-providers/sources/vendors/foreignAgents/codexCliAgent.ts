@@ -10,6 +10,8 @@ import { codexAppServerLaunch } from "@/vendors/codexAppServer/resolveCodexExecu
 import { getCodexModelProperties } from "@/vendors/codex/impl/getCodexModelProperties.js";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+// Ultra is selectable only when Codex advertises it; keep the fallback catalog unchanged.
+const CONFIG_EFFORTS = [...EFFORTS, "ultra"] as const;
 
 const models: readonly ForeignAgentModel[] = [
     model("gpt-6.1-sol", "Codex · GPT-6.1 Sol", "high"),
@@ -38,17 +40,22 @@ export const codexCliAgent: ForeignAgent = {
         ),
     models,
     modelsFromSelector: (values) =>
-        foreignModelsWithEfforts("codex-cli", values, (value, name) => ({
-            name: `Codex · ${name}`,
-            contextWindow: getCodexModelProperties(value)?.contextWindow ?? 272_000,
-        })),
+        foreignModelsWithEfforts(
+            "codex-cli",
+            values,
+            (value, name) => ({
+                name: `Codex · ${name}`,
+                contextWindow: getCodexModelProperties(value)?.contextWindow ?? 272_000,
+            }),
+            ["minimal", ...CONFIG_EFFORTS],
+        ),
     profile: {
         modelOptions: (selected, effort) => {
             const name = foreignAgentModelName("codex-cli", selected);
             if (name === undefined) return [];
             return [
                 { configId: "model", value: name },
-                ...(effort === undefined || !(EFFORTS as readonly string[]).includes(effort)
+                ...(effort === undefined || !(CONFIG_EFFORTS as readonly string[]).includes(effort)
                     ? []
                     : [{ configId: "reasoning_effort", value: effort }]),
             ];

@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import type { AcpConnection } from "@/protocol/acp/AcpConnection.js";
 import { codexAppServerConnect } from "@/vendors/codexAppServer/codexAppServerConnect.js";
+import { codexCliAgent } from "@/vendors/foreignAgents/codexCliAgent.js";
 
 const SERVER = fileURLToPath(new URL("./fixtures/scriptedAppServer.mjs", import.meta.url));
 
@@ -39,6 +40,46 @@ async function connect(
 }
 
 describe("codexAppServerConnect", () => {
+    it.each(["gpt-6-astra", "gpt-future-test-model"])(
+        "sends selected Ultra and later max unchanged to Codex for %s",
+        async (model) => {
+            const texts: string[] = [];
+            const connection = await connect([], undefined, undefined, texts);
+            try {
+                const { sessionId } = await connection.conn.newSession({
+                    cwd: tmpdir(),
+                    mcpServers: [],
+                });
+                for (const effort of ["ultra", "max"] as const) {
+                    const options = codexCliAgent.profile.modelOptions!(
+                        `codex-cli/${model}`,
+                        effort,
+                    );
+                    for (const option of options) {
+                        if (typeof option.value !== "string") {
+                            throw new Error("Expected a string model configuration value.");
+                        }
+                        await connection.conn.setSessionConfigOption({
+                            sessionId,
+                            configId: option.configId,
+                            value: option.value,
+                        });
+                    }
+                    await connection.conn.prompt({
+                        sessionId,
+                        prompt: [{ type: "text", text: "params" }],
+                    });
+                }
+                expect(texts.map((text) => JSON.parse(text))).toMatchObject([
+                    { turnStart: { model, effort: "ultra" } },
+                    { turnStart: { model, effort: "max" } },
+                ]);
+            } finally {
+                connection.terminate();
+            }
+        },
+    );
+
     it("ends a turn only after the updates Codex sent before it", async () => {
         const updates: string[] = [];
         const connection = await connect(updates);

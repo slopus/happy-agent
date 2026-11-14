@@ -77,6 +77,7 @@ export const usageEffortSchema = Type.Union([
     Type.Literal("high"),
     Type.Literal("xhigh"),
     Type.Literal("max"),
+    Type.Literal("ultra"),
 ]);
 
 export const usageTierSchema = Type.String({

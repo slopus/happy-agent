@@ -1,0 +1,234 @@
+diff --git a/README.md b/README.md
+index f7b538cad810f62905c3a78da92ebd3d18d1eaa5..1547661980c44aa7d4ebb6fc5f5b657dfb486f10 100644
+--- a/README.md
++++ b/README.md
+@@ -788,7 +788,15 @@ interface SessionRunRequest {
+     structuredOutput?: SessionStructuredOutput;
+ }
+ 
+-type SessionReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
++type SessionReasoningEffort =
++    | "off"
++    | "minimal"
++    | "low"
++    | "medium"
++    | "high"
++    | "xhigh"
++    | "max"
++    | "ultra";
+ 
+ type SessionServiceTier = string;
+ 
+@@ -803,6 +811,11 @@ provider-owned identifier at the shared session boundary: the selected provider
+ against its own typed schema and maps it onto its own wire contract. Omitting `serviceTier` selects
+ ordinary provider behavior.
+ 
++The Codex CLI adapter preserves `"ultra"` when the selected model advertises it. Its fallback
++catalog does not assume Ultra support, and other foreign-agent catalogs do not opt into it.
++The native Responses, Anthropic Messages, and Claude SDK routes reject Ultra. A configurable
++OpenAI-compatible model must explicitly list Ultra among its supported efforts to send it.
++
+ Codex accepts `"priority"` (Fast) and `"ultrafast"` (Ultrafast); omit the tier for Regular.
+ Ultrafast requires a supported model such as GPT-6 Astra and an eligible account and region.
+ It is a distinct wire value, not an alias for priority. Bedrock does not support these tiers.
+diff --git a/dist/core/SessionRunRequest.d.ts b/dist/core/SessionRunRequest.d.ts
+index 4a29ec4b25698b8bcfdeda2dc950af5fdb893a65..b03cdac4c1a48ea81abdbdc780b4e3ec9b44f0ec 100644
+--- a/dist/core/SessionRunRequest.d.ts
++++ b/dist/core/SessionRunRequest.d.ts
+@@ -1,6 +1,6 @@
+ import type { SessionContext } from "../core/SessionContext.js";
+ import type { TSchema } from "@sinclair/typebox";
+-export type SessionReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
++export type SessionReasoningEffort = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+ /**
+  * Opaque provider-owned service-tier identifier.
+  *
+diff --git a/dist/protocol/anthropic/createAnthropicRequest.js b/dist/protocol/anthropic/createAnthropicRequest.js
+index 5778b57bf62e9b9f0f61eaa585886ea8b977574f..2d8f1688c3d4633a6cd0d6de228e82b12ab2779e 100644
+--- a/dist/protocol/anthropic/createAnthropicRequest.js
++++ b/dist/protocol/anthropic/createAnthropicRequest.js
+@@ -71,6 +71,8 @@ export function createAnthropicRequest(options) {
+     };
+ }
+ function resolveEffort(effort) {
++    if (effort === "ultra")
++        throw new Error("Anthropic does not support Ultra reasoning effort.");
+     if (effort === undefined)
+         return "high";
+     if (effort === "off" || effort === "minimal")
+diff --git a/dist/protocol/responses/createOpenAIResponseRequest.js b/dist/protocol/responses/createOpenAIResponseRequest.js
+index acaf9437d8c598988fff3c7cc97ccbe71830abed..80267889222fa8a39dd4b886bf8576cd6ba9bdcc 100644
+--- a/dist/protocol/responses/createOpenAIResponseRequest.js
++++ b/dist/protocol/responses/createOpenAIResponseRequest.js
+@@ -4,9 +4,7 @@ import { toOpenAIReasoningEffort } from "../../protocol/responses/toOpenAIReason
+ import { toResponsesToolDefinitions } from "../../protocol/responses/toResponsesToolDefinitions.js";
+ export function createOpenAIResponseRequest(options) {
+     const capabilities = options.capabilities ?? OPENAI_RESPONSES_CAPABILITIES;
+-    const effort = options.effort === undefined || !capabilities.reasoning
+-        ? undefined
+-        : toOpenAIReasoningEffort(options.effort);
++    const effort = options.effort === undefined ? undefined : toOpenAIReasoningEffort(options.effort);
+     return {
+         model: options.model,
+         input: toOpenAIResponseInput(options.context),
+@@ -40,7 +38,7 @@ export function createOpenAIResponseRequest(options) {
+         ...(options.promptCacheKey === undefined
+             ? {}
+             : { prompt_cache_key: options.promptCacheKey }),
+-        ...(effort === undefined
++        ...(effort === undefined || !capabilities.reasoning
+             ? {}
+             : {
+                 reasoning: { effort },
+diff --git a/dist/protocol/responses/toOpenAIReasoningEffort.d.ts b/dist/protocol/responses/toOpenAIReasoningEffort.d.ts
+index 2d5b9958e147395961ec3f81bdf90c0229bd3581..e9c8723acbf0c2e883f70553645996e5580f9786 100644
+--- a/dist/protocol/responses/toOpenAIReasoningEffort.d.ts
++++ b/dist/protocol/responses/toOpenAIReasoningEffort.d.ts
+@@ -1,4 +1,4 @@
+ import type { ReasoningEffort } from "openai/resources/shared.js";
+ import type { SessionReasoningEffort } from "../../core/SessionRunRequest.js";
+-export declare function toOpenAIReasoningEffort(effort: SessionReasoningEffort): ReasoningEffort | undefined;
++export declare function toOpenAIReasoningEffort(effort: SessionReasoningEffort): ReasoningEffort;
+ //# sourceMappingURL=toOpenAIReasoningEffort.d.ts.map
+\ No newline at end of file
+diff --git a/dist/protocol/responses/toOpenAIReasoningEffort.js b/dist/protocol/responses/toOpenAIReasoningEffort.js
+index 283684f35134010ca8ab12dc0693be2c3b51b2c1..94887add4392b6232111619f7e32e58be10b7564 100644
+--- a/dist/protocol/responses/toOpenAIReasoningEffort.js
++++ b/dist/protocol/responses/toOpenAIReasoningEffort.js
+@@ -1,15 +1,10 @@
+ export function toOpenAIReasoningEffort(effort) {
++    if (effort === "ultra") {
++        throw new Error("The Responses protocol does not support Ultra reasoning effort.");
++    }
+     if (effort === "off") {
+         return "none";
+     }
+-    if (effort === "minimal" ||
+-        effort === "low" ||
+-        effort === "medium" ||
+-        effort === "high" ||
+-        effort === "xhigh" ||
+-        effort === "max") {
+-        return effort;
+-    }
+-    return undefined;
++    return effort;
+ }
+ //# sourceMappingURL=toOpenAIReasoningEffort.js.map
+\ No newline at end of file
+diff --git a/dist/vendors/claude/impl/toClaudeSdkOptions.js b/dist/vendors/claude/impl/toClaudeSdkOptions.js
+index 263b7e1f3765083fb9fc8554d514b03e0b7a8aa3..03cf3e273d899e4599e178ebd63d8ad53cc9337c 100644
+--- a/dist/vendors/claude/impl/toClaudeSdkOptions.js
++++ b/dist/vendors/claude/impl/toClaudeSdkOptions.js
+@@ -216,6 +216,8 @@ function withoutClaudeCredentials(env, credential) {
+     return sanitized;
+ }
+ function thinkingOptions(effort) {
++    if (effort === "ultra")
++        throw new Error("Claude SDK does not support Ultra reasoning effort.");
+     // Left to the SDK, which already thinks adaptively; the capture shows the native client sends
+     // no thinking configuration of its own when the caller states no preference.
+     if (effort === undefined)
+diff --git a/dist/vendors/foreignAgents/ForeignAgent.d.ts b/dist/vendors/foreignAgents/ForeignAgent.d.ts
+index eae95acc5ee9d5341260e4780e7543693ecc417d..ec0ae684d3299693c23b89127fac30d8bd326bb6 100644
+--- a/dist/vendors/foreignAgents/ForeignAgent.d.ts
++++ b/dist/vendors/foreignAgents/ForeignAgent.d.ts
+@@ -64,12 +64,12 @@ export declare function isForeignAgentModel(model: string): boolean;
+ /**
+  * Happy models from a model selector whose values carry their efforts in `_meta`, as the
+  * first-party drivers report them. Efforts Happy has no name for are left out, and a value with
+- * none is offered at medium.
++ * none is offered at medium. A driver must explicitly opt into additional efforts it can send.
+  */
+ export declare function foreignModelsWithEfforts(prefix: string, values: readonly AcpSelectValue[], shape: (value: string, name: string) => {
+     readonly name: string;
+     readonly contextWindow: number;
+-}): readonly ForeignAgentModel[];
++}, acceptedEfforts?: readonly SessionReasoningEffort[]): readonly ForeignAgentModel[];
+ /** The ACP adapter `start` names, or `fallback` when configuration names none. */
+ export declare function foreignAgentLaunch(start: ForeignAgentStart, fallback: AcpAgentLaunch | undefined): AcpAgentLaunch;
+ /** Speak ACP to an adapter process. */
+diff --git a/dist/vendors/foreignAgents/ForeignAgent.js b/dist/vendors/foreignAgents/ForeignAgent.js
+index 716eac2ff1668f08eb497e90b2d9d26389197a59..88768eccdd6793464fd50532a609c9b04e06c182 100644
+--- a/dist/vendors/foreignAgents/ForeignAgent.js
++++ b/dist/vendors/foreignAgents/ForeignAgent.js
+@@ -26,12 +26,12 @@ const HAPPY_EFFORTS = [
+ /**
+  * Happy models from a model selector whose values carry their efforts in `_meta`, as the
+  * first-party drivers report them. Efforts Happy has no name for are left out, and a value with
+- * none is offered at medium.
++ * none is offered at medium. A driver must explicitly opt into additional efforts it can send.
+  */
+-export function foreignModelsWithEfforts(prefix, values, shape) {
++export function foreignModelsWithEfforts(prefix, values, shape, acceptedEfforts = HAPPY_EFFORTS) {
+     return values.map(({ value, name, meta }) => {
+         const offered = Array.isArray(meta?.["efforts"]) ? meta["efforts"] : [];
+-        const efforts = HAPPY_EFFORTS.filter((effort) => offered.includes(effort));
++        const efforts = acceptedEfforts.filter((effort) => offered.includes(effort));
+         const effortLevels = efforts.length === 0 ? ["medium"] : efforts;
+         const preferred = meta?.["defaultEffort"];
+         const defaultEffort = effortLevels.find((effort) => effort === preferred) ??
+diff --git a/dist/vendors/foreignAgents/codexCliAgent.js b/dist/vendors/foreignAgents/codexCliAgent.js
+index 8d6436c9c66e7878d2da1ccaf859fe28482757ce..4c7af381ba75b79b80e1b5f67b38995a52b459eb 100644
+--- a/dist/vendors/foreignAgents/codexCliAgent.js
++++ b/dist/vendors/foreignAgents/codexCliAgent.js
+@@ -3,6 +3,8 @@ import { codexAppServerConnect } from "../../vendors/codexAppServer/codexAppServ
+ import { codexAppServerLaunch } from "../../vendors/codexAppServer/resolveCodexExecutable.js";
+ import { getCodexModelProperties } from "../../vendors/codex/impl/getCodexModelProperties.js";
+ const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
++// Ultra is selectable only when Codex advertises it; keep the fallback catalog unchanged.
++const CONFIG_EFFORTS = [...EFFORTS, "ultra"];
+ const models = [
+     model("gpt-6.1-sol", "Codex · GPT-6.1 Sol", "high"),
+     model("gpt-6.1-terra", "Codex · GPT-6.1 Terra", "low"),
+@@ -27,7 +29,7 @@ export const codexCliAgent = {
+     modelsFromSelector: (values) => foreignModelsWithEfforts("codex-cli", values, (value, name) => ({
+         name: `Codex · ${name}`,
+         contextWindow: getCodexModelProperties(value)?.contextWindow ?? 272_000,
+-    })),
++    }), ["minimal", ...CONFIG_EFFORTS]),
+     profile: {
+         modelOptions: (selected, effort) => {
+             const name = foreignAgentModelName("codex-cli", selected);
+@@ -35,7 +37,7 @@ export const codexCliAgent = {
+                 return [];
+             return [
+                 { configId: "model", value: name },
+-                ...(effort === undefined || !EFFORTS.includes(effort)
++                ...(effort === undefined || !CONFIG_EFFORTS.includes(effort)
+                     ? []
+                     : [{ configId: "reasoning_effort", value: effort }]),
+             ];
+diff --git a/dist/vendors/grok/impl/resolveGrokReasoningEffort.js b/dist/vendors/grok/impl/resolveGrokReasoningEffort.js
+index 0a545198706f69343c5ba106ec2c9cd181e1cc9d..cd5ffdce9ac5537c03fb3b395fb67842b39781a0 100644
+--- a/dist/vendors/grok/impl/resolveGrokReasoningEffort.js
++++ b/dist/vendors/grok/impl/resolveGrokReasoningEffort.js
+@@ -1,10 +1,9 @@
+ import { toOpenAIReasoningEffort } from "../../../protocol/responses/toOpenAIReasoningEffort.js";
+ export function resolveGrokReasoningEffort(apiModelId, effort) {
+-    if (apiModelId === "grok-build" ||
+-        apiModelId === "grok-composer-2.5-fast" ||
+-        effort === undefined) {
++    const resolved = effort === undefined ? undefined : toOpenAIReasoningEffort(effort);
++    if (apiModelId === "grok-build" || apiModelId === "grok-composer-2.5-fast") {
+         return undefined;
+     }
+-    return toOpenAIReasoningEffort(effort);
++    return resolved;
+ }
+ //# sourceMappingURL=resolveGrokReasoningEffort.js.map
+\ No newline at end of file
+diff --git a/dist/vendors/openaiCompatible/OpenAICompatibleProvider.js b/dist/vendors/openaiCompatible/OpenAICompatibleProvider.js
+index 1d2d1715db61757d63bae590dd6af7961cdbceb6..630e5396838e7dd71615e147eb0540dfb3709ed9 100644
+--- a/dist/vendors/openaiCompatible/OpenAICompatibleProvider.js
++++ b/dist/vendors/openaiCompatible/OpenAICompatibleProvider.js
+@@ -91,6 +91,9 @@ function generation(models, request, fallback, options) {
+         throw new Error(`${model.id} supports text input only.`);
+     }
+     const effort = request.effort;
++    if (effort === "ultra" && model.efforts === undefined) {
++        throw new Error(`${model.id} does not advertise Ultra reasoning effort.`);
++    }
+     let reasoningEffort = {};
+     if (effort !== undefined && model.efforts !== undefined) {
+         if (!model.efforts.includes(effort)) {

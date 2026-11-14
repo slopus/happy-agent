@@ -27,6 +27,7 @@ export const collaborationEffortSchema = Type.Union([
     Type.Literal("high"),
     Type.Literal("xhigh"),
     Type.Literal("max"),
+    Type.Literal("ultra"),
 ]);
 
 /** The service-tier override supported by Agent Base provider sessions. */

@@ -158,6 +158,9 @@ function generation(
         throw new Error(`${model.id} supports text input only.`);
     }
     const effort = request.effort;
+    if (effort === "ultra" && model.efforts === undefined) {
+        throw new Error(`${model.id} does not advertise Ultra reasoning effort.`);
+    }
     let reasoningEffort: Record<string, unknown> = {};
     if (effort !== undefined && model.efforts !== undefined) {
         if (!model.efforts.includes(effort)) {

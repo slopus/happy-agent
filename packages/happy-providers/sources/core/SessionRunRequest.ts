@@ -8,7 +8,8 @@ export type SessionReasoningEffort =
     | "medium"
     | "high"
     | "xhigh"
-    | "max";
+    | "max"
+    | "ultra";
 
 /**
  * Opaque provider-owned service-tier identifier.

@@ -120,6 +120,7 @@ export function createAnthropicRequest(options: {
 function resolveEffort(
     effort: SessionReasoningEffort | undefined,
 ): "low" | "medium" | "high" | "xhigh" | "max" {
+    if (effort === "ultra") throw new Error("Anthropic does not support Ultra reasoning effort.");
     if (effort === undefined) return "high";
     if (effort === "off" || effort === "minimal") return "low";
     return effort;
