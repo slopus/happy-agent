@@ -59,6 +59,7 @@ export const gitRunner: GitCommandRunner = {
         try {
             const result = await execFile("git", ["-C", cwd, ...args], {
                 encoding: "utf8",
+                env: { ...process.env, ...options.environment },
                 maxBuffer: options.maxOutputBytes,
                 signal: options.signal,
                 timeout: 30_000,
