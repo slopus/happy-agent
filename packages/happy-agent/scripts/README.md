@@ -54,9 +54,9 @@ performance cost. This is not a hard memory limit and does not constrain native
 allocations or separate helper processes. The Node-compatible distribution is
 unchanged.
 
-Each target embeds a checked-in Tailcat v0.7.0-happy.2 executable after verifying its pinned
+Each target embeds a checked-in Tailcat v0.7.0-happy.3 executable after verifying its pinned
 SHA-256. All five are built reproducibly from Happy's patched fork,
-[slopus/tailcat](https://github.com/slopus/tailcat), at tag `v0.7.0-happy.2`; the patches and build
+[slopus/tailcat](https://github.com/slopus/tailcat), at tag `v0.7.0-happy.3`; the patches and build
 command are recorded in `../assets/tailcat/README.md`. A normal Happy Agent
 build neither downloads nor compiles Tailcat. The Tailcat executable and BSD-3-Clause license are
 materialized together only when Tailcat exposure is enabled.

@@ -1,14 +1,14 @@
 # Tailcat binary assets
 
-Happy Agent embeds Tailcat v0.7.0-happy.2, Happy's patched build of Tailcat v0.7.0, for each of
-its five release targets. Binary integrity is pinned in `v0.7.0-happy.2/SHA256SUMS` and checked
+Happy Agent embeds Tailcat v0.7.0-happy.3, Happy's patched build of Tailcat v0.7.0, for each of
+its five release targets. Binary integrity is pinned in `v0.7.0-happy.3/SHA256SUMS` and checked
 again by `scripts/resolveTailcatBinaryAsset.ts` before a Happy Agent standalone binary is compiled.
 
 ## Source
 
-All five executables are built from tag `v0.7.0-happy.2` of Happy's fork,
+All five executables are built from tag `v0.7.0-happy.3` of Happy's fork,
 [slopus/tailcat](https://github.com/slopus/tailcat) (commit
-[`de122ebfc8f3ec0cda0f8e72a34b6d6627240896`](https://github.com/slopus/tailcat/commit/de122ebfc8f3ec0cda0f8e72a34b6d6627240896)).
+[`e36181208e7d3573533c309ea634de7ee15304df`](https://github.com/slopus/tailcat/commit/e36181208e7d3573533c309ea634de7ee15304df)).
 That tag is upstream [tailscale/tailcat](https://github.com/tailscale/tailcat) `v0.7.0` (commit
 `15ab9e68bfc6534a61797d7af28cedd42b54a3a5`) plus these commits:
 
@@ -37,7 +37,12 @@ That tag is upstream [tailscale/tailcat](https://github.com/tailscale/tailcat) `
    arrives over DERP from a client it would admit but holds no session for, it now answers with a
    5-byte meow-again packet (`meow` then `0x03`), at most once a second per client. Clients that
    don't know the packet ignore it.
-5. A README note describing the fork, which `tailcat readme` prints.
+5. [`44b84627c`](https://github.com/slopus/tailcat/commit/44b84627ca418b89eac4cbdccbbdfdb4132137e9)
+   keeps that reply from reaching a client while it is being admitted. The server admits a meow
+   in the background, so a rejoining client's next packet could arrive first and be answered with
+   meow-again; the client then started over, and WireGuard dropped its next handshake as a flood.
+   A meow now marks its client as being admitted before that work starts.
+6. A README note describing the fork, which `tailcat readme` prints.
 
 The fork is not an official Tailscale release. Its only protocol addition is the meow-again reply,
 which upstream Tailcat clients ignore, so they connect to it unchanged.
@@ -48,7 +53,7 @@ Every executable was built with Go 1.27.1, `CGO_ENABLED=0`, the fork's `build-ta
 
 ```text
 GOOS=<os> GOARCH=<arch> go build -trimpath -buildvcs=false -tags "$(cat build-tags.txt)" \
-  -ldflags "-s -w -X main.version=v0.7.0-happy.2" ./cmd/tailcat
+  -ldflags "-s -w -X main.version=v0.7.0-happy.3" ./cmd/tailcat
 ```
 
 The build is reproducible: a fresh clone of the tag builds the same five hashes, and the same

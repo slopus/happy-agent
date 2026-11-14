@@ -7,7 +7,7 @@ captured output and existing supervision remain authoritative; reconnecting cann
 
 ## Happy ships its own patched Tailcat
 
-The bundled Tailcat is v0.7.0-happy.2, built from Happy's fork `slopus/tailcat`: upstream v0.7.0
+The bundled Tailcat is v0.7.0-happy.3, built from Happy's fork `slopus/tailcat`: upstream v0.7.0
 plus fixes Happy needs before upstream ships them. A client that reset its connection right after
 the handshake made netstack hand the exec handler a connection with a nil remote address, and the
 resulting panic killed the server and every exposure on it. After a brief path blackout, gVisor's
@@ -15,16 +15,18 @@ RACK started a SACK recovery during timeout recovery that sent nothing until the
 timeout, so a phone's download crawled for a minute or more; the fork pins `slopus/gvisor` with
 that fixed. A restarted server keeps its key but not its sessions, and it dropped its clients'
 packets in silence until their own timeouts made them reconnect; it now tells such a client to
-meow again at once, so phones rejoin a restarted computer without waiting. The fork's patches,
-source commits, and reproducible build command are recorded in
+meow again at once, so phones rejoin a restarted computer without waiting. That reply must not
+reach a client whose meow is still being admitted, or the client restarts its join and WireGuard
+drops the retry as a handshake flood; a meow marks its client as admitting first. The fork's
+patches, source commits, and reproducible build command are recorded in
 `packages/happy-agent/assets/tailcat/README.md`. Upstream clients ignore the meow-again reply, so
 they and every argument Happy Agent passes keep working. Fix Tailcat bugs in the fork with a
 test, and rebuild all five targets together.
 
 ## New identities carry a pre-shared key
 
-The bundled Tailcat is based on v0.7.0. Since v0.6.0, `genkey` adds a WireGuard pre-shared key to new
-server identities and their addresses. Happy Agent keeps that upstream default and does not pass
+The bundled Tailcat is based on v0.7.0. Since v0.6.0, `genkey` adds a WireGuard pre-shared key to
+new server identities and their addresses. Happy Agent keeps that upstream default and does not pass
 `--psk=false`, because the key makes the address itself a secret that is needed to connect. A
 persisted identity created by v0.4.0 has no pre-shared key, and `serve` keeps using it as it is,
 with a warning, so existing addresses keep working for clients of every version. An address that
