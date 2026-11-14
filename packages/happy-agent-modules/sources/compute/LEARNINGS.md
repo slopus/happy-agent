@@ -213,6 +213,13 @@ enough images accumulated. Read now decodes the image and scales a longer side d
 as Claude Code does, and tells the model the original and shown sizes. A file that does not decode
 as an image is refused rather than sent. Codex `view_image` still shows images as stored.
 
+Images people send now reach the model as file references, so Read is where a large screenshot
+gets converted. Read accepts source files of up to 32 MiB, since only its output has to fit the
+3 MiB limit. An image still over that limit after scaling is an error, not a substitute. The error
+gives the path, the size and dimensions, and the limit, and suggests `sips` or `ffmpeg`, so the
+model can make a smaller copy and read that. `view_image` keeps the 3 MiB source limit and returns
+the same error.
+
 ## A bot's compute choice applies when the machine is built
 
 A bot's owner may run its agents in a Docker container of a chosen image. The choice is read only

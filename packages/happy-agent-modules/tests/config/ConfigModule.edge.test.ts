@@ -176,6 +176,7 @@ describe("ConfigModule edge coverage", () => {
                 ),
                 happyHome: join(root, ".happy"),
                 historyDumpHome: join(root, ".happy", "agent", "observation", "history"),
+                imageCachePath: join(root, ".happy", "cache", "images"),
                 instructionsPath: join(
                     root,
                     process.platform === "darwin" ? "Happy/Config" : "happy/config",

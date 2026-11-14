@@ -101,6 +101,11 @@ on. These departures from that truth are deliberate:
   and return a `media` presentation laid out in two columns. The model gets the same pixels as
   before plus one sentence saying the user already sees the image. A snapshot that fails, or a
   picture no chat client shows, leaves the read unchanged. Reviewer arrays never show anything.
+- **Readers fit images or say why they cannot.** Images people send reach the model as file
+  references, so a reader is what converts them. Claude's `Read` takes source files of up to
+  32 MiB and scales the longer side to 2000 pixels. An image still over 3 MiB is an error that
+  gives the path, size, and limit and suggests making a smaller copy with `sips` or `ffmpeg`.
+  `view_image` returns the same error for a source over 3 MiB.
 - **GLM's Claude-shaped Read returns text only.** Its model rejects image input, so the fixed
   GLM array refuses image paths before producing image blocks. See [the GLM tools](./tools/glm/README.md).
 
