@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { access, mkdir, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
@@ -751,6 +751,32 @@ describe("AttachmentsModule", () => {
             ]);
         }
         expect(bodies.get(files[5]!.attachment)).toEqual({ type: "none" });
+    });
+
+    it("shows a picture whose file is larger than an image may be by encoding it smaller", async () => {
+        const { ctx, attachments, upload, tool } = await world();
+        // Noise does not compress, so this PNG fits 2000 px yet holds about 3.4 MiB.
+        const noise = await sharp(randomBytes(1200 * 1000 * 3), {
+            raw: { width: 1200, height: 1000, channels: 3 },
+        })
+            .png({ compressionLevel: 0 })
+            .toBuffer();
+        expect(noise.byteLength).toBeGreaterThan(3 * 1024 * 1024);
+        expect(noise.byteLength).toBeLessThan(5 * 1024 * 1024);
+        const id = await upload("agentone", "noise.png", noise, "image/png");
+        const files = [{ type: "file" as const, attachment: id, name: "noise.png" }];
+        const bodies = await attachments.modelBodies(ctx, "agentone", files);
+        const [block] = await attachments.send(ctx, "agentone", files);
+        const [, image] = attachments.modelInput(block!, bodies);
+        expect(image).toMatchObject({ type: "image", mimeType: "image/webp" });
+        const encoded = Buffer.from((image as { data: string }).data, "base64");
+        expect(encoded.byteLength).toBeLessThanOrEqual(3 * 1024 * 1024);
+        expect(await sharp(encoded).metadata()).toMatchObject({ format: "webp" });
+        // read_attachment shows it the same way.
+        const read = await tool("agentone");
+        expect(await read.execute(ctx, { attachment_id: id }, {} as never)).toMatchObject({
+            image: { mimeType: "image/webp" },
+        });
     });
 
     it("resolves a message's files, and refuses ones the conversation does not hold", async () => {

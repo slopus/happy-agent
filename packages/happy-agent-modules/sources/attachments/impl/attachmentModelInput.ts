@@ -3,8 +3,12 @@ import { TextDecoder } from "node:util";
 import type { SessionImageBlock, SessionTextBlock } from "@slopus/happy-providers";
 
 import type { HistoryFileBlock } from "../../history/index.js";
+import { getImageProcessor } from "../../impl/images/getImageProcessor.js";
 import { ImageProcessingError } from "../../impl/images/ImageProcessingError.js";
-import { prepareImageForPrompt } from "../../impl/images/prepareImageForPrompt.js";
+import {
+    prepareImageForPrompt,
+    type PreparedPromptImage,
+} from "../../impl/images/prepareImageForPrompt.js";
 import { MAX_PROMPT_IMAGE_INPUT_BYTES } from "../../impl/images/referenceImageLimits.js";
 import { readFileHead } from "./attachmentFiles.js";
 import { formatSize } from "./formatSize.js";
@@ -16,6 +20,10 @@ export const MAX_INLINE_TEXT_BYTES = 256 * 1024;
 /** The longest side and the largest encoding of an image shown to the model. */
 const MAX_IMAGE_DIMENSION = 2000;
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+/** Lossy WebP qualities tried at each size, and how far each smaller size shrinks the sides. */
+const SMALLER_QUALITIES = [85, 70] as const;
+const SMALLER_SCALE = 0.75;
+const SMALLEST_SIDE = 256;
 
 /** What of an attached file the model sees in the message itself. */
 export type AttachmentModelBody =
@@ -84,19 +92,60 @@ export async function prepareAttachmentImage(
             maxDimension: MAX_IMAGE_DIMENSION,
             maxPatches: Number.POSITIVE_INFINITY,
         });
-        if (prepared.bytes.byteLength > MAX_IMAGE_BYTES) {
+        const fitted = await fitImageBytes(prepared);
+        if (fitted === undefined) {
             return { note: "This image is too large to show, even scaled down." };
         }
         return {
             image: {
                 type: "image",
-                data: prepared.bytes.toString("base64"),
-                mimeType: prepared.mediaType,
+                data: fitted.bytes.toString("base64"),
+                mimeType: fitted.mediaType,
             },
         };
     } catch (error: unknown) {
         if (!(error instanceof ImageProcessingError)) throw error;
         return { note: `This image cannot be shown. ${error.message}` };
+    }
+}
+
+/**
+ * A prepared picture within the byte budget. One already within it is kept as it is; a larger one,
+ * such as a detailed PNG that fits the longest side, is encoded as lossy WebP, at lower quality and
+ * then at smaller sizes, until it fits. Undefined only when even the smallest size does not.
+ */
+async function fitImageBytes(
+    prepared: PreparedPromptImage,
+): Promise<{ readonly bytes: Buffer; readonly mediaType: string } | undefined> {
+    if (prepared.bytes.byteLength <= MAX_IMAGE_BYTES) return prepared;
+    const processor = await getImageProcessor();
+    let width = prepared.width;
+    let height = prepared.height;
+    for (;;) {
+        for (const quality of SMALLER_QUALITIES) {
+            const encoded = await processor.encode(prepared.bytes, {
+                autoOrient: false,
+                format: "webp",
+                quality,
+                maxPixels: prepared.width * prepared.height,
+                ...(width === prepared.width
+                    ? {}
+                    : {
+                          resize: {
+                              filter: "lanczos3" as const,
+                              fit: "fill" as const,
+                              width,
+                              height,
+                          },
+                      }),
+            });
+            if (encoded.data.byteLength <= MAX_IMAGE_BYTES) {
+                return { bytes: encoded.data, mediaType: "image/webp" };
+            }
+        }
+        if (Math.max(width, height) <= SMALLEST_SIDE) return undefined;
+        width = Math.max(1, Math.round(width * SMALLER_SCALE));
+        height = Math.max(1, Math.round(height * SMALLER_SCALE));
     }
 }
 
