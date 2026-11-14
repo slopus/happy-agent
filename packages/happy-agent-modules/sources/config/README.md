@@ -159,6 +159,8 @@ permission mode leaves open, the route hands the ask to whatever module register
 `onHarnessPermission` — the user-input module, which puts it to the person — named after the
 harness. With nothing registered, the ask is refused.
 
+A foreign agent may also start a turn on its own, as Claude Code does when a background command finishes. The route's turn environment then wakes the agent it runs as: config sends the provider's hidden system notice with `hideFromUser` through the agent system it was started with, on a context of its own, because the turn that ran the agent is long over. The run that notice starts shows the foreign agent's turn.
+
 `harnessAllowsSubagents` decides which harnesses an agent on one harness may start sub-agents on:
 its own; else the creator's `subagent_harnesses`; else, for `happy`, only `antigravity` (models
 Happy cannot run itself); else, for a foreign harness, every harness but `happy`. Collaboration's
