@@ -11,6 +11,7 @@ import type {
     AgentSystemRef,
     AnyAgentTool,
 } from "@slopus/happy-agent-base";
+import type { SessionImageBlock, SessionTextBlock } from "@slopus/happy-providers";
 import { afterCommit, delay, type Context } from "@steve.kite/stdlib";
 
 import type { ChatMediaDescription, ChatMediaModule } from "../chatMedia/index.js";
@@ -46,7 +47,11 @@ import {
     storeUploadedContent,
     writeUploadChunk,
 } from "./impl/attachmentFiles.js";
-import { attachmentNote } from "./impl/attachmentNote.js";
+import {
+    attachmentModelInput,
+    readAttachmentModelBody,
+    type AttachmentModelBody,
+} from "./impl/attachmentModelInput.js";
 import { addByteRange, byteRangesComplete } from "./impl/byteRanges.js";
 import * as store from "./persistence/attachmentStore.js";
 import { readAttachmentTool } from "./tools/read_attachment.js";
@@ -388,9 +393,41 @@ export class AttachmentsModule implements AgentModule {
         });
     }
 
-    /** The line the model reads in place of one attached file. */
-    note(block: HistoryFileBlock): string {
-        return attachmentNote(block);
+    /**
+     * What the model is shown of each file a message names, read before the message's own
+     * transaction so no decoding holds it: a picture up to 5 MB or UTF-8 text up to 256 KB.
+     * A file the conversation does not hold, or whose bytes are gone, is only named.
+     */
+    async modelBodies(
+        ctx: Context,
+        agentId: string,
+        files: readonly FileRequestBlock[],
+    ): Promise<ReadonlyMap<string, AttachmentModelBody>> {
+        const bodies = new Map<string, AttachmentModelBody>();
+        for (const { attachment } of files) {
+            if (bodies.has(attachment)) continue;
+            const row = await ctx.inTx((txCtx) => this.#live(txCtx, agentId, attachment));
+            const content = row === undefined ? undefined : contentOf(this.#config, row);
+            bodies.set(
+                attachment,
+                content === undefined || !(await fileExists(content.contentPath))
+                    ? { type: "none" }
+                    : await readAttachmentModelBody(
+                          content.contentPath,
+                          content.mimeType,
+                          content.size,
+                      ),
+            );
+        }
+        return bodies;
+    }
+
+    /** What the model reads for one sent file, with what `modelBodies` read of it. */
+    modelInput(
+        block: HistoryFileBlock,
+        bodies: ReadonlyMap<string, AttachmentModelBody>,
+    ): readonly (SessionTextBlock | SessionImageBlock)[] {
+        return attachmentModelInput(block, bodies.get(block.attachment) ?? { type: "none" });
     }
 
     /**

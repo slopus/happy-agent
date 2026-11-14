@@ -1,17 +1,13 @@
-import { TextDecoder } from "node:util";
-
 import { Type, type Static } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 import type { SessionOutputBlock } from "@slopus/happy-providers";
 import type { Context } from "@steve.kite/stdlib";
 
-import { ImageProcessingError } from "../../impl/images/ImageProcessingError.js";
-import { prepareImageForPrompt } from "../../impl/images/prepareImageForPrompt.js";
-import { MAX_PROMPT_IMAGE_INPUT_BYTES } from "../../impl/images/referenceImageLimits.js";
 import type { Compute, ComputeModule } from "../../compute/index.js";
 import { readFileHead } from "../impl/attachmentFiles.js";
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
-import { formatSize } from "../impl/attachmentNote.js";
+import { formatSize } from "../impl/formatSize.js";
+import { decodeAttachmentText, prepareAttachmentImage } from "../impl/attachmentModelInput.js";
 import { attachmentIdSchema } from "../Attachment.js";
 import type { AttachmentsModule } from "../AttachmentsModule.js";
 
@@ -21,9 +17,6 @@ const MAX_LINES_TO_READ = 2_000;
 const MAX_CHARACTERS = 60_000;
 /** The largest file read as text. */
 const MAX_TEXT_BYTES = 1024 * 1024;
-/** The longest side and the largest encoding of an image shown to the model. */
-const MAX_IMAGE_DIMENSION = 2000;
-const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const RASTER_IMAGE_MIME_TYPES: ReadonlySet<string> = new Set([
     "image/avif",
     "image/bmp",
@@ -121,10 +114,9 @@ export function readAttachmentTool(
         computeModule.shouldReviewPath(ctx, compute, path, { write: true });
     return defineAgentTool({
         name: "read_attachment",
-        defer: true,
         capabilities: ["Read files people attached to messages, and save copies to work on."],
         searchKeywords: ["attached file", "open attachment", "uploaded file", "read attachment"],
-        description: `Reads a file a person attached to a message in this conversation. Each attachment appears in the message as a line naming its ID, file name, type, and size. Images are shown to you. Text files come back as numbered lines: a line number, then a tab, then the line, numbered from 1. By default it reads up to ${String(MAX_LINES_TO_READ)} lines from the start; offset and limit read another stretch of a long file. Other files, such as PDFs, archives, and videos, are only described. To work on the file with your own tools, pass path to save a copy on your machine; relative paths start from your working directory, and missing folders are created. Choose a place that will not get committed, such as an ignored scratch folder. An existing file is replaced only with overwrite: true. The copy is yours: changing or deleting it does not change the attachment, and you can save it again.`,
+        description: `Reads a file a person attached to a message in this conversation. Each attachment appears in the message as a line naming its ID, file name, type, and size; pictures up to 5 MB and UTF-8 text up to 256 KB are shown there too, so open those only to read past what was shown or to save a copy. Images are shown to you. Text files come back as numbered lines: a line number, then a tab, then the line, numbered from 1. By default it reads up to ${String(MAX_LINES_TO_READ)} lines from the start; offset and limit read another stretch of a long file. Other files, such as PDFs, archives, and videos, are only described. To work on the file with your own tools, pass path to save a copy on your machine; relative paths start from your working directory, and missing folders are created. Choose a place that will not get committed, such as an ignored scratch folder. An existing file is replaced only with overwrite: true. The copy is yours: changing or deleting it does not change the attachment, and you can save it again.`,
         parameters: readAttachmentInputSchema,
         returnType: attachmentReadSchema,
         durable: false,
@@ -184,7 +176,10 @@ async function readContent(
     size: number,
 ): Promise<Partial<AttachmentRead>> {
     if (RASTER_IMAGE_MIME_TYPES.has(mimeType)) {
-        return await readImage(contentPath, size);
+        const image = await prepareAttachmentImage(contentPath, size);
+        return "image" in image
+            ? { image: { data: image.image.data, mimeType: image.image.mimeType } }
+            : image;
     }
     const known = mimeType.startsWith("text/") || TEXT_MIME_TYPES.has(mimeType);
     if (!known && mimeType !== "application/octet-stream") {
@@ -195,7 +190,7 @@ async function readContent(
             note: `This file is larger than the ${formatSize(MAX_TEXT_BYTES)} a text file may be to show here.`,
         };
     }
-    const text = decodeText(await readFileHead(contentPath, size));
+    const text = decodeAttachmentText(await readFileHead(contentPath, size));
     if (text === undefined) {
         return { note: "This file is not text or an image, so its bytes are not shown here." };
     }
@@ -244,38 +239,6 @@ async function saveCopy(
         await readFileHead(content.contentPath, content.size),
     );
     return path;
-}
-
-async function readImage(
-    contentPath: string,
-    size: number,
-): Promise<Pick<AttachmentRead, "image" | "note">> {
-    if (size > MAX_PROMPT_IMAGE_INPUT_BYTES) return { note: "This image is too large to show." };
-    try {
-        const prepared = await prepareImageForPrompt(await readFileHead(contentPath, size), {
-            maxDimension: MAX_IMAGE_DIMENSION,
-            maxPatches: Number.POSITIVE_INFINITY,
-        });
-        if (prepared.bytes.byteLength > MAX_IMAGE_BYTES) {
-            return { note: "This image is too large to show, even scaled down." };
-        }
-        return {
-            image: { data: prepared.bytes.toString("base64"), mimeType: prepared.mediaType },
-        };
-    } catch (error: unknown) {
-        if (!(error instanceof ImageProcessingError)) throw error;
-        return { note: `This image cannot be shown. ${error.message}` };
-    }
-}
-
-/** The bytes as UTF-8 text, or `undefined` when they are not valid UTF-8 or hold a NUL. */
-function decodeText(bytes: Uint8Array): string | undefined {
-    if (bytes.includes(0)) return undefined;
-    try {
-        return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-        return undefined;
-    }
 }
 
 function pageOfLines(

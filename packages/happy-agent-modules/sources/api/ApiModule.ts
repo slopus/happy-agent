@@ -5816,6 +5816,12 @@ export class ApiModule implements AgentModule {
             if (files.length > 0 && this.#attachments === undefined) {
                 throw invalidRequest("This daemon does not accept attached files.");
             }
+            // Pictures and text the model is shown are read first, so no decoding holds the
+            // message's transaction; that transaction still decides which files are sent.
+            const bodies =
+                files.length === 0
+                    ? undefined
+                    : await this.#attachments!.modelBodies(ctx, agentId, files);
             let content = requested.filter(
                 (block): block is Exclude<(typeof requested)[number], FileRequestBlock> =>
                     block.type !== "file",
@@ -5876,7 +5882,8 @@ export class ApiModule implements AgentModule {
                     await this.#assertUserControlledAgent(txCtx, agentId);
                     if (files.length > 0) {
                         // The files are checked and marked sent atomically with the message. The
-                        // stored message keeps each file's block; the model reads a note instead.
+                        // stored message keeps each file's block; the model reads the file's
+                        // picture or text when it is small enough, and otherwise a line naming it.
                         const sent = await this.#attachments!.send(txCtx, agentId, files);
                         let next = 0;
                         const blocks: HistoryPendingMessage["blocks"][number][] = [];
@@ -5889,7 +5896,7 @@ export class ApiModule implements AgentModule {
                             }
                             const file = sent[next++]!;
                             blocks.push(file);
-                            content.push({ type: "text", text: this.#attachments!.note(file) });
+                            content.push(...this.#attachments!.modelInput(file, bodies!));
                         }
                         pending = { ...pending, blocks };
                     }

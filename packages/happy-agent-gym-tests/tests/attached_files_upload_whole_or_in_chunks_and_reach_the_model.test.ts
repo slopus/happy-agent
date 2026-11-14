@@ -11,13 +11,16 @@ afterEach(async () => {
     gyms.clear();
 });
 
+const ONE_PIXEL_PNG =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
 function sha256(bytes: Uint8Array): string {
     return createHash("sha256").update(bytes).digest("hex");
 }
 
 // The wire is spoken directly so every status and header is checked; the client is checked last.
 describe("attached files", () => {
-    it("upload whole or in parallel chunks, reach the model as notes, and are never echoed", async () => {
+    it("upload whole or in parallel chunks, reach the model as pictures, text, or notes, and are never echoed", async () => {
         const notes = "line one\nline two\n";
         const noteBytes = Buffer.from(notes);
         const noteId = sha256(noteBytes);
@@ -133,13 +136,20 @@ describe("attached files", () => {
             }),
         ).rejects.toMatchObject({ status: 400, code: "attachment_not_found" });
 
-        // Sending names both; every representation carries the blocks without bytes.
+        const picture = Buffer.from(ONE_PIXEL_PNG, "base64");
+        const pictureId = sha256(picture);
+        expect(
+            (await call("PUT", "?name=dot.png", picture, { "content-type": "image/png" })).status,
+        ).toBe(201);
+
+        // Sending names all three; every representation carries the blocks without bytes.
         const sent = await gym.client.sendMessage(agentId, {
             text: "Look at these.",
             mode,
             content: [
                 { type: "file", attachment: noteId, name: "notes.txt" },
                 { type: "file", attachment: bigId, name: "big.bin" },
+                { type: "file", attachment: pictureId, name: "dot.png" },
             ] as unknown as MessageBlock[],
         });
         const expectedBlocks = [
@@ -160,6 +170,17 @@ describe("attached files", () => {
                 size: big.byteLength,
                 kind: "file",
             },
+            {
+                type: "file",
+                attachment: pictureId,
+                name: "dot.png",
+                mimeType: "image/png",
+                size: picture.byteLength,
+                kind: "image",
+                width: 1,
+                height: 1,
+                thumbhash: expect.any(String),
+            },
         ];
         expect(sent.message.content).toEqual(expectedBlocks);
         expect(JSON.stringify(sent).length).toBeLessThan(4_000);
@@ -173,12 +194,23 @@ describe("attached files", () => {
             .find((message) => message.id === sent.message.id);
         expect(stored?.content).toEqual(expectedBlocks);
 
-        // The model got notes, then read the text through its tool.
+        // The model saw the text and the picture in the message and was told of the large file,
+        // and its tool reads any of them again without being searched for first.
         const userTexts = gym.inference.userTexts().join("\n");
         expect(userTexts).toContain(
-            `[Attachment ${noteId}: "notes.txt", text/plain, 18 bytes. Open it with read_attachment.]`,
+            `[Attachment ${noteId}: "notes.txt", text/plain, 18 bytes. Its text follows; read_attachment reads it by line or saves a copy.]\n<file name="notes.txt">\nline one\nline two\n</file>`,
         );
-        expect(userTexts).toContain(`[Attachment ${bigId}: "big.bin"`);
+        expect(userTexts).toContain(
+            `[Attachment ${bigId}: "big.bin", application/octet-stream, 293 KB. Open it with read_attachment.]`,
+        );
+        expect(userTexts).toContain(`[Attachment ${pictureId}: "dot.png", image/png`);
+        const userImages = gym.inference.requests
+            .flatMap((request) => request.messages)
+            .filter((message) => message.role === "user")
+            .flatMap((message) => message.content)
+            .filter((block) => block.type === "image");
+        expect(userImages).toContainEqual(expect.objectContaining({ mimeType: "image/png" }));
+        expect(gym.inference.lastTools()).toContain("read_attachment");
         expect(
             gym.inference
                 .toolResults()

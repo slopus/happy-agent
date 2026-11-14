@@ -8972,10 +8972,12 @@ The message stores the block with the attachment's details, so the send response
 }
 ```
 
-The model is not given the bytes. It reads one line per file naming its ID, name, type, and size,
-and opens the file with its `read_attachment` tool: an image is shown, text is read a page at a
-time, and other files are described. Given a path, the tool also saves a copy there on the agent's
-machine, under the turn's own permissions.
+The model reads one line per file naming its ID, name, type, and size. A picture up to 5 MB
+follows it in the message, sized for the model, and so does a file of UTF-8 text up to 256 KB,
+inside `<file name="…">` and `</file>`. Any other file is only named. The `read_attachment` tool
+opens any sent attachment again: an image is shown, text is read a page at a time, and other files
+are described. Given a path, the tool also saves a copy there on the agent's machine, under the
+turn's own permissions.
 
 ### `POST /v0/agents/:agentId/send`
 

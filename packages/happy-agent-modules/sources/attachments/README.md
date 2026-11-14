@@ -25,7 +25,7 @@ POST /v0/agents/:id/send { content: [{ type: "file", attachment: sha, name }] }
         │ send(): each must be a live attachment of this conversation ─▶ sent, never expires
         ▼
   history block { type: "file", attachment, name, mimeType, size, kind, width?, … }
-  model input   "[Attachment <sha>: "name", mime, size. Open it with read_attachment.]"
+  model input   "[Attachment <sha>: "name", mime, size. …]" + picture ≤ 5 MB or <file> text ≤ 256 KB
         │
 GET    /v0/agents/:id/attachments/:sha          bytes; Range, ETag, immutable cache
 DELETE /v0/agents/:id/attachments/:sha          cancel an upload or discard an unsent attachment
@@ -47,7 +47,11 @@ DELETE /v0/agents/:id/attachments/:sha          cancel an upload or discard an u
   while that upload is still live and its agent exists, checked in the transaction that records
   it, so a request whose upload was cancelled, expired, or erased meanwhile answers 404.
 - The API stores the blocks `send` returns in the pending row, which History records as the
-  accepted message's blocks; Agent Base receives a text note in place of each file.
+  accepted message's blocks. Agent Base receives, for each file, a line naming it with its ID,
+  then its picture when it is at most 5 MB and decodes, or its text in `<file name="…">` when it
+  is UTF-8 of at most 256 KB, as Happy Cloud does. They are read before the message's
+  transaction, so no decoding holds it. History replays and compaction treat them as any inline
+  image or text.
 - Unsent attachments and unfinished uploads expire 24 hours after they last received bytes.
   Anyone who may send to the agent may upload, send, and cancel; anyone who may read the
   conversation may download. Sent attachments cannot be removed yet.

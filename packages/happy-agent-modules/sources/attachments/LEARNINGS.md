@@ -54,11 +54,15 @@ Happy Cloud would need a C AV1 decoder in its API process to read AVIF. Kirill c
 attachments as plain files on both servers rather than add it, so an attachment is described the
 same wherever it is uploaded. Pictures an agent presents itself still decode AVIF.
 
-## Attachments never reach the model as bytes
+## Small pictures and text reach the model in the message
 
-A turn is replayed to the provider every time, and an attachment can be 1 GiB. The model receives
-one line per file and opens it with `read_attachment` when it needs it. The stored message keeps
-the `file` block, so clients show the file, while Agent Base keeps only the note.
+Giving the model only a note per file meant a picture sent from the phone went unseen unless the
+model searched for and called a deferred tool, a regression from inline images, and Happy Cloud
+shows them. Kirill aligned the daemon with Happy Cloud: a picture up to 5 MB is shown in the
+message and UTF-8 text up to 256 KB is inlined in `<file name="…">`; larger files stay a note,
+since a turn is replayed every time and an attachment can be 1 GiB. Every item names its ID, and
+`read_attachment` is always offered, so the model can read further or save a copy. The stored
+message keeps the `file` block, so clients show the file.
 
 ## Agents get a copy where they ask, never the stored file
 

@@ -696,6 +696,63 @@ describe("AttachmentsModule", () => {
         expect(await code(attachments.delete(ctx, "agentone", sent))).toBe("conflict");
     });
 
+    it("shows the model small pictures and text, and names everything else", async () => {
+        const { config, ctx, attachments, upload } = await world();
+        const picture = await sharp({
+            create: { width: 40, height: 20, channels: 3, background: { r: 1, g: 2, b: 3 } },
+        })
+            .png()
+            .toBuffer();
+        const image = await upload("agentone", "shot.png", picture, "image/png");
+        const text = await upload("agentone", "notes.md", Buffer.from("# Notes\nline two\n"));
+        const large = await upload("agentone", "big.txt", Buffer.alloc(256 * 1024 + 1, "a"));
+        const binary = await upload("agentone", "blob.bin", Buffer.from([0, 1, 2, 3]));
+        const gone = await upload("agentone", "gone.txt", Buffer.from("removed bytes"));
+        await rm(config.attachmentContentPath(gone));
+        const files = [
+            { type: "file" as const, attachment: image, name: "shot.png" },
+            { type: "file" as const, attachment: text, name: 'my "notes".md' },
+            { type: "file" as const, attachment: large, name: "big.txt" },
+            { type: "file" as const, attachment: binary, name: "blob.bin" },
+            { type: "file" as const, attachment: gone, name: "gone.txt" },
+            {
+                type: "file" as const,
+                attachment: sha256(Buffer.from("never uploaded")),
+                name: "x.txt",
+            },
+        ];
+        const bodies = await attachments.modelBodies(ctx, "agentone", files);
+        const blocks = await attachments.send(ctx, "agentone", files.slice(0, 5));
+        const inputs = blocks.map((block) => attachments.modelInput(block, bodies));
+
+        expect(inputs[0]).toEqual([
+            {
+                type: "text",
+                text: `[Attachment ${image}: "shot.png", image/png, ${String(picture.byteLength)} bytes. It is shown below; read_attachment opens it again or saves a copy.]`,
+            },
+            { type: "image", mimeType: "image/png", data: expect.any(String) },
+        ]);
+        expect(inputs[1]).toEqual([
+            {
+                type: "text",
+                text: `[Attachment ${text}: "my \\"notes\\".md", text/markdown, 17 bytes. Its text follows; read_attachment reads it by line or saves a copy.]\n<file name="my &quot;notes&quot;.md">\n# Notes\nline two\n</file>`,
+            },
+        ]);
+        for (const [index, id, described] of [
+            [2, large, `"big.txt", text/plain, 256 KB`],
+            [3, binary, `"blob.bin", application/octet-stream, 4 bytes`],
+            [4, gone, `"gone.txt", text/plain, 13 bytes`],
+        ] as const) {
+            expect(inputs[index]).toEqual([
+                {
+                    type: "text",
+                    text: `[Attachment ${id}: ${described}. Open it with read_attachment.]`,
+                },
+            ]);
+        }
+        expect(bodies.get(files[5]!.attachment)).toEqual({ type: "none" });
+    });
+
     it("resolves a message's files, and refuses ones the conversation does not hold", async () => {
         const { ctx, attachments, upload } = await world();
         const id = await upload("agentone", "a.txt", Buffer.from("hello"));
@@ -721,9 +778,6 @@ describe("AttachmentsModule", () => {
                 kind: "file",
             },
         ]);
-        expect(attachments.note(blocks[0]!)).toBe(
-            `[Attachment ${id}: "renamed.txt", text/plain, 5 bytes. Open it with read_attachment.]`,
-        );
         expect(
             await code(
                 attachments.send(ctx, "agenttwo", [{ type: "file", attachment: id, name: "a" }]),
