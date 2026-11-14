@@ -1,9 +1,10 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { once } from "node:events";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { TailcatConnection } from "../../sources/tailcat/impl/TailcatConnection.js";
+import { openTailcatRemote } from "../../sources/tailcat/remote.js";
 
 it("replaces a live but stale carrier for subsequent concurrent requests without replaying a failed connection", async () => {
     const root = await mkdtemp(join(tmpdir(), "tailcat-reconnect-"));
@@ -164,6 +165,57 @@ setInterval(() => {}, 1000);
         await expect(transport.connect(24779)).rejects.toThrow("unavailable");
     } finally {
         await transport.close();
+        await rm(root, { recursive: true, force: true });
+    }
+});
+
+it("starts each new carrier from where Tailcat resolves at that time", async () => {
+    // Release binaries extract Tailcat to a temporary folder. When that folder was deleted while
+    // the agent ran, a carrier started from the path kept at the first start failed with ENOENT,
+    // and every request to that remote failed until the agent restarted.
+    const root = await mkdtemp(join(tmpdir(), "tailcat-resolve-"));
+    const first = join(root, "first", "tailcat-test.cjs");
+    const second = join(root, "second", "tailcat-test.cjs");
+    const pidFile = join(root, "carrier-pid");
+    const script = `#!/usr/bin/env node
+require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+const server = require('node:net').createServer((socket) => {
+    socket.on('error', () => {});
+    let greeting = true;
+    socket.on('data', () => {
+        socket.write(Buffer.from(greeting ? [5, 0] : [5, 0, 0, 1, 127, 0, 0, 1, 0, 80]));
+        greeting = false;
+    });
+});
+server.listen(0, '127.0.0.1', () => console.error('SOCKS running at socks5h://127.0.0.1:' + server.address().port));
+`;
+    for (const executable of [first, second]) {
+        await mkdir(dirname(executable));
+        await writeFile(executable, script);
+        await chmod(executable, 0o755);
+    }
+    vi.stubEnv("HAPPY_AGENT_TAILCAT_PATH", first);
+    const remote = openTailcatRemote("tcResolvedAgainAddress");
+    try {
+        const socket = await remote.connect(24779);
+        const closed = new Promise((resolve) => socket.once("close", resolve));
+        // The first folder is deleted and its carrier exits; Tailcat now resolves elsewhere.
+        vi.stubEnv("HAPPY_AGENT_TAILCAT_PATH", second);
+        await rm(dirname(first), { recursive: true });
+        process.kill(Number(await readFile(pidFile, "utf8")), "SIGTERM");
+        await closed;
+        const connects = async () => {
+            try {
+                await remote.connect(24779);
+                return true;
+            } catch {
+                return false;
+            }
+        };
+        await expect.poll(connects, { timeout: 5_000 }).toBe(true);
+    } finally {
+        await remote.close();
+        vi.unstubAllEnvs();
         await rm(root, { recursive: true, force: true });
     }
 });
