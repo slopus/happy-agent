@@ -22,9 +22,7 @@ export function createOpenAIResponseRequest(options: {
 }): ResponseCreateParamsStreaming {
     const capabilities = options.capabilities ?? OPENAI_RESPONSES_CAPABILITIES;
     const effort =
-        options.effort === undefined || !capabilities.reasoning
-            ? undefined
-            : toOpenAIReasoningEffort(options.effort);
+        options.effort === undefined ? undefined : toOpenAIReasoningEffort(options.effort);
     return {
         model: options.model,
         input: toOpenAIResponseInput(options.context),
@@ -58,7 +56,7 @@ export function createOpenAIResponseRequest(options: {
         ...(options.promptCacheKey === undefined
             ? {}
             : { prompt_cache_key: options.promptCacheKey }),
-        ...(effort === undefined
+        ...(effort === undefined || !capabilities.reasoning
             ? {}
             : {
                   reasoning: { effort },

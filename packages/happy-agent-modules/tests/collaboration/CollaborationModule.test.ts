@@ -92,7 +92,7 @@ class Collection {
     sendFailure: Error | undefined;
     abortFailure: Error | undefined;
 
-    readonly models = MODELS;
+    constructor(readonly models: readonly AgentModel[] = MODELS) {}
 
     /** Register an agent that already exists, as the collection would after a restart. */
     seed(id: string, parent: string | null, config: AgentConfig = {}): void {
@@ -969,19 +969,59 @@ describe("collaboration", () => {
         expect(collection.created).toEqual([{ id: "allowedchild", parent: "parent" }]);
     });
 
-    it("refuses an effort the chosen model does not support", async () => {
-        const collection = new Collection();
-        const { module, hooks, ctx } = await started(collection);
+    it.each(["low", "ultra"] as const)(
+        "refuses unsupported effort %s for the chosen model",
+        async (effort) => {
+            const collection = new Collection();
+            const { module, ctx } = await started(collection);
 
-        await expect(
-            module.createAgent(
+            await expect(
+                module.createAgent(
+                    ctx,
+                    "parent",
+                    { ...TASK, effort, model: "opus-5", provider: "claude" },
+                    "child",
+                ),
+            ).rejects.toThrow(
+                `Effort "${effort}" is not available for collaborator model "opus-5".`,
+            );
+            expect(collection.created).toHaveLength(0);
+            expect(collection.delivered).toHaveLength(0);
+        },
+    );
+
+    it.each(["max", "ultra"] as const)(
+        "preserves advertised effort %s when starting a collaborator",
+        async (effort) => {
+            const collection = new Collection([
+                {
+                    providerId: "codex",
+                    id: "test-ultra-model",
+                    name: "Test Ultra Model",
+                    effortLevels: ["max", "ultra"],
+                    defaultEffort: "max",
+                },
+            ]);
+            const { module, ctx } = await started(collection);
+
+            await module.createAgent(
                 ctx,
                 "parent",
-                { ...TASK, effort: "low", model: "opus-5", provider: "claude" },
+                { ...TASK, model: "test-ultra-model", effort },
                 "child",
-            ),
-        ).rejects.toThrow('Effort "low" is not available for collaborator model "opus-5".');
-    });
+            );
+
+            expect(collection.delivered[0]!.options).toMatchObject({
+                model: "test-ultra-model",
+                effort,
+                provider: "codex",
+                metadata: expect.objectContaining({ mode: expect.objectContaining({ effort }) }),
+            });
+            expect(collection.configs.get("child")?.metadata?.["lastMode"]).toMatchObject({
+                effort,
+            });
+        },
+    );
 
     it("asks for a provider when a model name alone is ambiguous", async () => {
         const collection = new Collection();
