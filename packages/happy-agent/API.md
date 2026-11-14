@@ -8777,6 +8777,13 @@ ordinary Markdown inline link to a `happy://` URL, written where the entity's na
 I published [Q3 revenue](happy://artifacts/r7k2m9q4w1e5t8y3u6i0o2p5) with the full breakdown.
 ```
 
+Agents and the daemon write each such link as a share link with an empty label, the same link in
+an `https` form that works outside Happy too, as described under "Share links":
+
+```markdown
+I published [](https://link.happy.page/#1/k3x9q2m7p0a4b8c1d5e6f7g2/artifacts/r7k2m9q4w1e5t8y3u6i0o2p5) with the full breakdown.
+```
+
 A file is linked the same way, as described under "File links". The daemon stores and returns
 message text exactly as written: links are part of `text`, not a block of their own, and no route
 rewrites them.
@@ -8890,12 +8897,66 @@ pct-encoded = "%" HEXDIG HEXDIG
 
 Server links are additive and do not increment the protocol version.
 
+**Share links.** A **share link** is an instance link carried in the fragment of an `https` URL on
+`link.happy.page`, so it works anywhere an ordinary web address does. Pasted into a browser, the
+page opens the instance link it carries in a Happy app. Inside Markdown it is a Happy link and
+means exactly the instance link it carries.
+
+```text
+share-url     = "https://link.happy.page/#" payload
+payload       = "1/" instance-id "/" share-rest [ "?" param *( "&" param ) ]
+share-rest    = artifact-path / service / other / file-path
+artifact-path = "artifacts/" id
+file-path     = target "/files/" path
+param         = "as=" role / "version=" version / "lines=" line [ "-" line ]
+role          = "task" / "bot" / "subtask" / "subagent" / "session"
+```
+
+`id`, `service`, and `other` are as under "Grammar", `instance-id` as under "Instance links", and
+`target`, `path`, and `line` as under "File links". For example:
+
+```text
+https://link.happy.page/#1/k3x9q2m7p0a4b8c1d5e6f7g2/agents/t7bgxjt05aexj73frl6ul37e?as=task
+https://link.happy.page/#1/k3x9q2m7p0a4b8c1d5e6f7g2/artifacts/r7k2m9q4w1e5t8y3u6i0o2p5?version=2
+https://link.happy.page/#1/k3x9q2m7p0a4b8c1d5e6f7g2/agents/a1b2c3d4/files/packages/app/Foo.tsx?lines=42-50
+```
+
+- A share link opens the instance link `happy://<instance-id>/<share-rest>`, with `version`
+  written as the artifact's `?version=<N>` and `lines=<a>-<b>` as the file's `#L<a>-L<b>`
+  (`lines=<a>` as `#L<a>`). Every rule under "Instance links" applies to it.
+- `1` is the payload version. Any other version is malformed.
+- `as` says what an agent is: a task's, a bot's, a subtask, a subagent, or a session. It applies
+  only to an agent link, is for display only, and never changes what the link opens. `version`
+  applies only to an artifact and `lines` only to a file.
+- Each parameter appears at most once, and a value may be percent-encoded. Any other parameter,
+  a repeated one, an empty value, a second fragment, a payload over 4,096 characters, a link
+  without an instance ID, or a broken rule above makes the URL not a share link. It is then an
+  ordinary web address and never partly interpreted. A settings link and a `happy-file://` link
+  have no share form.
+- The canonical form writes parameters in the order `as`, `version`, `lines`, encodes the path as
+  a canonical file URL does, and writes a single line as `lines=<a>`.
+
+The daemon and agents write every Happy link that leaves their own process as a share link of the
+daemon's health `instanceId`: in tool results, instructions to the model, notifications, and the
+links agents write in replies and messages. The link is always a Markdown link with an empty
+label, `[](https://link.happy.page/#1/…)`, and never stands bare. Clients show the item's current
+name in its place and ignore any label, so a written name would only cost tokens and go stale;
+text meant for the model names the item in plain words beside the link, such as
+`Task "Fix login" created: [](https://link.happy.page/#1/…)`. An agent link's `as` names what the
+agent is when the writer knows. Readers keep accepting `happy://` links, instance links, and
+`happy-file://` links everywhere, so stored history and older agents keep working. When the
+daemon reads a share link, it treats one naming its own `instanceId` exactly as the `happy://`
+link it carries, and one naming another installation as that installation's instance link.
+
+Share links are additive and do not increment the protocol version. A client that does not know
+them shows an ordinary web link with its label.
+
 **Links.** A Happy link is a CommonMark inline link, `[label](destination)` or
-`[label](<destination>)` with an optional title, whose destination uses the `happy` or
-`happy-file` scheme. Its label may hold balanced brackets, code spans, and backslash escapes, and
-it cannot cross a blank line. An image, `![alt](happy://…)`, is a Happy link whose label is its alt
-text. A link in an inline code span or a fenced code block, or one whose `[` is backslash-escaped,
-is literal text, as in Markdown.
+`[label](<destination>)` with an optional title, whose destination uses the `happy` or `happy-file`
+scheme, or is a share link. Its label may hold balanced brackets, code spans, and backslash escapes,
+and it cannot cross a blank line. An image, `![alt](happy://…)`, is a Happy link whose label is its
+alt text. A link in an inline code span or a fenced code block, or one whose `[` is
+backslash-escaped, is literal text, as in Markdown.
 
 The label of an entity link is the writer's fallback: the name the agent knows. It may be empty,
 `[](happy://artifacts/…)`, which asks the client to fill in the name.
@@ -8981,10 +9042,10 @@ browser.
 **Streaming.** While a text block is still growing through `message.delta`, its end may be a Happy
 link that is not complete yet. Once its label's `]` has arrived, a client hides the link from its
 `[` (or `![`) for as long as the destination so far could still become a `happy:` or `happy-file:`
-URL, such as `[Q3]`, `[Q3](`, `[Q3](hap`, or `[Q3](happy://artifacts/r7k2`. The tail is shown once
-the link completes, or once the text proves it is not a Happy link. A tail longer than 5,120
-characters is never hidden, and the tail is never hidden inside code. Once the message is final,
-an incomplete link is ordinary text.
+URL or a share link, such as `[Q3]`, `[Q3](`, `[Q3](hap`, `[Q3](happy://artifacts/r7k2`, or
+`[Q3](https://link.happy.page/#1/k3x9`. The tail is shown once the link completes, or once the text
+proves it is not a Happy link. A tail longer than 5,120 characters is never hidden, and the tail is
+never hidden inside code. Once the message is final, an incomplete link is ordinary text.
 
 **Fallback.** A surface that cannot render Happy links gets plain Markdown in which each Happy
 link is replaced. An entity link becomes the entity's live title when the surface can resolve it,
@@ -9045,12 +9106,21 @@ type HappyLinkMatch = {
     syntax: "link" | "legacyTag";
     display: "link" | "button"; // "button" only for a link titled exactly `button`
 };
+type HappyShareLinkRole = "task" | "bot" | "subtask" | "subagent" | "session";
+type HappyShareLink = {
+    link: HappyLink & { instanceId: string }; // the instance link it carries
+    as?: HappyShareLinkRole; // agents only; display only
+};
 
 parseHappyUrl(url: string): HappyLink | undefined; // happy://, instance links, happy-file://
 isHappyUrl(url: string): boolean; // happy: or happy-file:, any case, well-formed or not
 formatHappyUrl(link: HappyLink): string; // an instance link when link.instanceId is set
 formatHappyReferenceUrl(reference: HappyReference): string;
 formatHappyMarkdownLink(link: HappyLink, label?: string): string; // "[label](happy://…)"
+parseHappyShareUrl(url: string): HappyShareLink | undefined; // https://link.happy.page/#1/…
+formatHappyShareUrl(link: HappyLink, options?: { as?: HappyShareLinkRole }): string; // instance only
+formatHappyShareMarkdownLink(link: HappyLink,
+    options?: { as?: HappyShareLinkRole }): string; // "[](https://link.happy.page/#1/…)"
 parseHappyLinks(markdown: string, options?: { streaming?: boolean }):
     ({ type: "text"; text: string } | ({ type: "link" } & HappyLinkMatch))[];
 replaceHappyLinks(markdown: string, replace: (match: HappyLinkMatch) => string,
@@ -9062,7 +9132,9 @@ rewriteLegacyHappyReferenceTags(markdown: string, options?: { streaming?: boolea
 happyReferencePlaceholder(reference: HappyReference): string; // "an unavailable artifact"
 ```
 
-`HAPPY_REFERENCE_KINDS` lists the entity kinds and `HAPPY_SETTINGS_PAGES` the settings pages.
+`HAPPY_REFERENCE_KINDS` lists the entity kinds, `HAPPY_SETTINGS_PAGES` the settings pages, and
+`HAPPY_SHARE_LINK_ROLES` the share link roles. `parseHappyLinks` and the functions built on it read
+a share link as the instance link it carries, with `syntax` `"link"`.
 Clients and the daemon use these rather than their own parsers, so every surface agrees on
 exactly what a link names.
 
@@ -9158,11 +9230,12 @@ The loop starts in [Foo.tsx:42](happy://agents/a1b2c3d4/files/packages/app/Foo.t
 The setup steps are in [README](happy-file://workspaces/k2h4j5l6/README.md).
 ```
 
-The `happy://…/files/…` form is the one agents write in Markdown, alongside entity links. The
-`happy-file://` form, which puts the path straight after the target, is the API's canonical file
-URL. Readers accept both everywhere, and both name the same file. The label is ordinary Markdown
-that the agent writes, and the daemon stores and returns message text exactly as written. An agent
-keeps writing plain `path:line` for a file in the reader's own workspace.
+The `happy://…/files/…` form is the one Markdown carries, alongside entity links, and agents write
+it as a share link, described under "Happy links". The `happy-file://` form, which puts the path
+straight after the target, is the API's canonical file URL. Readers accept both everywhere, and both
+name the same file. The label is ordinary Markdown that the agent writes, and the daemon stores and
+returns message text exactly as written. An agent keeps writing plain `path:line` for a file in the
+reader's own workspace.
 
 **Grammar.** In ABNF, with `ALPHA`, `DIGIT`, and `HEXDIG` as in RFC 5234:
 
