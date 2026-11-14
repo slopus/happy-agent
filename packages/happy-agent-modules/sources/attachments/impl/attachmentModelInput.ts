@@ -20,7 +20,7 @@ export const MAX_INLINE_TEXT_BYTES = 256 * 1024;
 /** The longest side and the largest encoding of an image shown to the model. */
 const MAX_IMAGE_DIMENSION = 2000;
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
-/** Lossy WebP qualities tried at each size, and how far each smaller size shrinks the sides. */
+/** JPEG qualities tried at each size, and how far each smaller size shrinks the sides. */
 const SMALLER_QUALITIES = [85, 70] as const;
 const SMALLER_SCALE = 0.75;
 const SMALLEST_SIDE = 256;
@@ -111,8 +111,9 @@ export async function prepareAttachmentImage(
 
 /**
  * A prepared picture within the byte budget. One already within it is kept as it is; a larger one,
- * such as a detailed PNG that fits the longest side, is encoded as lossy WebP, at lower quality and
- * then at smaller sizes, until it fits. WebP keeps no EXIF orientation, so the pixels are turned
+ * such as a detailed PNG that fits the longest side, is encoded as JPEG, at lower quality and then
+ * at smaller sizes, until it fits. JPEG because every provider that takes images accepts it, where
+ * Grok takes only JPEG and PNG. The encoding keeps no EXIF orientation, so the pixels are turned
  * upright first and every size is measured upright. Undefined only when even the smallest size
  * does not fit.
  */
@@ -129,7 +130,7 @@ async function fitImageBytes(
         for (const quality of SMALLER_QUALITIES) {
             const encoded = await processor.encode(prepared.bytes, {
                 autoOrient: true,
-                format: "webp",
+                format: "jpeg",
                 quality,
                 maxPixels,
                 ...(width === upright.width
@@ -144,7 +145,7 @@ async function fitImageBytes(
                       }),
             });
             if (encoded.data.byteLength <= MAX_IMAGE_BYTES) {
-                return { bytes: encoded.data, mediaType: "image/webp" };
+                return { bytes: encoded.data, mediaType: "image/jpeg" };
             }
         }
         if (Math.max(width, height) <= SMALLEST_SIDE) return undefined;

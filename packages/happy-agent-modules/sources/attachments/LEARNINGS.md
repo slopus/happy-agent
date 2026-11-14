@@ -64,6 +64,11 @@ since a turn is replayed every time and an attachment can be 1 GiB. Every item n
 `read_attachment` is always offered, so the model can read further or save a copy. The stored
 message keeps the `file` block, so clients show the file.
 
+The 5 MB is only which files are tried; what reaches the model is at most 2000 px and 3 MiB, which
+stays under the strictest provider limit (Claude Code and Bedrock refuse more than 5 MB of base64
+per image) and Claude's 2000 px rule for requests with many images. A picture still too large is
+encoded smaller as JPEG, never WebP, because Grok accepts only JPEG and PNG.
+
 ## Agents get a copy where they ask, never the stored file
 
 Kirill wanted agents to have a real path to an attachment without being able to delete it.

@@ -768,14 +768,14 @@ describe("AttachmentsModule", () => {
         const bodies = await attachments.modelBodies(ctx, "agentone", files);
         const [block] = await attachments.send(ctx, "agentone", files);
         const [, image] = attachments.modelInput(block!, bodies);
-        expect(image).toMatchObject({ type: "image", mimeType: "image/webp" });
+        expect(image).toMatchObject({ type: "image", mimeType: "image/jpeg" });
         const encoded = Buffer.from((image as { data: string }).data, "base64");
         expect(encoded.byteLength).toBeLessThanOrEqual(3 * 1024 * 1024);
-        expect(await sharp(encoded).metadata()).toMatchObject({ format: "webp" });
+        expect(await sharp(encoded).metadata()).toMatchObject({ format: "jpeg" });
         // read_attachment shows it the same way.
         const read = await tool("agentone");
         expect(await read.execute(ctx, { attachment_id: id }, {} as never)).toMatchObject({
-            image: { mimeType: "image/webp" },
+            image: { mimeType: "image/jpeg" },
         });
     });
 
@@ -799,7 +799,7 @@ describe("AttachmentsModule", () => {
             const shown = await sharp(
                 Buffer.from((image as { data: string }).data, "base64"),
             ).metadata();
-            expect(shown).toMatchObject({ format: "webp", width: 1000, height: 1500 });
+            expect(shown).toMatchObject({ format: "jpeg", width: 1000, height: 1500 });
             expect(shown.orientation ?? 1).toBe(1);
         }
     });
