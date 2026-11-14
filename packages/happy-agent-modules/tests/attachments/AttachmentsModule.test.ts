@@ -779,6 +779,31 @@ describe("AttachmentsModule", () => {
         });
     });
 
+    it("keeps a large picture's orientation when it is encoded smaller", async () => {
+        const { ctx, attachments, upload } = await world();
+        for (const orientation of [6, 8]) {
+            // Stored 1500 wide and 1000 tall, shown turned a quarter: 1000 wide and 1500 tall.
+            const photo = await sharp(randomBytes(1500 * 1000 * 3), {
+                raw: { width: 1500, height: 1000, channels: 3 },
+            })
+                .jpeg({ quality: 100, chromaSubsampling: "4:4:4" })
+                .withMetadata({ orientation })
+                .toBuffer();
+            expect(photo.byteLength).toBeGreaterThan(3 * 1024 * 1024);
+            expect(photo.byteLength).toBeLessThan(5 * 1024 * 1024);
+            const id = await upload("agentone", "photo.jpg", photo, "image/jpeg");
+            const files = [{ type: "file" as const, attachment: id, name: "photo.jpg" }];
+            const bodies = await attachments.modelBodies(ctx, "agentone", files);
+            const [block] = await attachments.send(ctx, "agentone", files);
+            const [, image] = attachments.modelInput(block!, bodies);
+            const shown = await sharp(
+                Buffer.from((image as { data: string }).data, "base64"),
+            ).metadata();
+            expect(shown).toMatchObject({ format: "webp", width: 1000, height: 1500 });
+            expect(shown.orientation ?? 1).toBe(1);
+        }
+    });
+
     it("resolves a message's files, and refuses ones the conversation does not hold", async () => {
         const { ctx, attachments, upload } = await world();
         const id = await upload("agentone", "a.txt", Buffer.from("hello"));

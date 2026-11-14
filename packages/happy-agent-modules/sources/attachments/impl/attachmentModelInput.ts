@@ -112,23 +112,27 @@ export async function prepareAttachmentImage(
 /**
  * A prepared picture within the byte budget. One already within it is kept as it is; a larger one,
  * such as a detailed PNG that fits the longest side, is encoded as lossy WebP, at lower quality and
- * then at smaller sizes, until it fits. Undefined only when even the smallest size does not.
+ * then at smaller sizes, until it fits. WebP keeps no EXIF orientation, so the pixels are turned
+ * upright first and every size is measured upright. Undefined only when even the smallest size
+ * does not fit.
  */
 async function fitImageBytes(
     prepared: PreparedPromptImage,
 ): Promise<{ readonly bytes: Buffer; readonly mediaType: string } | undefined> {
     if (prepared.bytes.byteLength <= MAX_IMAGE_BYTES) return prepared;
     const processor = await getImageProcessor();
-    let width = prepared.width;
-    let height = prepared.height;
+    const maxPixels = prepared.width * prepared.height;
+    const upright = await processor.metadata(prepared.bytes, { autoOrient: true, maxPixels });
+    let width = upright.width;
+    let height = upright.height;
     for (;;) {
         for (const quality of SMALLER_QUALITIES) {
             const encoded = await processor.encode(prepared.bytes, {
-                autoOrient: false,
+                autoOrient: true,
                 format: "webp",
                 quality,
-                maxPixels: prepared.width * prepared.height,
-                ...(width === prepared.width
+                maxPixels,
+                ...(width === upright.width
                     ? {}
                     : {
                           resize: {
