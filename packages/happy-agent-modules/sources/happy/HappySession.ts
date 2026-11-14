@@ -115,16 +115,18 @@ export class HappyMessageRefused extends Error {
     }
 }
 
-/** One image a person attached on the phone. */
-export interface HappyInboundImage {
-    readonly data: string;
+/** One file a person attached on the phone, decrypted. */
+export interface HappyInboundAttachment {
+    readonly bytes: Uint8Array;
     readonly mimeType: string;
+    /** The name the phone gave it, which is only a hint and may be anything. */
+    readonly name: string;
 }
 
 /** What arrived from the phone, ready for the conversation. */
 export interface HappyInboundMessage {
+    readonly attachments: readonly HappyInboundAttachment[];
     readonly content?: HappyInputContent;
-    readonly images: readonly HappyInboundImage[];
     /** Namespaced identity of the remote message, so its echo can be recognized. */
     readonly remoteMessageId: string;
     readonly selection: {

@@ -72,6 +72,11 @@ const testRunners = {
         workingDirectory,
     }),
 };
+/** The installation this computer is published as. */
+const testNode = {
+    get: async () => ({ name: "Test node", avatar: null }),
+    onUpdated: () => () => undefined,
+};
 const referenceSurfaces = { get: async () => undefined };
 const referenceTasks = {
     forAgent: async () => undefined,
@@ -201,6 +206,9 @@ async function fixture() {
     ]);
     const createdWorkspaces: unknown[] = [];
     const createdBots: unknown[] = [];
+    /** Files written into agent folders, by absolute path; a path ending in `refusedWrites` fails. */
+    const writtenFiles = new Map<string, Buffer>();
+    const refusedWrites = new Set<string>();
     const wornAvatars: {
         botId: string;
         bytes: Uint8Array;
@@ -429,6 +437,20 @@ async function fixture() {
                 content: Buffer.from(root.root).toString("base64"),
                 hash: "a".repeat(64),
             }),
+            absolutePath: (root: { root: string }, path: string) => `${root.root}/${path}`,
+            write: async (
+                root: { root: string },
+                input: { content: string; expectedHash: string | null; path: string },
+            ) => {
+                const path = `${root.root}/${input.path}`;
+                if (
+                    [...refusedWrites].some((suffix) => path.endsWith(suffix)) ||
+                    input.expectedHash !== null
+                )
+                    throw new ProjectFileError(409, "conflict", "The file already exists.");
+                writtenFiles.set(path, Buffer.from(input.content, "base64"));
+                return { hash: "b".repeat(64) };
+            },
         } as never,
         referenceArtifacts as never,
         {
@@ -442,6 +464,7 @@ async function fixture() {
         } as never,
         referenceSurfaces as never,
         testRunners as never,
+        testNode as never,
     );
     modules.push(module);
     module.beforeStart(database.context, agents as never);
@@ -478,6 +501,8 @@ async function fixture() {
         wornAvatars,
         workspaceAgents,
         workspaces,
+        refusedWrites,
+        writtenFiles,
     };
 }
 
@@ -507,7 +532,7 @@ describe("Happy mobile messages", () => {
             const refused = "This task is not available to this connection.";
             await expect(
                 test.module.submit(ctx, "task-agent", {
-                    images: [],
+                    attachments: [],
                     remoteMessageId: "late-message",
                     selection: {},
                     text: "Late message",
@@ -603,13 +628,120 @@ describe("Happy mobile messages", () => {
         const content = [{ type: "tool_call_request" as const, name: "list_skills" }];
         await test.module.submit(databases.at(-1)!.context, "agent-rich", {
             content,
-            images: [],
+            attachments: [],
             remoteMessageId: "happy:rich-1",
             selection: {},
             text: "Requested tool: list_skills",
         });
         expect(test.pendingMessages[0]).toMatchObject({ blocks: content });
         expect(test.steered[0]).toMatchObject({ message: { role: "user", content } });
+    });
+
+    it("saves attachments in the agent's folder and names them after the words instead of loading them", async () => {
+        const test = await fixture();
+        test.configs.set("agent-files", { metadata: { happy: SELECTION } });
+        test.workspaceAgents.set("agent-files", "workspace-1");
+        const picture = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+        const report = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+        await test.module.submit(databases.at(-1)!.context, "agent-files", {
+            attachments: [
+                { bytes: picture, mimeType: "image/png", name: "../Screen Shot?.HEIC" },
+                { bytes: report, mimeType: "application/pdf", name: "report.pdf" },
+            ],
+            remoteMessageId: "happy:files-1",
+            selection: {},
+            text: "Look at these",
+        });
+        const id = test.pendingMessages[0]!.id as string;
+        const folder = `/projects/rig/rpc/.happy-uploads/${id}`;
+        expect([...test.writtenFiles]).toEqual([
+            // The uploads folder ignores itself, so attachments never show as Git changes.
+            ["/projects/rig/rpc/.happy-uploads/.gitignore", Buffer.from("*\n")],
+            [`${folder}/0-Screen Shot.png`, Buffer.from(picture)],
+            [`${folder}/1-report.pdf`, Buffer.from(report)],
+        ]);
+        const content = [
+            { text: "Look at these", type: "text" },
+            {
+                text: [
+                    "The user attached 2 files. They were saved on this machine and not loaded into your context; open them with your file-reading or image-viewing tool only if you need to see them:",
+                    `- ${folder}/0-Screen Shot.png`,
+                    `- ${folder}/1-report.pdf`,
+                ].join("\n"),
+                type: "text",
+            },
+        ];
+        expect(test.steered[0]).toMatchObject({ message: { role: "user", content } });
+        expect(test.pendingMessages[0]).toMatchObject({ blocks: content });
+    });
+
+    it("names a lone picture without an empty line for words the person did not write", async () => {
+        const test = await fixture();
+        test.configs.set("agent-picture", { metadata: { happy: SELECTION } });
+        test.projectAgents.set("agent-picture", "project-1");
+        await test.module.submit(databases.at(-1)!.context, "agent-picture", {
+            attachments: [{ bytes: new Uint8Array([1]), mimeType: "image/jpeg", name: "a.jpeg" }],
+            remoteMessageId: "happy:picture-1",
+            selection: {},
+            text: "",
+        });
+        const id = test.pendingMessages[0]!.id as string;
+        expect(test.steered[0]?.message).toEqual({
+            role: "user",
+            content: [
+                {
+                    text: `The user attached 1 image. It was saved on this machine and not loaded into your context; open it with your file-reading or image-viewing tool only if you need to see it:\n- /projects/rig/.happy-uploads/${id}/0-a.jpg`,
+                    type: "text",
+                },
+            ],
+        });
+    });
+
+    it("shows a picture inline when it cannot be saved where the agent works", async () => {
+        const test = await fixture();
+        const ctx = databases.at(-1)!.context;
+        const picture = new Uint8Array([7, 8, 9]);
+        const attachments = [
+            { bytes: picture, mimeType: "image/png", name: "shot.png" },
+            { bytes: new Uint8Array([1]), mimeType: "application/pdf", name: "report.pdf" },
+        ];
+        const inline = { data: Buffer.from(picture).toString("base64"), mimeType: "image/png" };
+        // No folder at all: the picture is still seen, and a file nobody can open is left out.
+        test.configs.set("agent-nowhere", { metadata: { happy: SELECTION } });
+        await test.module.submit(ctx, "agent-nowhere", {
+            attachments,
+            remoteMessageId: "happy:nowhere-1",
+            selection: {},
+            text: "",
+        });
+        expect(test.steered[0]?.message).toEqual({
+            role: "user",
+            content: [{ ...inline, type: "image" }],
+        });
+        expect(test.writtenFiles.size).toBe(0);
+
+        // A folder that refuses one write: what was saved is named, the picture is shown.
+        test.configs.set("agent-refused", { metadata: { happy: SELECTION } });
+        test.projectAgents.set("agent-refused", "project-1");
+        test.refusedWrites.add("/0-shot.png");
+        await test.module.submit(ctx, "agent-refused", {
+            attachments,
+            remoteMessageId: "happy:refused-1",
+            selection: {},
+            text: "Here",
+        });
+        const id = test.pendingMessages[1]!.id as string;
+        expect(test.steered[1]?.message).toEqual({
+            role: "user",
+            content: [
+                { text: "Here", type: "text" },
+                {
+                    text: `The user attached 1 file. It was saved on this machine and not loaded into your context; open it with your file-reading or image-viewing tool only if you need to see it:\n- /projects/rig/.happy-uploads/${id}/1-report.pdf`,
+                    type: "text",
+                },
+                { ...inline, type: "image" },
+            ],
+        });
     });
 
     it("publishes a pending steering message before delivering it to Agent Base", async () => {
@@ -625,7 +757,7 @@ describe("Happy mobile messages", () => {
         });
 
         await test.module.submit(databases.at(-1)!.context, "agent-active", {
-            images: [],
+            attachments: [],
             remoteMessageId: "happy:mobile-message-1",
             selection: {},
             text: "Steer this active run.",
@@ -922,7 +1054,7 @@ describe("Happy session activity metadata", () => {
         test.configs.set("agent-selection", storedAgent({}));
 
         await test.module.submit(context, "agent-selection", {
-            images: [],
+            attachments: [],
             remoteMessageId: "happy:message-1",
             selection: { effort: "high", modelId: "anthropic/opus-5", providerId: "claude" },
             text: "Use Opus",
@@ -963,7 +1095,7 @@ describe("Happy session activity metadata", () => {
         );
 
         await test.module.submit(databases.at(-1)!.context, "agent-draft-selection", {
-            images: [],
+            attachments: [],
             remoteMessageId: "happy:message-2",
             selection: {},
             text: "Use the draft selection",
@@ -1187,7 +1319,7 @@ describe("archiving a Happy session", () => {
         await expect(
             test.module.submit(databases.at(-1)!.context, "agent-1", {
                 text: "Do not resurrect this bot",
-                images: [],
+                attachments: [],
                 remoteMessageId: "late-message",
                 selection: {},
             }),
@@ -1392,6 +1524,7 @@ describe("archiving a Happy session", () => {
             referenceTasks as never,
             referenceSurfaces as never,
             testRunners as never,
+            testNode as never,
         );
         modules.push(module);
         const hooks = module.beforeStart(database.context, agents as never);
@@ -1638,6 +1771,7 @@ describe("archiving a Happy session", () => {
             referenceTasks as never,
             referenceSurfaces as never,
             testRunners as never,
+            testNode as never,
         );
         modules.push(module);
 

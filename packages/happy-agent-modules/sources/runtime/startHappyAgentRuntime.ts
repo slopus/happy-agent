@@ -723,6 +723,7 @@ export async function startHappyAgentRuntime(
             tasks,
             surfaces,
             runners,
+            node,
         );
         const goal = new GoalModule(history);
         const exportedBots = new ExportedBotsModule(

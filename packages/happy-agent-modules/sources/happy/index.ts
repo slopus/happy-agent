@@ -56,7 +56,7 @@ export type { HappyComposerDraft } from "./HappyComposerDraft.js";
 export { HAPPY_PERMISSION_MODES, type HappyPermissionModeKind } from "./happyPermissionModes.js";
 export {
     HappyMessageRefused,
-    type HappyInboundImage,
+    type HappyInboundAttachment,
     type HappyInboundMessage,
     type HappyGitSummary,
     type HappyModel,
