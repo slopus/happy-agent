@@ -1,8 +1,8 @@
 /**
  * Finds Happy links in Markdown source: inline links and images whose destination uses the `happy`
- * or `happy-file` scheme, plus the legacy `<happy-KIND id="…"/>` reference tags stored history still
- * holds. Links in code spans, fenced code, or behind a backslash stay literal, as Markdown reads
- * them.
+ * or `happy-file` scheme or is a share link, read as the instance link it carries, plus the legacy
+ * `<happy-KIND id="…"/>` reference tags stored history still holds. Links in code spans, fenced
+ * code, or behind a backslash stay literal, as Markdown reads them.
  */
 
 import {
@@ -19,6 +19,7 @@ import {
     isLegacyHappyReferenceTagPrefix,
     matchLegacyHappyReferenceTag,
 } from "./legacyHappyReferenceTags.js";
+import { HAPPY_SHARE_URL_PREFIX, parseHappyShareUrl } from "./happyShareLinks.js";
 import { skipCodeSpan, textBlocks } from "./markdownBlocks.js";
 import { matchInlineLink, unfinishedInlineLinkDestination } from "./markdownInlineLinks.js";
 
@@ -33,8 +34,8 @@ export interface HappyLinkMatch {
     /** The link exactly as written. */
     source: string;
     /**
-     * `link` for a Markdown link to a `happy://` or `happy-file://` URL; `legacyTag` for a legacy
-     * `<happy-KIND id="…"/>` reference tag.
+     * `link` for a Markdown link to a `happy://` or `happy-file://` URL or a share link;
+     * `legacyTag` for a legacy `<happy-KIND id="…"/>` reference tag.
      */
     syntax: "link" | "legacyTag";
     /**
@@ -201,11 +202,13 @@ function scan(
                 const image = character === "!";
                 const open = image ? index + 1 : index;
                 const found = matchInlineLink(markdown, open, block.end);
-                if (found !== undefined && isHappyUrl(found.url)) {
+                // A share link is a Happy link only when it parses; any other is a web address.
+                const shared = found === undefined ? undefined : parseHappyShareUrl(found.url);
+                if (found !== undefined && (shared !== undefined || isHappyUrl(found.url))) {
                     matches.push({
                         start: index,
                         match: {
-                            link: parseHappyUrl(found.url),
+                            link: shared?.link ?? parseHappyUrl(found.url),
                             label: found.label,
                             image,
                             source: markdown.slice(index, found.end),
@@ -240,9 +243,12 @@ function isUnfinishedHappyLink(markdown: string, start: number, open: number): b
     return isSchemePrefix(destination.toLowerCase());
 }
 
-/** Whether a lowercased destination is, or could still grow into, a `happy:` or `happy-file:` URL. */
+/**
+ * Whether a lowercased destination is, or could still grow into, a `happy:` or `happy-file:` URL or
+ * a share link.
+ */
 function isSchemePrefix(destination: string): boolean {
-    return ["happy:", "happy-file:"].some((scheme) =>
+    return ["happy:", "happy-file:", `${HAPPY_SHARE_URL_PREFIX}1/`].some((scheme) =>
         destination.length <= scheme.length
             ? scheme.startsWith(destination)
             : destination.startsWith(scheme),

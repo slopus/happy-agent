@@ -45,6 +45,7 @@ export * from "./requestOptions.js";
 export * from "./happyLinks.js";
 export * from "./happyServerLinks.js";
 export * from "./happyLinksInMarkdown.js";
+export * from "./happyShareLinks.js";
 export * from "./mediaLayoutBlocks.js";
 export * from "./mediaLayoutHtml.js";
 export {

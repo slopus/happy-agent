@@ -191,8 +191,9 @@ describe("streaming", () => {
         ["a bare bracket", "See ["],
         ["an open label", "See [Q3"],
         ["a complete link", `See [Q3](${ARTIFACT_URL})`],
-        ["another scheme", "See [docs](https"],
-        ["another scheme's prefix", "See [docs](ht"],
+        // A web address stays visible once it can no longer become a share link.
+        ["another scheme", "See [docs](https://example"],
+        ["another scheme's prefix", "See [docs](ft"],
         ["a different tag", "<div"],
         ["a newline after a tag prefix", "See <happy-arti\n"],
         ["an escaped bracket", "See \\[Q3](happy://arti"],

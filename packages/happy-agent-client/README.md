@@ -871,6 +871,22 @@ setting. Show it inert when the client has no such page. Show a link whose `disp
 as a button that opens the same thing. Show malformed and unresolvable links as inert text, never
 as buttons.
 
+**Share links.** Agents and the daemon write every Happy link as a share link, an instance link
+carried in the fragment of a `https://link.happy.page/#1/<instanceId>/<rest>` URL, always as a
+Markdown link with an empty label: `[](https://link.happy.page/#1/<instanceId>/agents/<id>?as=task)`.
+Clients show the item's current name and ignore any label.
+
+- `parseHappyShareUrl(url)` returns `{ link, as? }`, where `link` is the instance link it carries
+  (`instanceId` always set) and `as`, from `HAPPY_SHARE_LINK_ROLES`, says what an agent is for
+  display only. Anything that is not exactly a share link returns `undefined` and is an ordinary
+  web address.
+- `formatHappyShareUrl(link, { as? })` writes the canonical share link for an instance link to an
+  entity or a file, and `formatHappyShareMarkdownLink(link, { as? })` the empty-label Markdown
+  link. Both throw a `TypeError` for a link without `instanceId`, a settings link, or `as` on
+  anything but an agent.
+- `parseHappyLinks` and everything built on it read a share link in Markdown as the instance link
+  it carries, and while streaming hide a destination that could still become one.
+
 **Legacy reference tags.** Older history holds `<happy-KIND id="…"/>` reference tags. Nothing
 writes them any more, but the Markdown functions still read them onto the same model, reporting
 `syntax: "legacyTag"` with an empty label. `rewriteLegacyHappyReferenceTags(markdown)` turns them
