@@ -18,8 +18,13 @@ const eagerDirectories = [
     "compute/tools/glm",
     "userInput",
 ];
-// Voice receives its whole tool arrays without tool search.
-const eagerFiles = ["live/impl/voiceSidebarTools.ts", "live/impl/liveDesktopTools.ts"];
+// Voice receives its whole tool arrays without tool search, and every model is offered
+// read_attachment so it can open the files people attach.
+const eagerFiles = [
+    "attachments/tools/read_attachment.ts",
+    "live/impl/voiceSidebarTools.ts",
+    "live/impl/liveDesktopTools.ts",
+];
 
 interface ToolDefinition {
     readonly file: string;

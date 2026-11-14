@@ -9,6 +9,7 @@
   "Glob",
   "Grep",
   "Read",
+  "read_attachment",
   "read_user_input",
   "request_user_input",
   "DeferredToolPlaceholder",
