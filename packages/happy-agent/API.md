@@ -8942,8 +8942,11 @@ links agents write in replies and messages. The link is always a Markdown link w
 label, `[](https://link.happy.page/#1/…)`, and never stands bare. Clients show the item's current
 name in its place and ignore any label, so a written name would only cost tokens and go stale;
 text meant for the model names the item in plain words beside the link, such as
-`Task "Fix login" created: [](https://link.happy.page/#1/…)`. An agent link's `as` names what the
-agent is when the writer knows. Readers keep accepting `happy://` links, instance links, and
+`Task "Fix login" created: [](https://link.happy.page/#1/…)`. Artifact content is the exception:
+inside a document or HTML page an agent writes for an artifact, a share link may carry a label,
+`[label](https://link.happy.page/#1/…)`, and clients show that label where the artifact is
+displayed. Chat messages, messages between agents, and tool results keep the empty label. An
+agent link's `as` names what the agent is when the writer knows. Readers keep accepting `happy://` links, instance links, and
 `happy-file://` links everywhere, so stored history and older agents keep working. When the
 daemon reads a share link, it treats one naming its own `instanceId` exactly as the `happy://`
 link it carries, and one naming another installation as that installation's instance link.
