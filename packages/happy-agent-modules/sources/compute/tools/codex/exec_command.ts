@@ -4,6 +4,7 @@ import { defineAgentTool } from "@slopus/happy-agent-base";
 import { secretIdSchema } from "../../../secrets/index.js";
 import type { Compute } from "../../Compute.js";
 import { startComputeCommand } from "../../impl/startComputeCommand.js";
+import { codexCommandShell } from "./impl/codexCommandShell.js";
 import {
     createUnifiedExecOutput,
     formatUnifiedExecOutput,
@@ -122,10 +123,11 @@ export function codexExecCommandTool(compute: Compute) {
             ctx,
             { cmd, max_output_tokens, secrets, shell, tty, workdir, yield_time_ms },
         ) => {
+            const commandShell = codexCommandShell(compute, shell);
             const { snapshot, wallTimeSeconds } = await startComputeCommand(compute, ctx, {
                 command: cmd,
                 ...(workdir === undefined ? {} : { workdir }),
-                ...(shell === undefined ? {} : { shell }),
+                ...(commandShell === undefined ? {} : { shell: commandShell }),
                 ...(secrets === undefined ? {} : { secrets }),
                 ...(tty === undefined ? {} : { tty }),
                 maxOutputBytes: CODEX_UNIFIED_EXEC_CAPTURE_MAX_BYTES,
