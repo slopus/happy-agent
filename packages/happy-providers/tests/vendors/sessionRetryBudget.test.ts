@@ -48,6 +48,79 @@ describe("session retry budget", () => {
         expect(events).toContainEqual(expect.objectContaining({ type: "retrying", attempt: 1 }));
     });
 
+    it("falls back from WebSocket 405 to SSE even when inferenceMaxRetries is 0", async () => {
+        let sseRequests = 0;
+        let wsUpgrades = 0;
+        const server = createServer(async (request, response) => {
+            for await (const _chunk of request) {
+                // Drain request body.
+            }
+            sseRequests += 1;
+            response.writeHead(200, { "content-type": "text/event-stream" });
+            response.end(
+                [
+                    'event: response.created\ndata: {"type":"response.created","sequence_number":0,"response":{"id":"resp_1","object":"response","created_at":1,"model":"gpt-5.6-luna","status":"in_progress","output":[]}}\n\n',
+                    'event: response.output_item.added\ndata: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"msg_1","type":"message","status":"in_progress","role":"assistant","content":[]}}\n\n',
+                    'event: response.content_part.added\ndata: {"type":"response.content_part.added","sequence_number":2,"item_id":"msg_1","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}\n\n',
+                    'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg_1","output_index":0,"content_index":0,"delta":"OK"}\n\n',
+                    'event: response.output_text.done\ndata: {"type":"response.output_text.done","sequence_number":4,"item_id":"msg_1","output_index":0,"content_index":0,"text":"OK"}\n\n',
+                    'event: response.content_part.done\ndata: {"type":"response.content_part.done","sequence_number":5,"item_id":"msg_1","output_index":0,"content_index":0,"part":{"type":"output_text","text":"OK","annotations":[]}}\n\n',
+                    'event: response.output_item.done\ndata: {"type":"response.output_item.done","sequence_number":6,"output_index":0,"item":{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"OK","annotations":[]}]}}\n\n',
+                    'event: response.completed\ndata: {"type":"response.completed","sequence_number":7,"response":{"id":"resp_1","object":"response","created_at":1,"model":"gpt-5.6-luna","status":"completed","output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"OK","annotations":[]}]}],"usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}\n\n',
+                ].join(""),
+            );
+        });
+        server.on("upgrade", (_request, socket) => {
+            wsUpgrades += 1;
+            socket.write("HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\n\r\n");
+            socket.destroy();
+        });
+        servers.push(server);
+        await new Promise<void>((resolve, reject) => {
+            server.listen(0, "127.0.0.1", resolve);
+            server.once("error", reject);
+        });
+        const address = server.address();
+        if (typeof address !== "object" || address === null) expect.fail("Missing server port.");
+
+        const provider = new CodexProvider({
+            credential: { name: "codex-api-key", credential: { apiKey: "test" } } as never,
+            endpoint: `http://127.0.0.1:${address.port}/v1`,
+            inferenceMaxRetries: 2,
+            model: "gpt-5.6-luna",
+            transport: "auto",
+            userAgent: "rig-test",
+        });
+        const session = await provider.session("verify-fallback", {
+            inferenceMaxRetries: 0,
+            instructions: "Reply with OK.",
+            tools: [],
+        });
+        const events: SessionEvent[] = [];
+        try {
+            for await (const event of session.run(testContext, {
+                context: {
+                    instructions: "Reply with OK.",
+                    messages: [
+                        {
+                            role: "user",
+                            content: [{ type: "text" as const, text: "Reply with OK." }],
+                        },
+                    ],
+                },
+                effort: "low",
+            })) {
+                events.push(event);
+            }
+        } finally {
+            session.destroy();
+        }
+
+        expect(wsUpgrades).toBe(1);
+        expect(sseRequests).toBe(1);
+        expect(events.at(-1)).toMatchObject({ type: "done", state: "normal" });
+    });
+
     async function run(sessionOptions: {
         inferenceMaxRetries?: number;
     }): Promise<{ events: SessionEvent[]; requests: number }> {
