@@ -1159,6 +1159,11 @@ function templated(
         /\bCollaborators you created: ([a-z0-9]{24}(?:, [a-z0-9]{24})+)\./g,
         "Collaborators you created: {{collaboratorAgentIdsSortedById}}.",
     );
+    // Each gym is its own installation, so every share link names a different instance.
+    result = result.replace(
+        /https:\/\/link\.happy\.page\/#1\/[a-z][a-z0-9]{23}\//g,
+        "https://link.happy.page/#1/{{instanceId}}/",
+    );
     for (const [path, name] of paths) result = result.split(path).join(`{{${name}}}`);
     for (const [id, name] of Object.entries(ids)) result = result.split(id).join(`{{${name}}}`);
     result = result

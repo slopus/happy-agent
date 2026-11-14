@@ -82,7 +82,7 @@ import { surfaceImageAssetSchema, type SurfaceImageAsset } from "./SurfaceImageA
 import { surfaceReferenceSchema, type SurfaceReference } from "./SurfaceReference.js";
 import { surfaceChatSchema, type SurfaceChat } from "./SurfaceChat.js";
 import { formatSurfaceChatPrompt } from "./impl/formatSurfaceChatPrompt.js";
-import { SURFACE_REFERENCE_INSTRUCTIONS } from "./impl/surfaceReferenceInstructions.js";
+import { surfaceReferenceInstructions } from "./impl/surfaceReferenceInstructions.js";
 import { surfaceTools } from "./tools/surfaceTools.js";
 import {
     SurfaceDocumentLive,
@@ -175,8 +175,9 @@ export class SurfacesModule implements AgentModule {
     #kv!: AgentKV;
     #documents!: SurfaceDocuments;
     #calendars!: SurfaceCalendars;
-    readonly #promptDocuments = new SurfacePromptDocuments((ctx, surfaceId) =>
-        this.get(ctx, surfaceId),
+    readonly #promptDocuments = new SurfacePromptDocuments(
+        (ctx, surfaceId) => this.get(ctx, surfaceId),
+        () => this.config.loadedInstanceId,
     );
     #systemMonitor!: SystemMonitorSampler;
     #agents: AgentSystemRef | undefined;
@@ -254,7 +255,7 @@ export class SurfacesModule implements AgentModule {
                     chat === undefined
                         ? undefined
                         : formatSurfaceChatPrompt(await this.#surface(hookCtx, chat.surfaceId)),
-                    SURFACE_REFERENCE_INSTRUCTIONS,
+                    surfaceReferenceInstructions(this.config.loadedInstanceId),
                     important,
                 ]
                     .filter((part) => part !== undefined && part.length > 0)

@@ -1,6 +1,5 @@
 import { defineAgentTool } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
-import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 
 import { workspaceBaseRefSchema, workspaceNameSchema, workspaceSchema } from "../Workspace.js";
 import type { WorkspacesModule } from "../WorkspacesModule.js";
@@ -36,7 +35,7 @@ export function createChildWorkspaceTool(workspaces: WorkspacesModule, agentId: 
             {
                 type: "text",
                 text: workspaces.formatWorkspaceOperationForModel(
-                    `Child workspace created. Mention it in chat as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "workspace", id: workspace.id } }, workspace.name)}.`,
+                    `Child workspace created. Mention it in chat as ${workspaces.formatWorkspaceLink(workspace.id)}.`,
                     workspace,
                 ),
             },

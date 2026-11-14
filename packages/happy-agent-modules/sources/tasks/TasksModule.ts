@@ -99,6 +99,7 @@ import { createTaskTool } from "./tools/create_task.js";
 import { listTasksTool } from "./tools/list_tasks.js";
 import { sendTaskMessageTool } from "./tools/send_task_message.js";
 import { requireDurableCommit } from "../impl/durableCommit.js";
+import { happyUrlPattern, writeHappyMarkdownLink } from "../utils/writeHappyLinks.js";
 
 /** The latest human sender of each agent's conversation, who owns the tasks that agent creates. */
 const OWNER_KEY = "owner";
@@ -117,8 +118,9 @@ const ownerSchema = Type.Union([cuid2Schema, Type.Null()]);
 /** The catalog manages its tasks' folders; the agent sandbox does not apply to that work. */
 const PRODUCT = computePermissions("full_access");
 /** How an agent that manages tasks mentions one, so people see its live name as a link. */
-const TASK_REFERENCE_INSTRUCTIONS =
-    "When you mention a task in a reply, link it as [its name](happy://agents/<agentId>) with the task's agent ID, not its task ID; people see its live name as the link text. The task tools give you the exact link.";
+function taskReferenceInstructions(instanceId: string | undefined): string {
+    return `When you mention a task in a reply, link it as [](${happyUrlPattern(instanceId, "agents/<agentId>", { as: "task" })}) with the task's agent ID, not its task ID, and nothing between the brackets; people see its live name as the link text. The task tools give you the exact link.`;
+}
 
 /**
  * Persistent task conversations, each with a dedicated folder and an owner.
@@ -278,7 +280,7 @@ export class TasksModule implements AgentModule {
             }
             // Only the agents offered the task tools hear how to mention a task.
             if (!(await this.#offersTools(ctx, scope.agent.id))) return "";
-            return TASK_REFERENCE_INSTRUCTIONS;
+            return taskReferenceInstructions(this.#config.loadedInstanceId);
         },
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             // A task delegates through subtasks, not through more tasks, and a subagent or
@@ -668,6 +670,15 @@ export class TasksModule implements AgentModule {
             throw new Error("The stored task owner identity is invalid.");
         }
         return owner;
+    }
+
+    /** How an agent mentions a task in chat: an empty-label share link to its agent. */
+    formatTaskLink(agentId: string): string {
+        return writeHappyMarkdownLink(
+            this.#config.loadedInstanceId,
+            { type: "reference", reference: { kind: "agent", id: agentId } },
+            { as: "task" },
+        );
     }
 
     /**

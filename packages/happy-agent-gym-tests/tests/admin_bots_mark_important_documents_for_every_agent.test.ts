@@ -137,7 +137,7 @@ describe("admin bots mark important documents for every agent", () => {
                 "    <name>Release process</name>",
                 "    <description>How to cut a release. Read it before releasing anything.</description>",
                 `    <surface_id>${document.id}</surface_id>`,
-                `    <link>happy://surfaces/${document.id}</link>`,
+                `    <link>https://link.happy.page/#1/${(await gym.client.getHealth()).instanceId!}/surfaces/${document.id}</link>`,
                 "  </document>",
             ].join("\n"),
         );

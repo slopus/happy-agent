@@ -9,9 +9,10 @@ The people on a team, as a task's agent sees them, and looping one of them into 
   `TasksModule.loopIn`. They join it even when `tasks.autoJoin` is off, an explicit leave is
   cleared, and their membership is marked `unread` with `reason: "looped_in"` and the agent's
   one-sentence reason. Someone already in the task keeps their place and is marked again. The tool
-  returns the `[name](happy://users/<userId>)` mention link.
-- `mention` loops in every member a person's message to a task's agent names with a
-  `happy://users/<userId>` reference link, in the send's own transaction. The mark's reason is
+  returns the `[](https://link.happy.page/#1/<instanceId>/users/<userId>)` mention link.
+- `mention` loops in every member a person's message to a task's agent links as a user of
+  this installation, in a share link or the older `happy://users/<userId>`, in the send's own
+  transaction. The mark's reason is
   `mentioned` with the sender's `userId`. Links in code, image links, the sender, guests, and
   unknown users are ignored. The API calls it from the send route, so a mention needs no tool.
 - The mark is the member's own: it travels on their membership in task reads, the desktop

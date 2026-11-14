@@ -23,7 +23,7 @@
     "callId": "surface_create_agent",
     "content": [
       {
-        "text": "Created collaborator {{collaborator_agentId}} and sent it the task. Anything it has to say will arrive as a message; nothing is waiting on it.",
+        "text": "Created collaborator {{collaborator_agentId}} and sent it the task. Anything it has to say will arrive as a message; nothing is waiting on it. Mention it in chat as [](https://link.happy.page/#1/{{instanceId}}/agents/{{collaborator_agentId}}?as=subagent).",
         "type": "text"
       }
     ],

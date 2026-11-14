@@ -66,13 +66,15 @@ existing clients keep working.
 
 Kirill wanted artifacts mentioned in chat to open as live links, after ChatGPT's entity
 components. Steve then asked for ordinary Markdown links instead of custom `<happy-artifact/>`
-tags, so any Markdown renderer parses them. An agent writes `[title](happy://artifacts/<id>)`;
-the title it writes is only a fallback, because it goes stale when the artifact is renamed, so
-clients look up the live title and show that. Surfaces that cannot do that get the title as plain
-text. The tools return the exact link, and the module adds a short instruction, because the
+tags, so any Markdown renderer parses them. Kirill then decided agents write every Happy link as a
+share link that also opens outside Happy, with an empty label, so an agent writes
+`[](https://link.happy.page/#1/<instanceId>/artifacts/<id>)`. A written title went stale when the
+artifact was renamed, and clients always show the live title and ignore any label, so the label
+only cost tokens; tool results name the artifact in plain words beside the link instead. Surfaces
+that cannot look titles up get the title as plain text. The tools return the exact link, and the module adds a short instruction, because the
 artifact tools are deferred and an agent may mention an artifact without loading them. Links are
-written with the client's `formatHappyMarkdownLink`, through `formatArtifactLink`, so this module
-never repeats the grammar.
+written through `formatArtifactLink` with the shared share-link writer, so this module never
+repeats the grammar.
 
 ## Writing calls show a card in the chat
 

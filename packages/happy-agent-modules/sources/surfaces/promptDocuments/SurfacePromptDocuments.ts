@@ -1,12 +1,9 @@
-import {
-    formatHappyReferenceUrl,
-    type Surface,
-    type SurfacePromptDocument,
-} from "@slopus/happy-agent-client";
+import { type Surface, type SurfacePromptDocument } from "@slopus/happy-agent-client";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import { SurfaceError } from "../SurfaceError.js";
+import { writeHappyUrl } from "../../utils/writeHappyLinks.js";
 import {
     MAX_PROMPT_DOCUMENTS,
     markPromptDocumentInputSchema,
@@ -29,7 +26,14 @@ type ReadSurface = (ctx: Context, surfaceId: string) => Promise<Surface | undefi
  * may change the list before calling here.
  */
 export class SurfacePromptDocuments {
-    constructor(readonly surface: ReadSurface) {}
+    /**
+     * @param instanceId This installation's identity, which names it in each document's share
+     * link; undefined writes the plain `happy://` link.
+     */
+    constructor(
+        readonly surface: ReadSurface,
+        readonly instanceId: () => string | undefined,
+    ) {}
 
     /** How a document Surface reports its place in the list: null when it is not marked. */
     async entry(ctx: Context, surfaceId: string): Promise<SurfacePromptDocument | null> {
@@ -53,7 +57,10 @@ export class SurfacePromptDocuments {
             documents.push({
                 ...record,
                 displayName: record.name ?? (readable ? surface.name : "Unavailable document"),
-                link: formatHappyReferenceUrl({ kind: "surface", id: record.surfaceId }),
+                link: writeHappyUrl(this.instanceId(), {
+                    type: "reference",
+                    reference: { kind: "surface", id: record.surfaceId },
+                }),
                 readable,
             });
         }

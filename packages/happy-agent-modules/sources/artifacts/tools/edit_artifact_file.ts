@@ -8,7 +8,7 @@ import {
     requireWritableArtifact,
     shouldReviewArtifactWrite,
 } from "../impl/artifactWriteAccess.js";
-import { formatArtifactLink, formatArtifactVersion } from "../impl/formatArtifact.js";
+import { formatArtifactVersion } from "../impl/formatArtifact.js";
 import { replaceArtifactText } from "../impl/replaceArtifactText.js";
 import { requireFileArtifact } from "../impl/liveArtifact.js";
 import {
@@ -94,7 +94,7 @@ export function editArtifactFileTool(artifacts: ArtifactsModule, agentId: string
         toLLM: (result) => [
             {
                 type: "text",
-                text: `Edited ${JSON.stringify(result.path)}${result.replacements === undefined || result.replacements === 1 ? "" : ` in ${String(result.replacements)} places`}: artifact ${result.id} is now at ${formatArtifactVersion(result)}. Mention it in chat as ${formatArtifactLink(result.id, result.title)}.`,
+                text: `Edited ${JSON.stringify(result.path)}${result.replacements === undefined || result.replacements === 1 ? "" : ` in ${String(result.replacements)} places`}: artifact ${result.id} is now at ${formatArtifactVersion(result)}. Mention it in chat as ${artifacts.formatArtifactLink(result.id)}.`,
             },
         ],
     });

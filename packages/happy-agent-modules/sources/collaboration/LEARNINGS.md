@@ -139,11 +139,13 @@ asynchronous because the answer depends on the agent's bot.
 
 A subtask's report named files as `path:line`, and a parent relaying it showed paths that resolved
 against the parent's workspace, so they could not be opened. Agents are now told, next to their
-Agent ID, to write a file that will be read outside their own chat as
-`[name:line](happy://agents/<own ID>/files/<path>#L…)`, to use another agent's or a workspace's
-ID for files elsewhere, and to copy received links unchanged. Steve chose `happy://` for links
-agents write in Markdown, and kept `happy-file://` as the API's form; both stay valid, so a
-`happy-file` link an agent receives is copied as it is. Plain `path:line` remains the default
+Agent ID, to write a file that will be read outside their own chat as a link through their own
+agent ID, to use another agent's or a workspace's ID for files elsewhere, and to copy received
+links unchanged. Steve first chose `happy://` for links agents write in Markdown, keeping
+`happy-file://` as the API's form. Kirill then decided agents write every Happy link as a share
+link, `[](https://link.happy.page/#1/<instanceId>/agents/<own ID>/files/<path>?lines=…)`,
+so it opens outside Happy too. Every form stays valid, so a `happy://` or `happy-file://` link an
+agent receives is copied as it is. Plain `path:line` remains the default
 inside the agent's own chat. The guidance lives here because the Agent ID it builds on does.
 
 ## A message carries the mutation its sending run answers
@@ -206,3 +208,13 @@ The parity export once showed the list naming the same children in a different o
 runs: the collection appends children in creation order while running but rebuilds its index in
 storage key order after a restart. The list is sorted by agent ID so the same collaborators never
 read as a change.
+
+## Happy links are written with empty labels
+
+Kirill decided that clients always show an item's current name and ignore whatever label a link
+carries, so every link the daemon writes, and every link agents are told to write, is
+`[](https://link.happy.page/#1/<instanceId>/…)`. A written name only cost tokens and went stale on
+rename. Tool results that need the model to know what a link points at name the item in plain words
+beside it, as `Task created: Fix login — id …` does before its link. File links follow the
+same rule; a client shows a file link's path. `create_subtask` and `create_agent` therefore return
+no title for a label, only the link.

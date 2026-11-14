@@ -144,8 +144,9 @@ softer advice to prefer workspace-bound subtasks.
 ## A task is mentioned by its agent ID
 
 Kirill asked for tasks to be clickable in chat. A Happy link names the conversation a client
-opens, so a task is mentioned as `[name](happy://agents/<agentId>)` with its agent ID, never its
-task ID, which no route opens as a conversation. `create_task` and `list_tasks` hand back the exact
+opens, so a task is mentioned by its agent ID, never its task ID, which no route opens as a
+conversation. Kirill later decided that agents write every Happy link as a share link, so the
+mention is `[](https://link.happy.page/#1/<instanceId>/agents/<agentId>?as=task)`. `create_task` and `list_tasks` hand back the exact
 link,
 and the agents offered the task tools are told to use it, so a model never has to work out
 which of the two IDs goes in it.
@@ -214,8 +215,8 @@ access agent does not pass Full access on; the person picks the mode once they o
 ## Mentions join people; unread is counted, never stored
 
 Kirill asked for @mentions that bring a person into the conversation, and for sidebar counts in
-place of the unread dot. A person's message to a task's agent that names a member with a
-`happy://users/<userId>` link now loops them in atomically with the send, as `loop_in_teammate`
+place of the unread dot. A person's message to a task's agent that links a member of this installation, as a share link or the older
+`happy://users/<userId>`, now loops them in atomically with the send, as `loop_in_teammate`
 does, with reason `mentioned`. No new leave control was added: the existing close already leaves.
 
 He asked that unread counts cost no latency and not be stored separately. A membership keeps only

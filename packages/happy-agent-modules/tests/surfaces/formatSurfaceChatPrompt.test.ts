@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatSurfaceChatPrompt } from "../../sources/surfaces/impl/formatSurfaceChatPrompt.js";
-import { SURFACE_REFERENCE_INSTRUCTIONS } from "../../sources/surfaces/impl/surfaceReferenceInstructions.js";
+import { surfaceReferenceInstructions } from "../../sources/surfaces/impl/surfaceReferenceInstructions.js";
 import { surfaceTools } from "../../sources/surfaces/tools/surfaceTools.js";
 
 const id = "s4k8m2q9w1e5r7y3u6i0o2p4";
@@ -91,8 +91,14 @@ describe("Surface chat prompt", () => {
 
 describe("Surface reference instructions", () => {
     it("tell agents to mention a Surface by link, with the ID its tools take", () => {
+        const SURFACE_REFERENCE_INSTRUCTIONS = surfaceReferenceInstructions(
+            "k3x9q2m7p0a4b8c1d5e6f7g2",
+        );
         expect(SURFACE_REFERENCE_INSTRUCTIONS).toContain(
-            "[its name](happy://surfaces/<surfaceId>)",
+            "[](https://link.happy.page/#1/k3x9q2m7p0a4b8c1d5e6f7g2/surfaces/<surfaceId>) with nothing between the brackets",
+        );
+        expect(surfaceReferenceInstructions(undefined)).toContain(
+            "[](happy://surfaces/<surfaceId>)",
         );
         expect(SURFACE_REFERENCE_INSTRUCTIONS).toContain("surfaceId");
         const names = new Set(

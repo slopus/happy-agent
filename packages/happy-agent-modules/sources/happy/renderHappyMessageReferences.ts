@@ -9,18 +9,22 @@ import {
 } from "@slopus/happy-agent-client";
 
 import type { HappySessionProtocolMessage } from "./HappyProtocol.js";
+import { readHappyShareLinks } from "../utils/happyShareLinks.js";
+import { isHappyLinkHere } from "../utils/writeHappyLinks.js";
 
 /**
  * Replaces the Happy links in what the agent said with plain words, because the phone cannot open
  * them: each entity link becomes its entity's current name, else the label the agent wrote, else
- * the shared placeholder, and each file link becomes its label. Legacy reference tags read as
- * entity links with no label. Media layout blocks are dropped, and a text that was only layout is
+ * the shared placeholder, and each file link becomes its label. Share links read as the links they
+ * carry; only those naming this installation, `instanceId`, are looked up, and one naming another
+ * installation keeps its label. Legacy reference tags read as entity links with no label. Media layout blocks are dropped, and a text that was only layout is
  * left out. Only the agent's own text, service notices, and the descriptions of its tool calls
  * carry them; user input and tool output are relayed as they are. Each distinct reference is
  * resolved once, one at a time, so the lookups can share the caller's transaction.
  */
 export async function renderHappyMessageReferences(
     messages: readonly HappySessionProtocolMessage[],
+    instanceId: string | undefined,
     label: (reference: HappyReference) => Promise<string | undefined>,
 ): Promise<HappySessionProtocolMessage[]> {
     const labels = new Map<string, string | undefined>();
@@ -31,6 +35,7 @@ export async function renderHappyMessageReferences(
             if (segment.type !== "link") continue;
             linked = true;
             if (segment.link?.type !== "reference") continue;
+            if (!isHappyLinkHere(instanceId, segment.link)) continue;
             const key = referenceKey(segment.link.reference);
             if (!labels.has(key)) labels.set(key, await label(segment.link.reference));
         }
@@ -47,8 +52,9 @@ export async function renderHappyMessageReferences(
         }
         if (ev.t === "tool-call-start") {
             // A row's description is plain words, not Markdown, so a title goes in as written.
-            const description = (await resolve(ev.description))
-                ? replaceHappyLinks(ev.description, (match) => plainWords(match, named))
+            const read = readHappyShareLinks(ev.description);
+            const description = (await resolve(read))
+                ? replaceHappyLinks(read, (match) => plainWords(match, named))
                 : ev.description;
             rendered.push(
                 description === ev.description
@@ -62,7 +68,9 @@ export async function renderHappyMessageReferences(
             continue;
         }
         // Layout blocks arrange media the phone already shows in order; their HTML would show raw.
-        const laidOut = ev.t === "text" ? stripMediaLayoutBlocks(ev.text) : ev.text;
+        const laidOut = readHappyShareLinks(
+            ev.t === "text" ? stripMediaLayoutBlocks(ev.text) : ev.text,
+        );
         if (laidOut.trim() === "") continue;
         const text = (await resolve(laidOut)) ? renderHappyLinksAsText(laidOut, named) : laidOut;
         rendered.push(

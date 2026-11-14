@@ -1,7 +1,6 @@
 import { createId } from "@paralleldrive/cuid2";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
-import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 
 import { quoteVisibleExact } from "../../impl/quoteVisibleExact.js";
 import { projectRepositoryRefSchema, projectSchema } from "../Project.js";
@@ -45,7 +44,7 @@ export function createProjectTool(projects: ProjectsModule) {
             {
                 type: "text",
                 text: projects.formatProjectForModel(
-                    `Project registered. Mention it in chat as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "project", id: project.id } }, project.name)}.`,
+                    `Project registered. Mention it in chat as ${projects.formatProjectLink(project.id)}.`,
                     project,
                 ),
             },

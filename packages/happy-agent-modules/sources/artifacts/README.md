@@ -174,7 +174,7 @@ the place it works in, found by `actorFor`.
 | `delete_artifact`     | Leaves a tombstone for everyone.                                                                                                                                     | Always, because deletion is final.                                                                | Durable and transactional.                          |
 
 Agents mention an artifact in their replies with a Happy link,
-`[title](happy://artifacts/<artifactId>)`, adding `?version=N` to point at one version. The
+`[](https://link.happy.page/#1/<instanceId>/artifacts/<artifactId>)`, adding `?version=N` to point at one version. The
 module's instructions tell every agent so, and `create_artifact`, `update_artifact`,
 `read_artifact`, and `list_artifacts` hand back the exact link. Clients show the artifact's live
 title as the link text (API.md, "Happy links").

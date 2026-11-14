@@ -66,7 +66,7 @@ with the next message the bot receives. The history's own store remembers the na
 so several renames collapse into one notice, an unchanged name is not repeated, and a compacted
 history hears it again. A placeholder name is never announced.
 
-Every agent offered the bot tools is told to mention a bot as `[name](happy://agents/<agentId>)`
+Every agent offered the bot tools is told to mention a bot as `[](https://link.happy.page/#1/<instanceId>/agents/<agentId>?as=bot)`
 with the bot's agent ID, never its bot ID, and `create_bot` and `list_bots` give that exact link.
 Clients show the bot's live name as the link text.
 

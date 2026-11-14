@@ -1,5 +1,4 @@
 import { defineAgentTool } from "@slopus/happy-agent-base";
-import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 
 import {
     workspaceCreateToolInputSchema,
@@ -43,7 +42,7 @@ export function createWorkspaceTool(workspaces: WorkspacesModule, agentId: strin
             {
                 type: "text",
                 text: workspaces.formatWorkspaceOperationForModel(
-                    `Workspace created. Mention it in chat as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "workspace", id: workspace.id } }, workspace.name)}.`,
+                    `Workspace created. Mention it in chat as ${workspaces.formatWorkspaceLink(workspace.id)}.`,
                     workspace,
                 ),
             },

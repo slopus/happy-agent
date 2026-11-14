@@ -1,6 +1,5 @@
 import { createId } from "@paralleldrive/cuid2";
 import { defineAgentTool, type AgentPermissionMode } from "@slopus/happy-agent-base";
-import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 
 import { createSubtaskInputSchema, subtaskResultSchema } from "../Subtask.js";
 import type { CollaborationCreator } from "../../collaboration/index.js";
@@ -55,7 +54,7 @@ export function createSubtaskTool(
         toLLM: (result) => [
             {
                 type: "text",
-                text: `Created subtask ${result.agentId}${result.workspaceId === undefined ? " sharing your filesystem" : ` in workspace ${result.workspaceId}`}. It runs independently; use send_agent_message to coordinate with it. Mention it in chat as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "agent", id: result.agentId } })}.`,
+                text: `Created subtask ${result.agentId}${result.workspaceId === undefined ? " sharing your filesystem" : ` in workspace ${result.workspaceId}`}. It runs independently; use send_agent_message to coordinate with it. Mention it in chat as ${subtasks.formatSubtaskLink(result.agentId)}.`,
             },
         ],
     });

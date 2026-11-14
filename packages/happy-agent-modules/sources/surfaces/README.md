@@ -112,7 +112,7 @@ installation-wide list of marked documents in its own table, each with the admin
 an optional display name, its first mark time, and the marking agent. Every agent's instructions
 end the Surface section with an `# Important documents` list modeled on the skills catalog:
 name (the given one, else the Surface's live name), description, `surface_id`, and
-`happy://surfaces/<id>` link, oldest mark first with ties broken by Surface ID, plus guidance to
+`https://link.happy.page/#1/<instanceId>/surfaces/<id>` share link, oldest mark first with ties broken by Surface ID, plus guidance to
 read matching documents with `read_document` before acting, re-read them when work touches them
 again, and let the user's direct request win over a conflicting document. Missing or non-document
 Surfaces are left out. The list is read on every request, so a change reaches each agent's next

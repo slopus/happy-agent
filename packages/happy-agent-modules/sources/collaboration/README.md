@@ -56,7 +56,7 @@ rebuilt every turn from `parentOf`:
 ```
 Your Agent ID is b7c1.
 When a file you mention will be read outside your own chat (...), link it as
-[Foo.tsx:42](happy://agents/b7c1/files/<path from your workspace root>#L42-L50), ...
+[](https://link.happy.page/#1/<instanceId>/agents/b7c1/files/<path from your workspace root>?lines=42-50), ...
 You were created by agent a3f2. When you stop working, only your final message is reported to it
 automatically; nothing you wrote earlier, including text between tool calls, reaches it. Make that
 final message complete: the whole result, what you verified, and anything still open. Use
@@ -85,9 +85,9 @@ a restart and the same list must not read as news.
 
 The Agent ID also addresses the agent's files. A bare `path:line` is read against the reader's own
 workspace, so a file mentioned in a message, a report, or a relay from another workspace is written
-as a `happy://…/files/…` link through the agent (or a workspace) instead, as API.md specifies
-under "File links". Links received from other agents, in either the `happy://` or the API's
-`happy-file://` form, are copied unchanged.
+as a share link to the file through the agent (or a workspace) instead, as API.md specifies under
+"Share links" and "File links". Links received from other agents, as share links or in the
+`happy://` or the API's `happy-file://` form, are copied unchanged.
 
 ### A collaborator's answer comes back on its own
 

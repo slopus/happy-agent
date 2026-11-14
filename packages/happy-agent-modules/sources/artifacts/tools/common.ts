@@ -11,6 +11,7 @@ import {
     MAX_ARTIFACT_FILES,
     type ArtifactRecord,
 } from "../Artifact.js";
+import { happyUrlPattern } from "../../utils/writeHappyLinks.js";
 
 /** The one capability every artifact tool contributes to the model's instructions. */
 export const ARTIFACT_TOOL_CAPABILITY =
@@ -20,8 +21,9 @@ export const ARTIFACT_TOOL_CAPABILITY =
  * How a model mentions an artifact in a reply. Clients show the link with the artifact's live
  * title, and surfaces that cannot show links get the title as plain text.
  */
-export const ARTIFACT_REFERENCE_INSTRUCTIONS =
-    "When you mention an artifact in a reply, link it as [its title](happy://artifacts/<artifactId>); add ?version=N to point at one version. The artifact tools give you the exact link. People see the artifact's current title as the link text, so do not repeat the title beside the link. A link inside code stays literal.";
+export function artifactReferenceInstructions(instanceId: string | undefined): string {
+    return `When you mention an artifact in a reply, link it as [](${happyUrlPattern(instanceId, "artifacts/<artifactId>")}) with nothing between the brackets; add ?version=N to point at one version. The artifact tools give you the exact link. People see the artifact's current title as the link text, so do not repeat the title beside the link. A link inside code stays literal.`;
+}
 
 /**
  * What makes a good artifact in the Feed, as every agent's instructions say it: the artifact tools

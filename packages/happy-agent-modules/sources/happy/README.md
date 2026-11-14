@@ -140,7 +140,8 @@ The queue is bounded, and reaching a bound is a decision rather than a failure:
   never happened.
 
 Agents mention artifacts, conversations, workspaces, and projects with Happy
-links such as `[title](happy://artifacts/<id>)`, and older history holds legacy
+links such as `[](https://link.happy.page/#1/<instanceId>/artifacts/<id>)`
+or the older `[title](happy://artifacts/<id>)`, and older history holds legacy
 `<happy-artifact id="…"/>` tags; the phone can open neither.
 Before the agent's text and service notices are queued, live and backfilled
 alike, each entity link or tag becomes its entity's current name, read from the
@@ -148,8 +149,9 @@ artifacts, bots, tasks, projects, workspaces, and Surfaces modules and the
 agent's own title. One whose entity is gone, deleted, or archived, or that names
 a service or user, becomes the label the agent wrote, or the shared placeholder,
 such as "an unavailable artifact", when there is none. A lookup that fails falls
-back the same way and never holds up the sync. File links, in either the
-`happy://` or the `happy-file://` form, become their labels. History keeps the
+back the same way and never holds up the sync. A share link is read as
+the link it carries, and one naming another installation becomes its label.
+File links, in any form, become their labels. History keeps the
 text exactly as the agent wrote it. Links in code, user messages, and tool
 output are left as they are.
 

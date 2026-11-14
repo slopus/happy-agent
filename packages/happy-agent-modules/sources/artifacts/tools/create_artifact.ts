@@ -20,7 +20,6 @@ import { LIVE_ARTIFACT_FALLBACK, normalizeArtifactUrl } from "../impl/liveArtifa
 import {
     formatArtifactBackground,
     formatArtifactCover,
-    formatArtifactLink,
     formatArtifactSource,
     formatArtifactVersion,
     formatFileCount,
@@ -286,7 +285,7 @@ export function createArtifactTool(
                         ? "For later changes, use write_artifact_file and edit_artifact_file; each call makes its next version."
                         : `Live content: ${JSON.stringify(artifact.live.url)}, through network ${JSON.stringify(artifact.live.networkId)}. Change its URL with update_artifact; its network stays fixed and its fallback file cannot be edited.`,
                     ARTIFACT_PRESENTED_NOTICE,
-                    `Mention it in chat as ${formatArtifactLink(artifact.id, artifact.title)}.`,
+                    `Mention it in chat as ${artifacts.formatArtifactLink(artifact.id)}.`,
                 ].join(" "),
             },
         ],

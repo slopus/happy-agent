@@ -93,7 +93,7 @@ settings receives none either, and a task an agent creates stays governed by tha
 - `archive_task` — `{ taskId }`. Only the creating agent may archive through the tool. Reviewed
   in Auto, never elevated.
 
-The same agents are told to mention a task as `[name](happy://agents/<agentId>)` with the task's
+The same agents are told to mention a task as `[](https://link.happy.page/#1/<instanceId>/agents/<agentId>?as=task)` with the task's
 agent ID, never its task ID; `create_task` and `list_tasks` give that exact link. Clients show the
 task's live name as the link text.
 

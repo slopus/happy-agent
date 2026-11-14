@@ -48,7 +48,7 @@ export function createAgentTool(
         toLLM: ({ agentId }) => [
             {
                 type: "text",
-                text: `Created collaborator ${agentId} and sent it the task. Anything it has to say will arrive as a message; nothing is waiting on it.`,
+                text: `Created collaborator ${agentId} and sent it the task. Anything it has to say will arrive as a message; nothing is waiting on it. Mention it in chat as ${collaboration.formatCollaboratorLink(agentId)}.`,
             },
         ],
     });
