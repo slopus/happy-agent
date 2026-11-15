@@ -538,15 +538,25 @@ describe("Happy Agent onboarding and usage matrix", () => {
             });
 
             // Fresh readings are left alone; accounts with no usage source are never read.
+            const refreshedAt = published.payload.refreshedAt ?? Number.NaN;
             await expect(
                 gym.client.refreshProviderUsage({ providerIds: ["claude"] }),
-            ).resolves.toEqual({ started: [] });
+            ).resolves.toEqual({
+                started: [],
+                skipped: [{ providerId: "claude", reason: "fresh", until: refreshedAt + 300_000 }],
+            });
             await expect(
                 gym.client.refreshProviderUsage({
                     providerIds: ["claude", "bedrock", "missing"],
                     olderThanMs: 0,
                 }),
-            ).resolves.toEqual({ started: [] });
+            ).resolves.toEqual({
+                started: [],
+                skipped: [
+                    { providerId: "bedrock", reason: "no_usage_source" },
+                    { providerId: "claude", reason: "fresh", until: refreshedAt + 60_000 },
+                ],
+            });
             expect(paths).toEqual(["/v1/messages"]);
             await expect(
                 gym.client.refreshProviderUsage({ olderThanMs: -1 } as never),
@@ -557,7 +567,7 @@ describe("Happy Agent onboarding and usage matrix", () => {
             const cursor = (await gym.client.getEvents({ limit: 10_000 })).cursor;
             await expect(
                 gym.client.refreshProviderUsage({ providerIds: ["gym"] }),
-            ).resolves.toEqual({ started: ["gym"] });
+            ).resolves.toEqual({ started: ["gym"], skipped: [] });
             const refreshEvents = await gym.waitUntil(async () => {
                 const page = await gym.client.getEvents({ after: cursor, limit: 10_000 });
                 const events = page.events.filter(

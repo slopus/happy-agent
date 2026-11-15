@@ -116,6 +116,7 @@ import {
     updateArtifactRequestSchema as publishedUpdateArtifactRequestSchema,
     providerVerificationRequestSchema,
     providerUsageRefreshRequestSchema,
+    type ProviderUsageRefreshResponse,
     drainRequestSchema,
     userIdsSchema,
     networkIdSchema,
@@ -462,7 +463,7 @@ import {
 } from "./projectCredentialDiagnostics.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 
-const API_PROTOCOL_VERSION = 35;
+const API_PROTOCOL_VERSION = 36;
 
 const addServerConnectionRequestSchema = Type.Object(
     {
@@ -2173,16 +2174,19 @@ export class ApiModule implements AgentModule {
                 if (!Value.Check(providerUsageRefreshRequestSchema, body)) {
                     throw invalidRequest("The usage refresh request is invalid.");
                 }
-                sendJson(response, 202, {
-                    started: this.#providerUsage.requestRefresh(ctx, {
+                const refresh: ProviderUsageRefreshResponse = this.#providerUsage.requestRefresh(
+                    ctx,
+                    {
                         ...(body.providerIds === undefined
                             ? {}
                             : { providerIds: body.providerIds }),
                         ...(body.olderThanMs === undefined
                             ? {}
                             : { olderThanMs: body.olderThanMs }),
-                    }),
-                });
+                        ...(body.force === undefined ? {} : { force: body.force }),
+                    },
+                );
+                sendJson(response, 202, refresh);
                 return;
             }
             if (request.method === "GET" && url.pathname === "/v0/bootstrap/desktop") {

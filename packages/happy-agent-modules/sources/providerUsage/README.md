@@ -78,11 +78,16 @@ as Bedrock that expose no coding-account quota API. Such an account is never rea
 that it reports no usage. `ApiModule` combines these readings with the complete provider/model
 catalog in `GET /v0/usage`.
 
-`requestRefresh(ctx, { providerIds, olderThanMs })` starts background reads of the accounts whose
-readings are older than `olderThanMs` (five minutes by default, at least one minute), skipping
-accounts without a usage source, under `retryAt`, or already being read. It returns the accounts it
-started at once. Those reads run in the module's own named context and end with it, never with the
-request that asked. `ApiModule` serves it as `POST /v0/usage/refresh`.
+`requestRefresh(ctx, { providerIds, olderThanMs, force })` starts background reads of the selected
+accounts (every enabled account when none are named) and answers at once with `{ started, skipped }`.
+Each skipped account carries one reason, the first that applies: `no_usage_source`, `in_flight`,
+`blocked_until_reset` (until the last full window resets), `retry_after` (until the vendor's
+`retryAt`), or `fresh` (until the reading is older than `olderThanMs`, five minutes by default and
+at least one minute). An account whose full window reset with no reading since is never fresh.
+`force` is a person's re-check: no age floor and no probe budget, but every other reason still
+applies, so a person cannot read a blocked or throttled account early. The reads run in the
+module's own named context and end with it, never with the request that asked. `ApiModule` serves
+it as `POST /v0/usage/refresh`.
 
 Actual fallback inference probes have a separate budget: each admitted probe, successful or not,
 waits 5 minutes, 40 minutes, 5 hours 20 minutes, then a day before another. Refresh requests never

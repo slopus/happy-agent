@@ -106,7 +106,7 @@ describe("provider names and probe budgets", () => {
                     providerIds: ["claude"],
                     olderThanMs: 60_000,
                 }),
-            ).toEqual({ started: ["claude"] });
+            ).toEqual({ started: ["claude"], skipped: [] });
             await gym.waitUntil(
                 async () =>
                     (await account())?.checkedAt === now && !(await account())?.refreshing

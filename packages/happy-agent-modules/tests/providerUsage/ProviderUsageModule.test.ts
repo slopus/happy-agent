@@ -48,6 +48,7 @@ async function createHarness(options: { sources?: readonly string[]; start?: boo
     const config = await ConfigModule.load(home);
     const sources = new Set(options.sources ?? ["claude", "codex"]);
     vi.spyOn(config, "hasProviderUsageSource").mockImplementation((id) => sources.has(id));
+    vi.spyOn(config, "isProviderEnabled").mockReturnValue(true);
     const reads: { providerId: string; method: ReadMethod | undefined }[] = [];
     let answer: (
         providerId: string,
@@ -87,6 +88,7 @@ async function createHarness(options: { sources?: readonly string[]; start?: boo
     });
     if (options.start === true) module.beforeStart?.(ctx);
     return {
+        config,
         ctx,
         events,
         load,
@@ -470,7 +472,17 @@ describe("ProviderUsageModule", () => {
         await harness.module.refresh(harness.ctx, "claude");
         await harness.module.refresh(harness.ctx, "claude");
         expect(harness.load).toHaveBeenCalledTimes(1);
-        expect(harness.module.requestRefresh(harness.ctx, { providerIds: ["claude"] })).toEqual([]);
+        expect(harness.module.requestRefresh(harness.ctx, { providerIds: ["claude"] })).toEqual({
+            started: [],
+            skipped: [{ providerId: "claude", reason: "retry_after", until: retryAt }],
+        });
+        // A person's re-check still waits for the vendor.
+        expect(
+            harness.module.requestRefresh(harness.ctx, { providerIds: ["claude"], force: true }),
+        ).toEqual({
+            started: [],
+            skipped: [{ providerId: "claude", reason: "retry_after", until: retryAt }],
+        });
     });
 
     it("stops asking a Claude usage endpoint that refused or throttled the account", async () => {
@@ -520,27 +532,157 @@ describe("ProviderUsageModule", () => {
             }),
         );
         await harness.module.refresh(harness.ctx, "codex");
-        vi.spyOn(Date, "now").mockReturnValue(Date.now() + 90_000);
+        const readAt = Date.now();
+        vi.spyOn(Date, "now").mockReturnValue(readAt + 90_000);
 
         // Codex is 90 seconds old: fresh for the default five minutes, stale for one minute.
-        expect(harness.module.requestRefresh(harness.ctx)).toEqual(["claude", "grok"]);
+        expect(harness.module.requestRefresh(harness.ctx)).toEqual({
+            started: ["claude", "grok"],
+            skipped: [
+                { providerId: "bedrock", reason: "no_usage_source" },
+                { providerId: "codex", reason: "fresh", until: readAt + 300_000 },
+            ],
+        });
         // Both are now being read, so asking again starts nothing new.
-        expect(harness.module.requestRefresh(harness.ctx, { olderThanMs: 0 })).toEqual(["codex"]);
-        await vi.waitFor(() => expect(harness.entry("grok")?.refreshing).toBe(false));
-        await vi.waitFor(() => expect(harness.entry("codex")?.refreshing).toBe(false));
-        // A demand fresher than a minute is raised to one minute.
-        expect(
-            harness.module.requestRefresh(harness.ctx, {
-                providerIds: ["codex", "bedrock", "nope"],
-                olderThanMs: 1,
+        expect(harness.module.requestRefresh(harness.ctx, { olderThanMs: 0 })).toEqual({
+            started: ["codex"],
+            skipped: [
+                { providerId: "bedrock", reason: "no_usage_source" },
+                { providerId: "claude", reason: "in_flight" },
+                { providerId: "grok", reason: "in_flight" },
+            ],
+        });
+        // Once codex's read settles, a demand fresher than a minute is raised to one minute.
+        await vi.waitFor(() =>
+            expect(
+                harness.module.requestRefresh(harness.ctx, {
+                    providerIds: ["codex", "bedrock", "nope"],
+                    olderThanMs: 1,
+                }),
+            ).toEqual({
+                started: [],
+                skipped: [
+                    { providerId: "bedrock", reason: "no_usage_source" },
+                    { providerId: "codex", reason: "fresh", until: readAt + 90_000 + 60_000 },
+                ],
             }),
-        ).toEqual([]);
+        );
+        await vi.waitFor(() => expect(harness.entry("grok")?.refreshing).toBe(false));
         expect(harness.reads.map((read) => read.providerId).sort()).toEqual([
             "claude",
             "codex",
             "codex",
             "grok",
         ]);
+    });
+
+    it("leaves only disabled accounts out when no accounts are named", async () => {
+        const harness = await createHarness({ sources: ["claude", "codex"] });
+        vi.mocked(harness.config.isProviderEnabled).mockImplementation((id) => id === "codex");
+
+        expect(harness.module.requestRefresh(harness.ctx)).toEqual({
+            started: ["codex"],
+            skipped: [],
+        });
+        expect(harness.module.requestRefresh(harness.ctx, { providerIds: ["claude"] })).toEqual({
+            started: ["claude"],
+            skipped: [],
+        });
+    });
+
+    describe("a person's re-check", () => {
+        const NOW = 1_800_000_000_000;
+
+        it("reads a fresh account at once but never one blocked until a future reset", async () => {
+            vi.useFakeTimers({ now: NOW });
+            const harness = await createHarness({ sources: ["claude", "codex"] });
+            harness.answer(async (providerId) =>
+                reading({
+                    providerId,
+                    exhausted: providerId === "claude",
+                    windows: {
+                        fiveHour: window(providerId === "claude" ? 100 : 20, NOW + 3_600_000),
+                        weekly: null,
+                        monthly: null,
+                    },
+                }),
+            );
+            await harness.module.refresh(harness.ctx, "claude");
+            await harness.module.refresh(harness.ctx, "codex");
+            vi.setSystemTime(NOW + 1_000);
+
+            expect(
+                harness.module.requestRefresh(harness.ctx, { providerIds: ["claude", "codex"] }),
+            ).toEqual({
+                started: [],
+                skipped: [
+                    {
+                        providerId: "claude",
+                        reason: "blocked_until_reset",
+                        until: NOW + 3_600_000,
+                    },
+                    { providerId: "codex", reason: "fresh", until: NOW + 300_000 },
+                ],
+            });
+            expect(
+                harness.module.requestRefresh(harness.ctx, {
+                    providerIds: ["claude", "codex"],
+                    olderThanMs: 600_000,
+                    force: true,
+                }),
+            ).toEqual({
+                started: ["codex"],
+                skipped: [
+                    {
+                        providerId: "claude",
+                        reason: "blocked_until_reset",
+                        until: NOW + 3_600_000,
+                    },
+                ],
+            });
+            await vi.waitFor(() =>
+                expect(harness.reads.map((read) => read.providerId)).toEqual([
+                    "claude",
+                    "codex",
+                    "codex",
+                ]),
+            );
+        });
+
+        it("treats a reading from before a passed reset as due, however recent the last report", async () => {
+            vi.useFakeTimers({ now: NOW });
+            const harness = await createHarness({ sources: ["claude"], start: true });
+            await vi.advanceTimersByTimeAsync(0);
+            harness.observe(
+                reading({
+                    exhausted: true,
+                    windows: {
+                        fiveHour: window(100, NOW + 60_000),
+                        weekly: null,
+                        monthly: null,
+                    },
+                }),
+            );
+            vi.setSystemTime(NOW + 120_000);
+            // Credits alone measure no window, so they cannot confirm the reset.
+            harness.observe(reading({ credits: null, capturedAt: NOW + 120_000 }));
+            harness.answer(async () =>
+                reading({
+                    windows: {
+                        fiveHour: window(3, NOW + 18_060_000),
+                        weekly: null,
+                        monthly: null,
+                    },
+                }),
+            );
+
+            expect(harness.module.requestRefresh(harness.ctx, { providerIds: ["claude"] })).toEqual(
+                { started: ["claude"], skipped: [] },
+            );
+            await vi.waitFor(() =>
+                expect(harness.module.accountState("claude")).toEqual({ kind: "measured" }),
+            );
+        });
     });
 
     describe("account sign-in", () => {

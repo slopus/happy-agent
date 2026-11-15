@@ -75,3 +75,12 @@ existing endpoint-refusal, retry, push, or reset-recheck machinery. A deferred p
 cached reading but sets `refreshError` naming when the next probe is allowed: a read that silently
 did nothing left a stale reading looking current. A person's forced refresh probes without
 consulting or advancing the budget.
+
+## A refresh says why it did not read
+
+The picker's "Re-check all" could not explain an account that stayed old: the refresh answered only
+`started`, so a blocked, throttled, busy, or unreadable account looked like a refresh that silently
+failed. `requestRefresh` now returns every selected account in `started` or `skipped`, each skip
+with one closed-union reason and `until` when the reason has an end. `force` drops only the age
+floor and the probe budget; blocked-until-reset and `retryAt` still apply, because Kirill asked that
+nothing be read before the window and the vendor's deadline is the vendor's.

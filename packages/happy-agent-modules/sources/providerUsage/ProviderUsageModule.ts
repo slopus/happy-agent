@@ -72,10 +72,31 @@ export interface ProviderUsageEntry {
 }
 
 export interface ProviderUsageRefreshOptions {
-    /** The accounts to consider; every account when omitted. */
+    /** The accounts to consider; every enabled account when omitted. */
     readonly providerIds?: readonly string[];
     /** Read only accounts whose reading is older than this. */
     readonly olderThanMs?: number;
+    /** A person asked to re-check now: ignore `olderThanMs` and the fallback-probe budget. */
+    readonly force?: boolean;
+}
+
+/**
+ * Why a refresh request did not read an account now. When several apply, the first in this
+ * order is reported; `until` is when the reason stops applying.
+ */
+export type ProviderUsageRefreshSkip =
+    | { readonly providerId: string; readonly reason: "no_usage_source" | "in_flight" }
+    | {
+          readonly providerId: string;
+          readonly reason: "blocked_until_reset" | "retry_after" | "fresh";
+          readonly until: number;
+      };
+
+export interface ProviderUsageRefreshResult {
+    /** The accounts whose reads started, in configuration order. */
+    readonly started: string[];
+    /** Every other selected account, in configuration order. */
+    readonly skipped: ProviderUsageRefreshSkip[];
 }
 
 /** How one read of an account is made. */
@@ -246,33 +267,80 @@ export class ProviderUsageModule implements AgentModule {
     }
 
     /**
-     * Start background reads of the accounts whose readings are older than `olderThanMs`.
+     * Start background reads of the selected accounts that are due.
      *
-     * Returns at once with the accounts whose reads started, in configuration order. Accounts
-     * without a usage source, under the vendor's retry deadline, already being read, or fresh
-     * enough are skipped. The readings arrive through `onChanged`.
+     * Returns at once with the accounts whose reads started and why every other selected account
+     * was skipped, both in configuration order. The readings arrive through `onChanged`.
      */
-    requestRefresh(ctx: Context, options: ProviderUsageRefreshOptions = {}): string[] {
-        if (this.#closed) return [];
-        const olderThanMs = Math.max(
-            PROVIDER_USAGE_REFRESH_MINIMUM_AGE_MS,
-            options.olderThanMs ?? PROVIDER_USAGE_REFRESH_DEFAULT_AGE_MS,
-        );
+    requestRefresh(
+        ctx: Context,
+        options: ProviderUsageRefreshOptions = {},
+    ): ProviderUsageRefreshResult {
+        const result: ProviderUsageRefreshResult = { started: [], skipped: [] };
+        if (this.#closed) return result;
+        // A forced read has no age floor; an ordinary one cannot demand fresher than a minute.
+        const olderThanMs =
+            options.force === true
+                ? undefined
+                : Math.max(
+                      PROVIDER_USAGE_REFRESH_MINIMUM_AGE_MS,
+                      options.olderThanMs ?? PROVIDER_USAGE_REFRESH_DEFAULT_AGE_MS,
+                  );
         const requested =
             options.providerIds === undefined ? undefined : new Set(options.providerIds);
         const background = this.#backgroundContext ?? this.#ownContext(ctx);
         const now = Date.now();
-        const started: string[] = [];
         for (const entry of this.#entries.values()) {
-            if (requested !== undefined && !requested.has(entry.providerId)) continue;
-            if (!this.#config.hasProviderUsageSource(entry.providerId)) continue;
-            if (this.#busy.has(entry.providerId)) continue;
-            if (entry.retryAt !== null && now < entry.retryAt) continue;
-            if (!isStale(entry, olderThanMs, now)) continue;
-            started.push(entry.providerId);
-            this.#track(this.refresh(background, entry.providerId, { olderThanMs }));
+            const selected =
+                requested === undefined
+                    ? this.#config.isProviderEnabled(entry.providerId)
+                    : requested.has(entry.providerId);
+            if (!selected) continue;
+            const skip = this.#refreshSkip(entry, olderThanMs, now);
+            if (skip !== undefined) {
+                result.skipped.push(skip);
+                continue;
+            }
+            result.started.push(entry.providerId);
+            this.#track(
+                this.refresh(
+                    background,
+                    entry.providerId,
+                    olderThanMs === undefined ? { force: true } : { olderThanMs },
+                ),
+            );
         }
-        return started;
+        return result;
+    }
+
+    /** Why a refresh request must not read this account now; `olderThanMs` is absent when forced. */
+    #refreshSkip(
+        entry: ProviderUsageEntry,
+        olderThanMs: number | undefined,
+        now: number,
+    ): ProviderUsageRefreshSkip | undefined {
+        const { providerId } = entry;
+        if (!this.#config.hasProviderUsageSource(providerId)) {
+            return { providerId, reason: "no_usage_source" };
+        }
+        if (this.#busy.has(providerId)) return { providerId, reason: "in_flight" };
+        const state = this.accountState(providerId);
+        if (state?.kind === "blocked") {
+            return { providerId, reason: "blocked_until_reset", until: state.resetsAt };
+        }
+        if (entry.retryAt !== null && now < entry.retryAt) {
+            return { providerId, reason: "retry_after", until: entry.retryAt };
+        }
+        // A reading taken before a blocking window reset says nothing about the account now.
+        if (
+            olderThanMs !== undefined &&
+            state?.kind !== "resetPassed" &&
+            entry.refreshedAt !== null &&
+            now - entry.refreshedAt < olderThanMs
+        ) {
+            return { providerId, reason: "fresh", until: entry.refreshedAt + olderThanMs };
+        }
+        return undefined;
     }
 
     /**

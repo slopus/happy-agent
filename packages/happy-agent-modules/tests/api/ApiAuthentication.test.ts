@@ -227,7 +227,7 @@ describe("GET /v0/health", () => {
         const { call, token } = await harness("standalone");
 
         expect((await call("/v0/health", `Bearer ${token!}`)).body).toMatchObject({
-            version: { protocol: 35 },
+            version: { protocol: 36 },
         });
     });
 });
