@@ -2265,11 +2265,22 @@ describe("sub-agent harnesses", () => {
         );
         await resolveModuleHooks(ctx0(), module, collection.asRef());
 
-        // An exhausted week hides the session window: nothing runs until the week resets.
-        expect((await module.agentOptionsUsage(ON_HAPPY)).split("\n")).toEqual([
-            "claude: weekly out until 2026-10-28T00:00Z",
-            "antigravity: Gemini Models 5-hour 99%, weekly 95%; Gemini 4 Argon weekly out until 2026-10-26T21:29Z",
-        ]);
+        vi.useFakeTimers({ now: Date.parse("2026-10-20T22:00:00Z"), toFake: ["Date"] });
+        try {
+            // An exhausted week hides the session window: nothing runs until the week resets.
+            expect((await module.agentOptionsUsage(ON_HAPPY)).split("\n")).toEqual([
+                "claude: weekly out until 2026-10-28T00:00Z",
+                "antigravity: Gemini Models 5-hour 99%, weekly 95%; Gemini 4 Argon weekly out until 2026-10-26T21:29Z",
+            ]);
+
+            // Past both resets with no reading since, the old shares are not current.
+            vi.setSystemTime(Date.parse("2026-10-28T08:00:00Z"));
+            expect((await module.agentOptionsUsage(ON_HAPPY)).split("\n")[0]).toBe(
+                "claude: 5-hour unknown since its reset at 2026-10-21T00:00Z, weekly unknown since its reset at 2026-10-28T00:00Z",
+            );
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it("keeps tool definitions byte-identical when the options change", async () => {

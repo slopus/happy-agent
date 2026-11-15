@@ -42,11 +42,20 @@ a missing credential changes the value. Errors, throttling, and null reads with 
 it alone. Smart-provider entries carry no `signIn`. An unchanged value announces nothing, so
 ordinary inference does not flood `provider.usage.updated`.
 
-## Read a blocked account again as soon as it can work
+## Only a vendor reading past the reset unblocks an account
 
-The human asked that an account blocked by a window be read again just after that window resets,
-so a client learns quickly that inference is unblocked. Vendors' resets can be soft, so a read that
-still finds the same window full backs off briefly before giving up to the daily poll.
+An account read "weekly 100%" for hours after its weekly reset. The usage endpoint answered 429,
+the probe budget (pushed out a day by an in-band reading) deferred the header probe without saying
+so, and the recheck gave up after six reads to the daily poll. Kirill asked that the window be
+checked once it passes, that nothing be assumed good, and that nothing be read before the window.
+
+Each account now has a state derived from its reading and the clock (`providerAccountState`):
+`measured`, `blocked` until a full window's future reset, or `resetPassed` when that reset passed
+and nothing has measured the window since. A blocked account is never read, by poll or probe. A
+reset-passed one is read 30 seconds after the reset and then after 1, 2, 5, and every 15 minutes,
+honoring the vendor's `retryAt`, until a reading measures it; its reads bypass the probe budget. A
+full window is never dropped by merging an in-band reading that did not mention it, so a reading of
+another window cannot quietly unblock the account, and freshness of the entry never skips the read.
 
 ## Claude's usage method follows its credential
 
@@ -62,5 +71,7 @@ Every admitted usage probe grows a separate cooldown from 5 minutes to 40 minute
 remain eligible. An ordinary inference reading that measures a window resets escalation and
 postpones probes for a day. Admission happens immediately before the actual inference request,
 covering inference-only credentials and throttled-endpoint fallbacks without bypassing the
-existing endpoint-refusal, retry, push, or reset-recheck machinery. A deferred probe retains the
-cached reading and its existing error state; intentional backoff is not a failed refresh.
+existing endpoint-refusal, retry, push, or reset-recheck machinery. A deferred probe keeps the
+cached reading but sets `refreshError` naming when the next probe is allowed: a read that silently
+did nothing left a stale reading looking current. A person's forced refresh probes without
+consulting or advancing the budget.

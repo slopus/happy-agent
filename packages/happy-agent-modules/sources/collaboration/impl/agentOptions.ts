@@ -27,6 +27,8 @@ export interface AgentOptionsUsageWindow {
     readonly remainingPercent: number;
     /** ISO time the window resets, or null when unreported. */
     readonly resetsAt: string | null;
+    /** The window reset after it was last read, so its share left is not known yet. */
+    readonly unconfirmed?: boolean;
 }
 
 /** One harness and the accounts it runs on. */
@@ -117,7 +119,8 @@ export function formatAgentOptions(options: AgentOptions): string {
 
 /**
  * The quota each account reports, one line per account. A window that is out says when it
- * resets; once a weekly or monthly window is out, nothing shorter in its scope matters.
+ * resets; once a weekly or monthly window is out, nothing shorter in its scope matters. A window
+ * that reset after it was last read says its share is unknown rather than repeating the old one.
  */
 export function formatAgentOptionsUsage(options: AgentOptions): string {
     const lines = options.harnesses.flatMap((harness) =>
@@ -130,7 +133,9 @@ export function formatAgentOptionsUsage(options: AgentOptions): string {
             if (scopes.size === 0) return [];
             const parts = [...scopes].map(([scope, windows]) => {
                 const long = windows.filter((window) => /week|month/iu.test(window.window));
-                const out = long.filter((window) => window.remainingPercent <= 0);
+                const out = long.filter(
+                    (window) => window.remainingPercent <= 0 && window.unconfirmed !== true,
+                );
                 const shown = (out.length > 0 ? out : windows).toSorted(
                     (a, b) => Number(long.includes(a)) - Number(long.includes(b)),
                 );
@@ -150,10 +155,10 @@ function formatWindow(window: AgentOptionsUsageWindow): string {
           : /five hour|5-hour/iu.test(window.window)
             ? "5-hour"
             : window.window;
+    const resetsAt = window.resetsAt?.replace(/:\d{2}(\.\d+)?Z$/u, "Z") ?? null;
+    if (window.unconfirmed === true) return `${name} unknown since its reset at ${resetsAt ?? "?"}`;
     if (window.remainingPercent > 0) return `${name} ${String(window.remainingPercent)}%`;
-    return window.resetsAt === null
-        ? `${name} out`
-        : `${name} out until ${window.resetsAt.replace(/:\d{2}(\.\d+)?Z$/u, "Z")}`;
+    return resetsAt === null ? `${name} out` : `${name} out until ${resetsAt}`;
 }
 
 /** What changed between two listings, as the lines removed and added. */

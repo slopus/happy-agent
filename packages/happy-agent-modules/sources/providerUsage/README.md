@@ -23,7 +23,8 @@ never overlap: polls, rechecks, and client refreshes share its one-at-a-time que
 Every window carries the `capturedAt` it was measured. A window carried forward keeps its own,
 and a reading that measured no window — Claude reporting only overage, say — moves neither the
 reading's `capturedAt` nor the entry's `refreshedAt`. A carried window that has since reset is
-dropped rather than shown as current.
+dropped rather than shown as current, unless it was full: only a reading that measures that window
+again may say the account works.
 
 Each entry separates the last success from the last attempt:
 
@@ -50,13 +51,21 @@ reading on screen.
 
 ## Rechecking after a reset
 
-When an account is blocked — a window at 100%, which is what an exhausted or refused account
-reports — the module schedules one read for 30 seconds after the last full window resets, or at
-the vendor's `retryAt` if that is later. A newer reading that names another reset moves it, and
-one showing the account working cancels it. If the read still finds the same window blocked, the
-vendor's reset was soft: the module reads again after one, two, then five minutes, up to six reads,
-before leaving the account to the daily poll and in-band readings. An exhausted account whose
-blocking window is unknown has no reset to wait for and gets no recheck. Rechecks end on `close()`.
+`accountState(providerId)` derives where an account stands from its reading and the clock:
+
+- `measured` — no full window stands in the way.
+- `blocked` — a window at 100% resets at `resetsAt`, in the future. Nothing reads the account
+  before then: no poll, no probe, no refresh.
+- `resetPassed` — that reset passed and no reading has measured the window since. The old numbers
+  are not current and the account is not known to work.
+
+The module schedules one read for 30 seconds after the last full window resets, or at the vendor's
+`retryAt` if that is later. A newer reading that names another reset moves it, and one showing the
+account working cancels it. Until a reading measures the window again — the read failed, was
+throttled, or the vendor's reset was soft — the module reads again after one, two, five, and then
+every fifteen minutes, never handing the account back to the daily poll. These reads skip the
+fallback-probe budget. An exhausted account whose blocking window is unknown has no reset to wait
+for and gets no recheck. Rechecks end on `close()`.
 
 Routing does not depend on any of this: a smart provider skips a failed account only for the
 current turn and reconsiders every account on the next user message, so a recovered account is
@@ -77,7 +86,8 @@ request that asked. `ApiModule` serves it as `POST /v0/usage/refresh`.
 
 Actual fallback inference probes have a separate budget: each admitted probe, successful or not,
 waits 5 minutes, 40 minutes, 5 hours 20 minutes, then a day before another. Refresh requests never
-reset this budget. Ordinary inference that measures a window resets escalation and postpones
+reset this budget; a forced read (`refresh(ctx, id, { force: true })`) and a read past a reset probe
+without consulting or advancing it. A probe the budget defers sets `refreshError`. Ordinary inference that measures a window resets escalation and postpones
 probes for a day. Inexpensive account endpoints remain eligible under the ordinary refresh policy;
 existing endpoint refusals, vendor retry deadlines, pushed events, and reset rechecks remain in use.
 

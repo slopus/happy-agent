@@ -167,7 +167,7 @@ export class CollaborationModule implements AgentModule {
                     harness.providers.map(async (provider) => {
                         const usage =
                             (await this.#config.harnessUsage(provider.id)) ??
-                            vendorUsageWindows(readings.get(provider.id) ?? null);
+                            vendorUsageWindows(readings.get(provider.id) ?? null, Date.now());
                         return usage.length === 0 ? provider : { ...provider, usage };
                     }),
                 ),
@@ -1196,8 +1196,11 @@ export class CollaborationModule implements AgentModule {
     }
 }
 
-/** A vendor reading's windows, as share left; none without a reading. */
-function vendorUsageWindows(usage: ProviderUsage | null): AgentOptionsUsageWindow[] {
+/**
+ * A vendor reading's windows, as share left; none without a reading. A window whose reset has
+ * passed describes a period that is over, so it is marked unconfirmed until a reading renews it.
+ */
+function vendorUsageWindows(usage: ProviderUsage | null, now: number): AgentOptionsUsageWindow[] {
     if (usage === null) return [];
     const named = [
         ["", "5-hour", usage.windows.fiveHour],
@@ -1216,6 +1219,9 @@ function vendorUsageWindows(usage: ProviderUsage | null): AgentOptionsUsageWindo
                       remainingPercent: Math.max(0, Math.round(100 - value.usedPercent)),
                       resetsAt:
                           value.resetsAt === null ? null : new Date(value.resetsAt).toISOString(),
+                      ...(value.resetsAt !== null && value.resetsAt <= now
+                          ? { unconfirmed: true }
+                          : {}),
                   },
               ],
     );

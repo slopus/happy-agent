@@ -16,6 +16,11 @@ import {
 } from "@steve.kite/stdlib";
 
 import { ConfigModule, type ProviderSignInObservation } from "../config/index.js";
+import {
+    providerAccountState,
+    windowsOf,
+    type ProviderAccountState,
+} from "./providerAccountState.js";
 
 /** A spent-usage refusal older than this no longer says the account is spent. */
 const SPENT_READING_MAX_AGE_MS = 15 * 60_000;
@@ -27,14 +32,18 @@ export const PROVIDER_USAGE_REFRESH_DEFAULT_AGE_MS = 5 * 60 * 1_000;
 export const PROVIDER_USAGE_REFRESH_MINIMUM_AGE_MS = 60 * 1_000;
 /** How long after a blocking window resets the account is read again. */
 export const PROVIDER_USAGE_RESET_RECHECK_DELAY_MS = 30 * 1_000;
-/** The waits between reads while an account still reads blocked after its reset passed. */
+/**
+ * The waits between reads while no reading has confirmed an account past its reset. The last
+ * one repeats until a reading does: the account is never left to the daily poll.
+ */
 export const PROVIDER_USAGE_RESET_RECHECK_BACKOFF_MS: readonly number[] = [
     60 * 1_000,
     2 * 60 * 1_000,
     5 * 60 * 1_000,
+    15 * 60 * 1_000,
 ];
-/** After this many reads past the reset the daily poll and in-band readings take over again. */
-export const PROVIDER_USAGE_RESET_RECHECK_ATTEMPTS = 6;
+/** The longest delay a timer takes; a monthly reset is further away than that. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 
 const NOT_REPORTED = "The provider did not report account usage.";
 /** How long a read that returned nothing may spend looking for the account's credential locally. */
@@ -69,11 +78,19 @@ export interface ProviderUsageRefreshOptions {
     readonly olderThanMs?: number;
 }
 
+/** How one read of an account is made. */
+export interface ProviderUsageReadOptions {
+    /** Skip the read when the account's reading is younger than this. */
+    readonly olderThanMs?: number;
+    /** A person asked: the fallback-probe budget is neither consulted nor advanced. */
+    readonly force?: boolean;
+}
+
 /** One pending read scheduled for just after the window blocking an account resets. */
 interface ResetRecheck {
     /** The reset instant this recheck waits for. */
     readonly resetAt: number;
-    /** Reads already made past that reset that still found the account blocked. */
+    /** Reads already made past that reset that brought no reading confirming the account. */
     readonly attempt: number;
     readonly timer: ReturnType<typeof setTimeout> | undefined;
     /** Set while the recheck's own read runs, so the readings it causes do not reschedule it. */
@@ -184,12 +201,20 @@ export class ProviderUsageModule implements AgentModule {
      */
     firstBlockedReset(providerIds: readonly string[]): number | null {
         let first: number | null = null;
+        const now = Date.now();
         for (const providerId of providerIds) {
             const entry = this.#entries.get(providerId);
-            const resetAt = entry === undefined ? null : blockingResetAt(entry.usage);
+            if (entry === undefined) continue;
+            const resetAt = resetOf(providerAccountState(entry.usage, now));
             if (resetAt !== null) first = Math.min(first ?? resetAt, resetAt);
         }
         return first;
+    }
+
+    /** Where an account stands by its latest reading; undefined for an unconfigured one. */
+    accountState(providerId: string): ProviderAccountState | undefined {
+        const entry = this.#entries.get(providerId);
+        return entry === undefined ? undefined : providerAccountState(entry.usage, Date.now());
     }
 
     /**
@@ -204,11 +229,11 @@ export class ProviderUsageModule implements AgentModule {
         // A refusal carrying no window keeps the reading's older capture time, so it is dated by
         // when inference reported it instead.
         const saidAt = Math.max(usage.capturedAt, this.#refusedAt.get(providerId) ?? 0);
-        const resetsAt = blockingResetAt(usage);
-        if (now - saidAt > SPENT_READING_MAX_AGE_MS || (resetsAt !== null && resetsAt <= now)) {
+        const state = providerAccountState(usage, now);
+        if (now - saidAt > SPENT_READING_MAX_AGE_MS || state.kind === "resetPassed") {
             return undefined;
         }
-        return { resetsAt };
+        return { resetsAt: state.kind === "blocked" ? state.resetsAt : null };
     }
 
     /**
@@ -316,7 +341,7 @@ export class ProviderUsageModule implements AgentModule {
     async refresh(
         ctx: Context,
         providerId: string,
-        options: { readonly olderThanMs?: number } = {},
+        options: ProviderUsageReadOptions = {},
     ): Promise<ProviderUsageEntry | undefined> {
         const queue = this.#queues.get(providerId);
         if (queue === undefined) return undefined;
@@ -336,7 +361,7 @@ export class ProviderUsageModule implements AgentModule {
     async #read(
         ctx: Context,
         providerId: string,
-        options: { readonly olderThanMs?: number },
+        options: ProviderUsageReadOptions,
     ): Promise<ProviderUsageEntry | undefined> {
         const previous = this.#entries.get(providerId);
         if (previous === undefined) return undefined;
@@ -345,11 +370,16 @@ export class ProviderUsageModule implements AgentModule {
             if (previous.usage !== null || previous.error !== null) return previous;
             return this.#set({ ...previous, checkedAt: Date.now(), error: NOT_REPORTED });
         }
+        // Nothing about a blocked account can change before its reset, so it is not asked.
+        const state = providerAccountState(previous.usage, Date.now());
+        if (state.kind === "blocked") return previous;
         // The provider named the instant it will answer again. Asking sooner earns another
         // refusal and nothing else, so the read is skipped until then.
         if (previous.retryAt !== null && Date.now() < previous.retryAt) return previous;
-        // A read queued behind another one may find the account already fresh enough.
+        // A read queued behind another one may find the account already fresh enough. A reading
+        // of another window can be fresh without saying anything about the one that reset.
         if (
+            state.kind !== "resetPassed" &&
             options.olderThanMs !== undefined &&
             !isStale(previous, options.olderThanMs, Date.now())
         ) {
@@ -360,7 +390,12 @@ export class ProviderUsageModule implements AgentModule {
         try {
             const usage = await this.#config.readProviderUsage(ctx, providerId, {
                 shouldProbe: () => {
-                    const admitted = this.#admitProbe(providerId);
+                    // Only a vendor reading may say an account works again after its reset, so
+                    // the read that looks for one is never deferred to save probes.
+                    const admitted =
+                        options.force === true ||
+                        state.kind === "resetPassed" ||
+                        this.#admitProbe(providerId);
                     probeDeferred = !admitted;
                     return admitted;
                 },
@@ -376,8 +411,17 @@ export class ProviderUsageModule implements AgentModule {
             const current = this.#current(providerId);
             const now = Date.now();
             if (usage === null) {
-                if (probeDeferred)
-                    return this.#set({ ...current, checkedAt: now, refreshing: false });
+                if (probeDeferred) {
+                    const nextAt = this.#probes.get(providerId)?.nextAt ?? now;
+                    const deferred = `Usage was not checked: the next usage probe is allowed at ${new Date(nextAt).toISOString()}.`;
+                    return this.#set({
+                        ...current,
+                        checkedAt: now,
+                        error: current.usage === null ? deferred : null,
+                        refreshError: deferred,
+                        refreshing: false,
+                    });
+                }
                 return this.#set({
                     ...current,
                     checkedAt: now,
@@ -511,20 +555,21 @@ export class ProviderUsageModule implements AgentModule {
     /**
      * Keep exactly one pending read for just after the window that blocks an account resets.
      *
-     * An unblocked account has none. A blocked one waits for its reset plus a short grace, or for
-     * the vendor's retry deadline if that is later. A reading that names a different reset moves
-     * the recheck; a reading with the same reset leaves the pending one alone.
+     * A measured account has none. A blocked one waits for its reset plus a short grace, or for
+     * the vendor's retry deadline if that is later; one whose reset already passed is read at
+     * once. A reading that names a different reset moves the recheck; a reading with the same
+     * reset leaves the pending one alone.
      */
     #reconsiderRecheck(providerId: string): void {
         if (this.#closed) return;
         const entry = this.#entries.get(providerId);
-        const resetAt = entry === undefined ? null : blockingResetAt(entry.usage);
-        const pending = this.#rechecks.get(providerId);
+        const resetAt =
+            entry === undefined ? null : resetOf(providerAccountState(entry.usage, Date.now()));
         if (resetAt === null) {
             this.#cancelRecheck(providerId);
             return;
         }
-        if (pending?.resetAt === resetAt) return;
+        if (this.#rechecks.get(providerId)?.resetAt === resetAt) return;
         this.#scheduleRecheck(
             providerId,
             resetAt,
@@ -539,9 +584,10 @@ export class ProviderUsageModule implements AgentModule {
         const when = Math.max(at, retryAt ?? 0);
         const timer = setTimeout(
             () => {
-                this.#track(this.#runRecheck(providerId));
+                if (Date.now() < when) this.#scheduleRecheck(providerId, resetAt, attempt, when);
+                else this.#track(this.#runRecheck(providerId));
             },
-            Math.max(0, when - Date.now()),
+            Math.min(MAX_TIMER_DELAY_MS, Math.max(0, when - Date.now())),
         );
         timer.unref?.();
         this.#rechecks.set(providerId, { resetAt, attempt, timer, running: false });
@@ -566,26 +612,27 @@ export class ProviderUsageModule implements AgentModule {
         await this.refresh(ctx, providerId);
         if (this.#closed || this.#rechecks.get(providerId)?.running !== true) return;
         this.#rechecks.delete(providerId);
-        const entry = this.#current(providerId);
-        const resetAt = blockingResetAt(entry.usage);
-        if (resetAt === null) return;
-        if (resetAt !== recheck.resetAt) {
+        const state = providerAccountState(this.#current(providerId).usage, Date.now());
+        if (state.kind !== "resetPassed" || state.resetAt !== recheck.resetAt) {
             this.#reconsiderRecheck(providerId);
             return;
         }
-        // The vendor's reset can be soft: the account still reads blocked by the same window.
+        // The read failed, was throttled, or the vendor still reports the window full past its
+        // reset. Only a reading can settle it, so keep asking, ever more patiently.
         const attempt = recheck.attempt + 1;
-        if (attempt >= PROVIDER_USAGE_RESET_RECHECK_ATTEMPTS) {
-            // Keep the reset on record so the same reading does not start the cycle over.
-            this.#rechecks.set(providerId, { resetAt, attempt, timer: undefined, running: false });
-            return;
-        }
         const backoff =
             PROVIDER_USAGE_RESET_RECHECK_BACKOFF_MS[
                 Math.min(attempt - 1, PROVIDER_USAGE_RESET_RECHECK_BACKOFF_MS.length - 1)
-            ] ?? PROVIDER_USAGE_POLL_INTERVAL_MS;
-        this.#scheduleRecheck(providerId, resetAt, attempt, Date.now() + backoff);
+            ] ?? PROVIDER_USAGE_RESET_RECHECK_DELAY_MS;
+        this.#scheduleRecheck(providerId, recheck.resetAt, attempt, Date.now() + backoff);
     }
+}
+
+/** The reset a blocked account waits for or a passed one awaits confirmation of; null otherwise. */
+function resetOf(state: ProviderAccountState): number | null {
+    if (state.kind === "blocked") return state.resetsAt;
+    if (state.kind === "resetPassed") return state.resetAt;
+    return null;
 }
 
 /** The sign-in an account entry takes; a smart provider's entry carries none. */
@@ -598,33 +645,6 @@ function signedIn(
 
 function isStale(entry: ProviderUsageEntry, olderThanMs: number, now: number): boolean {
     return entry.refreshedAt === null || now - entry.refreshedAt >= olderThanMs;
-}
-
-/**
- * When the window blocking an account resets, or null when nothing blocks it.
- *
- * A window at 100% blocks until it resets; an account the vendor refuses is blocked by its full
- * windows. With several full windows the account works again only once the last one resets. An
- * exhausted account whose full window is unknown has no reset to wait for, so the daily poll and
- * in-band readings remain its only rechecks.
- */
-function blockingResetAt(usage: ProviderUsage | null): number | null {
-    if (usage === null) return null;
-    let resetAt: number | null = null;
-    for (const window of windowsOf(usage)) {
-        if (window === null || window.usedPercent < 100 || window.resetsAt === null) continue;
-        resetAt = Math.max(resetAt ?? window.resetsAt, window.resetsAt);
-    }
-    return resetAt;
-}
-
-function windowsOf(usage: ProviderUsage): (ProviderUsageWindow | null)[] {
-    return [
-        usage.windows.fiveHour,
-        usage.windows.weekly,
-        usage.windows.monthly,
-        usage.windows.fableWeekly ?? null,
-    ];
 }
 
 function measuresWindow(usage: ProviderUsage): boolean {
@@ -669,8 +689,13 @@ function mergeProviderUsage(
         if (current !== null) return current;
         // A window the newer reading did not mention is only worth keeping while it is still the
         // window it described. Once it has reset, its percentage measures a period that is over,
-        // and reporting it as current would be worse than reporting nothing.
-        if (older === null || (older.resetsAt !== null && older.resetsAt <= now)) return null;
+        // and reporting it as current would be worse than reporting nothing. A full window is the
+        // exception: dropping it would call the account working when no vendor said so, so it
+        // stays until a reading measures it again.
+        if (older === null) return null;
+        if (older.resetsAt !== null && older.resetsAt <= now && older.usedPercent < 100) {
+            return null;
+        }
         return older;
     };
     return {

@@ -768,6 +768,173 @@ describe("ProviderUsageModule", () => {
             });
         });
 
+        it("does not read a blocked account before its reset, however far away", async () => {
+            const harness = await blockedHarness();
+            const day = 24 * 60 * 60_000;
+            // Further away than a timer can wait in one go.
+            const resetsAt = Date.now() + 40 * day;
+            harness.answer(async () => unblocked(resetsAt));
+            harness.observe(
+                reading({
+                    exhausted: true,
+                    windows: {
+                        fiveHour: null,
+                        weekly: null,
+                        monthly: { ...window(100, resetsAt), durationMs: 30 * day },
+                    },
+                }),
+            );
+            expect(harness.module.accountState("claude")).toEqual({ kind: "blocked", resetsAt });
+
+            const claudeReads = () =>
+                harness.reads.filter((read) => read.providerId === "claude").length;
+            // The daily polls that read Codex and a direct read all pass it by.
+            await vi.advanceTimersByTimeAsync(40 * day - 1);
+            await harness.module.refresh(harness.ctx, "claude");
+            expect(claudeReads()).toBe(0);
+            expect(harness.reads.filter((read) => read.providerId === "codex")).toHaveLength(39);
+
+            await vi.advanceTimersByTimeAsync(1 + PROVIDER_USAGE_RESET_RECHECK_DELAY_MS);
+            expect(claudeReads()).toBe(1);
+            expect(harness.module.accountState("claude")).toEqual({ kind: "measured" });
+        });
+
+        it("keeps reading an account past its reset until a reading confirms it", async () => {
+            const harness = await blockedHarness();
+            const resetsAt = Date.now() + 60_000;
+            harness.answer(async () => {
+                throw new Error("fetch failed");
+            });
+            harness.observe(blocked(resetsAt));
+
+            await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+            // 30 seconds after the reset, then 1, 2, 5, and every 15 minutes from then on.
+            expect(harness.load).toHaveBeenCalledTimes(11);
+            expect(harness.module.accountState("claude")).toEqual({
+                kind: "resetPassed",
+                resetAt: resetsAt,
+            });
+            expect(harness.entry("claude")).toMatchObject({
+                usage: { exhausted: true, windows: { fiveHour: { usedPercent: 100 } } },
+                refreshError: "fetch failed",
+            });
+
+            await vi.advanceTimersByTimeAsync(10 * 60 * 60_000);
+            expect(harness.load).toHaveBeenCalledTimes(51);
+
+            harness.answer(async () => unblocked(resetsAt));
+            await vi.advanceTimersByTimeAsync(15 * 60_000);
+            expect(harness.load).toHaveBeenCalledTimes(52);
+            expect(harness.module.accountState("claude")).toEqual({ kind: "measured" });
+            expect(harness.entry("claude")?.refreshError).toBeNull();
+            await vi.advanceTimersByTimeAsync(60 * 60_000);
+            expect(harness.load).toHaveBeenCalledTimes(52);
+        });
+
+        it("waits for the vendor's retry deadline between reads past the reset", async () => {
+            const harness = await blockedHarness();
+            const resetsAt = Date.now() + 60_000;
+            const retryAt = resetsAt + PROVIDER_USAGE_RESET_RECHECK_DELAY_MS + 40 * 60_000;
+            harness.answer(async () => {
+                throw new ProviderUsageRequestError("Claude usage returned HTTP 429.", {
+                    retryAt,
+                    status: 429,
+                });
+            });
+            harness.observe(blocked(resetsAt));
+
+            await vi.advanceTimersByTimeAsync(60_000 + PROVIDER_USAGE_RESET_RECHECK_DELAY_MS);
+            expect(harness.load).toHaveBeenCalledTimes(1);
+            expect(harness.entry("claude")).toMatchObject({
+                retryAt,
+                refreshError: "Claude usage returned HTTP 429.",
+            });
+            harness.answer(async () => unblocked(resetsAt));
+            await vi.advanceTimersByTimeAsync(40 * 60_000 - 1);
+            expect(harness.load).toHaveBeenCalledTimes(1);
+            await vi.advanceTimersByTimeAsync(1);
+            expect(harness.load).toHaveBeenCalledTimes(2);
+            expect(harness.module.accountState("claude")).toEqual({ kind: "measured" });
+        });
+
+        it("says why a read deferred by the probe budget did not happen", async () => {
+            const harness = await blockedHarness();
+            harness.answer(async (_id, method) =>
+                method?.shouldProbe?.() === true ? unblocked(Date.now()) : null,
+            );
+            // An in-band measurement postpones probes for a day.
+            harness.observe(unblocked(Date.now()));
+            await harness.module.refresh(harness.ctx, "claude");
+
+            expect(harness.entry("claude")).toMatchObject({
+                usage: { windows: { fiveHour: { usedPercent: 3 } } },
+                error: null,
+                refreshError:
+                    "Usage was not checked: the next usage probe is allowed at 2027-01-16T08:00:00.000Z.",
+            });
+        });
+
+        it("keeps a full window past its reset until a reading measures it again", async () => {
+            const harness = await blockedHarness();
+            const week = 7 * 24 * 60 * 60_000;
+            const resetsAt = Date.now() + 60_000;
+            harness.answer(async () => {
+                throw new Error("fetch failed");
+            });
+            harness.observe(
+                reading({
+                    exhausted: true,
+                    windows: {
+                        fiveHour: null,
+                        weekly: { ...window(100, resetsAt), durationMs: week },
+                        monthly: null,
+                    },
+                }),
+            );
+            await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+            // Inference measured only the session window; the week is still unconfirmed.
+            harness.observe(
+                reading({
+                    windows: { fiveHour: window(4, Date.now() + 1e6), weekly: null, monthly: null },
+                }),
+            );
+            expect(harness.module.accountState("claude")).toEqual({
+                kind: "resetPassed",
+                resetAt: resetsAt,
+            });
+            expect(harness.entry("claude")?.usage?.windows.weekly).toMatchObject({
+                usedPercent: 100,
+                resetsAt,
+            });
+            // And a read is still due however fresh that made the entry look.
+            const before = harness.load.mock.calls.length;
+            await harness.module.refresh(harness.ctx, "claude", { olderThanMs: 60 * 60_000 });
+            expect(harness.load.mock.calls.length).toBe(before + 1);
+        });
+
+        it("probes on a forced read without touching the probe budget", async () => {
+            const harness = await blockedHarness();
+            let probes = 0;
+            harness.answer(async (_id, method) => {
+                if (method?.shouldProbe?.() !== true) return null;
+                probes += 1;
+                return unblocked(Date.now());
+            });
+            await harness.module.refresh(harness.ctx, "claude");
+            expect(probes).toBe(1);
+            await harness.module.refresh(harness.ctx, "claude", { force: true });
+            await harness.module.refresh(harness.ctx, "claude", { force: true });
+            expect(probes).toBe(3);
+            // The budget still admits its next probe exactly five minutes after the first.
+            vi.setSystemTime(Date.now() + 5 * 60_000 - 1);
+            await harness.module.refresh(harness.ctx, "claude");
+            expect(probes).toBe(3);
+            vi.setSystemTime(Date.now() + 1);
+            await harness.module.refresh(harness.ctx, "claude");
+            expect(probes).toBe(4);
+        });
+
         it("cancels a pending recheck on close", async () => {
             const harness = await blockedHarness();
             harness.observe(blocked(Date.now() + 60_000));

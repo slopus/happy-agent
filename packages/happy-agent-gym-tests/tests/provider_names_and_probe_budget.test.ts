@@ -115,13 +115,18 @@ describe("provider names and probe budgets", () => {
                 "the requested refresh to settle",
             );
         };
+        let probedAt = now;
         for (const delay of [5 * 60_000, 40 * 60_000, 320 * 60_000, 24 * 60 * 60_000]) {
             const before = probes;
             now += 60_000;
             await refresh();
             expect(probes).toBe(before);
-            expect((await account())?.refreshError).toBeNull();
+            // A deferred probe says so, and when the budget admits the next one.
+            expect((await account())?.refreshError).toBe(
+                `Usage was not checked: the next usage probe is allowed at ${new Date(probedAt + delay).toISOString()}.`,
+            );
             now += delay - 60_000;
+            probedAt = now;
             await refresh();
             expect(probes).toBe(before + 1);
         }
