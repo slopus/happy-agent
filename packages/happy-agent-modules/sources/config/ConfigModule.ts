@@ -1986,6 +1986,9 @@ export class ConfigModule implements AgentModule {
     #instanceId: string | undefined;
     #peerMessaging: PeerMessagingConfig;
     readonly #accountUsageListeners = new Set<(usage: ProviderUsage) => void>();
+    readonly #foreignBackgroundWorkListeners = new Set<
+        (agentId: string, running: number) => void
+    >();
     #harnessAsker: HarnessPermissionAsker | undefined;
     #harnessReviewer: HarnessPermissionReviewer | undefined;
     /** The agents a foreign agent's own turn wakes, and the context that outlives any turn. */
@@ -3871,6 +3874,17 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
+     * Watch how many background tasks each agent's foreign agent keeps running after its turns,
+     * such as Claude Code's background commands, monitors, subagents and workflows. `listener`
+     * hears the agent and its new count on every change, and 0 once that work is gone. Returns the
+     * function that ends the subscription.
+     */
+    onForeignAgentBackgroundWork(listener: (agentId: string, running: number) => void): () => void {
+        this.#foreignBackgroundWorkListeners.add(listener);
+        return () => this.#foreignBackgroundWorkListeners.delete(listener);
+    }
+
+    /**
      * Review what foreign agents' own permission systems ask with `reviewer`, the module that owns
      * Auto review, before anyone is asked. Returns the function that stops it.
      */
@@ -3936,6 +3950,23 @@ export class ConfigModule implements AgentModule {
                     `Could not show a turn a foreign agent started on its own: ${String(error)}`,
                 );
             });
+    }
+
+    /**
+     * A foreign agent's count of the background tasks it keeps running changed. `ctx` names the
+     * agent, as for a wake: the count may change long after the turn that started the work.
+     * Bookkeeping beside the run, so a listener that throws never breaks inference.
+     */
+    #reportForeignBackgroundWork(ctx: Context, running: number): void {
+        const agent = contextAgentId(ctx);
+        if (agent === undefined) return;
+        for (const listener of this.#foreignBackgroundWorkListeners) {
+            try {
+                listener(agent, running);
+            } catch {
+                // A background-work listener never decides whether inference continues.
+            }
+        }
     }
 
     /** Sign-in state is bookkeeping too; a listener that throws never breaks inference. */
@@ -4230,6 +4261,7 @@ export class ConfigModule implements AgentModule {
                         this.#askHarnessPermission(ctx, harnessId, question, signal),
                     undefined,
                     (ctx, notice) => this.#wakeForeignAgent(ctx, notice),
+                    (ctx, running) => this.#reportForeignBackgroundWork(ctx, running),
                 ),
             },
             this.configuration,
@@ -4306,6 +4338,7 @@ export class ConfigModule implements AgentModule {
                     this.#askHarnessPermission(ctx, harnessId, question, signal),
                 () => this.configuration,
                 (ctx, notice) => this.#wakeForeignAgent(ctx, notice),
+                (ctx, running) => this.#reportForeignBackgroundWork(ctx, running),
             );
             // A test-owned inference registry is already authenticated. Initialize all its
             // accounts as usable, including canonical IDs whose production defaults are off. This

@@ -101,6 +101,7 @@ async function createFixture(teamMode = false) {
     };
     const config = {
         onDefaultModelChanged: subscribe,
+        onForeignAgentBackgroundWork: subscribe,
         onProviderServiceTiersChanged: subscribe,
         configuration: {
             paths: { tokenPath: join(directory, "token") },

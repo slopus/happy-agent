@@ -227,7 +227,7 @@ import {
     compactionSchema,
     type Compaction,
 } from "../compactions/index.js";
-import { ComputeModule, type ComputeProcessEvent } from "../compute/index.js";
+import { ComputeModule, type ComputeProcess, type ComputeProcessEvent } from "../compute/index.js";
 import {
     ConfigModule,
     PublicApiConfigError,
@@ -521,6 +521,8 @@ const MAX_TERMINAL_WIRE_MESSAGE_BYTES = 4 * 1024 * 1024 + 20;
 const MAX_ANNOUNCED_PENDING_MESSAGES = 10_000;
 const MAX_ANNOUNCED_AGENT_CREATIONS = 10_000;
 const MAX_ANNOUNCED_TERMINAL_RUNS = 10_000;
+/** Tries at announcing an agent's process count after its foreign background work changed. */
+const MAX_FOREIGN_WORK_ANNOUNCE_ATTEMPTS = 8;
 const MAX_ANNOUNCED_EXECUTION_CONFIGURATIONS = 512 * 64;
 const DRAIN_MUTATION_LOG_INTERVAL_MS = 5_000;
 /** How often a drain looks at what still holds it open; it logs only on change or every 5s. */
@@ -757,6 +759,18 @@ export class ApiModule implements AgentModule {
     readonly #backgroundScope = new AsyncResource("happy-agent-api");
     /** Agents whose usage-driven metadata refresh is already scheduled. */
     readonly #pendingUsageMetadataAgents = new Set<string>();
+    /**
+     * How many background tasks each agent's foreign agent runs now, as config reports them, such
+     * as Claude Code's background commands and subagents. They count among the agent's running
+     * processes. An agent is held only while its count is above 0, and nothing is persisted: the
+     * tasks live in the foreign agent's process, which ends with the daemon.
+     */
+    readonly #foreignBackgroundWork = new Map<string, number>();
+    /**
+     * Per agent, the announcement of its process count that is pending or running, and whether a
+     * newer count arrived since it last read one.
+     */
+    readonly #foreignBackgroundWorkUpdates = new Map<string, { again: boolean }>();
     /** Per agent, the streamed assistant message being accumulated block by block. */
     readonly #streamingAssistantBlocks = new Map<
         string,
@@ -3158,6 +3172,9 @@ export class ApiModule implements AgentModule {
             this.#config.onDefaultModelChanged(() => {
                 this.#journal.append("config.updated", {});
             }),
+            this.#config.onForeignAgentBackgroundWork((agentId, running) => {
+                this.#adoptForeignBackgroundWork(ctx, agentId, running);
+            }),
             this.#node.onUpdated(() => {
                 this.#journal.append("config.updated", {});
             }),
@@ -3573,8 +3590,76 @@ export class ApiModule implements AgentModule {
             );
         }
         await this.#updateAgentMetadata(ctx, event.agentId, {
-            processes: { running: event.runningProcesses },
+            processes: {
+                running:
+                    event.runningProcesses + (this.#foreignBackgroundWork.get(event.agentId) ?? 0),
+            },
         });
+    }
+
+    /** The agent's running processes: its own, then the background tasks of its foreign agent. */
+    #runningProcessCount(agentId: string, processes: readonly ComputeProcess[]): number {
+        return (
+            processes.filter((process) => process.status === "running").length +
+            (this.#foreignBackgroundWork.get(agentId) ?? 0)
+        );
+    }
+
+    /**
+     * Take a foreign agent's new count of the background tasks it runs, and announce the agent's
+     * process count. The count may arrive from inside the agent's own operation, mid-turn, where a
+     * metadata update would wait on that operation, so the announcement runs from the module's
+     * background scope. One announcement per agent is pending at a time and reads the latest count
+     * when it runs; a count that arrives after that read makes it announce once more. A burst of
+     * changes, such as a workflow starting many subagents, so costs a few updates, and the last one
+     * published is the count that stands. A failed update is retried a bounded number of times.
+     */
+    #adoptForeignBackgroundWork(ctx: Context, agentId: string, running: number): void {
+        if (running === (this.#foreignBackgroundWork.get(agentId) ?? 0)) return;
+        if (running > 0) this.#foreignBackgroundWork.set(agentId, running);
+        else this.#foreignBackgroundWork.delete(agentId);
+        const pending = this.#foreignBackgroundWorkUpdates.get(agentId);
+        if (pending !== undefined) {
+            pending.again = true;
+            return;
+        }
+        const entry = { again: true };
+        this.#foreignBackgroundWorkUpdates.set(agentId, entry);
+        const task = this.#backgroundScope.runInAsyncScope(async () => {
+            let attempts = 0;
+            try {
+                while (entry.again && attempts < MAX_FOREIGN_WORK_ANNOUNCE_ATTEMPTS) {
+                    await new Promise<void>((resolve) => setImmediate(resolve));
+                    if (this.#closed) return;
+                    // The read below sees every count that has arrived so far, so only a later
+                    // one needs another announcement.
+                    entry.again = false;
+                    try {
+                        const processes = await this.#compute.listProcesses(ctx, agentId);
+                        await this.#updateAgentMetadata(ctx, agentId, {
+                            processes: { running: this.#runningProcessCount(agentId, processes) },
+                        });
+                        attempts = 0;
+                    } catch (error: unknown) {
+                        // An agent deleted meanwhile has nothing left to announce.
+                        if (error instanceof ApiError && error.code === "not_found") return;
+                        attempts += 1;
+                        entry.again = true;
+                        if (attempts === MAX_FOREIGN_WORK_ANNOUNCE_ATTEMPTS) {
+                            ctx.log.warn(
+                                "The API could not announce a foreign agent's background work.",
+                                { agentId },
+                                error,
+                            );
+                        }
+                    }
+                }
+            } finally {
+                this.#foreignBackgroundWorkUpdates.delete(agentId);
+            }
+        });
+        this.#backgroundMetadataUpdates.add(task);
+        void task.finally(() => this.#backgroundMetadataUpdates.delete(task));
     }
 
     async #convertProjectEvent(ctx: Context, event: ProjectEvent): Promise<void> {
@@ -6461,8 +6546,7 @@ export class ApiModule implements AgentModule {
                 subtasks,
                 subtaskOrderKey: this.#subtasks?.siblingOrderKey(config) ?? null,
                 pendingQuestionId: questions.requests[0]?.id ?? null,
-                runningProcesses: processes.filter((process) => process.status === "running")
-                    .length,
+                runningProcesses: this.#runningProcessCount(agentId, processes),
                 runningSubagents,
                 working: activeRunId !== undefined,
                 wait,

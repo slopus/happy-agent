@@ -180,7 +180,11 @@ export const agentSchema = Type.Recursive((agent) =>
         parentAgentId: Nullable(cuid2Schema),
         /** The open question when the run is waiting on the person. */
         pendingQuestionId: Nullable(cuid2Schema),
-        /** How many background processes started by this agent are running now. */
+        /**
+         * How many background processes started by this agent are running now, including a
+         * foreign harness's own background tasks, such as Claude Code's, which have no process
+         * objects.
+         */
         processes: Type.Object({ running: Type.Integer() }),
         status: agentStatusSchema,
         /**

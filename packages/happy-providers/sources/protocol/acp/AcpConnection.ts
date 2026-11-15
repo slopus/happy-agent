@@ -99,5 +99,21 @@ export const acpTurnEndedSchema = Type.Union([
 
 export type AcpTurnEnded = Static<typeof acpTurnEndedSchema>;
 
+/**
+ * Extension notification an agent sends whenever the work it keeps running after its turns
+ * changes, in the shape of {@link acpBackgroundWorkSchema}: `running` is how many of its own
+ * background tasks are running now — commands, monitors, subagents or workflows that outlived the
+ * tool call that started them, such as Claude Code's `run_in_background` commands. Each
+ * notification replaces the last; agents that never send it have no background work Happy sees.
+ */
+export const ACP_BACKGROUND_WORK = "_happy/background_work";
+
+export const acpBackgroundWorkSchema = Type.Object({
+    sessionId: Type.String(),
+    running: Type.Integer({ minimum: 0 }),
+});
+
+export type AcpBackgroundWork = Static<typeof acpBackgroundWorkSchema>;
+
 /** Start a foreign agent working in `cwd` that reports to `client`. */
 export type AcpConnect = (cwd: string, client: acp.Client) => Promise<AcpConnection>;

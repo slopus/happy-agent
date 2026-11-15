@@ -59,6 +59,13 @@ export interface AcpTurnEnvironment {
      * runs the agent while it is still held.
      */
     readonly wake?: (notice: SessionSystemMessage) => void;
+    /**
+     * Report how many background tasks the foreign agent is running now: work it keeps going after
+     * its turn ended, such as a background command or subagent. Called with each new count, and
+     * with 0 once that work is gone with the agent's process or its session. Without it, such work
+     * is not reported anywhere.
+     */
+    readonly backgroundWork?: (running: number) => void;
 }
 
 /** One ACP session configuration option to set before a prompt. */

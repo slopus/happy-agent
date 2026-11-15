@@ -19,10 +19,12 @@ import type {
 import { acpCompactWithAgent } from "@/protocol/acp/impl/acpCompactWithAgent.js";
 import {
     ACP_APPROVED_TOOLS_META,
+    ACP_BACKGROUND_WORK,
     ACP_BRIDGED_CALL_META,
     ACP_REFUSAL_REASON_META,
     ACP_TURN_ENDED,
     ACP_TURN_STARTED,
+    acpBackgroundWorkSchema,
     acpTurnEndedSchema,
     type AcpConnection,
 } from "@/protocol/acp/AcpConnection.js";
@@ -174,6 +176,12 @@ export class AcpSession extends BaseSession {
     #advertised: acp.SessionConfigOption[] | undefined;
     readonly #closedCalls = new Set<string>();
     #contextUsed = 0;
+    /**
+     * How many background tasks the foreign session last said it runs, as last reported to the
+     * turn environment. They belong to that one session in that one agent process, so the count
+     * goes back to 0 whenever either is replaced or gone.
+     */
+    #backgroundWork = 0;
     #destroyed = false;
 
     constructor(id: string, options: AcpSessionOptions) {
@@ -216,6 +224,7 @@ export class AcpSession extends BaseSession {
             // from the summary instead.
             this.#acpSessionId = undefined;
             this.#record = undefined;
+            this.#reportBackgroundWork(0);
         } else {
             this.#abandonTurn();
         }
@@ -232,6 +241,7 @@ export class AcpSession extends BaseSession {
         this.#connection = undefined;
         this.#connecting = undefined;
         connection?.terminate();
+        this.#reportBackgroundWork(0);
     }
 
     /**
@@ -521,6 +531,7 @@ export class AcpSession extends BaseSession {
                     this.#acpSessionId = undefined;
                     this.#applied.clear();
                     this.#forgetUnkeptRecord();
+                    this.#reportBackgroundWork(0);
                 });
                 return connection;
             },
@@ -554,6 +565,12 @@ export class AcpSession extends BaseSession {
             extNotification: async (method, params) => {
                 if (this.#replaying || params["sessionId"] !== this.#acpSessionId) return;
                 if (method === ACP_TURN_STARTED) this.#startSelfStarted();
+                if (
+                    method === ACP_BACKGROUND_WORK &&
+                    Value.Check(acpBackgroundWorkSchema, params)
+                ) {
+                    this.#reportBackgroundWork(params.running);
+                }
                 if (method === ACP_TURN_ENDED) {
                     // The ACP connection hands each incoming message to its handlers without
                     // waiting for the one before, so an update the agent sent earlier may still be
@@ -623,6 +640,25 @@ export class AcpSession extends BaseSession {
         this.#selfStarted = undefined;
     }
 
+    /**
+     * Tell the turn environment how many background tasks the foreign session runs now, once per
+     * change. It may arrive between turns, so it goes to the environment of the latest run, as a
+     * wake does. It is bookkeeping beside the session, so a reporter that throws never breaks the
+     * session change or the exit it is reported from.
+     */
+    #reportBackgroundWork(running: number): void {
+        // A destroyed session runs nothing. A count still on its way from it would bring back
+        // work that ended with it, and nothing would report the end again.
+        if (this.#destroyed && running !== 0) return;
+        if (running === this.#backgroundWork) return;
+        this.#backgroundWork = running;
+        try {
+            this.#environment?.backgroundWork?.(running);
+        } catch {
+            // A count that could not be reported is replaced by the next one.
+        }
+    }
+
     /** Whether the foreign session has already been given every input in `messages`. */
     async #consumedEverything(messages: readonly SessionMessage[]): Promise<boolean> {
         await this.#loadRecord();
@@ -679,6 +715,8 @@ export class AcpSession extends BaseSession {
             mcpServers: await this.#mcpServers(connection),
             _meta: await this.#sessionMeta(instructions),
         } as acp.NewSessionRequest);
+        // Work the replaced session left running is no longer this conversation's.
+        this.#reportBackgroundWork(0);
         this.#acpSessionId = response.sessionId;
         this.#advertised = response.configOptions ?? undefined;
         this.#cwd = environment.cwd;
@@ -735,6 +773,8 @@ export class AcpSession extends BaseSession {
         } catch {
             return false;
         }
+        // A restored session runs in a process of its own, which starts with no background work.
+        this.#reportBackgroundWork(0);
         this.#acpSessionId = record.acpSessionId;
         this.#keptSessionId = record.acpSessionId;
         this.#cwd = environment.cwd;
@@ -907,6 +947,8 @@ export class AcpSession extends BaseSession {
             this.#connection = undefined;
             this.#acpSessionId = undefined;
             this.#applied.clear();
+            // Ending the agent ends every background task it was running, too.
+            this.#reportBackgroundWork(0);
         }
         this.#stopping = settleWithin(prompt, CANCEL_GRACE_MS).then(async () => {
             connection.terminate(groups);
