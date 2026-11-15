@@ -716,6 +716,58 @@ describe("ProviderUsageModule", () => {
             expect(harness.entry("claude")?.usage?.exhausted).toBe(false);
         });
 
+        it("reads a throttled account after its weekly reset even when the probe budget is spent", async () => {
+            const harness = await blockedHarness();
+            const week = 7 * 24 * 60 * 60_000;
+            const resetsAt = Date.now() + 60 * 60_000;
+            const weekly = (usedPercent: number, at: number) => ({
+                usedPercent,
+                resetsAt: at,
+                startsAt: at - week,
+                durationMs: week,
+            });
+            // The vendor's usage endpoint is throttled, as Claude's often is; only the
+            // inference-header probe can answer, and only when the module admits it.
+            harness.answer(async (_id, method) => {
+                if (method?.skipUsageEndpoint !== true) {
+                    const retryAt = Date.now() + 60_000;
+                    method?.onUsageEndpointRefused?.({ status: 429, retryAt });
+                    if (method?.shouldProbe?.() !== true) {
+                        throw new ProviderUsageRequestError(
+                            "Claude usage returned HTTP 429. Retry after 60 seconds.",
+                            { retryAt, status: 429 },
+                        );
+                    }
+                } else if (method.shouldProbe?.() !== true) {
+                    return null;
+                }
+                return reading({
+                    windows: {
+                        fiveHour: null,
+                        weekly: weekly(2, resetsAt + week),
+                        monthly: null,
+                    },
+                });
+            });
+            // Inference measured the spent week in band, which also postpones probes for a day.
+            harness.observe(
+                reading({
+                    exhausted: true,
+                    windows: { fiveHour: null, weekly: weekly(100, resetsAt), monthly: null },
+                }),
+            );
+
+            await vi.advanceTimersByTimeAsync(3 * 60 * 60_000);
+
+            expect(harness.entry("claude")).toMatchObject({
+                usage: {
+                    exhausted: false,
+                    windows: { weekly: { usedPercent: 2, resetsAt: resetsAt + week } },
+                },
+                refreshError: null,
+            });
+        });
+
         it("cancels a pending recheck on close", async () => {
             const harness = await blockedHarness();
             harness.observe(blocked(Date.now() + 60_000));
