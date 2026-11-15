@@ -80,6 +80,9 @@ environment actually used after the bot's compute choice: `host` for this comput
 run as another Linux user), `r-<runnerId>` for a runner, and for a container `c-` and a digest of
 the agent, image, and runner. A running machine is never moved, so a newer setting renames nothing
 until the machine is rebuilt; a rebuilt container in the same environment keeps its name.
+Clients must not parse the name, so the same environment also records the network's kind
+(`host`, `runner`, or `container`) beside it, and `agentNetwork` reports both; the desktop loads a
+`host` preview directly only when it runs on the daemon's computer.
 
 `namedNetwork` serves only what is true now and never starts a machine. `host` is served while
 work runs here and `r-<id>` while that runner is configured, through the runners module's product

@@ -120,6 +120,7 @@ import {
     drainRequestSchema,
     userIdsSchema,
     networkIdSchema,
+    type WorkspaceAgentNetworkResponse,
     skillPageQuerySchema,
     updateGlobalSkillRequestSchema,
     type ArtifactFileInput as ArtifactRequestFile,
@@ -2994,14 +2995,14 @@ export class ApiModule implements AgentModule {
         ctx: Context,
         workspaceId: string,
         agentId: string,
-    ): Promise<{ readonly networkId: string }> {
+    ): Promise<WorkspaceAgentNetworkResponse> {
         this.#assertSocketReady();
         await this.#resolveWorkspaceScope(ctx, workspaceId);
         const agentCtx = await this.#proxiedAgent(ctx, workspaceId, agentId);
-        const networkId = await this.#machineNetwork(() =>
-            this.#compute.networkId(agentCtx, agentId),
+        const { networkId, kind } = await this.#machineNetwork(() =>
+            this.#compute.agentNetwork(agentCtx, agentId),
         );
-        return { networkId };
+        return { networkId, kind };
     }
 
     /** The agent's own context, once it is known to belong to this workspace and is not archived. */

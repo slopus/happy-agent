@@ -222,6 +222,36 @@ describe("ComputeModule network identity", () => {
         await here.dispose(ctx);
     });
 
+    it("says whether a network is this computer's, a runner's, or a container's", async () => {
+        const here = compute(runners([]));
+        expect(await here.agentNetwork(on({ cwd: "/workspace/a" }), "agenta")).toEqual({
+            networkId: "host",
+            kind: "host",
+        });
+        const local = await here.agentNetwork(
+            on({ cwd: "/workspace/b", docker: { image: "node:22" } }),
+            "agentb",
+        );
+        expect(local.kind).toBe("container");
+        expect(local.networkId).toMatch(/^c-[0-9a-f]{32}$/);
+        await here.dispose(ctx);
+
+        const remote = compute(runners(["studio"]));
+        expect(
+            await remote.agentNetwork(on({ cwd: "/srv/a", runnerId: "studio" }), "agenta"),
+        ).toEqual({ networkId: "r-studio", kind: "runner" });
+        const boxed = on({ cwd: "/srv/b", runnerId: "studio", docker: { image: "node:22" } });
+        expect((await remote.agentNetwork(boxed, "agentb")).kind).toBe("container");
+        // The kind is the running machine's, as its name is: a newer setting waits for a restart.
+        expect(
+            await remote.agentNetwork(
+                on({ cwd: "/srv/a", runnerId: "studio", docker: { image: "node:22" } }),
+                "agenta",
+            ),
+        ).toEqual({ networkId: "r-studio", kind: "runner" });
+        await remote.dispose(ctx);
+    });
+
     it("refuses to name or serve the network of a machine that cannot open connections", async () => {
         const module = ComputeModule.withProvider(testConfig, new SecretsModule(), {
             id: "host",

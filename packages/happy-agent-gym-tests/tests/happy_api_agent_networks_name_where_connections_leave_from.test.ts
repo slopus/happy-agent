@@ -29,7 +29,7 @@ describe("agent networks", () => {
         const bot = (await gym.client.createBot({ name: "Network bot" })).bot;
 
         const host = await gym.client.getWorkspaceAgentNetwork(workspaceId, agentId);
-        expect(host).toEqual({ networkId: "host" });
+        expect(host).toEqual({ networkId: "host", kind: "host" });
         expect(await gym.client.getWorkspaceAgentNetwork(workspaceId, other)).toEqual(host);
         expect(await gym.client.getWorkspaceAgentNetwork(bot.workspaceId, bot.agent.id)).toEqual(
             host,
@@ -114,19 +114,22 @@ describe("agent networks", () => {
             .agent;
 
         // Naming the network does not start the container.
-        const { networkId } = await gym.client.getWorkspaceAgentNetwork(boxed.id, first.id);
+        const { networkId, kind } = await gym.client.getWorkspaceAgentNetwork(boxed.id, first.id);
         expect(networkId).toMatch(/^c-[0-9a-f]{32}$/);
+        expect(kind).toBe("container");
         const neighbor = (await gym.client.getWorkspaceAgentNetwork(boxed.id, second.id)).networkId;
         expect(neighbor).toMatch(/^c-[0-9a-f]{32}$/);
         expect(neighbor).not.toBe(networkId);
         expect(await gym.client.getWorkspaceAgentNetwork(boxed.id, first.id)).toEqual({
             networkId,
+            kind: "container",
         });
 
         // A restarted daemon builds the same container environment under the same name.
         await gym.restart();
         expect(await gym.client.getWorkspaceAgentNetwork(boxed.id, first.id)).toEqual({
             networkId,
+            kind: "container",
         });
         expect((await attach(gym, networkPath(gym, networkId))).status).toBe(200);
 

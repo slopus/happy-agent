@@ -28,6 +28,7 @@ import {
     type HostComputeConfig,
 } from "@slopus/happy-agent-compute";
 import { createId } from "@paralleldrive/cuid2";
+import type { AgentNetworkKind } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { detach, mapAsyncLock, type Context, type MapAsyncLock } from "@steve.kite/stdlib";
@@ -229,6 +230,8 @@ interface CachedCompute {
     readonly compute: HostCompute;
     /** The network this machine was built to leave from; see {@link agentNetworkId}. */
     readonly networkId: string;
+    /** Whether that network is this computer's, a runner's, or a container's own. */
+    readonly networkKind: AgentNetworkKind;
     /** Connections opened from this machine on the product's behalf, ended with the machine. */
     readonly connections: Set<Duplex>;
     readonly processContext: Context;
@@ -434,12 +437,14 @@ export class ComputeModule implements AgentModule {
                     await compute.dispose(lockCtx);
                     throw new Error("Compute module is closed.");
                 }
+                const network = agentNetworkId(agentId, effective);
                 const cached: CachedCompute = {
                     abortGeneration: 0,
                     closing: false,
                     cwd: config.cwd,
                     compute,
-                    networkId: agentNetworkId(agentId, effective),
+                    networkId: network.networkId,
+                    networkKind: network.kind,
                     connections: new Set(),
                     processContext: created.processContext,
                     processManager: created.processManager,
@@ -482,13 +487,21 @@ export class ComputeModule implements AgentModule {
      * in a container has one of its own that changes only when its container's environment does.
      */
     async networkId(ctx: Context, agentId: string): Promise<string> {
+        return (await this.agentNetwork(ctx, agentId)).networkId;
+    }
+
+    /** The {@link networkId} of one agent's machine, with which of the three networks it is. */
+    async agentNetwork(
+        ctx: Context,
+        agentId: string,
+    ): Promise<{ readonly networkId: string; readonly kind: AgentNetworkKind }> {
         const compute = await this.resolve(ctx, agentId);
         if (compute?.network === undefined) throw machineWithoutNetwork();
         const cached = this.#computes.get(agentId);
         if (cached === undefined || cached.compute !== compute || cached.closing) {
             throw machineStopped();
         }
-        return cached.networkId;
+        return { networkId: cached.networkId, kind: cached.networkKind };
     }
 
     /**
