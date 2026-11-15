@@ -18,6 +18,7 @@ the TypeScript program. The companion Lean development lives in `../lean/`.
 | `Safety*.cfg`                                        | The safety invariants under broad bounds.                                                                             |
 | `Liveness*.cfg`                                      | Temporal properties under fairness.                                                                                   |
 | `SettleRaceAtCrash.cfg` … `ResponseContinuation.cfg` | Focused checks, one per defect found by an earlier version of this model and since fixed in `sources/`.               |
+| `NativeCompaction.cfg`                               | Provider-native context replacement during an open response, with crash/restart and abort interleavings.              |
 | `SingleOwner.cfg` / `SingleOwnerResolveGap.cfg`      | Ownership checks: the first passes; the second shows why an assumption is needed (expected **violation**).            |
 | `run.sh`                                             | Runs TLC on every configuration and compares each outcome with its expectation.                                       |
 
@@ -94,6 +95,7 @@ names are the stable reference.
 | `Turn`                                                  | `#runTurn` (2172): unless its abort scope is already aborted, clear `#turnRequested` and `#abandonedQueueKeys`; `#ensureLoaded` → `#loadHistory` (4120), including undispatched-call recovery                                                                                                                                                           |
 | `ResumeTools` / `PostResume`                            | `#runInferenceAttempt` (2599)                                                                                                                                                                                                                                                                                                                           |
 | `CompactCheck`, `CompStage`, `CompSucceed`, `CompFail`  | `#runCompaction` (3221) / `#compactHistoryAttempt` (3248), `#preserveCompactionContinuation` (3389)                                                                                                                                                                                                                                                     |
+| `NativeCompaction`                                      | `#collect` → `#acceptNativeCompaction` → `#applyCompletedCompaction`: at a closed-block, settled-tool boundary, atomically replace private context and identities while retaining the open inference identity.                                                                                                                                          |
 | `Recovery`                                              | `#resumesInterruptedRun` (3100), emitting `block_reset` if `#resetInterruptedResponse` left it undecided; a trailing `block` or `compaction` record is owed when the inherited `inference` stage carries a live inference identity                                                                                                                      |
 | `LoopTop`                                               | the abort check at the top of the drain loop in `#runInferenceAttempt`                                                                                                                                                                                                                                                                                  |
 | `Consume`                                               | `#consumeQueue` (3625): durable-key filter, then one transaction (delete key, append user record, pending `inference`)                                                                                                                                                                                                                                  |
@@ -127,6 +129,12 @@ names are the stable reference.
   pending record carries a live inference identity, which is what `#resumesInterruptedRun` reads.
 - **Tool durability** is chosen by the model when it emits the call. `reloadable` is folded into
   `durable`, since both mean "may run again" (`#isRetryable`). `steerable` tools are not modelled.
+- **Native checkpoints** use the shared `MaxCompactions` bound. Their summary content, checkpoint-ID deduplication and account-specific resume fingerprints are not modelled; regression tests cover those contracts. The model checks the durable replacement and open-response continuation.
+- **Provider preflight** may request that same ordinary compaction after a response reports that
+  its assembled context needs replacement. The existing requested-compaction transition models
+  its atomic replacement. Token budgets, the one-attempt preflight policy, and deterministic
+  invalid-summary failures are outside this model; `AgentBaseRequiredCompaction.test.ts` covers
+  those decisions, cancellation, and preservation of the pending input.
 - **Provider streams** emit at most `MaxBlocks` finished blocks. Server-side tools are not
   modelled. Tool calls are numbered `1..NumCalls` for the whole behaviour.
 - **In-process unwinding** is only partly modelled: `#settled()` waits before the next request are

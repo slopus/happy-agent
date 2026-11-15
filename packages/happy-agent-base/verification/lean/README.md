@@ -392,8 +392,12 @@ as a crash.
   obligation `idleWorkScheduled`: some reason to start a run always holds while work is owed.
   That a reason leads to the step being taken is the code's `finally`, checked by the regression
   tests; the model's liveness results stay existential.
-- Compaction is assumed to run only at a settled boundary (empty batch, no unanswered calls),
-  which is what `#runInferenceAttempt` arranges.
+- These global Lean proofs include explicit compaction only at a settled boundary (empty batch, no unanswered calls), which `#runInferenceAttempt` arranges. Provider-native checkpoints during an open response are not in this Lean transition relation. `../tla/NativeCompaction.cfg` checks their atomic replacement and continuation under bounded crash/abort interleavings; runtime tests additionally cover native summary bytes, checkpoint deduplication and account switches. Do not read the Lean results as proofs of that added transition.
+- An assembled-context preflight refusal now requests the existing explicit-compaction path at
+  that same settled boundary. The one-attempt decision, invalid-summary terminal policy and
+  token-budget classification are not Lean claims; `AgentBaseRequiredCompaction.test.ts` covers
+  them together with cancellation and pending-input retention. The underlying compaction
+  transaction and continuation transitions are unchanged.
 - The provider and tools are unconstrained nondeterminism. The liveness results are
   existential.
 - The correspondence between each transition and the TypeScript was established by reading

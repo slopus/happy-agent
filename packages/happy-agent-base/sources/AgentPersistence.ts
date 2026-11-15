@@ -46,6 +46,8 @@ export type AgentRecord =
     | { readonly type: "system"; readonly message: SessionSystemMessage }
     | {
           readonly type: "compaction";
+          /** Stable identity of an unsolicited native checkpoint, for restart-safe deduplication. */
+          readonly checkpointId?: string;
           /** Base-to-provider tool identities required to replay `messages`. */
           readonly contextToolIds: readonly (readonly [id: string, callId: string])[];
           readonly messages: readonly SessionMessage[];

@@ -243,3 +243,26 @@ settles.
 `verification/lean/` (Lean 4) and `verification/tla/` (TLA+) model this state machine. Keep
 their transition tables in step with changes to the loop, the settlement, the tool batch, and
 recovery.
+
+## Native agent compaction replaces the canonical model context
+
+A foreign Claude session compacted its private context while Base retained the original long
+transcript. Switching accounts then replayed hundreds of thousands of superseded tokens. A
+provider-native checkpoint now reaches Base through the private stream before later output.
+Base commits the replacement through the same atomic compaction record and module hooks as a
+requested compaction, preserving the in-flight inference identity and the original public
+history. Duplicate checkpoint identities survive restart; an unresolved tool or failed commit
+cannot replace history. Only post-checkpoint response blocks join the replacement.
+
+## A provider preflight requests compaction without resetting history
+
+A provider can refuse an assembled request before inference with the existing context-overflow
+event and `diagnostics.code: "context_compaction_required"`. The outer loop owns the response:
+it requests one ordinary native compaction, adopts its checked replacement through the usual
+transaction and hooks, and only then retries inference. This opt-in signal never invokes the
+private-history reset. Failed or cancelled compaction, or a second preflight refusal, settles the
+turn with the original evidence intact; `retryForever` cannot repeat that recovery. An invalid
+summary is also terminal for an ordinary requested compaction, since replaying it unchanged is
+not progress. Known fixed-context, no-progress and saved-recovery refusals also terminate
+`retryForever`, after completed output and outstanding tool results are retained. Other
+context-overflow events keep their existing reset contract.

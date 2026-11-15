@@ -26,7 +26,7 @@ CONSTANTS
     MaxOffers,       \* how many times each identity may be offered (>1 = duplicate delivery)
     MaxCrashes,      \* process crashes injected
     MaxAborts,       \* user aborts injected
-    MaxCompactions,  \* compaction requests injected
+    MaxCompactions,  \* requested or native compactions injected
     MaxBlocks,       \* completed blocks per provider response
     ForeignCtxTools, \* TRUE: a tool may keep writing through a context it did not get from Base
     EndStates        \* provider outcomes allowed, a subset of {"normal","error","tool_call","eof"}
@@ -298,6 +298,23 @@ CompSucceed ==
     /\ g' = [g EXCEPT !.released = [m \in Msgs |->
                          IF m \in UserIdsIn(d.hist) THEN @[m] + 1 ELSE @[m]]]
     /\ v' = [v EXCEPT !.comp = FALSE, !.lastRec = "compaction", !.pc = v.compRet]
+
+(* #collect accepts a provider-native checkpoint only between finished      *)
+(* blocks, with every tool exchange settled. The same transaction replaces   *)
+(* context and identity keys; the still-running response keeps its pending   *)
+(* inference identity and continues from the native summary.                 *)
+NativeCompaction ==
+    /\ At("stream") /\ ~v.aborted /\ ~g.partial
+    /\ d.reqOpen /\ Unanswered(d.hist) = {} /\ v.resp = <<>>
+    /\ \A c \in Calls : d.tools[c] = "absent"
+    /\ g.compactions < MaxCompactions
+    /\ d' = [d EXCEPT !.ids = @ \ UserIdsIn(d.hist),
+                      !.hist = <<Rec("compaction", NoCall)>>,
+                      !.pending = "inference"]
+    /\ v' = [v EXCEPT !.lastRec = "compaction", !.blocks = 0]
+    /\ g' = [g EXCEPT !.compactions = @ + 1,
+                      !.released = [m \in Msgs |->
+                         IF m \in UserIdsIn(d.hist) THEN @[m] + 1 ELSE @[m]]]
 
 (* Provider failure or cancellation: #preserveCompactionContinuation.       *)
 CompFail ==
@@ -593,7 +610,7 @@ Finally ==
 Loop ==
     \/ Start \/ LoopOpen \/ Turn \/ ResumeTools \/ PostResume \/ CompactCheck
     \/ CompStage \/ CompSucceed \/ CompFail \/ Recovery \/ LoopTop \/ Consume
-    \/ Infer \/ BlockBegin \/ BlockText \/ \E k \in Kinds : BlockCall(k)
+    \/ Infer \/ BlockBegin \/ BlockText \/ NativeCompaction \/ \E k \in Kinds : BlockCall(k)
     \/ \E st \in EndStates \cup {"cancelled"} : StreamEnd(st)
     \/ SettleUnanswered \/ SettleUnanswered2 \/ Dispatch
     \/ \E c \in Calls : CallStart(c) \/ CallReturn(c) \/ CallCommit(c) \/ CallAborted(c)
@@ -716,6 +733,14 @@ NoToolStartAfterAbort == ~g.startAfterAbort
 (* before its response has appended anything.                              *)
 RequestNeverEndsWithResponse ==
     (v.up /\ v.pc = "stream" /\ v.blocks = 0) => LastType(d.hist) \notin {"text", "call"}
+
+(* A native checkpoint does not end or restart the active response. *)
+NativeCompactionPreservesContinuation ==
+    [][NativeCompaction =>
+        /\ d'.reqOpen = d.reqOpen
+        /\ d'.pending = "inference"
+        /\ v'.pc = "stream"
+        /\ v'.resp = v.resp]_vars
 
 (* Messages are interchangeable model values; used only for safety checking. *)
 MsgSymmetry == Permutations(Msgs)
