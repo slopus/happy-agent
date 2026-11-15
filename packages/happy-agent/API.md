@@ -16127,6 +16127,9 @@ Response — `200`:
 
 ```json
 {
+    "health": {
+        /* exactly GET /v0/health */
+    },
     "config": {
         /* exactly GET /v0/config */
     },
@@ -16176,6 +16179,9 @@ Response — `200`:
 }
 ```
 
+- `health` — exactly `GET /v0/health`, including `version.protocol` and `capabilities` with
+  their existing schemas. Optional for older compatible daemons and servers that do not send
+  it. Clients can read bootstrap first and fall back to health only when this field is absent.
 - `config`, `profile`, `onboarding`, `cloud`, and `happyIntegration` — the full
   objects from their own endpoints. `cloud` and `happyIntegration` are additive
   and may be absent on an older compatible daemon; a daemon old enough to omit one does not serve

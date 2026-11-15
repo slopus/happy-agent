@@ -12,7 +12,7 @@ import {
 import { botSchema } from "./bots.js";
 import { cloudSchema } from "./cloud.js";
 import { type EventCursor, eventCursorSchema } from "./common.js";
-import { daemonConfigSchema, onboardingStateSchema } from "./daemon.js";
+import { daemonConfigSchema, healthResponseSchema, onboardingStateSchema } from "./daemon.js";
 import { happyIntegrationSchema } from "./integrations.js";
 import type { UserMessage } from "./messages.js";
 import type { BackgroundProcess } from "./processes.js";
@@ -63,6 +63,8 @@ export const desktopBootstrapResponseSchema = Type.Object({
     /** Every bot, archived ones included. Absent on older compatible daemons. */
     bots: Type.Optional(Type.Array(botSchema)),
     config: daemonConfigSchema,
+    /** Exactly `GET /v0/health`. Absent on older compatible daemons and some servers. */
+    health: Type.Optional(healthResponseSchema),
     /**
      * The newest event cursor as of this snapshot. Opening the event stream
      * from here leaves no window for a change to fall between the two.
