@@ -1,5 +1,13 @@
 # API module learnings
 
+## Stories is removed from the public contract
+
+Desktop bootstrap and bot resources no longer send Stories fields, and bot renames require a
+name. The client has no Stories methods, schemas, events, or capability. Historical message quotes
+and their still-frame route remain readable; stored Stories data and migrations are preserved.
+Saved opt-ins cannot restore routes, tools, or events. Keep the retirement gym coverage for those
+boundaries and restart preservation, with assertions that the removed fields are absent.
+
 ## A shared public listener does not merge credential authority
 
 The public endpoint was initially treated as another phone-only transport. It now serves ordinary

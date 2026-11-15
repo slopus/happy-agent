@@ -249,7 +249,6 @@ describe("desktop bootstrap resource reads", () => {
         expect(bootstrap.bots?.[0]).toMatchObject({
             id: "botone",
             status: "archived",
-            stories: false,
             archivedAt: 1,
             agent: { id: "archived0", archivedAt: 1, userVisible: true, canSendMessages: false },
         });

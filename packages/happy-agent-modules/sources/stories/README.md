@@ -6,8 +6,8 @@ version of Stories today. A Stories-like feed may return for the latest updates 
 Only the immutable released migration definitions remain here, covered by the migration-history
 test. The runtime does not register this module or run these migrations. Existing Stories rows,
 the migration ledger, and media are left untouched. Historical message quotes and their still
-frames remain readable through History and the message API. Published client protocol types
-remain available for older daemons.
+frames remain readable through History and the message API. The current public client omits the
+Stories API, events, capability, and bootstrap fields.
 
 ```text
 runtime -> Activity / Feed

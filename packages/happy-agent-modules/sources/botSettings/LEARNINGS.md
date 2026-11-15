@@ -2,9 +2,10 @@
 
 ## Retired Stories settings are inert
 
-The old optional Stories field remains accepted when reading stored settings, but normalization
-discards it and tools neither offer nor describe it. Stored opt-ins cannot revive the removed
-feature or count as permission widenings.
+Only the private stored-row reader accepts the old optional Stories field. Normalization discards
+it so saved restrictions remain readable, while public settings, patches, events, and tool schemas
+omit it. New writes and updates reject it. Stored opt-ins cannot revive the removed feature or
+count as permission widenings.
 
 ## Settings live in a leaf module keyed by the bot's agent
 

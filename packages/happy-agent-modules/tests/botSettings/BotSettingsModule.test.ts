@@ -28,7 +28,9 @@ describe("BotSettingsModule", () => {
             );
             await expect(tree.botSettings.read(tree.ctx, "botagent")).resolves.toEqual(LOCKED);
             expect(tree.botSettings.describe(previous)).not.toContain("Stories");
-            expect(tree.botSettings.merge(previous, { stories: true })).toEqual(LOCKED);
+            expect(() => tree.botSettings.merge(LOCKED, { stories: true } as never)).toThrow(
+                "The bot settings change is invalid.",
+            );
             expect(tree.botSettings.widenings(LOCKED, previous)).toEqual([]);
         } finally {
             tree.close();

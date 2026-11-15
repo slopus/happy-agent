@@ -3714,7 +3714,6 @@ export class ApiModule implements AgentModule {
         if (agent === undefined) throw new Error("The bot event has no agent.");
         const resource: Record<string, unknown> = {
             ...botResource(event.bot, agent),
-            stories: false,
         };
         const workspace = botWorkspaceResource(event.bot, agent);
         if (event.type === "bot_created") {
@@ -9538,7 +9537,6 @@ export class ApiModule implements AgentModule {
         if (agent === undefined) throw new Error("The bot has no agent.");
         return {
             ...botResource(bot, agent),
-            stories: false,
         };
     }
 
@@ -10556,8 +10554,6 @@ export class ApiModule implements AgentModule {
             ...(this.#userSettings === undefined
                 ? {}
                 : { userSettings: await this.#userSettings.list(ctx) }),
-            storiesEnabled: false,
-            stories: [],
             ...feed,
             cursor,
         };

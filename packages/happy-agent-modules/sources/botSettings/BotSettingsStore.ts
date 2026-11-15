@@ -1,10 +1,17 @@
 import { agentDatabaseRows, agentDatabaseRun } from "@slopus/happy-agent-base";
+import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { sql } from "drizzle-orm";
 import type { Context } from "@steve.kite/stdlib";
 
 import { botSettingsSchema, type BotSettings } from "./BotSettings.js";
 import { BOT_SETTINGS_ROOTS_TABLE, BOT_SETTINGS_TABLE } from "./BotSettingsMigrations.js";
+
+/** Old rows may carry a retired opt-in; public settings and writes never accept it. */
+const storedBotSettingsSchema = Type.Object(
+    { ...botSettingsSchema.properties, stories: Type.Optional(Type.Boolean()) },
+    { additionalProperties: false },
+);
 
 export interface StoredBotSettings {
     readonly settings: BotSettings;
@@ -32,7 +39,7 @@ export async function readStoredBotSettings(
     const version = Number(row.version);
     // A stored restriction this module cannot read is refused rather than read as no restriction.
     if (
-        !Value.Check(botSettingsSchema, settings) ||
+        !Value.Check(storedBotSettingsSchema, settings) ||
         !Number.isSafeInteger(version) ||
         version < 1
     ) {

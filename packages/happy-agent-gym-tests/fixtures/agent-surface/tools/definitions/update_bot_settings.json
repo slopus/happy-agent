@@ -133,9 +133,6 @@
           },
           "crossWorkspace": {
             "type": "boolean"
-          },
-          "stories": {
-            "type": "boolean"
           }
         },
         "required": [
@@ -232,9 +229,6 @@
           },
           "crossWorkspace": {
             "type": "boolean"
-          },
-          "stories": {
-            "type": "boolean"
           }
         },
         "required": [
@@ -303,9 +297,6 @@
             ]
           },
           "crossWorkspace": {
-            "type": "boolean"
-          },
-          "stories": {
             "type": "boolean"
           }
         },

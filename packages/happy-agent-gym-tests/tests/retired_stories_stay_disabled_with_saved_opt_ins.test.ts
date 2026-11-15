@@ -33,17 +33,16 @@ it("keeps Stories retired after old opt-ins and stored Stories survive a restart
     });
 
     expect((await gym.client.getUserSetting("stories")).setting.value).toBe(true);
-    expect((await gym.client.getHealth()).capabilities?.["storyFeed"]).toBeUndefined();
-    expect((await gym.http.get("/v0/bootstrap/desktop")).body).toMatchObject({
-        storiesEnabled: false,
-        stories: [],
-    });
+    expect((await gym.client.getHealth()).capabilities).not.toHaveProperty("storyFeed");
+    const bootstrap = (await gym.http.get("/v0/bootstrap/desktop")).body;
+    expect(bootstrap).not.toHaveProperty("storiesEnabled");
+    expect(bootstrap).not.toHaveProperty("stories");
     const before = (await gym.client.getBot(bot.id)).bot;
-    expect(before.stories).toBe(false);
-    const after = (
-        await gym.client.renameBot(bot.id, { stories: true }, { ifMatch: before.version })
-    ).bot;
-    expect(after).toEqual(before);
+    expect(before).not.toHaveProperty("stories");
+    await expect(
+        gym.client.renameBot(bot.id, { stories: true } as never, { ifMatch: before.version }),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    expect((await gym.client.getBot(bot.id)).bot).toEqual(before);
 
     for (const [method, path] of [
         ["GET", "/v0/stories"],

@@ -98,9 +98,6 @@
           },
           "crossWorkspace": {
             "type": "boolean"
-          },
-          "stories": {
-            "type": "boolean"
           }
         },
         "required": [
