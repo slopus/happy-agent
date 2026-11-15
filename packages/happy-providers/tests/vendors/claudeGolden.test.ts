@@ -327,13 +327,35 @@ describe("Claude provider golden", () => {
                       ]
                     : environmentText,
             });
-            // The post-compaction replay ends on the summary, a user turn, and Claude Code
-            // spliced its synthetic "No response requested." after it, as the capture shows.
-            // Rig now resumes at the summary, which cuts the placeholder off. Claude Code then
-            // merges the summary and the next prompt into one user turn, joined by a newline,
-            // and its environment message follows as the last message, carrying the breakpoint.
+            if (index === 4) {
+                // Native partial compaction retains the most recent completed reply and its
+                // following user input. They are not sent to the summary model at all.
+                const retainedReply = expectedBody.messages.at(-2);
+                const retainedInput = expectedBody.messages.at(-1);
+                const precedingInput = expectedBody.messages.at(-3);
+                expect(retainedReply.content[0].text).toBe("SECOND");
+                expect(retainedInput.content[0].text).toContain(golden.turns[3].prompt);
+                const precedingAssistant = expectedBody.messages.at(-4);
+                precedingAssistant.content.find(
+                    (block: { type: string }) => block.type === "text",
+                ).cache_control = retainedReply.content[0].cache_control;
+                precedingInput.content = [
+                    {
+                        type: "text",
+                        text:
+                            precedingInput.content +
+                            retainedInput.content[0].text.slice(golden.turns[3].prompt.length),
+                    },
+                    ...retainedInput.content.slice(1),
+                ];
+                expectedBody.messages.splice(-2);
+            }
+            // Current native compaction preserves the latest completed reply and user input.
+            // Resume keeps both verbatim and joins the new prompt to that last user turn. The
+            // environment message follows with the cache breakpoint; no placeholder is replayed.
             if (index === 5) {
                 const [summary, environment, placeholder, prompt] = expectedBody.messages;
+                summary.content = claude2_1_321Summary(summary.content);
                 expect(placeholder).toEqual({
                     role: "assistant",
                     content: [{ type: "text", text: "No response requested." }],
@@ -343,8 +365,16 @@ describe("Claude provider golden", () => {
                 expectedBody.messages = [
                     {
                         role: "user",
+                        content: summary.content,
+                    },
+                    {
+                        role: "assistant",
+                        content: [{ type: "text", text: golden.turns[2].text }],
+                    },
+                    {
+                        role: "user",
                         content: [
-                            { type: "text", text: `${claude2_1_321Summary(summary.content)}\n` },
+                            { type: "text", text: `${golden.turns[3].prompt}\n` },
                             { type: "text", text: prompt.content[0].text },
                         ],
                     },

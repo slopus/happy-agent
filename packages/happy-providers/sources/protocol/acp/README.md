@@ -27,8 +27,9 @@ Agent Base ── run(context) ──▶ AcpSession ── ACP over stdio ──
   continues the conversation and a fingerprint of the input prefix it has seen. A run whose
   prefix matches sends only new input, restoring the ACP session with `session/resume` or
   `session/load` after a restart. Anything else — compaction, a provider switch, an edited
-  history, a lost session — opens a new ACP session and replays Happy's instructions and
-  transcript into its first prompt.
+  history, a lost session — opens a new ACP session. A first-party driver's `replaySession`
+  restores structured native history when supported; otherwise the ordinary ACP fallback
+  replays Happy's instructions and transcript into its first prompt.
 - **Permission.** The agent's own permission is mapped onto its config options by the vendor
   profile, and the agent's own reviewer decides what it does without asking. Its
   `session/request_permission` asks are answered from the Happy mode: Read only refuses, Full
@@ -42,8 +43,9 @@ Agent Base ── run(context) ──▶ AcpSession ── ACP over stdio ──
 - **Tool schemas.** The bridge drops string `pattern` keywords from the schemas it advertises:
   Antigravity validates them with Go's regex dialect and rejects its whole toolbox on one it
   cannot compile. Agent Base still validates every call against the full schema.
-- **Compaction.** ACP has none. `compact` asks the agent for a handoff summary and the next run
-  starts a new ACP session from it.
+- **Compaction.** ACP has none. A first-party driver's `compactSession` uses its native
+  protocol (Claude's `/compact`). The ordinary ACP fallback asks the agent for a handoff
+  summary and the next run starts a new ACP session from it.
 
 A consumer stops reading at `done`, so a session commits its record and settles its turn
 before yielding the terminal event.

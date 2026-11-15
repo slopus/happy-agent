@@ -6,6 +6,7 @@ import {
     type SDKAssistantMessageError,
     type SDKRateLimitInfo,
     type SDKResultMessage,
+    type SDKCompactBoundaryMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
 import { BaseSession } from "@/core/BaseSession.js";
@@ -16,7 +17,11 @@ import {
 import { EmptyResponseError, emptyResponseDoneEvent } from "@/core/EmptyResponseError.js";
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import { EMPTY_SESSION_USAGE, type SessionUsage } from "@/core/SessionUsage.js";
-import type { SessionCompaction, SessionCompactionOptions } from "@/core/SessionCompaction.js";
+import type {
+    SessionCompaction,
+    SessionCompactionOptions,
+    CompletedSessionCompaction,
+} from "@/core/SessionCompaction.js";
 import type { SessionContext, SessionToolCallBlock } from "@/core/SessionContext.js";
 import { SessionAssistantMessageAccumulator } from "@/core/SessionAssistantMessageAccumulator.js";
 import type { SessionEvent, SessionStream } from "@/core/SessionEvent.js";
@@ -116,6 +121,7 @@ export class ClaudeSession extends BaseSession {
     private readonly onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
     private readonly resolveInferenceMaxRetries: () => number;
     private readonly retryWait: NonNullable<InferenceRetryOptions["waitForInferenceRetry"]>;
+    private nativeCompactionResult: CompletedSessionCompaction | undefined;
 
     constructor(id: string, options: ClaudeSessionOptions) {
         super(id);
@@ -159,6 +165,7 @@ export class ClaudeSession extends BaseSession {
     }
 
     async compact(ctx: Context, options: SessionCompactionOptions): Promise<SessionCompaction> {
+        this.nativeCompactionResult = undefined;
         const original: SessionContext = {
             instructions: options.context.instructions,
             messages: [...options.context.messages],
@@ -218,6 +225,11 @@ export class ClaudeSession extends BaseSession {
                 message: done.message,
             };
         }
+        const nativeCompactionResult = this.completedNativeCompaction();
+        if (nativeCompactionResult !== undefined) {
+            this.context = nativeCompactionResult.context;
+            return nativeCompactionResult;
+        }
         if (summary.trim().length === 0) {
             return {
                 status: "failed",
@@ -251,6 +263,11 @@ export class ClaudeSession extends BaseSession {
 
     destroy(): void {
         this.closeActiveQuery();
+    }
+
+    /** The stream commits this result asynchronously before compact returns. */
+    private completedNativeCompaction(): CompletedSessionCompaction | undefined {
+        return this.nativeCompactionResult;
     }
 
     private async *streamRun(
@@ -534,7 +551,7 @@ export class ClaudeSession extends BaseSession {
         this.lastQueryToolCalls = [];
         let sawToolCall = false;
         let sawText = false;
-        let nativeCompactionCompleted = false;
+        let nativeCompactionCompleted: SDKCompactBoundaryMessage | undefined;
         let nativeCompactionError: string | undefined;
         let result: SDKResultMessage | undefined;
         let assistantError: SDKAssistantMessageError | undefined;
@@ -565,6 +582,9 @@ export class ClaudeSession extends BaseSession {
                         ...configuredContext,
                         messages: fittedMessages,
                     },
+                    // A native checkpoint replays its own entries; it is checked against the
+                    // history as stored, not this request's copy with its images fitted.
+                    retained: configuredContext.messages,
                     // The replayed environment must name the directory the live query runs in.
                     ...(cwd === undefined ? {} : { cwd }),
                     env: this.env,
@@ -661,7 +681,7 @@ export class ClaudeSession extends BaseSession {
                     message.type === "system" &&
                     message.subtype === "compact_boundary"
                 ) {
-                    nativeCompactionCompleted = true;
+                    nativeCompactionCompleted = message;
                     continue;
                 }
                 if (
@@ -934,6 +954,18 @@ export class ClaudeSession extends BaseSession {
                         "Claude SDK compacted the session without persisting a summary.",
                     );
                 }
+                const native = await this.activeReplay!.nativeCompaction(nativeCompactionCompleted);
+                this.nativeCompactionResult = {
+                    status: "completed",
+                    summary: native.compaction.content ?? summary,
+                    compaction: native.compaction,
+                    preservedMessages: native.preservedMessages,
+                    usage: native.usage,
+                    context: {
+                        instructions: configuredContext.instructions,
+                        messages: native.messages,
+                    },
+                };
                 this.closeActiveQuery();
                 yield { type: "text_start" };
                 yield { type: "text_delta", delta: summary };

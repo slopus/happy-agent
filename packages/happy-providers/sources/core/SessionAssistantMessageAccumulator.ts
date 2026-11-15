@@ -41,6 +41,13 @@ export class SessionAssistantMessageAccumulator {
     private readonly toolResults = new Map<string, MutableToolResultBlock>();
 
     add(event: SessionEvent): void {
+        if (event.type === "context_compacted") {
+            // Earlier response blocks now live inside the explicit native replacement.
+            this.content.length = 0;
+            if (this.checkpoint !== undefined) this.checkpoint = 0;
+            this.clearActiveBlocks();
+            return;
+        }
         if (event.type === "block_start") {
             if (this.checkpoint !== undefined) {
                 throw new Error("A session event block is already open.");

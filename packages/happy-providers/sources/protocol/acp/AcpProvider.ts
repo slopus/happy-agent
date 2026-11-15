@@ -74,6 +74,8 @@ export interface AcpProviderOptions {
     readonly connect?: AcpConnect;
     /** Private directory owned by this provider for session records and bridge files. */
     readonly stateDirectory: string;
+    /** Shared across compatible accounts so an unchanged failed recovery is not repeated. */
+    readonly recoveryDirectory?: string;
     /** The cwd and permission a turn runs under, read from the agent's context. */
     readonly environment: (ctx: Context) => AcpTurnEnvironment;
     readonly profile?: AcpAgentProfile;

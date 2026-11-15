@@ -80,6 +80,11 @@ export class AcpToolBridgeServer {
                     name,
                     ...(tool.description === undefined ? {} : { description: tool.description }),
                     inputSchema: toInputSchema(tool),
+                    // An explicit opt-out pins a tool; otherwise the foreign agent's native
+                    // discovery policy decides. Other MCP clients can ignore this metadata.
+                    ...(tool.defer === false
+                        ? { _meta: { "anthropic/alwaysLoad": true } }
+                        : {}),
                 })),
             }));
             server.setRequestHandler(CallToolRequestSchema, async (call) => {

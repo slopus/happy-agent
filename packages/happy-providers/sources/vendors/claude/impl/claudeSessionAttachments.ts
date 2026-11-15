@@ -63,6 +63,10 @@ const CLAUDE_MODEL_IDENTITIES: Readonly<
         displayName: "Opus 4.8",
         knowledgeCutoff: "January 2026",
     },
+    "claude-opus-4-7": {
+        displayName: "Opus 4.7",
+        knowledgeCutoff: "January 2026",
+    },
     "claude-sonnet-5-5": {
         displayName: "Sonnet 5.5",
         knowledgeCutoff: "June 2026",
@@ -70,6 +74,10 @@ const CLAUDE_MODEL_IDENTITIES: Readonly<
     "claude-haiku-5-5": {
         displayName: "Haiku 5.5",
         knowledgeCutoff: "June 2026",
+    },
+    "claude-haiku-4-5": {
+        displayName: "Haiku 4.5",
+        knowledgeCutoff: "February 2025",
     },
     "claude-sonnet-5": {
         displayName: "Sonnet 5",

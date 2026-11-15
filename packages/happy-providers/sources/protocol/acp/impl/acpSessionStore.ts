@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { Context } from "@steve.kite/stdlib";
+import { deterministicStringify, type Context } from "@steve.kite/stdlib";
 
 import type { SessionMessage } from "@/core/SessionContext.js";
 
@@ -20,6 +20,8 @@ export interface AcpSessionRecord {
     readonly cwd: string;
     readonly consumed: number;
     readonly fingerprint: string;
+    /** The driver materialized its native session from an in-memory SDK store. */
+    readonly replayRequired?: boolean;
 }
 
 function recordPath(directory: string, id: string): string {
@@ -99,6 +101,18 @@ export function acpTranscriptFingerprint(messages: readonly SessionMessage[]): s
     hash.update(String(messages.length));
     for (const message of messages) {
         hash.update(`\u0000${message.role}`);
+        if (message.role === "compaction") {
+            // A replacement can have the same message count as the checkpoint an account
+            // saw before. Its actual summary and opaque payload define that new prefix.
+            hash.update(
+                deterministicStringify([
+                    message.content,
+                    message.encryptedContent,
+                    message.vendor ?? null,
+                ]),
+            );
+            continue;
+        }
         if (message.role !== "user" && message.role !== "agent") continue;
         for (const block of message.content) {
             if (block.type === "text") hash.update(block.text);

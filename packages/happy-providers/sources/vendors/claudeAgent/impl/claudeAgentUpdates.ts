@@ -52,6 +52,7 @@ export function claudeAgentUpdates(): {
                             status: "in_progress",
                             rawInput: block.input as Record<string, unknown>,
                             locations: toolLocations(block.input),
+                            _meta: { happy_claude_tool: structuredClone(block) },
                         },
                     ];
                 });
@@ -72,6 +73,7 @@ export function claudeAgentUpdates(): {
                                     content: { type: "text", text: resultText(block.content) },
                                 },
                             ],
+                            _meta: { happy_claude_result: structuredClone(block) },
                         },
                     ];
                 });
