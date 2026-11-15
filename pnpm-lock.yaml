@@ -89,8 +89,8 @@ importers:
         specifier: 0.0.69
         version: 0.0.69(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-agent-client':
-        specifier: 0.0.171
-        version: 0.0.171
+        specifier: 0.0.173
+        version: 0.0.173
       '@slopus/happy-agent-compute':
         specifier: 0.1.30
         version: 0.1.30
@@ -247,8 +247,8 @@ importers:
         specifier: npm:@slopus/happy-agent-base@0.0.69
         version: 0.0.69(@opentelemetry/api@1.9.1)(@types/pg@8.15.6)(sql.js@1.14.1)(ws@8.21.1)(zod@4.4.3)
       '@slopus/happy-agent-client':
-        specifier: 0.0.171
-        version: 0.0.171
+        specifier: 0.0.173
+        version: 0.0.173
       '@slopus/happy-agent-compute':
         specifier: npm:@slopus/happy-agent-compute@0.1.30
         version: 0.1.30
@@ -287,8 +287,8 @@ importers:
         specifier: ^0.34.49
         version: 0.34.49
       '@slopus/happy-agent-client':
-        specifier: 0.0.171
-        version: 0.0.171
+        specifier: 0.0.173
+        version: 0.0.173
       '@slopus/happy-agent-gym':
         specifier: workspace:*
         version: link:../happy-agent-gym
@@ -380,8 +380,8 @@ importers:
         specifier: 0.1.3
         version: 0.1.3
       '@slopus/happy-agent-client':
-        specifier: 0.0.171
-        version: 0.0.171
+        specifier: 0.0.173
+        version: 0.0.173
       '@slopus/happy-agent-compute':
         specifier: npm:@slopus/happy-agent-compute@0.1.30
         version: 0.1.30
@@ -1969,8 +1969,8 @@ packages:
     resolution: {integrity: sha512-SbabzPBPTM02U4zndxRqD9bxvCXls17e9o1af3u7KWeY42Fz4lBfIX6jJI+n0modobJUp72QrGG9nQH10Ok+JQ==}
     engines: {node: '>=22.19.0'}
 
-  '@slopus/happy-agent-client@0.0.171':
-    resolution: {integrity: sha512-VYG6EXw58dIpgM5WLY1pXzExf+e/X3iRSV/Lna2IRkH70drQZu3W8CLomL9pQXBGHg9lCPS5tjvAcsro6cXTzQ==}
+  '@slopus/happy-agent-client@0.0.173':
+    resolution: {integrity: sha512-Z7eS2JXEmk7wuvee1/V2kwVqcV+6JGIwr19pjp4NyNw5hbH6zfBO/tpsBukKX5Oa7Psz7HtHaXvRi+274C2xpA==}
     engines: {node: '>=20'}
 
   '@slopus/happy-agent-compute@0.1.30':
@@ -5310,7 +5310,7 @@ snapshots:
       - ws
       - zod
 
-  '@slopus/happy-agent-client@0.0.171':
+  '@slopus/happy-agent-client@0.0.173':
     dependencies:
       '@sinclair/typebox': 0.34.49
       parse5: 8.0.1

@@ -4,7 +4,7 @@ import { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentConfig } from "@slopus/happy-agent-base";
-import type { Agent, DesktopBootstrapResponse } from "@slopus/happy-agent-client";
+import type { DesktopBootstrapResponse, HealthResponse } from "@slopus/happy-agent-client";
 import { createRootContext, withTracer, type Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -15,13 +15,6 @@ import { recordingTracer } from "../support/recordingTracer.js";
 const cleanups: (() => Promise<void>)[] = [];
 const token = "t".repeat(43);
 
-// The published client does not carry the archived collection or the health yet; widen the
-// response until the client release that does is consumed here.
-type Bootstrap = DesktopBootstrapResponse & {
-    readonly archivedAgents?: readonly Agent[];
-    readonly health?: Record<string, unknown>;
-};
-
 afterEach(async () => {
     for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
     vi.restoreAllMocks();
@@ -30,9 +23,11 @@ afterEach(async () => {
 describe("desktop bootstrap resource reads", () => {
     it("carries exactly what health answers, so a client needs no health check before it", async () => {
         const fixture = await createFixture();
-        const bootstrap = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
-        const health = await fixture.get<Record<string, unknown>>("/v0/health");
+        const bootstrap = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
+        const health = await fixture.get<HealthResponse>("/v0/health");
         expect(bootstrap.health).toEqual(health);
+        expect(bootstrap.health?.version.protocol).toEqual(health.version.protocol);
+        expect(bootstrap.health?.capabilities).toEqual(health.capabilities);
         expect(bootstrap.health).toMatchObject({ healthy: true, ready: true, status: "ready" });
     });
 
@@ -50,7 +45,7 @@ describe("desktop bootstrap resource reads", () => {
 
     it("reads each attached agent's configuration once and materializes the shared project/root series once", async () => {
         const fixture = await createFixture();
-        const bootstrap = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
+        const bootstrap = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
         expect(bootstrap.projects[0]?.agents.map((agent) => agent.id)).toEqual(["activeagent"]);
         expect(bootstrap.workspaces[0]?.agents).toEqual(bootstrap.projects[0]?.agents);
         // Every archived agent is within the bound, so each is projected once from the
@@ -89,7 +84,7 @@ describe("desktop bootstrap resource reads", () => {
         fixture.configs.set("tie", { metadata: { archivedAt: 9 } });
         fixture.configs.set("late", { metadata: { archivedAt: 9, title: "Closed last" } });
 
-        const bootstrap = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
+        const bootstrap = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
         expect(bootstrap.projects[0]?.agents.map((agent) => agent.id)).toEqual(["activeagent"]);
         expect(bootstrap.archivedAgents?.map((agent) => agent.id)).toEqual([
             "late",
@@ -116,7 +111,7 @@ describe("desktop bootstrap resource reads", () => {
         fixture.configs.set("childactive", {});
         fixture.configs.set("childclosed", { metadata: { archivedAt: 7 } });
 
-        const bootstrap = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
+        const bootstrap = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
         const child = bootstrap.workspaces.find((workspace) => workspace.id === "workspaceone");
         expect(child?.agents.map((agent) => agent.id)).toEqual(["childactive"]);
         expect(bootstrap.archivedAgents?.[0]).toMatchObject({
@@ -140,7 +135,7 @@ describe("desktop bootstrap resource reads", () => {
         }
         fixture.projects.listAgents.mockResolvedValue(associations);
 
-        const bootstrap = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
+        const bootstrap = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
         expect(bootstrap.archivedAgents).toHaveLength(200);
         expect(bootstrap.archivedAgents?.[0]?.id).toBe("closed249");
         expect(bootstrap.archivedAgents?.[199]?.id).toBe("closed050");
@@ -222,7 +217,7 @@ describe("desktop bootstrap resource reads", () => {
         fixture.configs.set("archived0", { metadata: { archivedAt: null } });
         fixture.processes.mockClear();
 
-        const next = await fixture.get<Bootstrap>("/v0/bootstrap/desktop");
+        const next = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
         expect(next.projects[0]?.agents.map((agent) => agent.id)).toEqual(["archived0"]);
         expect(next.workspaces[0]?.agents).toEqual(next.projects[0]?.agents);
         expect(next.archivedAgents?.map((agent) => agent.id)).toContain("activeagent");
