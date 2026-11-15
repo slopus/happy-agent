@@ -21,9 +21,10 @@ import {
  * or newer, and agent networks require protocol 28 or newer, and pushed provider-account
  * usage requires protocol 29 or newer, and typed failures with their retry and switch actions
  * require protocol 30 or newer. Protocol 35 also covers passive historical message payloads.
+ * A forced usage refresh with typed skip reasons requires protocol 36 or newer.
  * Global skill management is additive and detected through its catalog endpoint.
  */
-export const HAPPY_AGENT_PROTOCOL_VERSION = 35;
+export const HAPPY_AGENT_PROTOCOL_VERSION = 36;
 
 /** The oldest additive protocol supported for existing capabilities. */
 export const HAPPY_AGENT_MIN_PROTOCOL_VERSION = 22;

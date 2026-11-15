@@ -226,7 +226,9 @@ Provider-account usage is read with `getUsage()` and, from protocol 29, followed
 `checkedAt`, `error`, `refreshedAt`, `refreshError`, `retryAt`, and `refreshing` — after every
 change, so the latest event per `providerId` wins. `refreshProviderUsage({ providerIds,
 olderThanMs })` asks for fresher readings and answers at once with `{ started }`; the readings
-arrive as events. An entry without `refreshedAt` comes from an older daemon that neither emits the
+arrive as events. From protocol 36, `{ force: true }` is a person's re-check of every account,
+and the answer adds `skipped`, each with a typed `reason` and, when known, `until`. Send `force`
+only to protocol 36 or newer; older daemons answer it with `400`. An entry without `refreshedAt` comes from an older daemon that neither emits the
 event nor serves the refresh, so keep polling `getUsage()` there. Readings live in daemon memory;
 read `getUsage()` again after a resync or a daemon restart.
 

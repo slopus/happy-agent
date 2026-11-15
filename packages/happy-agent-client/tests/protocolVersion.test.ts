@@ -6,8 +6,8 @@ import {
 } from "../sources/protocol/daemon.js";
 
 describe("Happy Agent protocol version", () => {
-    it("retains protocol 35 for historical message compatibility", () => {
-        expect(HAPPY_AGENT_PROTOCOL_VERSION).toBe(35);
+    it("is protocol 36, which adds the forced usage refresh", () => {
+        expect(HAPPY_AGENT_PROTOCOL_VERSION).toBe(36);
     });
 
     it("keeps the additive compatibility range rooted at protocol 22", () => {

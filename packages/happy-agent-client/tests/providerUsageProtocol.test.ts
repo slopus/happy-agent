@@ -121,6 +121,41 @@ describe("provider-account usage protocol", () => {
             false,
         );
         expect(Value.Check(providerUsageRefreshRequestSchema, { olderThanMs: -1 })).toBe(false);
-        expect(Value.Check(providerUsageRefreshRequestSchema, { force: true })).toBe(false);
+        expect(Value.Check(providerUsageRefreshRequestSchema, { force: "yes" })).toBe(false);
+        expect(Value.Check(providerUsageRefreshRequestSchema, { refresh: true })).toBe(false);
+    });
+
+    it("sends a forced re-check and reads why accounts were skipped", async () => {
+        const answer = {
+            started: ["claude-work"],
+            skipped: [
+                { providerId: "claude", reason: "blocked_until_reset", until: 1_755_412_000_000 },
+                { providerId: "codex", reason: "retry_after", until: 1_755_400_060_000 },
+                { providerId: "grok", reason: "in_flight" },
+                { providerId: "bedrock", reason: "no_usage_source" },
+            ],
+        };
+        const bodies: unknown[] = [];
+        const client = new HappyAgentClient({
+            endpoint: "http://main",
+            token: "main-token",
+            fetch: async (_input, init) => {
+                bodies.push(JSON.parse(String(init?.body)));
+                return Response.json(answer, { status: 202 });
+            },
+        });
+
+        const response = await client.refreshProviderUsage({ force: true });
+
+        expect(bodies).toEqual([{ force: true }]);
+        expect(response).toEqual(answer);
+        expect(Value.Check(providerUsageRefreshRequestSchema, { force: true })).toBe(true);
+        expect(Value.Check(providerUsageRefreshResponseSchema, response)).toBe(true);
+        expect(
+            Value.Check(providerUsageRefreshResponseSchema, {
+                started: [],
+                skipped: [{ providerId: "codex", reason: "stale" }],
+            }),
+        ).toBe(false);
     });
 });

@@ -4360,8 +4360,10 @@ export class HappyAgentClient {
     /**
      * `POST /v0/usage/refresh` — asks for fresher provider-account readings, protocol 29 or newer.
      *
-     * Answers at once with the accounts whose reads started; the readings themselves arrive as
-     * `provider.usage.updated` events. An older daemon answers `404`.
+     * Answers at once with the accounts whose reads started and, from protocol 36, why each other
+     * selected account was skipped; the readings themselves arrive as `provider.usage.updated`
+     * events. An older daemon answers `404`, and a protocol 29 to 35 daemon answers `force` with
+     * `400`.
      */
     async refreshProviderUsage(
         request: ProviderUsageRefreshRequest = {},

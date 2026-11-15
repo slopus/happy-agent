@@ -138,14 +138,47 @@ export const providerUsageRefreshRequestSchema = Type.Object(
         providerIds: Type.Optional(Type.Array(Type.String())),
         /** Read only accounts older than this; defaults to 300000 and is at least 60000. */
         olderThanMs: Type.Optional(Type.Number({ minimum: 0 })),
+        /**
+         * Protocol 36 or newer: a person asked to re-check now. Ignores `olderThanMs` and the
+         * fallback-probe budget; an older daemon answers `400`.
+         */
+        force: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: false },
 );
 export type ProviderUsageRefreshRequest = Static<typeof providerUsageRefreshRequestSchema>;
 
+/**
+ * Why a refresh did not read an account now. When several apply, the daemon reports the first
+ * in this order. Clients treat a reason they do not recognize as the account not being read now.
+ */
+export const providerUsageRefreshSkipReasonSchema = Type.Union([
+    /** No account-usage source, or the account is disabled. */
+    Type.Literal("no_usage_source"),
+    /** A read is already running or queued; its result arrives as events. */
+    Type.Literal("in_flight"),
+    /** A full window blocks the account until `until`. */
+    Type.Literal("blocked_until_reset"),
+    /** The vendor asked not to be asked before `until`. */
+    Type.Literal("retry_after"),
+    /** The reading is newer than `olderThanMs` until `until`; never reported with `force`. */
+    Type.Literal("fresh"),
+]);
+export type ProviderUsageRefreshSkipReason = Static<typeof providerUsageRefreshSkipReasonSchema>;
+
+export const providerUsageRefreshSkipSchema = Type.Object({
+    providerId: Type.String(),
+    reason: providerUsageRefreshSkipReasonSchema,
+    /** When the reason stops applying, for the reasons that name an instant. */
+    until: Type.Optional(Type.Number()),
+});
+export type ProviderUsageRefreshSkip = Static<typeof providerUsageRefreshSkipSchema>;
+
 /** `POST /v0/usage/refresh` — `202`; the results arrive as `provider.usage.updated`. */
 export const providerUsageRefreshResponseSchema = Type.Object({
     started: Type.Array(Type.String()),
+    /** Every selected account not in `started`; protocol 36 or newer, absent from older daemons. */
+    skipped: Type.Optional(Type.Array(providerUsageRefreshSkipSchema)),
 });
 export type ProviderUsageRefreshResponse = Static<typeof providerUsageRefreshResponseSchema>;
 
