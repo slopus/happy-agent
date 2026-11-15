@@ -317,9 +317,8 @@ The complete Happy Agent API gym, `pnpm test:gym:api`, is an exhaustive gate wit
 about 45 minutes on the unprivileged Linux runner. Do not run it as routine
 verification or automatically on every push or pull request. Run targeted API
 gym files while developing. Run the complete gate only when a human explicitly
-requests it or when closing a release or API-contract milestone. In GitHub
-Actions, dispatch `Verify Happy Agent API` manually and enable
-`Run the exhaustive API gym`.
+requests it or when closing a release or API-contract milestone. There is no
+workflow for it; run `pnpm test:gym:api` locally.
 
 ## User-facing text
 
@@ -344,3 +343,7 @@ Do the following:
 7. Repeat until the current branch changes are upstreamed to `main`, or until a real conflict/blocker requires user input.
 
 Do not open a pull request for `sync to main` unless the user explicitly asks for one.
+
+## GitHub Actions cost
+
+Never create GitHub Actions workflows, or add automatic triggers (`push`, `pull_request`, `schedule`) to existing ones, without explicit user instruction. Actions minutes cost real money; checks run locally.

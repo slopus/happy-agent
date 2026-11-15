@@ -364,5 +364,4 @@ PERF_OUT=/tmp/head.json node --import tsx perf/ciBench.ts
 node --import tsx perf/ciCompare.ts /tmp/base.json /tmp/head.json
 ```
 
-The `Session speed` workflow runs both on a pull request's base and head and reports in the job
-summary. It is not a required check and never blocks a merge or a release.
+There is no CI workflow for it; run both locally on a base and a head checkout to compare.
