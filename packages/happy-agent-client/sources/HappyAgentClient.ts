@@ -3501,7 +3501,8 @@ export class HappyAgentClient {
 
     /**
      * `GET /v0/workspaces/:workspaceId/agents/:agentId/proxy` — the network that agent's
-     * connections leave from. Protocol 28 or newer; an older daemon answers `404`.
+     * connections leave from, and its `kind` when the daemon reports one. Protocol 28 or newer; an
+     * older daemon answers `404`.
      */
     async getWorkspaceAgentNetwork(
         workspaceId: Cuid2,

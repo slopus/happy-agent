@@ -6295,10 +6295,17 @@ does not fall back to the workspace proxy.
 Names the network that agent's connections leave from, so a client can keep one browser profile,
 with its cookies and storage, per network rather than per agent or workspace.
 
-Response — `200`: `{ "networkId": "..." }`.
+Response — `200`: `{ "networkId": "...", "kind": "host" }`.
 
 - `networkId` — an opaque identifier of 1 to 128 characters: lowercase letters and digits, plus
   `-` and `_` after the first character. Clients compare it for equality and never parse it.
+- `kind` — which network this is: `"host"` for the computer this daemon runs on, `"runner"` for
+  one of its runners, and `"container"` for a container of the agent's own, on this computer or on
+  a runner. Like `networkId`, it describes the machine the agent actually runs with. `"host"` names
+  the daemon's computer, not the client's: a client may load a URL without the tunnel only when it
+  knows it runs on that same computer. Older daemons omit `kind`; a client treats a missing or
+  unknown `kind` as needing the tunnel. The field is additive and does not increment the protocol
+  version.
 
 Two agents have the same `networkId` exactly when their connections leave from the same network:
 

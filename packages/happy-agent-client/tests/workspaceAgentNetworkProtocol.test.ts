@@ -33,6 +33,49 @@ describe("agent networks", () => {
         );
     });
 
+    it("passes the network's kind through, directly and through a connection", async () => {
+        const paths: string[] = [];
+        const client = new HappyAgentClient({
+            endpoint: "http://daemon/",
+            token: "credential",
+            fetch: async (input, init) => {
+                const url = new URL(new Request(input, init).url);
+                paths.push(url.pathname);
+                return Response.json(
+                    url.pathname.startsWith("/v0/connections/")
+                        ? { networkId: "r-build-box", kind: "runner" }
+                        : { networkId: "host", kind: "host" },
+                );
+            },
+        });
+
+        expect(await client.getWorkspaceAgentNetwork("workspace1", "agent1")).toEqual({
+            networkId: "host",
+            kind: "host",
+        });
+        expect(
+            await client.connection("build-box").getWorkspaceAgentNetwork("workspace1", "agent1"),
+        ).toEqual({ networkId: "r-build-box", kind: "runner" });
+        expect(paths).toEqual([
+            "/v0/workspaces/workspace1/agents/agent1/proxy",
+            "/v0/connections/build-box/api/v0/workspaces/workspace1/agents/agent1/proxy",
+        ]);
+    });
+
+    it("accepts every specified kind and an older daemon that omits it", () => {
+        for (const kind of ["host", "runner", "container", undefined])
+            expect(
+                Value.Check(workspaceAgentNetworkResponseSchema, {
+                    networkId: "host",
+                    ...(kind === undefined ? {} : { kind }),
+                }),
+            ).toBe(true);
+        for (const kind of ["", "Host", "docker", null])
+            expect(
+                Value.Check(workspaceAgentNetworkResponseSchema, { networkId: "host", kind }),
+            ).toBe(false);
+    });
+
     it("bounds a network identifier to the specified opaque form", () => {
         for (const networkId of ["host", "r-build_box", "c-a1b2-0f9e", "a".repeat(128)])
             expect(Value.Check(workspaceAgentNetworkResponseSchema, { networkId })).toBe(true);

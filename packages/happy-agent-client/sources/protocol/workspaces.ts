@@ -91,8 +91,23 @@ export type WorkspaceResponse = Static<typeof workspaceResponseSchema>;
 /** Names the network an agent's connections leave from; opaque, compared only for equality. */
 export const networkIdSchema = Type.String({ pattern: "^[a-z0-9][a-z0-9_-]{0,127}$" });
 
+/**
+ * Which network an agent's connections leave from: this daemon's computer, one of its runners, or
+ * a container of the agent's own. `"host"` is the daemon's computer, not necessarily the client's.
+ */
+export const agentNetworkKindSchema = Type.Union([
+    Type.Literal("host"),
+    Type.Literal("runner"),
+    Type.Literal("container"),
+]);
+export type AgentNetworkKind = Static<typeof agentNetworkKindSchema>;
+
 /** `GET /v0/workspaces/:workspaceId/agents/:agentId/proxy`, protocol 28 or newer. */
-export const workspaceAgentNetworkResponseSchema = Type.Object({ networkId: networkIdSchema });
+export const workspaceAgentNetworkResponseSchema = Type.Object({
+    networkId: networkIdSchema,
+    /** Absent on older daemons; absent or a value this client does not know needs the tunnel. */
+    kind: Type.Optional(agentNetworkKindSchema),
+});
 export type WorkspaceAgentNetworkResponse = Static<typeof workspaceAgentNetworkResponseSchema>;
 
 /** `GET /v0/workspaces` query parameters. */
