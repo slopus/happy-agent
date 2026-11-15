@@ -403,6 +403,9 @@ importers:
       jose:
         specifier: ^6.2.10
         version: 6.2.10
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
       markdown-it:
         specifier: 15.0.2
         version: 15.0.2
@@ -3150,6 +3153,9 @@ packages:
 
   json-schema-typed@8.0.2:
     resolution: {integrity: sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==}
+
+  jsonc-parser@3.3.1:
+    resolution: {integrity: sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ==}
 
   just-bash@3.0.2:
     resolution: {integrity: sha512-uY8LMD2NpADp1HlYUcZSw9ffuq0tRhW76sg8xkeo+ZRDMu7mbekWbKbYDWquazVVi7pqpGZlic/liMFktQKy6w==}
@@ -6480,6 +6486,8 @@ snapshots:
   json-schema-traverse@1.0.0: {}
 
   json-schema-typed@8.0.2: {}
+
+  jsonc-parser@3.3.1: {}
 
   just-bash@3.0.2:
     dependencies:

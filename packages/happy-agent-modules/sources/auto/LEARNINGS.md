@@ -1,5 +1,16 @@
 # Auto module — learnings
 
+- The selected Codex reviewer returned only `<risk_level>low</risk_level>` despite an explicit
+  outcome prompt. Risk alone cannot authorize an action, especially when a user's security rule
+  denies a low-risk action. The private reviewer now requests the provider's native structured
+  output with all four decision fields required and validates the complete response before
+  conversion. The selected provider, model, policy, and trusted history remain the same. Missing,
+  malformed, refused, or unsupported output never becomes an allow or triggers another review.
+  JSON objects with repeated decoded keys or a blank rationale are invalid decisions. Bare
+  explicit-outcome tags and clearly marked XML or unlabelled XML fences retain their conversion
+  policy; JSON and unknown fences cannot recover an allow from quoted tags. Local transport
+  fixtures prove forwarding and fail-closed behavior, not live service compatibility.
+
 - The converter used to change every critical-risk allow into a denial while keeping the
   reviewer's approval rationale. An informed user approval reached the reviewer and produced an
   allow, but the agent was falsely told the reviewer had refused again. Critical-risk verdicts
@@ -48,13 +59,15 @@
 - `senderAgentId` is attribution, never authorization. The reviewer's trust decision must keep
   resting solely on the positive `messageOrigin: "user"` stamp; a sender ID grants nothing.
 
-- The reviewer now returns its verdict as tagged fields (`<review>` wrapping `<risk_level>`,
+- The reviewer previously returned its verdict as tagged fields (`<review>` wrapping `<risk_level>`,
   `<user_authorization>`, `<outcome>`, `<rationale>`) instead of hand-assembled JSON. The user
   found a session where the reviewer allowed a `sync to main` push twice and both allows were
   discarded: its rationale quoted the phrase `"sync to main"`, the unescaped quotes made the JSON
   unparseable, and the unreadable answer became a `rejected` denial telling the agent not to route
   around a judgement the reviewer never made. Free text can break a format the model has to
-  assemble by hand; tags have nothing to escape.
+  assemble by hand; tags have nothing to escape. The private reviewer now uses provider-native
+  schema-constrained JSON, which requires the provider to enforce escaping and completeness;
+  legacy explicit tagged decisions remain readable under the rules above.
 - A reviewer ending in error, length, tool-call, cancellation, or without a completion event has
   made no judgement. Such runs now fail as unavailable; Permissions records an unproven outcome
   with the provider error in its bounded, public reason. A caller-aborted review still follows the

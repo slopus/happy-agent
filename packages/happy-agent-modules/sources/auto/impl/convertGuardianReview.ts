@@ -7,10 +7,12 @@ import {
     type AutoPermissionReview,
 } from "./parseAutoPermissionReview.js";
 import { shouldAllowAutoPermissionReview } from "./shouldAllowAutoPermissionReview.js";
+import { parseStructuredGuardianReview } from "./structuredGuardianReview.js";
 
 /**
  * Turns a completed reviewer's raw final text into the v2 permission decision, applying the exact
- * v1 recovery, defaults, and independent allow-policy re-derivation.
+ * legacy defaults and independent allow-policy re-derivation. Native JSON decisions are validated
+ * against the complete required schema; tagged explicit-outcome answers retain their old policy.
  *
  * This is the pure core of what Happy Agent v1's `reviewAutoPermission` did after the reviewer returned,
  * minus the parts that belong to `PermissionsModule` in v2: the timeout, the abort, and the
@@ -46,7 +48,7 @@ export function convertGuardianReview(options: {
     userEvidenceOmitted: boolean;
 }): PermissionReviewDecision {
     const { text, transcript, userEvidenceOmitted } = options;
-    const parsed = parseAutoPermissionReview(text) ?? UNREADABLE_REVIEW;
+    const parsed = parseReviewText(text) ?? UNREADABLE_REVIEW;
     const review: AutoPermissionReview =
         parsed.decision === "allow" && !shouldAllowAutoPermissionReview(parsed)
             ? { ...parsed, decision: "deny", denialKind: "rejected" }
@@ -72,4 +74,22 @@ export function convertGuardianReview(options: {
         userAuthorization: review.userAuthorization,
         ...extra,
     };
+}
+
+function parseReviewText(text: string): AutoPermissionReview | undefined {
+    const trimmed = text.trimStart();
+    // JSON never falls back to tag extraction: a quoted rationale is not another verdict.
+    if (trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith('"')) {
+        return parseStructuredGuardianReview(text);
+    }
+    if (!trimmed.startsWith("```")) return parseAutoPermissionReview(text);
+
+    // Preserve clearly tagged legacy XML in unlabelled or XML fences. JSON and unknown fenced
+    // formats fail closed even when they contain quoted review tags.
+    const fence = /^```(?:xml)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/iu.exec(trimmed.trimEnd());
+    const body = fence?.[1]?.trim();
+    if (body?.startsWith("<review>") || body?.startsWith("<outcome>")) {
+        return parseAutoPermissionReview(body);
+    }
+    return undefined;
 }
