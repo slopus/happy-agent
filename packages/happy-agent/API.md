@@ -474,6 +474,13 @@ Current daemons preserve historical calls regardless of that header. Protocol 35
 optional `kind` on run metadata, which marks a run stored outside any turn; it is additive, and
 an older client ignores it.
 
+Protocol 36 adds the person-initiated re-check to `POST /v0/usage/refresh`: the optional `force`
+request field and the `skipped` list in the response, each skipped account with a typed `reason`
+and, when known, `until`. Clients that offer a re-check of every account require protocol 36 or
+newer to send `force`; an older compatible daemon answers it with `400`, and a client then sends
+an ordinary refresh instead. Older daemons omit `skipped`, and a client then treats every selected
+account missing from `started` as not read now, without a reason.
+
 Account provenance, configuration history blocks, and structured error details are additive output
 and do not increment the protocol version. Clients tolerate their absence and older clients keep
 their existing text rendering. Existing sends and idle-only compaction remain unchanged.
@@ -9738,9 +9745,20 @@ Reports both sides of installation-wide usage in one response:
   provider exposes in the effective catalog.
 
 Each token window has the same provider-then-model breakdown as agent usage. Provider-account
-readings are advisory and live only in memory. The daemon asks each provider independently every
-15 minutes, so a slow or unavailable vendor cannot withhold another provider's state. A provider
-is present even before it has answered or when it has no account-usage API.
+readings are advisory and live only in memory. The daemon asks each provider independently, at
+startup and once a day after that, so a slow or unavailable vendor cannot withhold another
+provider's state; ordinary inference, reset rechecks, and `POST /v0/usage/refresh` bring readings
+in between. A provider is present even before it has answered or when it has no account-usage API.
+
+Only a vendor reading says how much of an account is left. An account blocked by a full window is
+not read at all before that window resets: no background read, no reset recheck, and no refresh.
+Once the reset passes, the daemon reads the account through the vendor again shortly after it, and
+keeps retrying with capped backoff and the vendor's `retryAt` until a reading captured after the
+reset arrives; the fallback-probe budget does not hold those reads back. Until then the entry keeps
+the last reading, with the blocking window's `resetsAt` in the past. The daemon never treats the
+account as usable merely because the reset time passed or because inference succeeded without
+reporting the window, and a client shows such an account as being checked rather than as having
+its full allowance back or as limited until a time already past.
 
 Response — `200`:
 
@@ -9933,7 +9951,8 @@ Request body, every field optional:
 ```json
 {
     "providerIds": ["claude-work", "codex"],
-    "olderThanMs": 300000
+    "olderThanMs": 300000,
+    "force": true
 }
 ```
 
@@ -9941,28 +9960,56 @@ Request body, every field optional:
   configured account are skipped rather than rejected.
 - `olderThanMs` — only accounts whose `refreshedAt` is older than this many milliseconds, or that
   have never been read, are read again. Defaults to 300000 (five minutes); smaller values are
-  raised to 60000 (one minute), so a client cannot hammer a vendor's rate-limited usage API.
+  raised to 60000 (one minute), so a client cannot hammer a vendor's rate-limited usage API. An
+  account whose blocking window has reset since its reading was captured is read whatever its
+  `refreshedAt` says.
+- `force` — protocol 36 or newer. `true` means a person asked to re-check now, such as a "Re-check
+  all" control. `olderThanMs` is ignored, and the fallback-probe budget described below neither
+  holds the read back nor counts it. Every other rule still applies. Clients send it only in direct
+  response to a person and never on a timer. Older compatible daemons answer it with `400`.
 
-An account is also skipped while its `retryAt` has not passed, while a read of it is already in
-flight, and when it has no account-usage source, such as Bedrock or an API key. Reads of the same
-account never overlap: a refresh joins the same one-at-a-time queue as the daily background poll.
-Background reads run at startup and once a day, skipping accounts measured during ordinary
-inference within the last day. The existing reset rechecks remain independent of that cadence.
-Fallback inference probes have a separate exponential budget: each admitted probe, successful or
-not, waits 5 minutes, 40 minutes, 5 hours 20 minutes, then a day before the next. Menu refreshes
-cannot reset this budget. Ordinary inference measurements reset escalation and postpone probes
-for a day. Inexpensive account endpoints remain eligible under the ordinary refresh age policy.
+An account is skipped, with or without `force`, while a full window blocks it until a future reset,
+while its `retryAt` has not passed, while a read of it is already in flight, and when it has no
+account-usage source, such as Bedrock or an API key. Reads of the same account never overlap: a
+refresh joins the same one-at-a-time queue as the daily background poll. Background reads run at
+startup and once a day, skipping accounts measured during ordinary inference within the last day.
+The reset rechecks described under `GET /v0/usage` remain independent of that cadence. Fallback
+inference probes have a separate exponential budget: each admitted probe, successful or not, waits
+5 minutes, 40 minutes, 5 hours 20 minutes, then a day before the next. Refreshes cannot reset this
+budget. Ordinary inference measurements reset escalation and postpone probes for a day.
+Inexpensive account endpoints remain eligible under the ordinary refresh age policy.
 
 Response — `202`:
 
 ```json
 {
-    "started": ["claude-work"]
+    "started": ["claude-work"],
+    "skipped": [
+        { "providerId": "claude", "reason": "blocked_until_reset", "until": 1755412000000 },
+        { "providerId": "codex", "reason": "retry_after", "until": 1755400060000 },
+        { "providerId": "grok", "reason": "fresh", "until": 1755400300000 },
+        { "providerId": "bedrock", "reason": "no_usage_source" }
+    ]
 }
 ```
 
 - `started` — the accounts for which a read was started, in configuration order. An empty array
   means every selected account was fresh enough or could not be read now.
+- `skipped` — optional for protocol-35 compatibility; a protocol-36 daemon always sends it. Every
+  selected configured account appears exactly once in `started` or `skipped`, and `skipped` is in
+  configuration order too. `until` is epoch milliseconds and present only for the reasons that
+  name it. Clients treat a reason they do not recognize as the account not being read now.
+
+When several reasons apply to an account, the first in this list is reported:
+
+- `"no_usage_source"` — the account has no account-usage source, or it is disabled.
+- `"in_flight"` — a read of the account is already running or queued; its result arrives as
+  events.
+- `"blocked_until_reset"` — a full window blocks the account; `until` is when the last blocking
+  window resets.
+- `"retry_after"` — the vendor asked not to be asked yet; `until` is the account's `retryAt`.
+- `"fresh"` — the reading is newer than `olderThanMs`; `until` is when it becomes old enough. Never
+  reported with `force`.
 
 `400` when the body is not an object of the shape above.
 
