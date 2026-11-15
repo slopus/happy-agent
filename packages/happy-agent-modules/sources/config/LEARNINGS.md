@@ -591,3 +591,7 @@ config cannot depend on. Config therefore exposes `onHarnessPermission`: user in
 asker, and every foreign provider's turn environment calls it with the agent from the context and
 the harness's display name. With no asker registered or no agent in the context, the ask is denied
 rather than allowed, because nobody could have approved it.
+
+## A foreign agent's background tasks reach the API as a count
+
+A Claude Code conversation looked finished while a background command or subagent it had started was still running, because those run inside Claude Code's own process and Happy never saw them. A foreign agent provider's turn environment now carries `backgroundWork`, the number of such tasks running now, and config passes each change to its `onForeignAgentBackgroundWork` listeners together with the agent the context names, as it passes account usage on. It is a listener rather than something config does itself, because only the API has anything to show it on. A context that names no agent reports nothing, and a listener that throws does not keep the count from the others.

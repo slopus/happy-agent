@@ -575,6 +575,7 @@ async function apiFixture(
     );
     const config = {
         onDefaultModelChanged: () => () => undefined,
+        onForeignAgentBackgroundWork: () => () => undefined,
         onProviderServiceTiersChanged: () => () => undefined,
         configuration: {
             paths: {
@@ -632,6 +633,7 @@ async function actualCloudApiFixture() {
     );
     const config = {
         onDefaultModelChanged: () => () => undefined,
+        onForeignAgentBackgroundWork: () => () => undefined,
         onProviderServiceTiersChanged: () => () => undefined,
         configuration: {
             paths: {

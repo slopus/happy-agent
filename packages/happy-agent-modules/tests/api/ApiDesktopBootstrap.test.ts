@@ -395,6 +395,56 @@ describe("message history request tracing", () => {
         expect(tracedPage).toEqual(plainPage);
         expect(plain.spans).toEqual([]);
     });
+
+    it("counts a foreign agent's background tasks among the agent's running processes", async () => {
+        const fixture = await createFixture();
+        fixture.processes.mockResolvedValue([{ status: "running" }, { status: "completed" }]);
+        const report = (agentId: string, running: number): void => {
+            fixture.backgroundWorkListeners.forEach((listener) => listener(agentId, running));
+        };
+        const announced = (): unknown[] =>
+            fixture.agents.updateMetadata.mock.calls
+                .map(([, id, update]) => [id, (update as { processes?: unknown }).processes])
+                .filter(([, processes]) => processes !== undefined);
+
+        // A count that arrives while the last one waits to be announced joins that announcement.
+        report("activeagent", 1);
+        report("activeagent", 2);
+        await vi.waitFor(() => expect(announced()).toEqual([["activeagent", { running: 3 }]]));
+        const bootstrap = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
+        expect(
+            bootstrap.projects[0]?.agents.find((agent) => agent.id === "activeagent")?.processes,
+        ).toEqual({ running: 3 });
+
+        // An unchanged count announces nothing; 0 leaves only the agent's own process.
+        report("activeagent", 2);
+        report("activeagent", 0);
+        await vi.waitFor(() =>
+            expect(announced()).toEqual([
+                ["activeagent", { running: 3 }],
+                ["activeagent", { running: 1 }],
+            ]),
+        );
+        const after = await fixture.get<DesktopBootstrapResponse>("/v0/bootstrap/desktop");
+        expect(
+            after.projects[0]?.agents.find((agent) => agent.id === "activeagent")?.processes,
+        ).toEqual({ running: 1 });
+    });
+
+    it("gives up announcing background work for an agent that no longer exists", async () => {
+        const fixture = await createFixture();
+        const attempts = (): number =>
+            fixture.processes.mock.calls.filter(([, agentId]) => agentId === "goneagent").length;
+
+        fixture.backgroundWorkListeners.forEach((listener) => listener("goneagent", 2));
+        await vi.waitFor(() => expect(attempts()).toBe(1));
+        // A failed announcement is tried again one event-loop turn later; a missing agent is not.
+        for (let turn = 0; turn < 32; turn += 1) {
+            await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        expect(attempts()).toBe(1);
+        expect(fixture.agents.updateMetadata).not.toHaveBeenCalled();
+    });
 });
 
 async function createFixture(tracing = false) {
@@ -405,6 +455,7 @@ async function createFixture(tracing = false) {
     const context = (tracing ? withTracer(root, tracer) : root).named("bootstrap-reads-test");
     const subscribe = () => () => undefined;
     const serviceTierListeners = new Set<() => void>();
+    const backgroundWorkListeners = new Set<(agentId: string, running: number) => void>();
     const passive = new Proxy({}, { get: () => subscribe });
     const project = {
         id: "projectone",
@@ -442,6 +493,9 @@ async function createFixture(tracing = false) {
         config: vi.fn(async (_ctx: Context, id: string) => configs.get(id)),
         childOf: vi.fn(async (_ctx: Context, _id: string): Promise<string[]> => []),
         parentOf: vi.fn(async (_ctx: Context, _id: string): Promise<string | null> => null),
+        updateMetadata: vi.fn(
+            async (_ctx: Context, _id: string, _update: Record<string, unknown>) => undefined,
+        ),
     };
     const projects = {
         onEvent: subscribe,
@@ -519,6 +573,14 @@ async function createFixture(tracing = false) {
         passive as never,
         {
             onDefaultModelChanged: () => () => undefined,
+            onForeignAgentBackgroundWork: (
+                listener: (agentId: string, running: number) => void,
+            ) => {
+                backgroundWorkListeners.add(listener);
+                return () => {
+                    backgroundWorkListeners.delete(listener);
+                };
+            },
             onProviderServiceTiersChanged: (listener: () => void) => {
                 serviceTierListeners.add(listener);
                 return () => {
@@ -576,6 +638,7 @@ async function createFixture(tracing = false) {
     return {
         close: () => api.close(),
         serviceTierListeners,
+        backgroundWorkListeners,
         agents,
         configs,
         projects,

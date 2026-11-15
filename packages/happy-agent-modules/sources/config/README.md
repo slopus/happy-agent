@@ -161,6 +161,8 @@ harness. With nothing registered, the ask is refused.
 
 A foreign agent may also start a turn on its own, as Claude Code does when a background command finishes. The route's turn environment then wakes the agent it runs as: config sends the provider's hidden system notice with `hideFromUser` through the agent system it was started with, on a context of its own, because the turn that ran the agent is long over. The run that notice starts shows the foreign agent's turn.
 
+Such a foreign agent may also keep work running after its turn ends — Claude Code's background commands, monitors, subagents and workflows. Each time the number of those tasks changes, the route's turn environment reports it, and config passes the agent it runs as and the new count to whatever module registered with `onForeignAgentBackgroundWork`: the API module, which counts the tasks among the agent's running background processes.
+
 `harnessAllowsSubagents` decides which harnesses an agent on one harness may start sub-agents on:
 its own; else the creator's `subagent_harnesses`; else, for `happy`, only `antigravity` (models
 Happy cannot run itself); else, for a foreign harness, every harness but `happy`. Collaboration's

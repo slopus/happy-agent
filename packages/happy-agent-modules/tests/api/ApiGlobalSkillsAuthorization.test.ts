@@ -43,6 +43,7 @@ it("lets team members read global skills but only the owner change enablement", 
         passive,
         {
             onDefaultModelChanged: subscribe,
+            onForeignAgentBackgroundWork: subscribe,
             onProviderServiceTiersChanged: subscribe,
             configuration: {
                 paths: { tokenPath: join(directory, "token") },

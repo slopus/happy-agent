@@ -38,6 +38,7 @@ import {
     foreignAgentRoutes,
     happyHarnessAccepts,
     isForeignAgentProvider,
+    type ForeignAgentBackgroundWorkReporter,
     type ForeignAgentConfiguredProvider,
     type ForeignAgentPermissionAsker,
     type ForeignAgentWaker,
@@ -593,6 +594,7 @@ export function agentProviders(
     accountFailures?: ProviderAccountFailures,
     askHarnessPermission?: ForeignAgentPermissionAsker,
     wakeForeignAgent?: ForeignAgentWaker,
+    reportForeignBackgroundWork?: ForeignAgentBackgroundWorkReporter,
 ): AgentProviders {
     const providers = new AgentProviders();
     const retryLimit = configuration.values.settings.inferenceMaxRetries;
@@ -648,6 +650,7 @@ export function agentProviders(
                                   onAccountUsage,
                                   askHarnessPermission,
                                   wakeForeignAgent,
+                                  reportForeignBackgroundWork,
                               )
                             : await createProvider(
                                   id,
