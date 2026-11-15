@@ -171,8 +171,6 @@ export const healthResponseSchema = Type.Object({
              * WebSockets, described under WebSocket tunnels and Keepalive.
              */
             webSocketTunnels: Type.Optional(Type.Boolean()),
-            /** True when the daemon serves `/v0/stories`, `story.changed`, and `story.removed`, under Stories. */
-            storyFeed: Type.Optional(Type.Boolean()),
             /** True when the daemon serves `/v0/feed` and the `feed.*` events, under Feed. */
             feed: Type.Optional(Type.Boolean()),
             /** True when `GET /v0/feed` and `POST /v0/feed/read-all` take `subjects`, under Feed. */

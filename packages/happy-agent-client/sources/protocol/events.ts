@@ -39,7 +39,6 @@ import type { Cloud } from "./cloud.js";
 import type { GitState } from "./git.js";
 import type { HappyIntegration } from "./integrations.js";
 import type { Message, Run } from "./messages.js";
-import type { StoryChangedPayload, StoryRemovedPayload } from "./stories.js";
 import type { ProviderCliUpdatedPayload } from "./providerClis.js";
 import type {
     FeedItemCreatedPayload,
@@ -886,8 +885,6 @@ export type HappyAgentEvent =
     | EventEnvelope<"user_settings.updated", UserSettingsUpdatedPayload>
     | EventEnvelope<"user_environment.updated", UserEnvironmentUpdatedPayload>
     | EventEnvelope<"mobile_connector.updated", MobileConnectorUpdatedPayload>
-    | EventEnvelope<"story.changed", StoryChangedPayload>
-    | EventEnvelope<"story.removed", StoryRemovedPayload>
     | EventEnvelope<"feed.item.created", FeedItemCreatedPayload>
     | EventEnvelope<"feed.item.updated", FeedItemUpdatedPayload>
     | EventEnvelope<"feed.item.removed", FeedItemRemovedPayload>

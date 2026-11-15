@@ -275,14 +275,6 @@ import type {
     FeedUnread,
 } from "./protocol/feed.js";
 import type {
-    Story,
-    StoryCreateRequest,
-    StoryMetadata,
-    StoryReply,
-    StoryRepostRequest,
-    StoryUpload,
-} from "./protocol/stories.js";
-import type {
     ArchiveProjectRequest,
     CloneProjectRequest,
     ProjectListResponse,
@@ -1405,146 +1397,12 @@ export class HappyAgentClient {
         });
     }
 
-    // Stories
-
-    /**
-     * `POST /v0/artifact-uploads` — stream one story file to the daemon for `postStory` or
-     * `repostStory` to reference. The daemon reads whether it is an image or video from its bytes.
-     */
-    async uploadStoryMedia(
-        body: Blob,
-        options: RequestOptions = {},
-    ): Promise<{ upload: StoryUpload }> {
-        return await this.#json({
-            method: "POST",
-            path: "v0/artifact-uploads",
-            binary: { contentType: "application/octet-stream", data: body },
-            signal: options.signal,
-        });
-    }
-
-    /**
-     * Post a person's original story: JSON referencing uploads, or, for older daemons, the base
-     * media as binary multipart files.
-     */
-    async postStory(body: StoryCreateRequest, options?: RequestOptions): Promise<{ story: Story }>;
-    async postStory(
-        media: Blob,
-        body?: StoryMetadata & { round?: Blob },
-        options?: RequestOptions,
-    ): Promise<{ story: Story }>;
-    async postStory(
-        media: Blob | StoryCreateRequest,
-        body: (StoryMetadata & { round?: Blob }) | RequestOptions = {},
-        options: RequestOptions = {},
-    ): Promise<{ story: Story }> {
-        if (!(media instanceof Blob)) {
-            const { signal } = body as RequestOptions;
-            return await this.#json({ method: "POST", path: "v0/stories", json: media, signal });
-        }
-        body = body as StoryMetadata & { round?: Blob };
-        const form = new FormData();
-        form.set("media", media, "media");
-        form.set("metadata", JSON.stringify({ caption: body.caption, layers: body.layers }));
-        if (body.round) form.set("round", body.round, "round.mp4");
-        return await this.#json({
-            method: "POST",
-            path: "v0/stories",
-            form,
-            signal: options.signal,
-        });
-    }
-
-    /** `GET /v0/stories` — live stories the caller can see, oldest first; daemons with `storyFeed`. */
-    async listStories(options: RequestOptions = {}): Promise<{ stories: Story[]; cursor: string }> {
-        return await this.#json({ method: "GET", path: "v0/stories", signal: options.signal });
-    }
-
-    /** `POST /v0/stories/:storyId/seen` — marks it seen for the caller only; idempotent. */
-    async markStorySeen(storyId: Cuid2, options: RequestOptions = {}): Promise<{ story: Story }> {
-        return await this.#json({
-            method: "POST",
-            path: `v0/stories/${encodeURIComponent(storyId)}/seen`,
-            json: {},
-            signal: options.signal,
-        });
-    }
-
-    /** The URL of `GET /v0/stories/:storyId/media`, for an element loading it with the token. */
-    storyMediaUrl(storyId: Cuid2): string {
-        return endpointUrl(this.#endpoint, `v0/stories/${encodeURIComponent(storyId)}/media`);
-    }
-
-    /** The URL of `GET /v0/stories/:storyId/layers/:layerId`, one media layer's bytes. */
-    storyLayerUrl(storyId: Cuid2, layerId: string): string {
-        return endpointUrl(
-            this.#endpoint,
-            `v0/stories/${encodeURIComponent(storyId)}/layers/${encodeURIComponent(layerId)}`,
-        );
-    }
-
-    /** The URL of `GET /v0/stories/:storyId/round`, a repost's round video. */
-    storyRoundUrl(storyId: Cuid2): string {
-        return endpointUrl(this.#endpoint, `v0/stories/${encodeURIComponent(storyId)}/round`);
-    }
-
     /** The URL of `GET /v0/agents/:agentId/messages/:messageId/story-frame`, a quote's still. */
     storyQuoteFrameUrl(agentId: Cuid2, messageId: Cuid2): string {
         return endpointUrl(
             this.#endpoint,
             `v0/agents/${encodeURIComponent(agentId)}/messages/${encodeURIComponent(messageId)}/story-frame`,
         );
-    }
-
-    /** `GET /v0/stories/:storyId/replies` — every reply, oldest first. */
-    async listStoryReplies(
-        storyId: Cuid2,
-        options: RequestOptions = {},
-    ): Promise<{ replies: StoryReply[] }> {
-        const path = `v0/stories/${encodeURIComponent(storyId)}/replies`;
-        return await this.#json({ method: "GET", path, signal: options.signal });
-    }
-
-    /** `POST /v0/stories/:storyId/replies` — also sent to the story's agent as the caller's message. */
-    async replyToStory(
-        storyId: Cuid2,
-        text: string,
-        options: RequestOptions = {},
-    ): Promise<{ reply: StoryReply }> {
-        const path = `v0/stories/${encodeURIComponent(storyId)}/replies`;
-        return await this.#json({ method: "POST", path, json: { text }, signal: options.signal });
-    }
-
-    /**
-     * `POST /v0/stories/:storyId/repost` — an agent story, with an optional caption, media layers
-     * referencing uploads, and a legacy round MP4.
-     */
-    async repostStory(
-        storyId: Cuid2,
-        body: Omit<StoryRepostRequest, "round"> & {
-            round?: StoryRepostRequest["round"] | Blob;
-        } = {},
-        options: RequestOptions = {},
-    ): Promise<{ story: Story }> {
-        const path = `v0/stories/${encodeURIComponent(storyId)}/repost`;
-        if (body.round instanceof Blob) {
-            if (body.mediaLayers !== undefined)
-                throw new Error("Upload a round as a media layer to repost it with media layers.");
-            const form = new FormData();
-            form.set("metadata", JSON.stringify({ caption: body.caption, layers: body.layers }));
-            form.set("round", body.round, "round.mp4");
-            return await this.#json({ method: "POST", path, form, signal: options.signal });
-        }
-        return await this.#json({ method: "POST", path, json: body, signal: options.signal });
-    }
-
-    /** `DELETE /v0/stories/:storyId` — when the story's `canDelete` is true; ends its reposts too. */
-    async deleteStory(
-        storyId: Cuid2,
-        options: RequestOptions = {},
-    ): Promise<Record<string, never>> {
-        const path = `v0/stories/${encodeURIComponent(storyId)}`;
-        return await this.#json({ method: "DELETE", path, signal: options.signal });
     }
 
     // Feed

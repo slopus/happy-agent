@@ -711,10 +711,10 @@ routes under `/v0/provider-clis` and the `provider_cli.updated` event reports
 `capabilities.providerClis: true` from health. Older daemons omit it and answer the routes with
 `404`; clients then offer only the manual terminal path for installing and signing in.
 
-Stories is retired. Current daemons omit `capabilities.storyFeed`, answer every `/v0/stories`
-route with `404 not_found`, and emit no new `story.changed` or `story.removed` events. Stored
-personal or bot Stories settings cannot enable it. Published client types remain readable for
-older daemons, and historical message quotes and their still-frame route remain available.
+Stories is removed. `/v0/stories` routes answer `404 not_found`; Stories tools, events, bot fields,
+and bootstrap fields are absent. Saved user preferences remain opaque and have no effect.
+Historical message quotes and their still-frame route remain available. Stored Stories data and
+migration history are preserved.
 
 The Feed is additive and does not increment the protocol version. A daemon that serves the routes
 under `/v0/feed` and the `feed.*` events reports `capabilities.feed: true` from health and
@@ -3055,8 +3055,7 @@ User settings are a small key-value store of opaque preferences that belongs to 
 application can keep a person's choices on the daemon and have them follow that person from device
 to device. The settings store checks only the shape and size of keys and values. Preferences never
 reach agents, tools, or model context. The daemon interprets the reserved `tasks.autoJoin` key as
-described under Tasks and the reserved `stories` key as described under Stories; other keys remain
-opaque.
+described under Tasks; other keys remain opaque.
 
 **Owner.** In team mode, settings belong to the authenticated member, keyed by their
 installation-local Happy user ID. A member reads, writes, and receives events for only their own
@@ -7408,9 +7407,9 @@ bootstrap state, `message.created` and any later full-message event, and accepte
 including after daemon restart. When omitted, the field is absent. Re-sending an existing message
 ID returns the originally stored object and never replaces it with metadata from the retry.
 
-A user message may also carry `quote`, what it replies to, set by the daemon and never by the
-sending client. Its `content` holds only what the person wrote; clients show the quote above it.
-The one kind today is a person's reply to a story:
+A historical user message may carry `quote`, what it replied to, set by the daemon and never by
+the sending client. Its `content` holds only what the person wrote; clients show the quote above
+it. The retained kind is a person's reply to a story:
 
 ```json
 {
@@ -10060,7 +10059,6 @@ exactly as agents embedded in projects and workspaces do; clients merge it by it
 Fields:
 
 - `id` — stable bot identifier.
-- `stories` — retired compatibility field, always `false` on current daemons. Older compatible daemons may omit it or support Stories.
 - `name` — the human display name. Required, 1–256 nonblank characters, no ASCII control
   characters.
 - `shortName` — optional generated label of at most 10 characters; clients fall back to `name`.
@@ -10180,7 +10178,7 @@ Response — `200`: `{ "bot": { ... } }`; `404` when no such bot exists.
 
 Updates the bot's display name. Requires `If-Match`, with the same authorization as rename.
 
-Request: `{ "name"?: "Research Buddy", "stories"?: true, "mutationId"?: "..." }`; at least one of `name` or `stories` is required (`400 invalid_request` otherwise). The retired `stories` input is accepted and ignored; a stories-only request does not change the bot, its version, or automatic naming.
+Request: `{ "name": "Research Buddy", "mutationId"?: "..." }`. `name` is required (`400 invalid_request` otherwise).
 
 Renaming also updates the bot's conversation title, clears `shortName`, and permanently cancels
 eligibility for automatic naming, even when the submitted name equals the current display name. This decision
@@ -12676,287 +12674,6 @@ Idempotent. The same callers may unarchive as may archive.
 
 Response — `200`: `{ "task": { ... }, "membership": { ... } }` with `archivedAt` `null`, and a
 `task.updated` event after commit, echoing `mutationId`. `403`, `404`, and `409` as for archive.
-
-## Stories (retired)
-
-Stories was removed because Activity is a better version of Stories today. A Stories-like feed
-may return for the latest updates in Activity. The runtime no longer loads a Stories module,
-offers `post_story`, `list_stories`, or `delete_story`, serves `/v0/stories` routes, advertises
-`storyFeed`, or publishes Stories events. Desktop bootstrap returns `storiesEnabled: false` and
-`stories: []` for older clients. Bot projections return `stories: false`, and the retired bot
-PATCH input is ignored. Opaque user settings remain readable and writable but have no effect.
-Stored Stories tables, migration history, media, and existing message quotes are preserved;
-the historical quote still-frame route remains available. No retirement migration deletes data.
-
-The following describes the historical wire formats retained by published clients for connecting
-to older daemons. It does not require current daemons to implement any Stories behavior.
-
-A story is one image or video that a task's own agent publishes to the people who joined the task, with a few words
-of caption, to show something that shipped. It lasts 24 hours. Clients show live stories on the
-task's existing icon and play them full screen. A bot's `stories` switch enables its story tools,
-off by default; its stories reach every non-guest member with personal stories on while enabled.
-
-**Turning stories on.** Stories are on for a person only while their user setting `stories` is
-the JSON boolean `true`; missing, cleared, `false`, or any other value is off. It is read and
-written through the ordinary user-settings routes and `user_settings.updated` events. For a person
-with stories off, nothing changes: `GET /v0/stories` answers an empty list, every other story route
-answers `404 not_found`, they receive no story events, and agents working for them are offered no
-story tool. Turning stories on shows every live story they may see; refetch the list when the
-setting changes.
-
-**Posting.** Agents post through their `post_story` tool
-`{ "path": "...", "caption"?: "...", "replaces"?: ["..."] }`. `path` names an image, or an H.264 MP4 video (`.mp4`), on
-the agent's own machine; the daemon snapshots its bytes when the call runs, with the same
-boundary, review, and size limits as presenting a file in chat (32 MiB for an image, 256 MiB for a
-video). An image that does not decode is refused, and so is a video that is not named `.mp4`, does
-not open with an MP4 `ftyp` box, or has no H.264 (`avc1` or `avc3`) sample entry under
-`moov/trak/mdia/minf/stbl/stsd`. Box lengths bound the scan; bytes in frame data or unrelated
-metadata do not declare a track. The daemon checks only
-the container and track type, not that every frame decodes. `caption` is 1–200
-characters. The tool is offered to a task's own agent when its owner has personal stories on,
-or a bot's own agent when its bot's Stories switch is on; never to a subtask, project or
-workspace conversation. This is checked once when
-the turn's tools are assembled, with no recheck inside the tools. Each call adds one
-story; an agent may have multiple live stories, played oldest first, with no video duration limit
-(the byte limits above still apply). For a multipart update, call `post_story` once per outline part;
-do not combine the parts into one frame or replace earlier parts of the same update. People may also upload their own stories or
-repost an agent's story. Nobody edits a story. Optional `replaces` names at most twenty of the
-agent's own live originals to remove, with their reposts, in the posting transaction. Foreign,
-repost, missing, and ended IDs are ignored. The tool result includes the `replaced` IDs; removals
-emit `story.removed` after commit. `delete_story` still removes a story without posting.
-Omitting `replaces` preserves earlier frames; use it only for originals made stale by this update.
-The viewer is 9:16 (1080×1920 reference pixels); important content fits inside
-x=48–1032 and y=384–1344, clear of the top progress/poster/attribution bar and bottom caption/reply controls.
-
-**Agent tools.** Alongside `post_story`, and under the same conditions, the agent is offered
-`list_stories` `{}`, which lists its live stories and people's reposts of them, each with how many
-people saw it, how many replied, and the latest 50 replies; and `delete_story` `{ "id": "..." }`,
-which deletes one of its own live stories with every repost of it. `delete_story` answers
-`{ "deleted": false }` for anything else, including a repost. An agent whose person has stories
-off is offered none of the three.
-
-**Reposts.** A person reposts an agent story they see, with an optional caption and an optional
-round video of themselves, through `POST /v0/stories/:storyId/repost`. A repost keeps the
-original's `agentId`, `taskId`, `botId`, and `media`, referencing the same stored media bytes
-without downloading, re-encoding, or uploading the original again, and reaches every non-guest team member with
-stories on. It lasts 24 hours from its own `postedAt`. A repost
-cannot be reposted. A person's original story cannot be reposted either. Optional `layers` keep
-text and round positions separate from the base media (see below).
-
-**Replies.** Anyone who sees a story may reply to it with 1–2000 characters of text. The reply is
-kept with the story, readable by everyone who sees the story, and is also sent to the story's agent
-as the replier's own message in that agent's chat. Its `content` is exactly the text they wrote,
-and its `quote` names the story; see Message content. Just before it, the model receives a private
-system notification naming the story, such as
-`The person's next message replies to your story “<caption>” (story <id>). Its first frame follows.`,
-with the quote's frame as an image when there is one. It is delivered
-like a message the person typed, so the agent answers it in its ordinary turn. A reply to a repost
-reaches the original's agent the same way. Replies to a person's original story stay with that
-story only; there is no agent chat.
-
-**Deleting.** A story's `canDelete` tells the caller whether they may delete it. In team mode the
-task's owner may delete their task's agent stories, and a person may delete their own stories and reposts;
-nobody else may delete anything. The agent deletes its own through `delete_story`.
-In standalone mode the installation's one person may delete any story. Deleting an
-agent story deletes every repost of it. A deleted story leaves every list and route at once, and
-everyone who saw it receives `story.removed`; its media, round video, seen state, and replies
-answer `404 not_found`.
-
-**Who sees a story.** Posting always publishes: there is no owner-only or internal audience.
-A task agent's original story reaches the task's owner and every non-guest person who joined the
-task with stories on, while the task is active. Archiving hides it until unarchived, if it has not
-ended. Joining or leaving the task, archiving, and unarchiving send each affected reader
-`story.changed` for every live original they now see and `story.removed` for each they no longer see. A person's
-original story or repost reaches every non-guest team member with stories on, or the one person
-standalone. Guests cannot post or read stories. Everything else answers
-as if the story did not exist.
-
-**Seen.** Each person has their own seen state. Opening a story marks it seen for that person
-only, on all of their devices; nobody else's changes.
-
-**Ending.** A story ends at `expiresAt`, 24 hours after `postedAt`. An ended story leaves every
-list and route at once and no event announces it; clients drop it at `expiresAt`. Stories, seen
-state, and replies persist across daemon restarts.
-
-### The story object
-
-```json
-{
-    "id": "q2v7m4wfx0e8c1hg9kz3b6np",
-    "agentId": "k8d2s0vqzj4m7ly1c5xh3rwe",
-    "taskId": "t3n6b1yqk8w2x0fz9mh4c7dp",
-    "botId": null,
-    "caption": "New onboarding is ready to try",
-    "media": {
-        "kind": "image",
-        "mimeType": "image/png",
-        "size": 482113
-    },
-    "postedAt": 1755400000000,
-    "expiresAt": 1755486400000,
-    "seen": false,
-    "poster": "person",
-    "userId": "u5c9w2hx7m0k3qz8b1fn4tjd",
-    "repostOf": "a7p1x4kd9q2m6zv0w3hn8csl",
-    "round": { "mimeType": "video/mp4", "size": 912004 },
-    "replyCount": 3,
-    "replies": [
-        {
-            "id": "r4k8x1mq0w7z2cv9h3dn6pfs",
-            "storyId": "q2v7m4wfx0e8c1hg9kz3b6np",
-            "userId": "b6t0y3nw8k1q5zx2m7hc4dvj",
-            "text": "Looks great",
-            "createdAt": 1755401000000
-        }
-    ],
-    "canDelete": true
-}
-```
-
-- `id` — the story's CUID2.
-- `agentId` — the posting task's agent, including on reposts. This is the existing
-  **Open chat** target. `null` for a person's original story, which has no chat target.
-- `taskId`, `botId` — where it was posted. Exactly one is set for agent stories and reposts;
-  both are `null` for a person's original story. Match a row by its corresponding ID.
-- `caption` — 1–200 characters, or `null`.
-- `media` — `kind` is `"image"` or `"video"` (H.264 MP4), its `mimeType`, and its `size` in bytes.
-  Fetch the bytes from `GET /v0/stories/:storyId/media`.
-- `postedAt`, `expiresAt` — epoch milliseconds.
-- `seen` — whether the caller opened it.
-- `poster` — `"agent"` for the agent's own story, `"person"` for a person's story or repost. Clients show agents and
-  people differently.
-- `userId` — the person who posted or reposted it; `null` for an agent's story, and in standalone mode.
-- `repostOf` — the ID of the agent story this reposts, or `null`.
-- `round` — the reposter's round video, `{ "mimeType", "size" }`, or `null`. Fetch the bytes from
-  `GET /v0/stories/:storyId/round`.
-- `replyCount` — how many replies the story has.
-- `replies` — the latest replies, at most two, oldest first. Each reply has `id`, `storyId`,
-  `userId` (the replier, `null` in standalone mode), `text`, and `createdAt` in epoch milliseconds.
-- `canDelete` — whether the caller may delete it.
-- `layers` — optional `{ "text"?: { "text": "...", "x": 0.5, "y": 0.5, "scale"?: 1, "rotation"?: 0 },
-"round"?: { "x": 0.5, "y": 0.45, "scale"?: 1, "rotation"?: 0 } }`. Text is 1–200 characters, including emoji; coordinates
-  are finite numbers in [0, 1], measuring the layer's **center** relative to the full media frame.
-  Optional `scale` is finite and in [0.5, 3], default 1; optional `rotation` is finite degrees
-  in [-180, 180], default 0. Rotation and scaling apply around the layer's center.
-  Missing text means no text layer. A round without placement defaults to center (0.2, 0.2);
-  clients adding a new text layer start at (0.5, 0.5). All layer objects reject unknown fields.
-  Clients adding a new round layer start at (0.5, 0.45), with unscaled diameter 40% of frame width.
-  A round placement requires an uploaded round file. A repost without its own text shows the
-  original's text.
-- `mediaLayers` — optional array of stored images and videos placed above `media`, in paint
-  order, below text. Each is `{ "id", "kind", "mimeType", "size", "shape"?, "x", "y", "width",
-"aspect", "scale"?, "rotation"? }`: `kind` is `"image"` or `"video"`; `shape` is `"rect"`
-  (default) or `"round"`, clipped to a circle whose diameter is the layer width; `x` and `y`
-  are the layer's center in [0, 1] of the full frame; `width` is in (0, 1] of the frame width
-  before `scale`; `aspect` is the media's width over its height in [0.1, 10], so the box is known
-  before its bytes load; `scale` and `rotation` are as for `layers`. Fetch the bytes from
-  `GET /v0/stories/:storyId/layers/:layerId`. A repost lists the original's layers first, under
-  their own IDs, then its own. A story with a legacy `round` also lists it as the layer `round`
-  with `shape: "round"`, its `layers.round` center, scale, and rotation, `width: 0.4`, and
-  `aspect: 1`. The server never composes layers into the media or re-encodes any of them; each
-  is stored once and referenced by every story showing it. Older daemons omit the field.
-
-### `POST /v0/stories`
-
-Uploads a person's original story. Request is `multipart/form-data` with one `media` file
-(non-empty, at most 32 MiB = 33,554,432 bytes), optional `round` file (non-empty H.264 MP4,
-at most 16 MiB), and optional `metadata` string containing JSON `{ "caption"?: "...", "layers"?: { ... } }`.
-No other fields or repeated parts are accepted. The binary files are never base64 encoded.
-`media` must have an `image/*` content type and decode as an image, or have content type
-`video/mp4` and pass the same `ftyp`/`avc1`/`avc3` check as `post_story`. Round's content type is
-`video/mp4` and it passes that check too. `caption` is 1–200 characters; metadata rejects unknown fields.
-For both files, compare the base media type case-insensitively, ignoring parameters such as `codecs`.
-The entire multipart body is capped at 48 MiB plus 64 KiB of multipart overhead and metadata.
-
-Alternatively send `application/json`, referencing files already streamed to disk through
-`POST /v0/artifact-uploads`: `{ "media": { "uploadId": "..." }, "caption"?: "...",
-"layers"?: { ... }, "mediaLayers"?: [ { "uploadId": "...", "shape"?: "rect", "x": 0.5, "y": 0.5,
-"width": 0.4, "aspect": 1, "scale"?: 1, "rotation"?: 0 } ] }`, with at most 8 media layers and
-no other fields. The daemon reads each upload's kind from its bytes: an image that decodes (at
-most 32 MiB), or a video (at most 256 MiB) that passes the `post_story` H.264 MP4 check. Bytes are
-adopted into story storage without copying or re-encoding, and an upload may be referenced again
-until it expires. JSON `layers.round` is refused; send a circle video as a media layer with
-`shape: "round"`. An unknown, expired, or refused upload is `400 invalid_request`.
-
-Response — `200`: `{ "story": { ... } }`, with `poster: "person"`, the caller's `userId`, and
-`agentId`, `taskId`, `botId`, and `repostOf` all `null`. The story lasts 24 hours and emits
-`story.changed` to every non-guest member with stories on. `404 not_found` while stories are off
-or for a guest; `400 invalid_request` for invalid metadata, media or round; `413 too_large` when
-a file or the complete request exceeds its cap. Standalone posts have `userId: null`.
-
-### `GET /v0/stories`
-
-Response — `200`: `{ "stories": [ /* story objects */ ], "cursor": "..." }`: every live story the
-caller may see, oldest `postedAt` first. Empty while the caller's stories are off. `cursor` is the
-event cursor captured before the stories were read; follow `story.changed` and `story.removed`
-after it.
-
-### `POST /v0/stories/:storyId/seen`
-
-Marks the story seen for the caller. Any body is ignored; send none or `{}`. Idempotent.
-
-Response — `200`: `{ "story": { ... } }` with `seen: true`, and one `story.changed` to the caller
-after commit. `404 not_found` when the story does not exist, has ended, the caller may not see it,
-or the caller's stories are off.
-
-### `GET /v0/stories/:storyId/media`
-
-The story's image or video bytes, served exactly as `GET
-/v0/agents/:agentId/tool-calls/:toolCallId/media/:index` serves an item: `Content-Type` is
-`media.mimeType`, `ETag` and `If-None-Match`, `Cache-Control: private, max-age=31536000, immutable`
-with `Vary: Authorization`, single byte ranges answering `206` so a video can stream and seek,
-`X-Content-Type-Options: nosniff`, and the sandboxing `Content-Security-Policy`. `404 not_found`
-under the same conditions as marking it seen. A client that renders through an element rather than
-`fetch` points it at this URL through a transport that adds the bearer token.
-
-### `GET /v0/stories/:storyId/round`
-
-A story's round video, served exactly as its media. `404 not_found` when the story has no round,
-and under the same conditions as marking it seen.
-
-### `GET /v0/stories/:storyId/layers/:layerId`
-
-One media layer's bytes, served exactly as the story's media, including byte ranges. A repost
-serves its original's layers under their IDs. `404 not_found` when the story has no such layer,
-and under the same conditions as marking it seen.
-
-### `POST /v0/stories/:storyId/repost`
-
-Request: `{ "caption"?: "...", "round"?: { "data": "<base64>" }, "layers"?: { ... },
-"mediaLayers"?: [ ... ] }`, with no other fields. `mediaLayers` are the reposter's own, referencing
-uploads exactly as in a JSON `POST /v0/stories`; they are painted above the original's layers.
-The original's media and layers are referenced, never downloaded, copied, or uploaded again.
-`caption` is 1–200 characters; `round.data` is a base64 H.264 MP4 video of at most 16 MiB (at
-most 22,369,624 characters), checked as `post_story` checks a video.
-Alternatively send `multipart/form-data` with optional `metadata` (the same JSON as person
-uploads) and optional binary `round`, with the same limits and validation, and no `media` part.
-The complete repost multipart body is capped at 16 MiB plus 64 KiB; content type is checked before
-either multipart upload's body is read.
-An empty JSON object or multipart form posts a repost with nothing added.
-
-Response — `200`: `{ "story": { ... } }`, the new repost, and one `story.changed` to everyone who
-sees it. `400 invalid_request` for a bad body or round. `404 not_found` when the story is a
-repost or a person's original story, and under the same conditions as marking it seen.
-
-### `GET /v0/stories/:storyId/replies`
-
-Response — `200`: `{ "replies": [ /* replies */ ] }`, every reply, oldest first. `404 not_found`
-under the same conditions as marking it seen.
-
-### `POST /v0/stories/:storyId/replies`
-
-Request: `{ "text": "..." }`, 1–2000 characters, with no other fields.
-
-Response — `200`: `{ "reply": { ... } }`. When `agentId` is non-null, the reply is sent to that
-agent as the caller's message. Everyone who sees the story receives `story.changed` with the new `replyCount` and
-`replies`. `400 invalid_request` for a bad body; `404 not_found` under the same conditions as
-marking it seen.
-
-### `DELETE /v0/stories/:storyId`
-
-Deletes the story, and every repost of a deleted agent story. Response — `200`: `{}`, and
-`story.removed` to everyone who saw each deleted story. `403 forbidden` when the caller sees the
-story but its `canDelete` is `false`; `404 not_found` under the same conditions as marking it seen.
 
 ## Artifacts
 
@@ -15881,21 +15598,6 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
     - `environment` (the complete device environment object).
     - `mutationId` — echoed when the report supplied one.
 
-**Stories**
-
-Retired: current daemons emit neither event below. The shapes remain documented for older daemons
-and retained event history.
-
-- `story.changed` — a story or repost was posted, someone replied to it, or the reader marked it
-  seen. Each reader receives their own copy, because `seen` and `canDelete` are theirs; in team
-  mode only that reader receives it, including journal pulls, replay, and live delivery. Only people
-  with stories on who may see the story receive it. Nothing is emitted when a story ends; clients
-  drop it at `expiresAt`.
-    - `story` (the complete story object, as that reader is served it).
-- `story.removed` — a story was deleted before it ended. Delivered like `story.changed`, to each
-  person who saw it; clients drop it at once.
-    - `storyId`.
-
 **Feed**
 
 Feed events belong to one person: in team mode only that person receives them, including journal
@@ -16166,8 +15868,6 @@ Response — `200`:
     "surfaces": [
         /* the full Surface instance catalog, ascending ID */
     ],
-    "storiesEnabled": false,
-    "stories": [],
     "feedUnread": 3,
     "teammates": [
         /* every team member who signs in, as GET /v0/users describes each one */
@@ -16217,10 +15917,6 @@ Response — `200`:
   Todo data and revision history are loaded on demand through the Todo Surface endpoints.
   Calendar events, occurrences, and revision history are likewise loaded on demand through the
   Calendar Surface endpoints.
-- `storiesEnabled` — retired compatibility field, always `false` on current daemons.
-- `stories` — retired compatibility field, always `[]` on current daemons. Historically
-  included with `storiesEnabled` by daemons supporting the Stories bootstrap addition;
-  both fields may be absent on older compatible daemons.
 - `feedUnread` — the caller's count of open Feed entries, exactly `unread` from `GET /v0/feed`, so
   a client can show the Feed's badge before reading the Feed itself. Follow `feed.unread.updated`
   from the bootstrap `cursor`. Optional; absent on daemons without the Feed and for guests.
