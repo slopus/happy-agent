@@ -113,7 +113,7 @@ export async function applyCodexPatch(
             file.content = operation.lines.join("\n");
             file.exists = true;
             planned.push({ kind: "add", path, content: file.content });
-            fileDiffs.addWholeFile(operation.path, "add", operation.lines);
+            fileDiffs.addWholeFile(path, "add", operation.lines);
             summaries.push(`A ${operation.path}`);
             continue;
         }
@@ -127,11 +127,7 @@ export async function applyCodexPatch(
             file.content = "";
             file.exists = false;
             planned.push({ kind: "delete", path });
-            fileDiffs.addWholeFile(
-                operation.path,
-                "delete",
-                iterateDiffContentLines(deletedContent),
-            );
+            fileDiffs.addWholeFile(path, "delete", iterateDiffContentLines(deletedContent));
             summaries.push(`D ${operation.path}`);
             continue;
         }
@@ -152,7 +148,7 @@ export async function applyCodexPatch(
             }
             file.content = updated.content;
             planned.push({ kind: "update", path, content: updated.content, provenByContext });
-            fileDiffs.add({ kind: "update", path: operation.path, hunks: updated.hunks });
+            fileDiffs.add({ kind: "update", path, hunks: updated.hunks });
             summaries.push(`M ${operation.path}`);
             continue;
         }
@@ -178,8 +174,8 @@ export async function applyCodexPatch(
             contentChanged,
             provenByContext,
         });
-        fileDiffs.addWholeFile(operation.path, "delete", iterateDiffContentLines(sourceContent));
-        fileDiffs.addWholeFile(operation.moveTo, "add", iterateDiffContentLines(updated.content));
+        fileDiffs.addWholeFile(path, "delete", iterateDiffContentLines(sourceContent));
+        fileDiffs.addWholeFile(destination, "add", iterateDiffContentLines(updated.content));
         summaries.push(`M ${operation.path}`);
     }
 

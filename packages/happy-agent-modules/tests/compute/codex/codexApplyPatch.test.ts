@@ -1,6 +1,7 @@
 import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it } from "vitest";
 
+import type { ComputeFileDiff } from "../../../sources/compute/ComputeToolPresentation.js";
 import { FakeCompute } from "../support/FakeCompute.js";
 import { computeToolset } from "../support/computeTools.js";
 
@@ -33,6 +34,95 @@ async function addFile(
 }
 
 describe("codex apply_patch", () => {
+    it("identifies the same file when patch headers alternate between relative and absolute paths", async () => {
+        const toolset = await machine();
+        const added = await toolset
+            .tool("apply_patch")
+            .execute(ctx, { patch: patch("*** Add File: notes.md", "+first") }, toolset.call);
+        const updated = await toolset.tool("apply_patch").execute(
+            ctx,
+            {
+                patch: patch("*** Update File: /workspace/./notes.md", "@@", "-first", "+second"),
+            },
+            toolset.call,
+        );
+
+        expect(toolset.compute.files.get("/workspace/notes.md")?.content).toBe("second");
+        expect(added.presentation.files.map((file: ComputeFileDiff) => file.path)).toEqual([
+            "/workspace/notes.md",
+        ]);
+        expect(updated.presentation.files.map((file: ComputeFileDiff) => file.path)).toEqual([
+            "/workspace/notes.md",
+        ]);
+    });
+
+    it("keeps the working directory in presented paths through adds, moves and deletes", async () => {
+        const toolset = await machine();
+        const added = await toolset
+            .tool("apply_patch")
+            .execute(
+                ctx,
+                { patch: patch("*** Add File: notes.md", "+first"), workdir: "sources/nested" },
+                toolset.call,
+            );
+        const moved = await toolset.tool("apply_patch").execute(
+            ctx,
+            {
+                patch: patch(
+                    "*** Update File: nested/notes.md",
+                    "*** Move to: renamed.md",
+                    "@@",
+                    "-first",
+                    "+second",
+                ),
+                workdir: "/workspace/sources",
+            },
+            toolset.call,
+        );
+        const deleted = await toolset
+            .tool("apply_patch")
+            .execute(
+                ctx,
+                { patch: patch("*** Delete File: ../renamed.md"), workdir: "sources/nested" },
+                toolset.call,
+            );
+
+        expect(added.presentation.files.map((file: ComputeFileDiff) => file.path)).toEqual([
+            "/workspace/sources/nested/notes.md",
+        ]);
+        expect(moved.presentation.files.map((file: ComputeFileDiff) => file.path)).toEqual([
+            "/workspace/sources/nested/notes.md",
+            "/workspace/sources/renamed.md",
+        ]);
+        expect(deleted.presentation.files.map((file: ComputeFileDiff) => file.path)).toEqual([
+            "/workspace/sources/renamed.md",
+        ]);
+        expect(toolset.compute.files.size).toBe(0);
+    });
+
+    it("distinguishes the same relative filename in the root and a custom working directory", async () => {
+        const toolset = await machine();
+        const root = await toolset
+            .tool("apply_patch")
+            .execute(ctx, { patch: patch("*** Add File: notes.md", "+root") }, toolset.call);
+        const nested = await toolset
+            .tool("apply_patch")
+            .execute(
+                ctx,
+                { patch: patch("*** Add File: notes.md", "+nested"), workdir: "sources" },
+                toolset.call,
+            );
+
+        expect(root.presentation.files.map((file: ComputeFileDiff) => file.path)).toEqual([
+            "/workspace/notes.md",
+        ]);
+        expect(nested.presentation.files.map((file: ComputeFileDiff) => file.path)).toEqual([
+            "/workspace/sources/notes.md",
+        ]);
+        expect(toolset.compute.files.get("/workspace/notes.md")?.content).toBe("root");
+        expect(toolset.compute.files.get("/workspace/sources/notes.md")?.content).toBe("nested");
+    });
+
     it("adds a file and reports it in Codex's own summary", async () => {
         const toolset = await machine();
         const { compute, tool, call } = toolset;
@@ -59,7 +149,7 @@ describe("codex apply_patch", () => {
             type: "file_diff",
             files: [
                 {
-                    path: "sources/greet.ts",
+                    path: "/workspace/sources/greet.ts",
                     kind: "add",
                     added: 3,
                     deleted: 0,
@@ -137,7 +227,7 @@ describe("codex apply_patch", () => {
             type: "file_diff",
             files: [
                 {
-                    path: "sources/count.ts",
+                    path: "/workspace/sources/count.ts",
                     kind: "update",
                     added: 1,
                     deleted: 1,
@@ -211,7 +301,7 @@ describe("codex apply_patch", () => {
             type: "file_diff",
             files: [
                 {
-                    path: "old.ts",
+                    path: "/workspace/old.ts",
                     kind: "delete",
                     added: 0,
                     deleted: 1,
@@ -260,7 +350,7 @@ describe("codex apply_patch", () => {
             type: "file_diff",
             files: [
                 {
-                    path: "sources/util.ts",
+                    path: "/workspace/sources/util.ts",
                     kind: "delete",
                     added: 0,
                     deleted: 1,
@@ -273,7 +363,7 @@ describe("codex apply_patch", () => {
                     ],
                 },
                 {
-                    path: "sources/renamed.ts",
+                    path: "/workspace/sources/renamed.ts",
                     kind: "add",
                     added: 1,
                     deleted: 0,

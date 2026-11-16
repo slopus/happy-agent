@@ -186,6 +186,15 @@ call-scoped durable run store, and records it with the transactional tool result
 and loaded API projections use one persisted value and keeps presentations intact across daemon
 restarts without adding tool-name dispatch or extra runtime wiring.
 
+## Patch presentations identify the resolved file
+
+Patch presentations used the path exactly as written in the header, even though the mutation
+resolved it against the patch's working directory. A relative and an absolute header could split
+one file into two change entries, while identical relative names under different working
+directories could merge different files. Every patch presentation now uses the resolved machine
+path, including both sides of a move, matching Write and Edit. Clients derive display names
+from that identity instead of treating a header's spelling as the file's identity.
+
 ## Read-log serialization follows the database lock
 
 `FileReadLog.record` enters the Agent Database's owned-operation boundary before taking the

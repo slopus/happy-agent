@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -1375,7 +1376,7 @@ describe("public transcript and run APIs", () => {
                 type: "file_diff",
                 files: [
                     {
-                        path: "notes.txt",
+                        path: `${await realpath(gym.workspacePath)}/notes.txt`,
                         kind: "update",
                         added: 1,
                         deleted: 1,
