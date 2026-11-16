@@ -62,6 +62,8 @@ export const subtaskResultSchema = Type.Object(
     {
         agentId: subtaskIdSchema,
         workspaceId: Type.Optional(subtaskIdSchema),
+        /** The title it was created with, which names it in the link its coordinator mentions it by. */
+        title: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
     },
     { additionalProperties: false },
 );

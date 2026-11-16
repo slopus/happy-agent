@@ -244,7 +244,8 @@ describe("mentioning a teammate and counting what is unread", () => {
             permissionMode: "auto",
         } as const;
         await aliceClient.sendMessage(task.agentId, {
-            text: `Can [Steve](happy://users/${steve!.id}) check this? Also [guest](happy://users/${guest.id}) and \`[x](happy://users/${steve!.id})\`.`,
+            // A share link someone pasted names Steve here; the happy:// form reads as before.
+            text: `Can [Steve](https://link.happy.page/#1/${runtime.modules.config.loadedInstanceId!}/users/${steve!.id}) check this? Also [guest](happy://users/${guest.id}) and \`[x](happy://users/${steve!.id})\`.`,
             mode,
         });
         // The join commits with the message: it is there as soon as the send answers.

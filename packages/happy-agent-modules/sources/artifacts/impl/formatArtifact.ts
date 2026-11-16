@@ -1,4 +1,4 @@
-import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
+import { formatNamedHappyLink } from "../../utils/formatNamedHappyLink.js";
 
 import type {
     ArtifactAuthor,
@@ -12,7 +12,7 @@ import { modelArtifactFileCount } from "./genUiEntry.js";
 
 /** The ready-to-paste Markdown link to an artifact, or to one of its versions, labeled with `title`. */
 export function formatArtifactLink(id: string, title: string, version?: number): string {
-    return formatHappyMarkdownLink(
+    return formatNamedHappyLink(
         {
             type: "reference",
             reference: { kind: "artifact", id, ...(version === undefined ? {} : { version }) },

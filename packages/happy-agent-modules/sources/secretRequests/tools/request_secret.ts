@@ -4,6 +4,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import type { ArtifactsModule } from "../../artifacts/index.js";
 import type { SecretsModule } from "../../secrets/index.js";
+import { formatNamedHappyLink } from "../../utils/formatNamedHappyLink.js";
 import { secretRequestDocument, secretRequestSchema } from "../impl/secretRequestDocument.js";
 
 const requestSecretResultSchema = Type.Object(
@@ -99,7 +100,7 @@ export function requestSecretTool(
             {
                 type: "text" as const,
                 text: [
-                    `Asked the user to ${result.exists ? "change" : "add"} ${result.secretId === null ? "a secret" : `the secret ${JSON.stringify(result.secretId)}`} with ${result.variables.join(", ")}, in [${result.title}](happy://artifacts/${result.artifactId}).`,
+                    `Asked the user to ${result.exists ? "change" : "add"} ${result.secretId === null ? "a secret" : `the secret ${JSON.stringify(result.secretId)}`} with ${result.variables.join(", ")}, in ${formatNamedHappyLink({ type: "reference", reference: { kind: "artifact", id: result.artifactId } }, result.title, "the secret request")}.`,
                     "The user sees the card in this chat. You will get a message when they save it; do not wait for it.",
                 ].join(" "),
             },

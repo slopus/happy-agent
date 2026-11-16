@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
-import { formatHappyMarkdownLink, happyReferenceSchema } from "@slopus/happy-agent-client";
+import { formatNamedHappyLink } from "../utils/formatNamedHappyLink.js";
+import { happyReferenceSchema } from "@slopus/happy-agent-client";
 import { posix } from "node:path";
 
 import {
@@ -589,7 +590,7 @@ function artifactDescription(action: string, args: Record<string, unknown>): str
     if (!Value.Check(artifactIdArgumentsSchema, args)) return `${action} an artifact`;
     const reference = { kind: "artifact", id: args.artifactId };
     return Value.Check(happyReferenceSchema, reference)
-        ? `${action} ${formatHappyMarkdownLink({ type: "reference", reference })}`
+        ? `${action} ${formatNamedHappyLink({ type: "reference", reference }, "an artifact")}`
         : `${action} an artifact`;
 }
 

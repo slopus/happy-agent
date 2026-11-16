@@ -71,8 +71,16 @@ the title it writes is only a fallback, because it goes stale when the artifact 
 clients look up the live title and show that. Surfaces that cannot do that get the title as plain
 text. The tools return the exact link, and the module adds a short instruction, because the
 artifact tools are deferred and an agent may mention an artifact without loading them. Links are
-written with the client's `formatHappyMarkdownLink`, through `formatArtifactLink`, so this module
-never repeats the grammar.
+written with the shared `formatNamedHappyLink`, through `formatArtifactLink`, so this module never
+repeats the grammar.
+
+For a short time agents were instead taught to write every link as an empty-label share link,
+`[](https://link.happy.page/#1/<instanceId>/…)`, and the tools returned that form. Steve had it
+reverted: a client without a share-link reader showed such a link as nothing at all. Agents are
+taught the `happy://` forms again, with the title as link text, and no link the daemon writes may
+ever have empty link text. `formatNamedHappyLink` enforces that for every module: a blank title
+is replaced by plain words such as "this artifact", and a test fails when a module writes a link
+any other way. A share link someone pastes is still read as the link it carries.
 
 ## Writing calls show a card in the chat
 

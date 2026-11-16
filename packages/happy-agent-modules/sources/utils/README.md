@@ -21,3 +21,9 @@ as Surface references do, without importing the API module's projection code.
 ranks short in-memory lists with BM25, so every search provider agrees on what a word is.
 `SearchHit` is the shape a provider returns before fusion assigns its rank. `htmlSearchText`
 reads HTML as the text a reader sees, for every provider that indexes HTML.
+
+`formatNamedHappyLink` is how every module writes a Happy link for a model or a person:
+`[name](happy://…)`, with link text that is never empty. A blank name is replaced by the caller's
+fallback, or by plain words for what the link names. Modules call it instead of the client's
+`formatHappyMarkdownLink`, whose label may be left empty. `isHappyLinkHere` tells a link someone
+wrote that names this installation, including a pasted share link, from one naming another.

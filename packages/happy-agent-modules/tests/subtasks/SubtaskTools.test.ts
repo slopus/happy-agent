@@ -85,10 +85,17 @@ describe("subtask creation result", () => {
             "auto",
             "OPTIONS-LISTING",
         );
+        expect(tool.toLLM({ agentId: "subtaskagent1", title: "Fix [login]" })).toEqual([
+            {
+                type: "text",
+                text: "Created subtask subtaskagent1 sharing your filesystem. It runs independently; use send_agent_message to coordinate with it. Mention it in chat as [Fix \\[login\\]](happy://agents/subtaskagent1).",
+            },
+        ]);
+        // A result recorded before titles were kept still gets link text.
         expect(tool.toLLM({ agentId: "subtaskagent1" })).toEqual([
             {
                 type: "text",
-                text: "Created subtask subtaskagent1 sharing your filesystem. It runs independently; use send_agent_message to coordinate with it. Mention it in chat as [](happy://agents/subtaskagent1).",
+                text: "Created subtask subtaskagent1 sharing your filesystem. It runs independently; use send_agent_message to coordinate with it. Mention it in chat as [this subtask](happy://agents/subtaskagent1).",
             },
         ]);
     });

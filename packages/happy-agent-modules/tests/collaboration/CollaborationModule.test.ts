@@ -12,7 +12,7 @@ import {
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
-import { parseHappyShareUrl, parseHappyUrl } from "@slopus/happy-agent-client";
+import { parseHappyUrl } from "@slopus/happy-agent-client";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

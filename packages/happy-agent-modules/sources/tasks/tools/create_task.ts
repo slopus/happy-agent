@@ -6,7 +6,8 @@ import {
     type AgentPermissionMode,
 } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
-import { formatHappyMarkdownLink, type MessageMode } from "@slopus/happy-agent-client";
+import { formatNamedHappyLink } from "../../utils/formatNamedHappyLink.js";
+import { type MessageMode } from "@slopus/happy-agent-client";
 
 import {
     collaborationEffortSchema,
@@ -119,7 +120,7 @@ export function createTaskTool(
         toLLM: (task) => [
             {
                 type: "text",
-                text: `Task created: ${task.name} — id ${task.id}, folder ${task.path}. Send it messages with send_task_message. Mention it in chat as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "agent", id: task.agentId } }, task.name)}.`,
+                text: `Task created: ${task.name} — id ${task.id}, folder ${task.path}. Send it messages with send_task_message. Mention it in chat as ${formatNamedHappyLink({ type: "reference", reference: { kind: "agent", id: task.agentId } }, task.name)}.`,
             },
         ],
     });

@@ -138,3 +138,12 @@ and records it with the durable start: the start runs later on a context that na
 it cannot read the coordinator's mode itself. A start recorded before modes were kept uses the
 product default. Module-owned subtasks (Voice) and exported-bot conversations keep
 their own modes. A person may still pick any mode in a subtask's own conversation.
+
+## The link create_subtask returns always has link text
+
+`create_subtask` told the coordinator to mention the new subtask as `[](happy://agents/<agentId>)`,
+with nothing between the brackets, and left the client to fill in the title. Steve asked that no
+link ever be written with empty link text, because a reader that does not fill in the name shows
+nothing. The tool's result now carries the title the subtask was created with, and the link is
+`[title](happy://agents/<agentId>)`. A result recorded before titles were kept is mentioned as
+"this subtask".

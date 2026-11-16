@@ -9,6 +9,8 @@ import { renderHappyMessageReferences } from "../../sources/happy/renderHappyMes
 import { resolveHappyReferenceLabel } from "../../sources/happy/resolveHappyReferenceLabel.js";
 import { ArtifactNotFoundError } from "../../sources/artifacts/index.js";
 
+const INSTANCE = "k3x9q2m7p0a4b8c1d5e6f7g2";
+
 function message(role: "agent" | "user", ev: HappySessionEvent): HappySessionProtocolMessage {
     return {
         content: { ev, id: "m", role, time: 1 },
@@ -35,6 +37,7 @@ describe("renderHappyMessageReferences", () => {
                 message("agent", { t: "text", text: "Code: `[x](happy://artifacts/known)`" }),
                 message("user", { t: "text", text: "[x](happy://artifacts/known)" }),
             ],
+            INSTANCE,
             async (reference) => {
                 asked.push(reference.id);
                 return reference.id === "known" ? "Q3 [draft]" : undefined;
@@ -48,6 +51,37 @@ describe("renderHappyMessageReferences", () => {
             "[x](happy://artifacts/known)",
         ]);
         expect(asked).toEqual(["known", "gone"]);
+    });
+
+    it("reads share links as the links they carry, naming only this installation's", async () => {
+        const asked: string[] = [];
+        const share = `https://link.happy.page/#1/${INSTANCE}`;
+        const other = "https://link.happy.page/#1/m1n2b3v4c5x6z7l8k9j0h1g2";
+        const rendered = await renderHappyMessageReferences(
+            [
+                message("agent", {
+                    t: "text",
+                    text: `See [old](${share}/artifacts/known?version=2), [Fix it](${share}/agents/known?as=task), [Foo.tsx:4](${share}/agents/a1b2/files/Foo.tsx?lines=4), and [theirs](${other}/artifacts/known).`,
+                }),
+                message("agent", { t: "text", text: `Code: \`[x](${share}/artifacts/known)\`` }),
+                message("agent", {
+                    t: "text",
+                    text: `[docs](https://link.happy.page/#1/${INSTANCE})`,
+                }),
+            ],
+            INSTANCE,
+            async (reference) => {
+                asked.push(`${reference.kind}:${reference.id}`);
+                return "Q3";
+            },
+        );
+
+        expect(textOf(rendered)).toEqual([
+            "See Q3, Q3, Foo.tsx:4, and theirs.",
+            `Code: \`[x](${share}/artifacts/known)\``,
+            `[docs](https://link.happy.page/#1/${INSTANCE})`,
+        ]);
+        expect(asked).toEqual(["artifact:known", "agent:known"]);
     });
 
     it("names each legacy tag in the agent's words once, and leaves everything else as written", async () => {
@@ -71,6 +105,7 @@ describe("renderHappyMessageReferences", () => {
                     t: "tool-call-end",
                 }),
             ],
+            INSTANCE,
             label,
         );
 
@@ -104,6 +139,7 @@ describe("renderHappyMessageReferences", () => {
                 start("c4", 'Reading <happy-artifact id="gone"/>'),
                 untouched,
             ],
+            INSTANCE,
             async (reference) => {
                 asked.push(reference.id);
                 return reference.id === "known" ? "Q3 [draft]" : undefined;
@@ -143,6 +179,7 @@ describe("renderHappyMessageReferences", () => {
                     message("user", { t: "text", text: `[Foo](${link})` }),
                     original,
                 ],
+                INSTANCE,
                 async () => "Fix login",
             );
 
@@ -247,6 +284,7 @@ describe("resolveHappyReferenceLabel", () => {
                 message("agent", { t: "text", text: '```html\n<img src="a.png">\n```' }),
                 message("user", { t: "text", text: grid }),
             ],
+            INSTANCE,
             async () => undefined,
         );
 

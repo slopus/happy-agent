@@ -7,8 +7,10 @@ import type {
 import { parseHappyLinks } from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 
+import { ConfigModule } from "../config/index.js";
 import { TasksModule, type TaskMembership } from "../tasks/index.js";
 import { TeamModule, type TeamUser } from "../team/index.js";
+import { isHappyLinkHere } from "../utils/isHappyLinkHere.js";
 import { listTeammatesTool } from "./tools/list_teammates.js";
 import { loopInTeammateTool } from "./tools/loop_in_teammate.js";
 
@@ -43,10 +45,12 @@ const TEAMMATES_INSTRUCTIONS = [
  */
 export class TeammatesModule implements AgentModule {
     readonly name = "teammates";
+    readonly #config: ConfigModule;
     readonly #tasks: TasksModule;
     readonly #team: TeamModule;
 
-    constructor(tasks: TasksModule, team: TeamModule) {
+    constructor(config: ConfigModule, tasks: TasksModule, team: TeamModule) {
+        this.#config = config;
         this.#tasks = tasks;
         this.#team = team;
     }
@@ -106,9 +110,9 @@ export class TeammatesModule implements AgentModule {
     }
 
     /**
-     * A team member wrote `text` in the task: every other member it links as
-     * `happy://users/<userId>` is looped in through the same join as an agent's, marked as
-     * mentioned by the writer from `at`. Guests and unknown people are left out, and an archived
+     * A team member wrote `text` in the task: every other member it links as a user of this
+     * installation, as `happy://users/<userId>` or in a share link someone pasted, is looped in
+     * through the same join as an agent's, marked as mentioned by the writer from `at`. Guests and unknown people are left out, and an archived
      * task takes nobody. Runs inside the caller's transaction, the one storing the message.
      */
     async mention(
@@ -122,10 +126,12 @@ export class TeammatesModule implements AgentModule {
     ): Promise<readonly Teammate[]> {
         if (!this.#team.enabled) return [];
         const ids = new Set<string>();
+        const instanceId = this.#config.loadedInstanceId;
         for (const segment of parseHappyLinks(input.text)) {
             if (segment.type !== "link" || segment.image) continue;
             const link = segment.link;
             if (link?.type !== "reference" || link.reference.kind !== "user") continue;
+            if (!isHappyLinkHere(instanceId, link)) continue;
             if (link.reference.id !== input.senderUserId) ids.add(link.reference.id);
         }
         if (ids.size === 0) return [];

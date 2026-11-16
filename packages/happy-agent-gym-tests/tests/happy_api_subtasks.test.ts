@@ -103,7 +103,9 @@ describe("user-interactive subtasks", () => {
         expect(result.text).toContain("Created subtask");
         const agentId = /Created subtask ([a-z0-9]+)/.exec(result.text)?.[1];
         expect(agentId).toBeDefined();
-        expect(result.text).toContain(`Mention it in chat as [](happy://agents/${agentId}).`);
+        expect(result.text).toContain(
+            `Mention it in chat as [Second model](happy://agents/${agentId}).`,
+        );
         const request = await gym.waitUntil(
             async () => gym.inference.requests.find((item) => item.sessionId === agentId),
             "the subtask's first inference",

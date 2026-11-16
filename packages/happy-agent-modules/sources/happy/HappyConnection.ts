@@ -390,14 +390,18 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             tasks: this.#taskCatalog,
             workspaces: this.#workspaces,
         };
-        return await renderHappyMessageReferences(messages, async (reference) => {
-            try {
-                return await resolveHappyReferenceLabel(ctx, catalogs, reference);
-            } catch (error) {
-                ctx.log.debug("Happy could not name a referenced item.", { reference }, error);
-                return undefined;
-            }
-        });
+        return await renderHappyMessageReferences(
+            messages,
+            this.#config.loadedInstanceId,
+            async (reference) => {
+                try {
+                    return await resolveHappyReferenceLabel(ctx, catalogs, reference);
+                } catch (error) {
+                    ctx.log.debug("Happy could not name a referenced item.", { reference }, error);
+                    return undefined;
+                }
+            },
+        );
     }
 
     /**

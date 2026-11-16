@@ -8777,13 +8777,6 @@ ordinary Markdown inline link to a `happy://` URL, written where the entity's na
 I published [Q3 revenue](happy://artifacts/r7k2m9q4w1e5t8y3u6i0o2p5) with the full breakdown.
 ```
 
-Agents and the daemon write each such link as a share link with an empty label, the same link in
-an `https` form that works outside Happy too, as described under "Share links":
-
-```markdown
-I published [](https://link.happy.page/#1/k3x9q2m7p0a4b8c1d5e6f7g2/artifacts/r7k2m9q4w1e5t8y3u6i0o2p5) with the full breakdown.
-```
-
 A file is linked the same way, as described under "File links". The daemon stores and returns
 message text exactly as written: links are part of `text`, not a block of their own, and no route
 rewrites them.
@@ -8936,20 +8929,14 @@ https://link.happy.page/#1/k3x9q2m7p0a4b8c1d5e6f7g2/agents/a1b2c3d4/files/packag
 - The canonical form writes parameters in the order `as`, `version`, `lines`, encodes the path as
   a canonical file URL does, and writes a single line as `lines=<a>`.
 
-The daemon and agents write every Happy link that leaves their own process as a share link of the
-daemon's health `instanceId`: in tool results, instructions to the model, notifications, and the
-links agents write in replies and messages. The link is always a Markdown link with an empty
-label, `[](https://link.happy.page/#1/…)`, and never stands bare. Clients show the item's current
-name in its place and ignore any label, so a written name would only cost tokens and go stale;
-text meant for the model names the item in plain words beside the link, such as
-`Task "Fix login" created: [](https://link.happy.page/#1/…)`. Artifact content is the exception:
-inside a document or HTML page an agent writes for an artifact, a share link may carry a label,
-`[label](https://link.happy.page/#1/…)`, and clients show that label where the artifact is
-displayed. Chat messages, messages between agents, and tool results keep the empty label. An
-agent link's `as` names what the agent is when the writer knows. Readers keep accepting `happy://` links, instance links, and
-`happy-file://` links everywhere, so stored history and older agents keep working. When the
-daemon reads a share link, it treats one naming its own `instanceId` exactly as the `happy://`
-link it carries, and one naming another installation as that installation's instance link.
+Agents and the daemon never write share links. Every Happy link they write, in tool results,
+instructions to the model, notifications, and the links agents write in replies and messages, is a
+`happy://` link labelled with the item's name, as described under "Links", and never a link with
+an empty label. A share link is what a person copies out of Happy or pastes into it. Readers
+accept one wherever they accept a `happy://` link, alongside instance links and `happy-file://`
+links. When the daemon reads a share link, it treats one naming its own `instanceId` exactly as
+the `happy://` link it carries, and one naming another installation as that installation's
+instance link.
 
 Share links are additive and do not increment the protocol version. A client that does not know
 them shows an ordinary web link with its label.
@@ -8961,8 +8948,9 @@ and it cannot cross a blank line. An image, `![alt](happy://…)`, is a Happy li
 alt text. A link in an inline code span or a fenced code block, or one whose `[` is
 backslash-escaped, is literal text, as in Markdown.
 
-The label of an entity link is the writer's fallback: the name the agent knows. It may be empty,
-`[](happy://artifacts/…)`, which asks the client to fill in the name.
+The label of an entity link is the writer's fallback: the name the agent knows. Agents and the
+daemon always write one. A reader still accepts an empty label, `[](happy://artifacts/…)`, and
+fills in the name.
 
 **Buttons.** A Happy link whose CommonMark title is exactly `button`, quoted with `"`, `'`, or
 parentheses and with no escapes, asks the client to show it as a button instead of inline text:
@@ -9233,12 +9221,11 @@ The loop starts in [Foo.tsx:42](happy://agents/a1b2c3d4/files/packages/app/Foo.t
 The setup steps are in [README](happy-file://workspaces/k2h4j5l6/README.md).
 ```
 
-The `happy://…/files/…` form is the one Markdown carries, alongside entity links, and agents write
-it as a share link, described under "Happy links". The `happy-file://` form, which puts the path
-straight after the target, is the API's canonical file URL. Readers accept both everywhere, and both
-name the same file. The label is ordinary Markdown that the agent writes, and the daemon stores and
-returns message text exactly as written. An agent keeps writing plain `path:line` for a file in the
-reader's own workspace.
+The `happy://…/files/…` form is the one agents write in Markdown, alongside entity links. The
+`happy-file://` form, which puts the path straight after the target, is the API's canonical file
+URL. Readers accept both everywhere, and both name the same file. The label is ordinary Markdown
+that the agent writes, and the daemon stores and returns message text exactly as written. An agent
+keeps writing plain `path:line` for a file in the reader's own workspace.
 
 **Grammar.** In ABNF, with `ALPHA`, `DIGIT`, and `HEXDIG` as in RFC 5234:
 
