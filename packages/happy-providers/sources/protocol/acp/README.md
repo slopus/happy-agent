@@ -48,6 +48,10 @@ Agent Base ── run(context) ──▶ AcpSession ── ACP over stdio ──
 A consumer stops reading at `done`, so a session commits its record and settles its turn
 before yielding the terminal event.
 
+## Turns the agent starts on its own
+
+Claude Code starts a turn by itself when a background command it started finishes, after the prompt that started the command has already ended. An agent that does this announces the turn with the `_happy/turn_started` extension notification and ends it with `_happy/turn_ended` (`AcpConnection.ts`); agents that never send them behave as before. The session keeps what such a turn reports in a live turn of its own and calls the turn environment's `wake` once with a hidden system notice (`ACP_SELF_STARTED_NOTICE`). The run that notice starts takes the turn over and shows it; so does any other run that comes first, which hands its new input to the turn like steering. The notice only starts a run: it is never sent to the agent or counted as input the foreign session consumed. A notice whose turn is gone — already shown, or lost with a daemon that restarted — ends its run empty without prompting the agent. Compaction waits for such a turn to end, so its summary request is not answered by the turn's own output. The ACP connection does not hand notifications to the client in the order the agent sent them, so updates that arrive while no turn is live are held (up to a bound) for an announcement that follows them, and the end of such a turn is applied a moment after its notification arrives.
+
 ## Steering and stop
 
 A foreign agent runs its own loop, and to Agent Base one foreign turn is a single long response.

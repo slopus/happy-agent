@@ -8,7 +8,9 @@
 // "over quota" fails with a 429 that names a weekly limit; "stubborn" never ends its first prompt;
 // "needs permission" asks the client before a command, and "needs permission for happy" before a
 // bridged happy_secret call (with "only always", offering no one-time allow), then replies with
-// the option it got; anything else is echoed back.
+// the option it got; "background" answers and then starts a turn of its own, announced with
+// "_happy/turn_started" and "_happy/turn_ended", as Claude Code does when a background command
+// finishes; anything else is echoed back.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 
@@ -208,6 +210,9 @@ class ScriptedAgent {
             await this.#say(params.sessionId, `secret=${result.content[0].text}`);
             return { stopReason: "end_turn" };
         }
+        if (text.includes("background")) {
+            setTimeout(() => void this.#backgroundTurn(params.sessionId), 50);
+        }
         await this.#say(params.sessionId, `echo:${text}`);
         return {
             stopReason: "end_turn",
@@ -218,6 +223,18 @@ class ScriptedAgent {
     async cancel(params) {
         log({ method: "cancel", sessionId: params.sessionId });
         this.#cancelled.get(params.sessionId)?.();
+    }
+
+    // Sent in one burst, without waiting between them, as an agent writing to stdout would.
+    async #backgroundTurn(sessionId) {
+        log({ method: "backgroundTurn", sessionId });
+        void this.#conn.extNotification("_happy/turn_started", { sessionId });
+        void this.#say(sessionId, "background:done");
+        await this.#conn.extNotification("_happy/turn_ended", {
+            sessionId,
+            stopReason: "end_turn",
+            usage: { inputTokens: 20, outputTokens: 4, totalTokens: 24 },
+        });
     }
 
     async #say(sessionId, text) {

@@ -8,7 +8,7 @@ import { createRootContext, withLifetime, withLogger } from "@steve.kite/stdlib"
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SessionAssistantMessageAccumulator } from "@/core/SessionAssistantMessageAccumulator.js";
-import type { SessionMessage } from "@/core/SessionContext.js";
+import type { SessionMessage, SessionSystemMessage } from "@/core/SessionContext.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
 import type { SessionTool } from "@/core/SessionTool.js";
 import {
@@ -51,6 +51,7 @@ function harness(
         profile?: AcpAgentProfile;
         tools?: readonly SessionTool[];
         askPermission?: AcpTurnEnvironment["askPermission"];
+        wake?: AcpTurnEnvironment["wake"];
     } = {},
 ) {
     const directory = mkdtempSync(join(tmpdir(), "acp-session-"));
@@ -96,6 +97,7 @@ function harness(
             ...(options.askPermission === undefined
                 ? {}
                 : { askPermission: options.askPermission }),
+            ...(options.wake === undefined ? {} : { wake: options.wake }),
         }),
         profile: options.profile ?? {
             modelOptions: (model) =>
@@ -539,6 +541,73 @@ describe("AcpSession", () => {
         const log = h.log();
         expect(log.filter((entry) => entry.method === "newSession")).toHaveLength(1);
         expect(log.filter((entry) => entry.method === "loadSession")).toHaveLength(1);
+    }, 30_000);
+
+    it("shows a turn the agent started on its own in the run its wake notice starts", async () => {
+        const notices: SessionSystemMessage[] = [];
+        const h = harness({ wake: (notice) => notices.push(notice) });
+        const session = await h.session();
+        h.user("start in the background");
+        expect(text(await h.run(session)).endsWith("start in the background")).toBe(true);
+        await vi.waitFor(() => expect(notices).toHaveLength(1));
+
+        h.messages.push(notices[0]!);
+        const woken = await h.run(session);
+        expect(text(woken)).toBe("background:done");
+        expect(done(woken)).toMatchObject({ state: "normal", endTurn: true });
+        expect(woken.find((event) => event.type === "token_usage")).toMatchObject({
+            usage: { output: 4 },
+        });
+        // The notice only starts the run; the agent is never sent it.
+        h.user("next");
+        await h.run(session);
+        expect(
+            h
+                .log()
+                .filter((entry) => entry.method === "prompt")
+                .map((entry) => entry.text),
+        ).toEqual([expect.stringContaining("start in the background"), "next"]);
+    }, 30_000);
+
+    it("hands a message sent before the wake run to the agent after its own turn", async () => {
+        const notices: SessionSystemMessage[] = [];
+        const h = harness({ steerable: true, wake: (notice) => notices.push(notice) });
+        const session = await h.session();
+        h.user("start in the background");
+        await h.run(session);
+        await vi.waitFor(() => expect(notices).toHaveLength(1));
+
+        h.user("and then this");
+        h.messages.push(notices[0]!);
+        const woken = await h.run(session);
+        expect(text(woken)).toBe("background:doneecho:and then this");
+        expect(done(woken)).toMatchObject({ state: "normal", endTurn: true });
+        expect(
+            h
+                .log()
+                .filter((entry) => entry.method === "prompt")
+                .at(-1),
+        ).toMatchObject({
+            text: "and then this",
+        });
+    }, 30_000);
+
+    it("ends a wake run empty when its turn did not survive a restart, without prompting", async () => {
+        const notices: SessionSystemMessage[] = [];
+        const h = harness({ wake: (notice) => notices.push(notice) });
+        const first = await h.session();
+        h.user("start in the background");
+        await h.run(first);
+        await vi.waitFor(() => expect(notices).toHaveLength(1));
+        await first.destroy();
+
+        // The notice is durable; the turn it was sent for lived only in the stopped daemon.
+        const second = await h.session();
+        h.messages.push(notices[0]!);
+        const events = await h.run(second);
+        expect(text(events)).toBe("");
+        expect(done(events)).toMatchObject({ state: "normal" });
+        expect(h.log().filter((entry) => entry.method === "prompt")).toHaveLength(1);
     }, 30_000);
 
     it("hands steering to an agent that takes input mid-turn without stopping it", async () => {
