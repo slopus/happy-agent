@@ -1,9 +1,11 @@
+import { createHmac } from "node:crypto";
 import { createServer, type RequestListener, type Server, type ServerResponse } from "node:http";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
-import { mkdir, readFile, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 
 import { clientFrameEvent, createAgentGym, type AgentGym } from "@slopus/happy-agent-gym";
@@ -550,6 +552,68 @@ describe("Happy integration API", () => {
             success: false,
             code: "invalid",
         });
+    }, 60_000);
+
+    it("saves a phone's picture in the agent's folder and gives the agent its path instead of the image", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            inference: [{ content: [{ type: "text", text: "I will look if I need to." }] }],
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        const session = await gym.waitUntil(
+            () => happy.sessions.find((item) => item.metadata.path === gym.workspacePath),
+            "the workspace session",
+        );
+        const picture = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+        happy.attach("sessions/picture.png", picture);
+        happy.deliver(session.id, {
+            role: "session",
+            content: {
+                type: "session",
+                data: {
+                    role: "user",
+                    ev: {
+                        t: "file",
+                        ref: "sessions/picture.png",
+                        name: "Screenshot.png",
+                        mimeType: "image/png",
+                        size: picture.length,
+                    },
+                },
+            },
+        });
+        happy.deliver(session.id, {
+            role: "user",
+            content: { type: "text", text: "What is on this screenshot?" },
+            meta: {
+                model: gym.selection.modelId,
+                modelProviderId: gym.selection.providerId,
+                effort: gym.selection.effort,
+            },
+        });
+        const request = await gym.waitUntil(() => gym.inference.last, "the agent's turn");
+        const asked = JSON.stringify(request.messages.at(-1));
+        expect(asked).toContain("What is on this screenshot?");
+        expect(asked).not.toContain('"image"');
+        const note = gym.inference
+            .userTexts()
+            .find((text) => text.startsWith("The user attached 1 image."));
+        expect(note).toBeDefined();
+        const lines = note!.split("\n");
+        expect(lines[0]).toBe(
+            "The user attached 1 image. It was saved on this machine and not loaded into your context; open it with your file-reading or image-viewing tool only if you need to see it:",
+        );
+        expect(lines).toHaveLength(2);
+        const path = lines[1]!.slice("- ".length);
+        const uploads = join(await realpath(gym.workspacePath), ".happy-uploads");
+        expect(dirname(dirname(path))).toBe(uploads);
+        expect(path.endsWith("/0-Screenshot.png")).toBe(true);
+        expect(await readFile(path)).toEqual(picture);
+        expect(gym.inference.unscripted).toEqual([]);
     }, 60_000);
 
     it.each(["immediate", "in-flight"] as const)(
@@ -1106,6 +1170,38 @@ describe("Happy integration API", () => {
         });
     }, 30_000);
 
+    it("names the computer after the node and republishes it when the node is renamed", async () => {
+        const happy = await startProtocolHappyServer({ authorizePairing: true });
+        const gym = await createAgentGym({
+            environment: { HAPPY_AGENT_HAPPY_SERVER_URL: happy.url },
+            timeoutMs: 20_000,
+        });
+        gyms.add(gym);
+        await gym.client.patchConfig({ node: { name: "Studio Mac" } });
+
+        await gym.client.startHappyIntegration();
+        await waitForIntegration(gym, "connected");
+        await gym.waitUntil(
+            () =>
+                happy.machineMetadata.at(-1)?.displayName === "Studio Mac — Happy Agent"
+                    ? true
+                    : undefined,
+            "the computer to be published under the node's name",
+        );
+        expect(happy.machineMetadata.at(-1)?.host).toBe(hostname());
+
+        await gym.client.patchConfig({ node: { name: "Kitchen Mac" } });
+        await gym.waitUntil(
+            () =>
+                happy.machineMetadata.at(-1)?.displayName === "Kitchen Mac — Happy Agent"
+                    ? true
+                    : undefined,
+            "the renamed node to be republished",
+        );
+        expect(happy.machineRegistrations).toBe(1);
+        expect(happy.machineMetadata.at(-1)?.host).toBe(hostname());
+    }, 30_000);
+
     it("authorizes, connects an existing agent, and preserves ordered state across restart", async () => {
         const happy = await startProtocolHappyServer({ authorizePairing: true });
         const gym = await createAgentGym({
@@ -1247,6 +1343,8 @@ interface ProtocolHappyServer {
     readonly connectedSessions: readonly string[];
     readonly endedSessions: readonly string[];
     readonly metadata: ReadonlyMap<string, Record<string, unknown>>;
+    /** Every machine metadata document the daemon wrote, oldest first. */
+    readonly machineMetadata: readonly Record<string, unknown>[];
     metadataVersion(sessionId: string): number;
     /** Writes merged metadata as a phone would; `shape` may re-serialize it the way another client would. */
     updateMetadata(
@@ -1255,6 +1353,8 @@ interface ProtocolHappyServer {
         shape?: (metadata: Record<string, unknown>) => Record<string, unknown>,
     ): void;
     readonly outgoing: ReadonlyMap<string, readonly unknown[]>;
+    /** Plays the phone uploading one attachment to the session's store. */
+    attach(ref: string, bytes: Uint8Array): void;
     deliver(sessionId: string, message: unknown): void;
     readonly sessions: readonly {
         id: string;
@@ -1290,6 +1390,7 @@ async function startProtocolHappyServer(options: {
     }[] = [];
     const sessionIds = new Map<string, string>();
     const metadata = new Map<string, Record<string, unknown>>();
+    const machineMetadata: Record<string, unknown>[] = [];
     const metadataVersions = new Map<string, number>();
     const outgoing = new Map<string, unknown[]>();
     const incoming = new Map<
@@ -1304,6 +1405,8 @@ async function startProtocolHappyServer(options: {
         }[]
     >();
     const secret = new Uint8Array(32).fill(7);
+    /** Attachments the phone uploaded, encrypted the way Happy stores blobs, by ref. */
+    const blobs = new Map<string, Buffer>();
     const encode = (value: unknown): string => {
         const nonce = nacl.randomBytes(24);
         return Buffer.concat([
@@ -1339,7 +1442,11 @@ async function startProtocolHappyServer(options: {
                 }
                 if (request.method === "POST" && url.pathname === "/v1/machines") {
                     machineRegistrations += 1;
-                    machineId = (JSON.parse(body) as { id: string }).id;
+                    const registered = JSON.parse(body) as { id: string; metadata?: string };
+                    machineId = registered.id;
+                    const registeredMetadata =
+                        registered.metadata === undefined ? undefined : decode(registered.metadata);
+                    if (registeredMetadata !== undefined) machineMetadata.push(registeredMetadata);
                     const token = bearerToken(request.headers.authorization);
                     const status = options.registrationStatus?.(token, machineRegistrations) ?? 200;
                     if (status !== 200) {
@@ -1372,6 +1479,28 @@ async function startProtocolHappyServer(options: {
                             metadataVersion: metadataVersions.get(id) ?? 0,
                         },
                     });
+                    return;
+                }
+                if (
+                    request.method === "POST" &&
+                    /^\/v1\/sessions\/[^/]+\/attachments\/request-download$/.test(url.pathname)
+                ) {
+                    const { ref } = JSON.parse(body) as { ref: string };
+                    sendJson(response, {
+                        downloadUrl: `http://${request.headers.host}/blobs/${encodeURIComponent(ref)}`,
+                    });
+                    return;
+                }
+                if (request.method === "GET" && url.pathname.startsWith("/blobs/")) {
+                    const blob = blobs.get(
+                        decodeURIComponent(url.pathname.slice("/blobs/".length)),
+                    );
+                    if (blob === undefined) {
+                        sendJson(response, { error: "not found" }, 404);
+                        return;
+                    }
+                    response.writeHead(200, { "content-type": "application/octet-stream" });
+                    response.end(blob);
                     return;
                 }
                 const messagesMatch = /^\/v3\/sessions\/([^/]+)\/messages$/.exec(url.pathname);
@@ -1455,6 +1584,10 @@ async function startProtocolHappyServer(options: {
                 if (event === "rpc-register" && payload.method)
                     rpcSockets.set(payload.method, socket);
                 if (event === "session-end" && payload.sid) endedSessions.push(payload.sid);
+                if (event === "machine-update-metadata" && payload.metadata) {
+                    const decoded = decode(payload.metadata);
+                    if (decoded !== undefined) machineMetadata.push(decoded);
+                }
                 let answer: Record<string, unknown> = {
                     result: "success",
                     version: (payload.expectedVersion ?? 0) + 1,
@@ -1534,6 +1667,7 @@ async function startProtocolHappyServer(options: {
             });
         },
         metadata,
+        machineMetadata,
         metadataVersion: (sessionId) => metadataVersions.get(sessionId) ?? 0,
         updateMetadata: (sessionId, patch, shape = (merged) => merged) => {
             const merged = shape({ ...metadata.get(sessionId), ...patch });
@@ -1551,6 +1685,19 @@ async function startProtocolHappyServer(options: {
                 socket.send(`42${JSON.stringify(["update", update])}`);
         },
         outgoing,
+        attach: (ref, bytes) => {
+            // Blobs are secretbox under a key derived from the account secret, never the secret.
+            const seed = createHmac("sha512", "Happy Blobs Master Seed").update(secret).digest();
+            const key = createHmac("sha512", seed.subarray(32))
+                .update(Buffer.from([0, ...Buffer.from("master")]))
+                .digest()
+                .subarray(0, 32);
+            const nonce = nacl.randomBytes(24);
+            blobs.set(
+                ref,
+                Buffer.concat([Buffer.from(nonce), Buffer.from(nacl.secretbox(bytes, nonce, key))]),
+            );
+        },
         deliver: (sessionId, message) => {
             const messages = incoming.get(sessionId) ?? [];
             const seq = messages.length + 1;

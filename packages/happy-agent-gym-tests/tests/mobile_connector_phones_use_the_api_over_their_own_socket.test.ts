@@ -496,6 +496,64 @@ describe.each(["tailcat", "https"] as const)("phones use the API over %s", (mode
         expect(gym.errors).toEqual([]);
     }, 60_000);
 
+    it("lets a phone remove itself without touching another phone", async () => {
+        const gym = await mobileGym();
+        const leaving = await pairPhone(gym);
+        const staying = await pairPhone(gym);
+        const workspaceId = await rootWorkspaceId(gym);
+        const webSocket = await phoneWebSocket(bridgePath(gym, workspaceId), leaving.deviceToken);
+        if (!(webSocket instanceof WebSocket)) throw new Error(`Upgrade refused: ${webSocket}`);
+        await expect(firstJson(gym, webSocket)).resolves.toMatchObject({ type: "ready" });
+        const keptSocket = await phoneWebSocket(bridgePath(gym, workspaceId), staying.deviceToken);
+        if (!(keptSocket instanceof WebSocket)) throw new Error(`Upgrade refused: ${keptSocket}`);
+        await expect(firstJson(gym, keptSocket)).resolves.toMatchObject({ type: "ready" });
+        const socketClosed = closed(webSocket);
+
+        // Only a phone's own credential reaches the route, and never as an upgrade or tunnel.
+        await expect(
+            phoneWebSocket("/v0/mobile-connector/device", leaving.deviceToken),
+        ).resolves.toBe(403);
+        await expect(
+            phoneConnect("/v0/mobile-connector/device", leaving.deviceToken),
+        ).resolves.toBe(403);
+        expect((await gym.http.request("DELETE", "/v0/mobile-connector/device")).status).toBe(404);
+        if (mode === "https") {
+            await expect(
+                phoneHttp("DELETE", "/v0/mobile-connector/device", gym.token),
+            ).resolves.toMatchObject({ status: 404 });
+        }
+
+        await expect(
+            phoneHttp("DELETE", "/v0/mobile-connector/device", leaving.deviceToken),
+        ).resolves.toEqual({ status: 200, body: {} });
+        await socketClosed;
+        await expect(phoneHttp("GET", "/v0/health", leaving.deviceToken)).resolves.toMatchObject({
+            status: 401,
+        });
+        // A retry after a lost answer finds the phone already gone.
+        await expect(
+            phoneHttp("DELETE", "/v0/mobile-connector/device", leaving.deviceToken),
+        ).resolves.toMatchObject({ status: 401, body: { code: "unauthorized" } });
+
+        const snapshot = await gym.http.ok<{ mobileConnector: MobileConnector }>(
+            "GET",
+            "/v0/mobile-connector",
+        );
+        expect(snapshot.mobileConnector.devices.map((device) => device.id)).toEqual([
+            staying.deviceId,
+        ]);
+        expect(keptSocket.readyState).toBe(WebSocket.OPEN);
+        await expect(phoneHttp("GET", "/v0/health", staying.deviceToken)).resolves.toMatchObject({
+            status: 200,
+        });
+        // The last phone removing itself still receives its answer before the socket closes.
+        await expect(
+            phoneHttp("DELETE", "/v0/mobile-connector/device", staying.deviceToken),
+        ).resolves.toEqual({ status: 200, body: {} });
+        keptSocket.terminate();
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
     it("delivers a large response in full before closing a phone's connection", async () => {
         const gym = await mobileGym();
         const paired = await pairPhone(gym);

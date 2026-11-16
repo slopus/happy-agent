@@ -113,7 +113,10 @@ real HTTP.
 The owner comes from the caller's context: the team member's installation-local ID, or
 `standalone`. No operation takes an owner as an argument. `authenticate` hands a device credential
 an AbortSignal; `revokeDevice` deletes the row and, after commit, aborts it, and the API closes
-every request, stream, WebSocket, and tunnel opened with it. A device's `lastSeenAt` moves at
+every request, stream, WebSocket, and tunnel opened with it. A phone removes itself through
+`removeOwnDevice`, the API's `DELETE /v0/mobile-connector/device`: the same deletion, except that
+the API spares the asking connection until its answer is sent and the socket lingers for it. A
+device's `lastSeenAt` moves at
 most once a minute. `onEvent` delivers `{ owner, mobileConnector }` after each change commits,
 with a UUIDv7 `version` per owner.
 

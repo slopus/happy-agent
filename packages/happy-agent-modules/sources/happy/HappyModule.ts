@@ -18,6 +18,7 @@ import type { EventsModule } from "../events/index.js";
 import type { ProjectFilesModule } from "../files/index.js";
 import type { GitModule } from "../git/index.js";
 import type { HistoryModule } from "../history/index.js";
+import type { NodeModule } from "../node/index.js";
 import type { ProjectsModule } from "../projects/index.js";
 import type { ProviderUsageModule } from "../providerUsage/index.js";
 import type { RunnersModule } from "../runners/index.js";
@@ -31,6 +32,7 @@ import { HappyConnection, type HappyIntegrationListener } from "./HappyConnectio
 import { happySyncMigrations } from "./HappySyncDatabase.js";
 import { happyIntegrationMigrations } from "./HappyIntegrationDatabase.js";
 import { happyProjectSyncMigrations } from "./HappyProjectSyncDatabase.js";
+import { HAPPY_UPLOADS_SWEEP_INTERVAL_MS, sweepHappyUploads } from "./sweepHappyUploads.js";
 
 export { HappyIntegrationRequestError, type HappyIntegrationListener } from "./HappyConnection.js";
 
@@ -44,6 +46,7 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
         ...happyProjectSyncMigrations,
     ].sort(([left], [right]) => left.localeCompare(right));
     readonly #team: TeamModule;
+    readonly #files: ProjectFilesModule;
     readonly #createConnection: (user: TeamUser) => HappyConnection;
     readonly #connections = new Map<
         string,
@@ -53,6 +56,8 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
     #context: Context | undefined;
     #agents: AgentSystemRef<LibSQLDatabase> | undefined;
     #closed = false;
+    #uploadsTimer: NodeJS.Timeout | undefined;
+    #uploadsSweep: Promise<void> | undefined;
 
     constructor(
         config: ConfigModule,
@@ -72,6 +77,7 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
         tasks: TasksModule,
         surfaces: SurfacesModule,
         runners: RunnersModule,
+        node: NodeModule,
     ) {
         super(
             config,
@@ -90,8 +96,10 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
             tasks,
             surfaces,
             runners,
+            node,
         );
         this.#team = team;
+        this.#files = files;
         this.#createConnection = (user) =>
             new HappyConnection(
                 config,
@@ -110,6 +118,7 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
                 tasks,
                 surfaces,
                 runners,
+                node,
                 team,
                 user,
             );
@@ -135,9 +144,26 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
         ctx: Context,
         agents: AgentSystemRef<LibSQLDatabase>,
     ): AgentModuleHooks => {
-        if (!this.#team.enabled) return this.start(ctx, agents);
         const database = agentDatabase(ctx);
         if (database === undefined) throw new Error("Happy requires its agent database.");
+        // Attachments are kept once per installation, whichever connection saved them.
+        const uploads = withAgentDatabase(detach(ctx).named("happy-uploads-retention"), database);
+        const hooks = this.#startConnections(ctx, agents, database);
+        return {
+            ...hooks,
+            afterStart: async (startedCtx, startedAgents) => {
+                this.#retainUploads(uploads);
+                await hooks.afterStart?.(startedCtx, startedAgents);
+            },
+        };
+    };
+
+    #startConnections(
+        ctx: Context,
+        agents: AgentSystemRef<LibSQLDatabase>,
+        database: NonNullable<ReturnType<typeof agentDatabase>>,
+    ): AgentModuleHooks {
+        if (!this.#team.enabled) return this.start(ctx, agents);
         this.#context = withAgentDatabase(
             detach(ctx).named("personal-mobile-connections"),
             database,
@@ -153,7 +179,32 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
                 );
             },
         };
-    };
+    }
+
+    /**
+     * Looks for attachments past their retention now and every interval after, off the start
+     * path; a look still running when the next is due is not doubled.
+     */
+    #retainUploads(ctx: Context): void {
+        if (this.#closed || this.#uploadsTimer !== undefined) return;
+        const sweep = () => {
+            if (this.#closed || this.#uploadsSweep !== undefined) return;
+            this.#uploadsSweep = sweepHappyUploads(ctx, this.#files, Date.now(), () => this.#closed)
+                .catch((error: unknown) => {
+                    ctx.log.debug(
+                        "Attachments past their retention could not be looked for.",
+                        {},
+                        error,
+                    );
+                })
+                .finally(() => {
+                    this.#uploadsSweep = undefined;
+                });
+        };
+        this.#uploadsTimer = setInterval(sweep, HAPPY_UPLOADS_SWEEP_INTERVAL_MS);
+        this.#uploadsTimer.unref();
+        sweep();
+    }
 
     override onIntegrationUpdated(listener: HappyIntegrationListener): () => void {
         const unsubscribe = super.onIntegrationUpdated(listener);
@@ -191,6 +242,7 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
     }
     override async settle(): Promise<void> {
         await super.settle();
+        await this.#uploadsSweep;
         await Promise.all(
             [...this.#connections.values()].map(async ({ connection, ready }) => {
                 await ready;
@@ -200,7 +252,10 @@ export class HappyModule extends HappyConnection implements AgentModule<AnyAgent
     }
     override async stop(): Promise<void> {
         this.#closed = true;
+        if (this.#uploadsTimer !== undefined) clearInterval(this.#uploadsTimer);
+        this.#uploadsTimer = undefined;
         await Promise.all([
+            this.#uploadsSweep,
             super.stop(),
             ...[...this.#connections.values()].map(async ({ connection, ready }) => {
                 await ready.catch(() => undefined);

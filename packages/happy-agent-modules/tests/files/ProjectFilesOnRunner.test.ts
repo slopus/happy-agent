@@ -1,5 +1,14 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+    mkdir,
+    mkdtemp,
+    readdir,
+    readFile,
+    realpath,
+    rm,
+    utimes,
+    writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -115,6 +124,8 @@ describe("files on a runner", () => {
             path: "docs/guide.md",
         });
         await expect(readFile(join(folder, "docs", "guide.md"), "utf8")).resolves.toBe("new");
+        // What an agent working on the runner is told the written file is called.
+        expect(files.absolutePath(root, "docs/guide.md")).toBe(join(folder, "docs", "guide.md"));
 
         const conflict = await files
             .write(root, {
@@ -132,8 +143,34 @@ describe("files on a runner", () => {
         await expect(files.read(root, { path: "../outside.txt" })).rejects.toMatchObject({
             code: "invalid",
         });
+        expect(() => files.absolutePath(root, "../outside.txt")).toThrow(ProjectFileError);
         await expect(files.read(root, { path: "missing.txt" })).rejects.toMatchObject({
             code: "missing",
+        });
+    });
+
+    it("removes old folders on the runner by the runner's own modification times", async () => {
+        const { files, folder, root } = await runnerFolder();
+        const day = 24 * 60 * 60 * 1000;
+        for (const [message, age] of [
+            ["old", 45 * day],
+            ["fresh", day],
+        ] as const) {
+            const path = join(folder, ".happy-uploads", message);
+            await mkdir(path, { recursive: true });
+            await writeFile(join(path, "1-a.png"), message);
+            const at = new Date(Date.now() - age);
+            await utimes(join(path, "1-a.png"), at, at);
+            await utimes(path, at, at);
+        }
+
+        await expect(
+            files.removeOlderThan(root, ".happy-uploads", Date.now() - 30 * day),
+        ).resolves.toEqual({ found: true, removed: [".happy-uploads/old"] });
+        await expect(readdir(join(folder, ".happy-uploads"))).resolves.toEqual(["fresh"]);
+        await expect(files.removeOlderThan(root, "missing", Date.now())).resolves.toEqual({
+            found: false,
+            removed: [],
         });
     });
 

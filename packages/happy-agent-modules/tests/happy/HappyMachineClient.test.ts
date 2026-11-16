@@ -1,3 +1,5 @@
+import { hostname } from "node:os";
+
 import { createRootContext } from "@steve.kite/stdlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -23,9 +25,12 @@ vi.mock("../../sources/happy/credentials/readHappyCliMachineId.js", () => ({
         account === undefined ? (sibling.unverifiedId ?? sibling.id) : sibling.id,
 }));
 
+const node = { name: "Studio Mac" as string | undefined };
+
 beforeEach(() => {
     sibling.id = undefined;
     sibling.unverifiedId = undefined;
+    node.name = "Studio Mac";
 });
 
 const KEY = Buffer.alloc(32, 7);
@@ -153,6 +158,7 @@ function client(options: {
         context: createRootContext().named("happy-machine-test"),
         fetch: options.fetch,
         models: () => MODELS,
+        nodeName: async () => node.name,
         ...(options.onConnectionChanged === undefined
             ? {}
             : { onConnectionChanged: options.onConnectionChanged }),
@@ -288,6 +294,62 @@ describe("keeping Happy's picture of this computer current", () => {
         await expect(machine.refreshSibling()).rejects.toThrow("account and server");
         expect(socket.published().at(-1)?.siblingMachineId).toBeUndefined();
         expect(socket.disconnectCount).toBe(0);
+    });
+
+    it("names this computer after the node and follows a rename", async () => {
+        const socket = new FakeSocket();
+        const machine = client({ fetch: vi.fn(async () => REGISTERED()), socket });
+        machine.start();
+        await vi.waitFor(() => expect(socket.connected).toBe(true));
+        expect(socket.published().at(-1)).toMatchObject({
+            displayName: "Studio Mac — Happy Agent",
+            host: hostname(),
+        });
+
+        node.name = "Kitchen Mac";
+        await machine.refreshNodeName();
+        expect(socket.published().at(-1)).toMatchObject({
+            displayName: "Kitchen Mac — Happy Agent",
+            host: hostname(),
+        });
+        const count = socket.published().length;
+        await machine.refreshNodeName();
+        expect(socket.published()).toHaveLength(count);
+    });
+
+    it("falls back to the hostname when the node name cannot be read", async () => {
+        node.name = undefined;
+        const { socket } = await connected();
+        expect(socket.published().at(-1)?.displayName).toBe(`${hostname()} — Happy Agent`);
+    });
+
+    it("replaces the name it wrote before but keeps one given on the phone", async () => {
+        const named = async (displayName: string) => {
+            const socket = new FakeSocket();
+            const machine = client({
+                fetch: vi.fn(async () =>
+                    Response.json({
+                        machine: {
+                            daemonStateVersion: 1,
+                            metadata: encode({ displayName }),
+                            metadataVersion: 3,
+                        },
+                    }),
+                ),
+                socket,
+            });
+            machine.start();
+            await vi.waitFor(() => expect(socket.connected).toBe(true));
+            return { machine, socket };
+        };
+        const generated = await named(`${hostname()} — Happy Agent`);
+        expect(generated.socket.published().at(-1)?.displayName).toBe("Studio Mac — Happy Agent");
+
+        const personal = await named("Dad's laptop");
+        expect(personal.socket.published().at(-1)?.displayName).toBe("Dad's laptop");
+        node.name = "Kitchen Mac";
+        await personal.machine.refreshNodeName();
+        expect(personal.socket.published().at(-1)?.displayName).toBe("Dad's laptop");
     });
 
     it("describes this computer without listing the work on it", async () => {

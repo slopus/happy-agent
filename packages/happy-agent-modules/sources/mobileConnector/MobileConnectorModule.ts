@@ -429,19 +429,23 @@ export class MobileConnectorModule implements AgentModule {
     async revokeDevice(ctx: Context, deviceId: string): Promise<MobileConnectorSnapshot> {
         const owner = this.#owner(ctx);
         await ctx.inTx(async (txCtx) => {
-            if (!(await deleteMobileDevice(txCtx, owner, deviceId))) {
+            if (!(await this.#deleteDevice(txCtx, owner, deviceId))) {
                 throw new MobileConnectorError("not_found", "That phone is not paired.");
             }
-            await this.#scheduleReconcile(txCtx);
-            afterCommit(txCtx, async () => {
-                this.#revoked.add(deviceId);
-                this.#revocations.get(deviceId)?.abort();
-                this.#revocations.delete(deviceId);
-                this.#lastTouched.delete(deviceId);
-            });
-            this.#announce(txCtx, [owner]);
         });
         return await this.#snapshotFor(ctx, owner);
+    }
+
+    /**
+     * A phone removes itself, as `revokeDevice` would. Its answer travels over the socket this may
+     * close, so the socket lingers as after a pairing. Already removed is the same outcome.
+     */
+    async removeOwnDevice(ctx: Context, deviceId: string): Promise<void> {
+        const owner = this.#owner(ctx);
+        this.#lingerSocket();
+        await ctx.inTx(async (txCtx) => {
+            await this.#deleteDevice(txCtx, owner, deviceId);
+        });
     }
 
     /** Watch snapshots as they change; each event belongs to one owner only. */
@@ -576,6 +580,20 @@ export class MobileConnectorModule implements AgentModule {
         await exposure?.close();
     }
 
+    /** Delete a phone's row; after commit its token fails and its connections close. */
+    async #deleteDevice(ctx: Context, owner: MobileOwner, deviceId: string): Promise<boolean> {
+        if (!(await deleteMobileDevice(ctx, owner, deviceId))) return false;
+        await this.#scheduleReconcile(ctx);
+        afterCommit(ctx, async () => {
+            this.#revoked.add(deviceId);
+            this.#revocations.get(deviceId)?.abort();
+            this.#revocations.delete(deviceId);
+            this.#lastTouched.delete(deviceId);
+        });
+        this.#announce(ctx, [owner]);
+        return true;
+    }
+
     // Phone-facing bookkeeping.
 
     /** Record that a device was seen, at most once a minute. */
@@ -668,6 +686,11 @@ export class MobileConnectorModule implements AgentModule {
         const timer = this.#expiries.get(pairing);
         if (timer !== undefined) clearTimeout(timer);
         this.#expiries.delete(pairing);
+        this.#lingerSocket();
+    }
+
+    /** Keep the socket a little longer, so an answer already on its way reaches the phone. */
+    #lingerSocket(): void {
         if (this.#closed) return;
         if (this.#linger !== undefined) clearTimeout(this.#linger);
         this.#linger = setTimeout(() => {

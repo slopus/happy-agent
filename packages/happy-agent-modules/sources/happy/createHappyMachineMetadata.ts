@@ -24,6 +24,7 @@ export interface HappyMachineMetadata {
     capabilities: { bots: true; tasks: true; newSession: boolean; resume: false; worktrees: false };
     client: { id: "rig"; name: "Happy Agent"; version: string };
     defaults: { effort: string; modelId: string; permissionMode: "auto"; providerId: string };
+    /** `<node name> — Happy Agent`, the name the person gave this installation. */
     displayName: string;
     /**
      * The version of the daemon speaking for this machine, which here is Happy Agent's own.
@@ -35,6 +36,7 @@ export interface HappyMachineMetadata {
     happyCliVersion: string;
     happyHomeDir: string;
     homeDir: string;
+    /** The computer's hostname, whatever the installation is called. */
     host: string;
     machineKind: "rig";
     models: readonly HappyPublishedModel[];
@@ -73,6 +75,8 @@ export interface HappyMachineMetadata {
 export function createHappyMachineMetadata(options: {
     configuration: HappyConnectionConfiguration;
     models: readonly HappyModel[];
+    /** The installation's node name; the hostname stands in when it cannot be read. */
+    nodeName?: string;
     siblingMachineId?: string;
     version: string;
 }): HappyMachineMetadata {
@@ -95,7 +99,7 @@ export function createHappyMachineMetadata(options: {
             permissionMode: "auto",
             providerId: defaultModel.providerId,
         },
-        displayName: `${host} — Happy Agent`,
+        displayName: happyMachineDisplayName(options.nodeName ?? host),
         happyCliVersion: options.version,
         happyHomeDir: options.configuration.happyHome,
         homeDir: homedir(),
@@ -116,4 +120,18 @@ export function createHappyMachineMetadata(options: {
             resultKinds: ["success", "pending", "requestToApproveDirectoryCreation", "error"],
         },
     };
+}
+
+const DISPLAY_NAME_SUFFIX = " — Happy Agent";
+
+export function happyMachineDisplayName(name: string): string {
+    return `${name}${DISPLAY_NAME_SUFFIX}`;
+}
+
+/**
+ * Whether a published name is one Happy Agent wrote. Any other name was given on the phone, and
+ * is the person's to keep.
+ */
+export function isGeneratedHappyMachineDisplayName(name: string): boolean {
+    return name.endsWith(DISPLAY_NAME_SUFFIX);
 }

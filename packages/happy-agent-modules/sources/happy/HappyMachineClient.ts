@@ -5,6 +5,7 @@ import type { Context } from "@steve.kite/stdlib";
 import { connectHappySocket } from "./connectHappySocket.js";
 import {
     createHappyMachineMetadata,
+    isGeneratedHappyMachineDisplayName,
     type HappyMachineMetadata,
 } from "./createHappyMachineMetadata.js";
 import { readHappyCliMachineId } from "./credentials/readHappyCliMachineId.js";
@@ -42,6 +43,8 @@ export interface HappyMachineClientOptions {
     readonly fetch?: typeof fetch;
     readonly operations: HappySpawnOperations;
     readonly models: () => readonly HappyModel[];
+    /** The installation's current node name, which names this computer on the phone. */
+    readonly nodeName: () => Promise<string | undefined>;
     readonly onConnectionChanged?: (event: HappyMachineConnectionEvent) => void;
     /** Happy changed how this machine's sessions travel; see {@link HappySessionSockets}. */
     readonly onSessionTransportChanged?: (transport: HappySessionTransport) => Promise<void>;
@@ -155,6 +158,7 @@ export class HappyMachineClient {
     #metadataVersion = 0;
     #retryTimer: NodeJS.Timeout | undefined;
     #siblingMachineId: string | undefined;
+    #nodeName: string | undefined;
     #socket: HappySocket | undefined;
     #connectionKey = "";
     /**
@@ -302,6 +306,26 @@ export class HappyMachineClient {
         }
     }
 
+    /** Publishes the node's new name; a name given on the phone stays. */
+    async refreshNodeName(): Promise<void> {
+        const nodeName = await this.#readNodeName();
+        if (this.#closed || nodeName === this.#nodeName) return;
+        this.#nodeName = nodeName;
+        const socket = this.#socket;
+        if (socket?.connected) {
+            this.#syncMetadata(socket, this.#generation, this.#metadataVersion, 0);
+        }
+    }
+
+    async #readNodeName(): Promise<string | undefined> {
+        try {
+            return await this.#options.nodeName();
+        } catch (error: unknown) {
+            this.#options.context.log.debug("The node name could not be read.", {}, error);
+            return undefined;
+        }
+    }
+
     #readSibling(): Promise<string | undefined> {
         const configuration = this.#options.configuration;
         return configuration.cliHome === undefined
@@ -313,6 +337,7 @@ export class HappyMachineClient {
         // Happy CLI may have been installed since this daemon last registered, so who this
         // machine is paired with is read again every time the pairing is published.
         this.#siblingMachineId = await this.#readSibling();
+        this.#nodeName = await this.#readNodeName();
         const metadata = this.#metadata();
         const encryption = this.#options.configuration.credentials.encryption;
         const dataEncryptionKey =
@@ -502,6 +527,7 @@ export class HappyMachineClient {
         return createHappyMachineMetadata({
             configuration: this.#options.configuration,
             models: this.#options.models(),
+            ...(this.#nodeName === undefined ? {} : { nodeName: this.#nodeName }),
             ...(this.#siblingMachineId === undefined
                 ? {}
                 : { siblingMachineId: this.#siblingMachineId }),
@@ -524,8 +550,10 @@ export class HappyMachineClient {
         const metadata = {
             ...base,
             ...this.#metadata(),
-            // The name is the person's to choose, so Happy Agent never writes over it.
-            ...(typeof this.#metadataBase.displayName === "string"
+            // A name given on the phone is the person's, so Happy Agent never writes over it. One
+            // Happy Agent wrote follows the node's name.
+            ...(typeof this.#metadataBase.displayName === "string" &&
+            !isGeneratedHappyMachineDisplayName(this.#metadataBase.displayName)
                 ? { displayName: this.#metadataBase.displayName }
                 : {}),
         };

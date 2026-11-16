@@ -481,6 +481,60 @@ describe("MobileConnectorModule", () => {
         ).resolves.toMatchObject({ kind: "device", deviceId: paired.deviceId });
     });
 
+    it("lets a phone remove itself, leaving other phones, and repeats harmlessly", async () => {
+        const target = await world();
+        const leaving = await pairedPhone(target);
+        const staying = await pairedPhone(target);
+        const device = await target.mobile.authenticate(
+            target.ctx,
+            `Bearer ${leaving.deviceToken}`,
+        );
+        if (device?.kind !== "device") throw new Error("The device token was not accepted.");
+        const announced = target.events.length;
+
+        await target.mobile.removeOwnDevice(target.ctx, leaving.deviceId);
+        expect(device.revoked.aborted).toBe(true);
+        await expect(
+            target.mobile.authenticate(target.ctx, `Bearer ${leaving.deviceToken}`),
+        ).resolves.toBe(undefined);
+        expect((await target.mobile.snapshot(target.ctx)).devices.map(({ id }) => id)).toEqual([
+            staying.deviceId,
+        ]);
+        await vi.waitFor(() => {
+            expect(
+                target.events
+                    .slice(announced)
+                    .some((event) => event.mobileConnector.devices.length === 1),
+            ).toBe(true);
+        });
+        await expect(
+            target.mobile.authenticate(target.ctx, `Bearer ${staying.deviceToken}`),
+        ).resolves.toMatchObject({ kind: "device", deviceId: staying.deviceId });
+
+        await expect(
+            target.mobile.removeOwnDevice(target.ctx, leaving.deviceId),
+        ).resolves.toBeUndefined();
+        expect(await storedDevices(target)).toHaveLength(1);
+    });
+
+    it("keeps the socket open long enough for a removed last phone's answer", async () => {
+        const target = await world();
+        const paired = await pairedPhone(target);
+        // Let the pairing's own linger run out, so only the removal holds the socket.
+        await vi.waitFor(async () => {
+            expect(await pendingCallCount(target.ctx)).toBe(0);
+        });
+        await new Promise((resolve) => setTimeout(resolve, 3_100));
+        await waitForStatus(target, "open");
+
+        await target.mobile.removeOwnDevice(target.ctx, paired.deviceId);
+        await vi.waitFor(async () => {
+            expect(await pendingCallCount(target.ctx)).toBe(0);
+        });
+        expect((await target.mobile.snapshot(target.ctx)).status).toBe("open");
+        await waitForStatus(target, "closed");
+    }, 15_000);
+
     it("reopens the socket once the transport is attached when devices exist", async () => {
         const first = await world();
         const paired = await pairedPhone(first);
@@ -572,6 +626,7 @@ describe("MobileConnectorModule", () => {
         await expect(target.mobile.revokeDevice(bob, paired.deviceId)).rejects.toMatchObject({
             code: "not_found",
         });
+        await target.mobile.removeOwnDevice(bob, paired.deviceId);
         expect((await storedDevices(target))[0]?.owner_id).toBe("alice0000000000000000001");
     });
 });

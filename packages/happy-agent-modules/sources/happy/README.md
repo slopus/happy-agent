@@ -322,6 +322,36 @@ An attachment arrives as its own message just before the words that go with it,
 so it is held rather than delivered, and the read position does not move until
 the message that claims it has been delivered too.
 
+The agent gets attachments as paths, not as pictures in its context. Each one is written into
+the agent's folder at `.happy-uploads/<message>/<n>-<name>`, where the phones' direct chats put
+theirs, through the files module, so a folder on a runner gets the file on the runner. After the
+person's words the agent reads one note naming every saved file by its absolute path on that
+machine, in the wording Happy CLI uses:
+
+```text
+The user attached 2 images. They were saved on this machine and not loaded into your context; open them with your file-reading or image-viewing tool only if you need to see them:
+- /work/project/.happy-uploads/<message>/0-screenshot.png
+- /work/project/.happy-uploads/<message>/2-diagram.jpg
+```
+
+The noun is `file` when any attachment is not a picture. A picture that cannot be saved, because
+the session has no folder or the write fails, goes inline as before; any other file that cannot be
+saved is left out.
+
+Saved attachments are kept for 30 days after anything was last written to their message's folder,
+as Happy CLI keeps its own. The module looks once as the daemon starts and then every hour, off the
+start path, in every folder the files module serves (`ProjectFilesModule.roots`): projects,
+workspaces, bots, tasks, and Surface chats, on this machine or a runner. It removes each
+`.happy-uploads/<message>` folder older than that through `removeOlderThan`, one folder at a time,
+and goes on past a folder that fails. This covers what the phones' direct chats write through the
+file API as well as what the relay saves. A transcript that still names a removed file finds it
+gone.
+
+The uploads folder keeps itself out of Git with its own `.happy-uploads/.gitignore` holding `*`,
+which ignores everything there, itself included. The relay writes it before the first attachment;
+the hourly look writes it into any uploads folder that lacks one, such as one a direct chat made.
+An ignore file already there is never replaced.
+
 ## Reading workspace changes from the phone
 
 The encrypted session RPC adds three read-only methods. Clients discover them through
