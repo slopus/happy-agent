@@ -165,6 +165,9 @@ importers:
 
   packages/happy-agent-client:
     dependencies:
+      '@noble/hashes':
+        specifier: 1.8.0
+        version: 1.8.0
       '@sinclair/typebox':
         specifier: ^0.34.49
         version: 0.34.49

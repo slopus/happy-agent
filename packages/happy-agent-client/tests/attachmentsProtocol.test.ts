@@ -147,7 +147,7 @@ describe("attachments protocol", () => {
         ]);
     });
 
-    it("sends a large file in chunks, asking first and skipping what the daemon holds", async () => {
+    it("sends chunk zero first and skips the remaining bytes the daemon holds", async () => {
         const data = new Uint8Array(10).map((_, index) => index);
         const fileId = digest(data);
         // The daemon already holds bytes 4–5 from an earlier attempt.
@@ -181,18 +181,23 @@ describe("attachments protocol", () => {
             true,
         );
         expect(requests.map((request) => request.contentRange)).toEqual([
-            "bytes */10",
             "bytes 0-2/10",
             "bytes 3-3/10",
             "bytes 6-8/10",
             "bytes 9-9/10",
         ]);
-        expect(requests[2]?.body).toEqual([3]);
+        expect(requests[1]?.body).toEqual([3]);
     });
 
     it("stops when the daemon does not keep a chunk", async () => {
         const { client } = recordingClient(() => ({
-            upload: { id, name: "big.bin", size: 10, received: [], expiresAt: 1 },
+            upload: {
+                id: digest(new Uint8Array(10)),
+                name: "big.bin",
+                size: 10,
+                received: [],
+                expiresAt: 1,
+            },
         }));
         await expect(
             client.attachFile(

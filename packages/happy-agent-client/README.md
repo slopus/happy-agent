@@ -84,14 +84,135 @@ set with `updateVaultFolder(surfaceId, folderId, { role: "skills" }, { ifMatch }
 settings' `defaultVault` for the vault a team starts with. Happy Agent sends neither and refuses a
 `role` change; read a missing `role` as `null` and a missing `defaultVault` as `false`.
 
-Files attached to messages are uploaded to the conversation first when health reports
+When health reports `capabilities.media`, files are global objects named by the SHA-256 of
+their bytes. `uploadMedia({ name, data, contentType })` sends a whole file; `uploadMediaChunk(id,
+{ name, size, start, data, contentType })` sends one range, or probes without `data`. It answers
+`{ upload }` while ranges are missing and `{ media }` once complete. Name uploaded media in any
+agent's `send` as `{ type: "file", attachment: media.id, name }`. `getMedia(id, options)` reads
+original bytes or a variant, with optional `range` and `ifNoneMatch`; `mediaUrl(id, { variant })`
+builds the URL for a token transport. `deleteMedia(id)` cancels an upload or discards uploaded
+media nothing references.
+
+`uploadMediaFile({ name, data, contentType }, options)` also accepts a `Blob` or `File` in
+`data`, or `{ size, read(start, end) }` with an exclusive `end`. It reads at most 4 MiB at a
+time to hash large files incrementally with the portable JavaScript SHA-256 implementation in
+`@noble/hashes`, then sends chunk zero immediately. A completed response ends the upload; otherwise
+the acknowledged ranges determine the first missing byte for each subsequent request. Requests
+run one at a time. Resuming repeats at most one chunk already held by the daemon. No entire
+large file is held in memory and no whole-buffer Web Crypto digest is used, on browsers, Bun,
+or Node. Files at most 4 MiB go in one request. Default upload chunks are 4 MiB too; existing
+`directLimit` and `chunkSize` overrides remain supported.
+
+Pass `signal` to cancel reads, hashing, or HTTP requests, and
+`onProgress(uploadedBytes, totalBytes)` for acknowledged bytes, including ranges already held
+when resuming. `onHashProgress(hashedBytes, totalBytes)` reports the separate hashing phase,
+starting at zero and advancing after every bounded read; direct uploads skip this phase.
+Upload progress advances on responses: Fetch does not expose bytes sent within a chunk.
+Desktop must supply an upload transport with sent-byte events to show that finer progress.
+A custom read already in flight may
+finish after cancellation, but no more reads or requests start. Repeat the helper to resume
+after a network error or a `5xx` response: calling `uploadMediaFile(file, options)` or
+`attachFile(agentId, file, options)` again hashes, sends chunk zero, and resumes missing ranges.
+A `404 not_found` means the upload expired or was cancelled mid-request; calling again restarts it.
+A `409 hash_mismatch` after all bytes were sent means the file changed while uploading;
+it propagates as `HappyAgentApiError`, so reselect the file before trying again.
+The helper never sends more than 4,096 byte-carrying requests per
+invocation. A server may reach its persisted cap earlier and answer `400 invalid_request`;
+the helper maps that specific cap response and its own cap to `HappyAgentUploadLimitError`,
+preserving the server error as `cause`. Other `invalid_request` responses stay API errors.
+Cancel the incomplete upload and start again with larger chunks
+when the request cap is reached. Errors never automatically delete a shared upload or retry.
+
+Request `preview` or `large` for every image or video whether or not `preview` metadata is
+present; the field only gives preview pixel dimensions. Use `variant: "preview"` for tiles
+and lists. Pictures with `animated: true` load the original
+when on screen or opened in a viewer; both still variants contain only their first frame.
+The flag identifies animated GIF, WebP, APNG, or detected AVIF sequences, never videos or
+HEIC/HEIF bursts. If the client cannot decode the original animation, show `large`.
+The daemon sets this flag only on image items; ignore it on other kinds.
+A startup background pass checks older records for animation. Every surface read joins `kind`,
+`width`, `height`, `thumbhash`, `scale`, `durationMs`, `preview`, and `animated` from the shared
+record field by field: use each record field when present, otherwise the stored field. A read
+never lowers the stored kind; a stored image or video stays one even if the record says file.
+A record may upgrade from file to image or video, never downgrade or switch measured kinds.
+No event announces late measurements; refetch locally held history to pick them up.
+Per-use names and artifact paths
+and MIME types stay per use. No separate per-item lookup is needed. Older tool
+items without an ID use their tool-call original URL, which still plays picture animations.
+Artifact files predating media metadata are measured by that pass or their first global
+variant read.
+Otherwise use `"large"` for a full-width picture or a viewer's first paint, and `"play"` for
+video playback. Fetch the original to zoom only when the client can decode its media type;
+otherwise keep `large`, including at zoom, for HEIC or unsupported AVIF. Downloads use the
+original. On `503 variant_not_ready` for `preview` or `large`, keep the ThumbHash placeholder
+and retry after `Retry-After`; do not fetch the original for that timeout. On
+`404 variant_unavailable` or another non-`2xx` answer, display the original when the client can
+decode it. Any non-`2xx` from `play` still falls back to the original video.
+`getMedia` throws `HappyAgentApiError` for those failures, including
+`503 variant_not_ready` and `404 variant_unavailable`; `null` means a conditional read matched
+its ETag. Shared measurements describe the original as displayed: reserve layout space from
+`width`, `height`, and `scale`, then show `thumbhash` until bytes load. `preview: { width, height }`
+describes only preview bytes. Newly measured pictures get `kind: "image"` only with width,
+height, and ThumbHash; an incomplete measurement is `"file"`. Older attachment and artifact
+objects may omit all measurements. Video dimensions, `durationMs`, and poster `thumbhash` remain
+optional. Older daemons may ignore `variant` and return the original.
+
+Before storing a message, completed tool call, or artifact version, the daemon measures all
+items before generating variants, with the response waiting at most ten seconds for the whole
+operation. Variants are omitted first when time runs out. No measurement is guaranteed in the
+first response; ordinary pictures and videos have them, and clients must lay out sensibly
+without them. One bounded background queue finishes missing measurements, then variants, and
+updates the shared record. Startup resumes work interrupted by a stop. Host processes are killed
+at their own execution limits; in-process decodes may run on after the response stops waiting.
+A genuine decode failure is remembered. Measurements and still variants never wait behind a
+`play` encode.
+
+Missing still variants are generated inline on read, one generation per media and variant,
+with concurrent readers waiting on it and a host-wide cap. All waiting counts inside the read's
+ten-second budget. A timeout answers `503 variant_not_ready` with `Retry-After` and `no-store`;
+pending work is remembered while the background queue finishes it, so repeated reads do not
+restart generation. `404 variant_unavailable` means the variant will not be made.
+Artifact `mimeType` comes from the file extension; the media route uses the shared record's
+content-derived MIME type, so their `Content-Type` may differ for the same bytes. Render by
+kind and measurements; use MIME type only for downloads and open-with actions.
+
+Existing `item.kind === "image"` and `case "image"` checks keep narrowing `MediaItem` to
+required image `width`, `height`, and `thumbhash`. You can also use the exported
+`isMediaImageItem(item)` guard. File items' static kinds stay `"video" | "document" | "file"`
+to preserve that narrowing; runtime schemas accept newer kind strings, which clients render
+as files. Always keep a `default` that renders an item as a file; never use `assertNever` on
+`MediaFileItem.kind`. The kinds on attachment, global media, and artifact objects remain open
+strings. The narrowing fixture is checked by `pnpm check`, not `pnpm test`.
+
+Still variants are kept as long as their media, with no timer eviction. Original passthrough
+requires EXIF orientation 1 or absent; generated WebP retains transparency and converts to sRGB.
+They use `Cache-Control: private, max-age=2592000` (30 days) and a strong ETag of
+the served bytes. They may change when remade; revalidate with `ifNoneMatch`. To resume, pass
+the held ETag as `ifRange` alongside `range`: append a matching `206`, or replace the cached
+bytes when the server answers `200` with the whole new body. Definitive generation failures are
+`404 variant_unavailable` with `Cache-Control: no-store`. Original media and `play` keep their
+immutable cache contracts.
+Original, `play`, and still variant reads all evaluate `ifRange` the same way. A previously
+received ETag keeps matching at an immutable address; a different ETag or a date receives
+the whole body, since these routes send no `Last-Modified`.
+
+Artifact preview URLs serve still WebP within 640×640, with no Range support and immutable
+caching for numbered versions. They do not lazily generate a missing preview: on `404`, request
+the global media preview using the file's SHA-256. Their opaque ETags identify that resource; cache
+by full URL, never by ETag alone across artifact and global media preview routes.
+
+Older daemons upload files through conversation routes when health reports
 `capabilities.attachments`. An attachment's ID is the SHA-256 of its bytes. `attachFile(agentId,
-{ name, data, contentType })` sends a file of up to 8 MiB in one request (`uploadAttachment()`)
-and a larger one in chunks (`uploadAttachmentChunk()`), asking first, so bytes the daemon already
-holds are not sent again; it answers the attachment. Name it in `send` as
+{ name, data, contentType })` sends a file of up to 4 MiB in one request (`uploadAttachment()`)
+and a larger one in chunks (`uploadAttachmentChunk()`), sending chunk zero first and resuming
+from the acknowledged ranges; it answers the attachment. Name it in `send` as
 `{ type: "file", attachment: attachment.id, name }`. The stored message's `file` block describes
 the file without its bytes; show them through `attachmentUrl()` or `getAttachment()`.
 `deleteAttachment()` cancels an upload or discards an attachment no message has sent.
+These methods remain available, and `getAttachment` and `attachmentUrl` accept the same
+optional `variant` on daemons that serve variants.
+`attachFile` accepts the same byte sources, cancellation, progress callback, and resume
+behavior as `uploadMediaFile`; both use one implementation.
 
 `search({ q, types, limit })` searches everything in the node the caller can reach when health
 reports `capabilities.search`: vault files and folders, documents, conversation messages, todos,

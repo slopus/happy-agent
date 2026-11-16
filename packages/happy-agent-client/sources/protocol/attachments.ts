@@ -7,6 +7,7 @@
 import { type Static, Type } from "@sinclair/typebox";
 
 import { timestampSchema } from "./common.js";
+import { mediaPreviewSchema } from "./mediaMetadata.js";
 
 /** The largest attachment: 1 GiB. */
 export const ATTACHMENT_MAX_SIZE = 1_073_741_824;
@@ -22,13 +23,18 @@ export const attachmentIdSchema = Type.String({ pattern: "^[0-9a-f]{64}$" });
 const attachmentNameSchema = Type.String({ minLength: 1, maxLength: 255 });
 const attachmentSizeSchema = Type.Integer({ minimum: 0, maximum: ATTACHMENT_MAX_SIZE });
 
-/** How clients show a file; an unknown kind renders as a file. */
-export const attachmentKindSchema = Type.Union([
+const knownAttachmentKindSchema = Type.Union([
     Type.Literal("image"),
     Type.Literal("video"),
     Type.Literal("document"),
     Type.Literal("file"),
 ]);
+export type KnownAttachmentKind = Static<typeof knownAttachmentKindSchema>;
+
+/** How clients show a file; retain literal hints while accepting future kinds as files. */
+export const attachmentKindSchema = Type.Unsafe<KnownAttachmentKind | (string & {})>(
+    Type.Union([...knownAttachmentKindSchema.anyOf, Type.String()]),
+);
 export type AttachmentKind = Static<typeof attachmentKindSchema>;
 
 /** What an attached file is shown as. Happy Cloud may omit `kind` and the image fields. */
@@ -36,14 +42,19 @@ const attachmentDetails = {
     mimeType: Type.String({ minLength: 1, maxLength: 255 }),
     size: attachmentSizeSchema,
     kind: Type.Optional(attachmentKindSchema),
-    /** Displayed width in pixels, after EXIF orientation; images only. */
+    /** Displayed width in pixels, after image orientation or video rotation. */
     width: Type.Optional(Type.Integer({ minimum: 1 })),
-    /** Displayed height in pixels, after EXIF orientation; images only. */
+    /** Displayed height in pixels, after image orientation or video rotation. */
     height: Type.Optional(Type.Integer({ minimum: 1 })),
-    /** Standard base64 ThumbHash placeholder; images only. */
+    /** A video's length in whole milliseconds. */
+    durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    /** Standard base64 ThumbHash of the picture or video poster. */
     thumbhash: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
     /** Pixels per point from the image's density; absent means 1. */
     scale: Type.Optional(Type.Number({ exclusiveMinimum: 1, maximum: 4 })),
+    preview: Type.Optional(mediaPreviewSchema),
+    /** Client-playable GIF, WebP, APNG, or detected AVIF animation; never video or HEIC/HEIF. */
+    animated: Type.Optional(Type.Literal(true)),
 };
 
 /** One file uploaded to a conversation. */
@@ -97,7 +108,10 @@ export const fileBlockSchema = Type.Object({
     kind: attachmentDetails.kind,
     width: attachmentDetails.width,
     height: attachmentDetails.height,
+    durationMs: attachmentDetails.durationMs,
     thumbhash: attachmentDetails.thumbhash,
     scale: attachmentDetails.scale,
+    preview: attachmentDetails.preview,
+    animated: attachmentDetails.animated,
 });
 export type FileBlock = Static<typeof fileBlockSchema>;

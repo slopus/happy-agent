@@ -20,8 +20,11 @@ import {
     type Timestamp,
 } from "./common.js";
 import { artifactDisplaySchema, artifactTitleSchema, artifactTypeSchema } from "./artifacts.js";
+import { attachmentKindSchema, type KnownAttachmentKind } from "./attachments.js";
 import type { FileBlock } from "./attachments.js";
 import { mediaLayoutStyleSchema } from "./mediaLayoutStyle.js";
+import { mediaIdSchema } from "./media.js";
+import { mediaPreviewSchema } from "./mediaMetadata.js";
 import type { UsageBreakdown } from "./usage.js";
 import { userIdSchema } from "./users.js";
 
@@ -181,8 +184,10 @@ export const mediaItemSourceSchema = Type.Object({
 /** Where an item came from on the agent's machine. */
 export type MediaItemSource = Static<typeof mediaItemSourceSchema>;
 
-/** A decoded picture: always measured, with a ThumbHash to show until its bytes load. */
+/** A decoded picture, with its measured size and ThumbHash to show until its bytes load. */
 export const mediaImageItemSchema = Type.Object({
+    /** Global media ID; absent on older daemons. */
+    id: Type.Optional(mediaIdSchema),
     kind: Type.Literal("image"),
     /** The file's base name, for display and downloads only. */
     name: mediaItemNameSchema,
@@ -195,6 +200,9 @@ export const mediaImageItemSchema = Type.Object({
     height: mediaItemDimensionSchema,
     /** Standard base64 encoding of a ThumbHash placeholder. */
     thumbhash: mediaItemThumbhashSchema,
+    preview: Type.Optional(mediaPreviewSchema),
+    /** Client-playable picture animation; load original, falling back to large on decode failure. */
+    animated: Type.Optional(Type.Literal(true)),
     /**
      * Pixels per point, from the file's density: 2 for a 144 DPI Retina screenshot. Absent means
      * 1. An image's natural size is its pixel size divided by this.
@@ -204,25 +212,35 @@ export const mediaImageItemSchema = Type.Object({
     source: Type.Optional(mediaItemSourceSchema),
 });
 
-/** A decoded picture: always measured, with a ThumbHash to show until its bytes load. */
+/** A decoded picture with its measured size, ThumbHash, and optional global media ID. */
 export type MediaImageItem = Static<typeof mediaImageItemSchema>;
 
 /** A video, a PDF document, or any other file; clients render an unknown kind as a file. */
 export const mediaFileItemSchema = Type.Object({
-    kind: Type.Union([Type.Literal("video"), Type.Literal("document"), Type.Literal("file")]),
+    /** Global media ID; absent on older daemons. */
+    id: Type.Optional(mediaIdSchema),
+    /** Static kinds stay closed for image narrowing; newer strings render as files at runtime. */
+    kind: Type.Unsafe<Exclude<KnownAttachmentKind, "image">>(
+        Type.Intersect([attachmentKindSchema, Type.Not(Type.Literal("image"))]),
+    ),
     /** The file's base name, for display and downloads only. */
     name: mediaItemNameSchema,
-    /** From the file extension; `application/octet-stream` when unknown. */
+    /** Probed from content, falling back to the supplied type or file extension. */
     mimeType: mediaItemMimeTypeSchema,
     size: mediaItemSizeSchema,
-    /** Not currently supplied for these kinds; tolerated when present. */
+    /** Displayed width after video rotation, when the host can probe it. */
     width: Type.Optional(mediaItemDimensionSchema),
-    /** Not currently supplied for these kinds; tolerated when present. */
+    /** Displayed height after video rotation, when the host can probe it. */
     height: Type.Optional(mediaItemDimensionSchema),
-    /** Not currently supplied for these kinds; tolerated when present. */
+    durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
+    /** The video poster's ThumbHash, when the host can decode its first frame. */
     thumbhash: Type.Optional(mediaItemThumbhashSchema),
+    preview: Type.Optional(mediaPreviewSchema),
+    scale: Type.Optional(Type.Number({ exclusiveMinimum: 1, maximum: 4 })),
     /** The file it was presented as; absent on older daemons. */
     source: Type.Optional(mediaItemSourceSchema),
+    /** Sent only on picture items; tolerate and ignore it on other kinds. */
+    animated: Type.Optional(Type.Literal(true)),
 });
 
 /** A video, a PDF document, or any other file; clients render an unknown kind as a file. */
@@ -459,7 +477,7 @@ export const storyQuoteSchema = Type.Object({
     caption: Type.Union([Type.String({ minLength: 1, maxLength: 200 }), Type.Null()]),
     /** When the story ends, in epoch milliseconds; afterwards it cannot be opened. */
     expiresAt: Type.Integer(),
-    /** A still of its first frame, from `storyQuoteFrameUrl`, or `null` when there is none. */
+    /** Always null on current daemons; older daemons may serve a still via `storyQuoteFrameUrl`. */
     frame: Type.Union([
         Type.Object({ mimeType: Type.String(), thumbhash: Type.Optional(Type.String()) }),
         Type.Null(),

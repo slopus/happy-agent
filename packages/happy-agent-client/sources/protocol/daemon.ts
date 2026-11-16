@@ -158,6 +158,8 @@ export const healthResponseSchema = Type.Object({
              * blocks in `send`, under Attachments.
              */
             attachments: Type.Optional(Type.Boolean()),
+            /** True when global `/v0/media` routes and IDs on tool-call media are available. */
+            media: Type.Optional(Type.Boolean()),
             /** True when the daemon can rename Surfaces and change their images. */
             surfaceEditing: Type.Optional(Type.Boolean()),
             /**

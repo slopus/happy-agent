@@ -13,10 +13,12 @@ import type {
 } from "./protocol/artifactActions.js";
 import type {
     Attachment,
-    AttachmentByteRange,
     AttachmentChunkResponse,
     AttachmentResponse,
 } from "./protocol/attachments.js";
+import type { MediaChunkResponse, MediaReadQuery, MediaResponse } from "./protocol/media.js";
+import type { Media } from "./protocol/media.js";
+import { fileUpload } from "./fileUpload.js";
 import type {
     ArtifactFileContent,
     ArtifactFileRequestOptions,
@@ -29,6 +31,11 @@ import type {
     ByteRange,
     ConditionalRequestOptions,
     ImageUpload,
+    FileUpload,
+    MediaChunk,
+    MediaContent,
+    MediaFile,
+    MediaRequestOptions,
     OptionallyVersionedRequestOptions,
     RequestOptions,
     ToolCallMediaContent,
@@ -449,6 +456,7 @@ interface HttpRequest {
     contentRange?: string | undefined;
     ifMatch?: string | undefined;
     ifNoneMatch?: string | undefined;
+    ifRange?: string | undefined;
     lastEventId?: string | undefined;
     signal?: AbortSignal | undefined;
     /** `304` is an answer rather than a failure on the conditional picture routes. */
@@ -1397,7 +1405,10 @@ export class HappyAgentClient {
         });
     }
 
-    /** The URL of `GET /v0/agents/:agentId/messages/:messageId/story-frame`, a quote's still. */
+    /**
+     * The URL of `GET /v0/agents/:agentId/messages/:messageId/story-frame`, a quote's still.
+     * @deprecated Current daemons answer 404 and always return `quote.frame: null`.
+     */
     storyQuoteFrameUrl(agentId: Cuid2, messageId: Cuid2): string {
         return endpointUrl(
             this.#endpoint,
@@ -3960,6 +3971,56 @@ export class HappyAgentClient {
         return endpointUrl(this.#endpoint, toolCallMediaPath(agentId, toolCallId, index));
     }
 
+    // Media
+
+    /** `PUT /v0/media?name=` — upload whole bytes independently of any conversation. */
+    async uploadMedia(file: MediaFile, options: RequestOptions = {}): Promise<MediaResponse> {
+        return await this.#uploadWhole("v0/media", file, options);
+    }
+
+    /** `PUT /v0/media/:mediaId?name=` — send a chunk, or probe with no `data`. */
+    async uploadMediaChunk(
+        mediaId: string,
+        chunk: MediaChunk,
+        options: RequestOptions = {},
+    ): Promise<MediaChunkResponse> {
+        return await this.#uploadChunk(mediaPath(mediaId), chunk, options);
+    }
+
+    /** Stream a Blob/File or random-access source; hash, send chunk zero, and resume large files. */
+    async uploadMediaFile(file: FileUpload, options: AttachFileOptions = {}): Promise<Media> {
+        return await fileUpload(file, options, {
+            whole: async (data) => (await this.uploadMedia({ ...file, data }, options)).media,
+            chunk: async (id, chunk) => {
+                const answer = await this.uploadMediaChunk(id, chunk, options);
+                return "media" in answer ? { complete: answer.media } : answer;
+            },
+        });
+    }
+
+    /**
+     * `GET /v0/media/:mediaId` — original or variant, with Range and conditional reads.
+     * Non-2xx variant answers throw HappyAgentApiError. Still `503 variant_not_ready` keeps the
+     * placeholder and retries after Retry-After; other failures may fall back to the original.
+     * Play falls back on any failure; unavailable variants answer `404 variant_unavailable`.
+     */
+    async getMedia(
+        mediaId: string,
+        options: MediaRequestOptions = {},
+    ): Promise<MediaContent | null> {
+        return await this.#fileContent(mediaPath(mediaId), options, { variant: options.variant });
+    }
+
+    /** A token transport's media URL: preview for tiles, large for the first viewer paint. */
+    mediaUrl(mediaId: string, query: MediaReadQuery = {}): string {
+        return endpointUrl(this.#endpoint, mediaPath(mediaId), { ...query });
+    }
+
+    /** `DELETE /v0/media/:mediaId` — cancel an upload or discard unreferenced uploaded media. */
+    async deleteMedia(mediaId: string, options: RequestOptions = {}): Promise<void> {
+        await this.#send({ method: "DELETE", path: mediaPath(mediaId), signal: options.signal });
+    }
+
     // Attachments
 
     /**
@@ -3971,16 +4032,7 @@ export class HappyAgentClient {
         file: AttachmentFile,
         options: RequestOptions = {},
     ): Promise<AttachmentResponse> {
-        return await this.#json({
-            method: "PUT",
-            path: attachmentsPath(agentId),
-            query: { name: file.name },
-            binary: {
-                contentType: file.contentType ?? "application/octet-stream",
-                data: file.data,
-            },
-            signal: options.signal,
-        });
+        return await this.#uploadWhole(attachmentsPath(agentId), file, options);
     }
 
     /**
@@ -3995,64 +4047,27 @@ export class HappyAgentClient {
         chunk: AttachmentChunk,
         options: RequestOptions = {},
     ): Promise<AttachmentChunkResponse> {
-        const data = chunk.data ?? new Uint8Array(0);
-        const start = chunk.start ?? 0;
-        return await this.#json({
-            method: "PUT",
-            path: attachmentPath(agentId, attachmentId),
-            query: { name: chunk.name },
-            binary: { contentType: chunk.contentType ?? "application/octet-stream", data },
-            contentRange:
-                chunk.data === undefined
-                    ? `bytes */${String(chunk.size)}`
-                    : `bytes ${String(start)}-${String(start + data.byteLength - 1)}/${String(chunk.size)}`,
-            signal: options.signal,
-        });
+        return await this.#uploadChunk(attachmentPath(agentId, attachmentId), chunk, options);
     }
 
     /**
      * Attach a file to a conversation and answer the attachment to name in `send`. A file up to
-     * `directLimit` goes in one request; a larger one is hashed and sent in chunks, asking first,
-     * so bytes the daemon already holds are not sent again.
+     * `directLimit` goes in one request; a larger one is hashed, sends chunk zero, then resumes
+     * from the daemon's acknowledged ranges, repeating at most one chunk already held.
      */
     async attachFile(
         agentId: Cuid2,
-        file: AttachmentFile,
+        file: FileUpload,
         options: AttachFileOptions = {},
     ): Promise<Attachment> {
-        const directLimit = options.directLimit ?? 8 * 1024 * 1024;
-        const chunkSize = options.chunkSize ?? 8 * 1024 * 1024;
-        if (file.data.byteLength <= directLimit) {
-            return (await this.uploadAttachment(agentId, file, options)).attachment;
-        }
-        const id = hexDigest(await globalThis.crypto.subtle.digest("SHA-256", file.data));
-        const chunk = {
-            name: file.name,
-            size: file.data.byteLength,
-            contentType: file.contentType,
-        };
-        let answer = await this.uploadAttachmentChunk(agentId, id, chunk, options);
-        let previous: number | undefined;
-        while (!("attachment" in answer)) {
-            const start = firstMissingByte(answer.upload.received);
-            if (start === previous) {
-                throw new Error(
-                    "The daemon did not keep the uploaded bytes; attach the file again.",
-                );
-            }
-            previous = start;
-            const end = Math.min(
-                nextReceivedByte(answer.upload.received, start),
-                start + chunkSize,
-            );
-            answer = await this.uploadAttachmentChunk(
-                agentId,
-                id,
-                { ...chunk, start, data: file.data.subarray(start, end) },
-                options,
-            );
-        }
-        return answer.attachment;
+        return await fileUpload(file, options, {
+            whole: async (data) =>
+                (await this.uploadAttachment(agentId, { ...file, data }, options)).attachment,
+            chunk: async (id, chunk) => {
+                const answer = await this.uploadAttachmentChunk(agentId, id, chunk, options);
+                return "attachment" in answer ? { complete: answer.attachment } : answer;
+            },
+        });
     }
 
     /**
@@ -4062,14 +4077,16 @@ export class HappyAgentClient {
     async getAttachment(
         agentId: Cuid2,
         attachmentId: string,
-        options: ArtifactFileRequestOptions = {},
+        options: MediaRequestOptions = {},
     ): Promise<ArtifactFileContent | null> {
-        return await this.#fileContent(attachmentPath(agentId, attachmentId), options);
+        return await this.#fileContent(attachmentPath(agentId, attachmentId), options, {
+            variant: options.variant,
+        });
     }
 
     /** The URL of an attachment's bytes, for an element loading them through a token transport. */
-    attachmentUrl(agentId: Cuid2, attachmentId: string): string {
-        return endpointUrl(this.#endpoint, attachmentPath(agentId, attachmentId));
+    attachmentUrl(agentId: Cuid2, attachmentId: string, query: MediaReadQuery = {}): string {
+        return endpointUrl(this.#endpoint, attachmentPath(agentId, attachmentId), { ...query });
     }
 
     /**
@@ -4475,16 +4492,53 @@ export class HappyAgentClient {
         };
     }
 
+    /** The upload protocol is shared by global media and the older attachment addresses. */
+    async #uploadWhole<T>(path: string, file: AttachmentFile, options: RequestOptions): Promise<T> {
+        return await this.#json({
+            method: "PUT",
+            path,
+            query: { name: file.name },
+            binary: {
+                contentType: file.contentType ?? "application/octet-stream",
+                data: file.data,
+            },
+            signal: options.signal,
+        });
+    }
+
+    async #uploadChunk<T>(
+        path: string,
+        chunk: AttachmentChunk,
+        options: RequestOptions,
+    ): Promise<T> {
+        const data = chunk.data ?? new Uint8Array(0);
+        const start = chunk.start ?? 0;
+        return await this.#json({
+            method: "PUT",
+            path,
+            query: { name: chunk.name },
+            binary: { contentType: chunk.contentType ?? "application/octet-stream", data },
+            contentRange:
+                chunk.data === undefined
+                    ? `bytes */${String(chunk.size)}`
+                    : `bytes ${String(start)}-${String(start + data.byteLength - 1)}/${String(chunk.size)}`,
+            signal: options.signal,
+        });
+    }
+
     /** Served file bytes, whole or one range; `null` when `If-None-Match` still matches. */
     async #fileContent(
         path: string,
-        options: ArtifactFileRequestOptions,
+        options: MediaRequestOptions,
+        query: QueryParameters = {},
     ): Promise<ArtifactFileContent | null> {
         const response = await this.#send({
             method: "GET",
             path,
+            query,
             accept: "*/*",
             ifNoneMatch: options.ifNoneMatch,
+            ifRange: options.ifRange,
             range: options.range === undefined ? undefined : rangeHeader(options.range),
             signal: options.signal,
             allowNotModified: true,
@@ -4527,6 +4581,7 @@ export class HappyAgentClient {
         }
         if (request.ifMatch !== undefined) headers["if-match"] = request.ifMatch;
         if (request.ifNoneMatch !== undefined) headers["if-none-match"] = request.ifNoneMatch;
+        if (request.ifRange !== undefined) headers["if-range"] = request.ifRange;
         if (request.lastEventId !== undefined) headers["last-event-id"] = request.lastEventId;
         if (request.range !== undefined) headers.range = request.range;
         if (request.contentRange !== undefined) headers["content-range"] = request.contentRange;
@@ -4658,25 +4713,12 @@ function attachmentsPath(agentId: Cuid2): string {
     return `v0/agents/${encodeURIComponent(agentId)}/attachments`;
 }
 
+function mediaPath(mediaId: string): string {
+    return `v0/media/${encodeURIComponent(mediaId)}`;
+}
+
 function attachmentPath(agentId: Cuid2, attachmentId: string): string {
     return `${attachmentsPath(agentId)}/${encodeURIComponent(attachmentId)}`;
-}
-
-function hexDigest(digest: ArrayBuffer): string {
-    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(
-        "",
-    );
-}
-
-/** The first byte an upload lacks, given the ranges it holds in order. */
-function firstMissingByte(received: readonly AttachmentByteRange[]): number {
-    const first = received[0];
-    return first === undefined || first.start > 0 ? 0 : first.end + 1;
-}
-
-/** Where the next held range after `start` begins, or infinity when none does. */
-function nextReceivedByte(received: readonly AttachmentByteRange[], start: number): number {
-    return received.find((range) => range.start > start)?.start ?? Number.POSITIVE_INFINITY;
 }
 
 function toolCallMediaPath(agentId: Cuid2, toolCallId: Cuid2, index: number): string {

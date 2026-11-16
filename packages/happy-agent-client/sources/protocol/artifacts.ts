@@ -4,6 +4,7 @@
  */
 
 import { type Static, Type } from "@sinclair/typebox";
+import { attachmentKindSchema } from "./attachments.js";
 
 import {
     cuid2Schema,
@@ -170,12 +171,15 @@ export const artifactSha256Schema = Type.String({ pattern: "^[0-9a-f]{64}$" });
  * optional, absent when the daemon could not take it and on older daemons.
  */
 export const artifactFileSchema = Type.Object({
-    /** Decided by the daemon from the path's extension; `application/octet-stream` when unknown. */
+    /** From the artifact path's extension; shared display metadata does not change this type. */
     mimeType: Type.String(),
     path: artifactPathSchema,
     sha256: artifactSha256Schema,
     /** Bytes, at least 1. */
     size: Type.Integer({ minimum: 1 }),
+    kind: Type.Optional(attachmentKindSchema),
+    animated: Type.Optional(Type.Literal(true)),
+    scale: Type.Optional(Type.Number({ exclusiveMinimum: 1, maximum: 4 })),
     /** The picture's or video's pixel size as displayed, after EXIF orientation or rotation. */
     width: Type.Optional(Type.Integer({ minimum: 1 })),
     height: Type.Optional(Type.Integer({ minimum: 1 })),

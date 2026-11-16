@@ -6,6 +6,8 @@
  * here for a schema to validate.
  */
 
+import type { MediaVariant } from "./protocol/media.js";
+
 /** Options every request accepts. */
 export interface RequestOptions {
     /** Cancels the request; the rejection is the signal's abort reason. */
@@ -122,10 +124,39 @@ export interface AttachmentChunk {
     contentType?: string | undefined;
 }
 
-/** How `attachFile` sends a file. */
+/** A global media upload uses the attachment upload protocol. */
+export type MediaFile = AttachmentFile;
+export type MediaChunk = AttachmentChunk;
+
+/** Random-access bytes; `end` is exclusive, and each read must return exactly that range. */
+export interface FileUploadSource {
+    size: number;
+    read(start: number, end: number): Promise<Uint8Array>;
+}
+
+/** A file can be read a chunk at a time instead of being loaded whole. */
+export interface FileUpload extends Omit<AttachmentFile, "data"> {
+    data: Uint8Array<ArrayBuffer> | Blob | FileUploadSource;
+}
+
+/** Read original media or a variant, with optional Range and ETag headers. */
+export interface MediaRequestOptions extends ArtifactFileRequestOptions {
+    variant?: MediaVariant | undefined;
+    /** Resume only if the current strong ETag matches; mismatches and dates receive 200. */
+    ifRange?: string | undefined;
+}
+
+/** Served media bytes, whole or one range. */
+export type MediaContent = ArtifactFileContent;
+
+/** How `attachFile` and `uploadMediaFile` send a file. */
 export interface AttachFileOptions extends RequestOptions {
-    /** The largest file sent in one request: 8 MiB unless said otherwise. */
+    /** The largest file sent in one request: 4 MiB unless said otherwise. */
     directLimit?: number | undefined;
-    /** How many bytes each chunk of a larger file carries: 8 MiB unless said otherwise. */
+    /** How many bytes each chunk of a larger file carries: 4 MiB unless said otherwise. */
     chunkSize?: number | undefined;
+    /** Durably received bytes (including resumed ranges), then total bytes; excludes hashing. */
+    onProgress?: ((uploadedBytes: number, totalBytes: number) => void) | undefined;
+    /** Bytes hashed, then total bytes, before sending a chunked upload; absent for direct uploads. */
+    onHashProgress?: ((hashedBytes: number, totalBytes: number) => void) | undefined;
 }
