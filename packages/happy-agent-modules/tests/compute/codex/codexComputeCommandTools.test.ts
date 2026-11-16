@@ -87,6 +87,61 @@ describe("codex compute command tools", () => {
         });
     });
 
+    it.each([
+        "powershell",
+        "PowerShell.exe",
+        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    ])(
+        "runs a native Windows command that names Windows PowerShell (%s) in the default shell",
+        async (shell) => {
+            const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+            const systemRoot = process.env.SystemRoot;
+            Object.defineProperty(process, "platform", { value: "win32" });
+            process.env.SystemRoot = "C:\\Windows";
+            try {
+                const { compute, tool, call } = await machine();
+                compute.script("Get-ChildItem", { chunks: ["README.md\n"], exitCode: 0 });
+
+                const result = await tool("exec_command").execute(
+                    ctx,
+                    { cmd: "Get-ChildItem", shell },
+                    call,
+                );
+
+                // The machine's own shell runs sandboxed; only a custom one needs Full access.
+                expect(compute.startedOptions[0]).not.toHaveProperty("shell");
+                expect(result.exit_code).toBe(0);
+            } finally {
+                Object.defineProperty(process, "platform", platform);
+                if (systemRoot === undefined) delete process.env.SystemRoot;
+                else process.env.SystemRoot = systemRoot;
+            }
+        },
+    );
+
+    it("keeps any other shell a native Windows command names", async () => {
+        const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+        Object.defineProperty(process, "platform", { value: "win32" });
+        try {
+            const { compute, tool, call } = await machine();
+            compute.script("Get-ChildItem", { chunks: [], exitCode: 0 });
+
+            await tool("exec_command").execute(ctx, { cmd: "Get-ChildItem", shell: "pwsh" }, call);
+            await tool("exec_command").execute(
+                ctx,
+                { cmd: "Get-ChildItem", shell: "D:\\tools\\powershell.exe" },
+                call,
+            );
+
+            expect(compute.startedOptions.map((options) => options.shell)).toEqual([
+                "pwsh",
+                "D:\\tools\\powershell.exe",
+            ]);
+        } finally {
+            Object.defineProperty(process, "platform", platform);
+        }
+    });
+
     it("passes selected secret bundle IDs through to the machine", async () => {
         const { compute, tool, call } = await machine();
         compute.script("printenv TOKEN", { chunks: ["set\n"], exitCode: 0 });
