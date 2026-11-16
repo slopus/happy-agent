@@ -404,6 +404,30 @@ describe("UsageModule edge cases", () => {
         });
     });
 
+    it("preserves distinct max and ultra usage through storage, aggregation, and reload", async () => {
+        await withUsageDatabase("usage-ultra-roundtrip", async (database) => {
+            const store = new UsageDatabase();
+            const records = [
+                inferenceRecord("max-inference", "agent-1", 10, { effort: "max" }),
+                inferenceRecord("ultra-inference", "agent-1", 20, { effort: "ultra" }),
+                turnRecord("ultra-turn", "agent-1", 30, { effort: "ultra" }),
+            ];
+            for (const record of records) await store.record(database.context, record);
+
+            const fresh = new UsageModule(new EventsModule());
+            expect((await fresh.readPage(database.context, "agent-1")).records).toEqual(records);
+            const summary = await fresh.aggregate(database.context, { agentId: "agent-1" });
+            expect(summary.groups).toHaveLength(2);
+            expect(summary.groups).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({ effort: "max", inferenceCount: 1, turnCount: 0 }),
+                    expect.objectContaining({ effort: "ultra", inferenceCount: 1, turnCount: 1 }),
+                ]),
+            );
+            expect(summary.currentContext).toMatchObject({ effort: "ultra", contextTokens: 25 });
+        });
+    });
+
     it("rejects semantically invalid persisted duration from raw-page reads", async () => {
         await withUsageDatabase("usage-invalid-persisted-duration", async (database) => {
             const invalid = inferenceRecord("invalid-duration", "agent-1", 20, {

@@ -99,7 +99,7 @@ const HAPPY_EFFORTS: readonly SessionReasoningEffort[] = [
 /**
  * Happy models from a model selector whose values carry their efforts in `_meta`, as the
  * first-party drivers report them. Efforts Happy has no name for are left out, and a value with
- * none is offered at medium.
+ * none is offered at medium. A driver must explicitly opt into additional efforts it can send.
  */
 export function foreignModelsWithEfforts(
     prefix: string,
@@ -108,10 +108,11 @@ export function foreignModelsWithEfforts(
         value: string,
         name: string,
     ) => { readonly name: string; readonly contextWindow: number },
+    acceptedEfforts: readonly SessionReasoningEffort[] = HAPPY_EFFORTS,
 ): readonly ForeignAgentModel[] {
     return values.map(({ value, name, meta }) => {
         const offered = Array.isArray(meta?.["efforts"]) ? (meta["efforts"] as unknown[]) : [];
-        const efforts = HAPPY_EFFORTS.filter((effort) => offered.includes(effort));
+        const efforts = acceptedEfforts.filter((effort) => offered.includes(effort));
         const effortLevels = efforts.length === 0 ? (["medium"] as const) : efforts;
         const preferred = meta?.["defaultEffort"];
         const defaultEffort =

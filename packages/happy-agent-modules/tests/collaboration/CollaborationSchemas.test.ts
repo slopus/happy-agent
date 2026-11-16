@@ -26,7 +26,7 @@ describe("collaboration schemas", () => {
     });
 
     it("accepts every supported effort and rejects unknown values", () => {
-        for (const effort of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+        for (const effort of ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]) {
             expect(Value.Check(collaborationEffortSchema, effort), effort).toBe(true);
         }
         expect(Value.Check(collaborationEffortSchema, "default")).toBe(false);

@@ -149,6 +149,40 @@ describe("OpenAI-compatible Chat Completions provider", () => {
         }
     });
 
+    it("rejects Ultra when the model has no configured effort support", async () => {
+        const transport = mockTransport(() => answer());
+        const session = await provider(transport.fetch, {
+            models: [{ id: DEEPSEEK }],
+        }).session("unsupported-ultra", { instructions: "" });
+        try {
+            const rejected = await collect(session.run(testContext, { context, effort: "ultra" }));
+            expect(rejected.at(-1)).toMatchObject({
+                state: "error",
+                message: `${DEEPSEEK} does not advertise Ultra reasoning effort.`,
+            });
+            expect(transport.requests).toHaveLength(0);
+        } finally {
+            session.destroy();
+        }
+    });
+
+    it.each(["ultra", "max"] as const)(
+        "forwards explicitly configured %s effort",
+        async (effort) => {
+            const transport = mockTransport(() => answer());
+            const session = await provider(transport.fetch, {
+                models: [{ id: DEEPSEEK, efforts: ["max", "ultra"] }],
+            }).session("configured-effort", { instructions: "" });
+            try {
+                const events = await collect(session.run(testContext, { context, effort }));
+                expect(events.at(-1)).toMatchObject({ state: "normal" });
+                expect(transport.requests[0]!.body.reasoning_effort).toBe(effort);
+            } finally {
+                session.destroy();
+            }
+        },
+    );
+
     it("reports each model's configured input types and rejects images for text-only models", async () => {
         const transport = mockTransport(() => answer());
         expect(provider(transport.fetch, { model: DEEPSEEK }).inputTypes).toEqual([
