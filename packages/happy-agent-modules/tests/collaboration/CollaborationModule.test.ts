@@ -1489,10 +1489,8 @@ describe("collaboration", () => {
         expect(instructions).toContain(
             `or [](https://link.happy.page/#1/${instanceId}/workspaces/<workspace ID>/files/<path>)`,
         );
-        expect(instructions).toContain("Copy Happy links you receive unchanged.");
-        // Agents are taught share links only; older forms are read, never taught.
-        expect(instructions.replace(/\[\]\(https:\/\/link\.happy\.page\/[^)]*\)/g, "")).not.toMatch(
-            /happy(-file)?:\/\//,
+        expect(instructions).toContain(
+            "Copy Happy links you receive unchanged, whether they start with https://link.happy.page/, happy://, or happy-file://.",
         );
         expect(instructions).toContain("Otherwise keep writing path:line.");
         // The example the model copies, with its path filled in, is a link the shared parser accepts.
