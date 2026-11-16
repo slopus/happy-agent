@@ -231,7 +231,7 @@ describe("History tool presentations", () => {
                     type: "file_diff",
                     files: [
                         {
-                            path: "sources/new.ts",
+                            path: "/workspace/sources/new.ts",
                             kind: "add",
                             added: 1,
                             deleted: 0,
