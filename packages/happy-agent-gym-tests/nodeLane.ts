@@ -8,6 +8,7 @@ export const nodeLaneScenarios: readonly string[] = [
     // Transport and streaming: SSE frames, file bodies, proxied bodies, and request paths.
     "happy_api_events_transport_matrix.test.ts",
     "mobile_connector_phones_use_the_api_over_their_own_socket.test.ts",
+    "account_link_makes_a_daemon_reachable_through_the_relay.test.ts",
     "happy_api_proxy_matrix.test.ts",
     "happy_api_websocket_tunnels_carry_proxy_bytes.test.ts",
     "happy_api_server_connections_by_url.test.ts",

@@ -65,6 +65,10 @@ export * from "./userEnvironment/index.js";
 // Tailcat: stable account-free internet exposure, controlled only by active admin bots.
 export * from "./tailcat/index.js";
 
+// Account link: ties this daemon to one Happy account and attaches it to the Happy Relay while
+// its owner has marked it reachable, controlled only by active admin bots.
+export * from "./accountLink/index.js";
+
 // Mobile connector: phones pair by QR code and reach the daemon directly over their own Tailcat.
 export * from "./mobileConnector/index.js";
 export * from "./connections/index.js";
