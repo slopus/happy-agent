@@ -580,6 +580,10 @@ A chat UI action sets the default model through `setDefaultModel`, not through t
 nothing told clients it changed. Config now calls `onDefaultModelChanged` listeners after the
 write, and the API announces `config.updated` from there for every caller.
 
+## A foreign agent's own turn wakes the agent
+
+Claude Code starts a turn by itself when a background command it started finishes. That turn's output arrived after the prompt had ended, when no Happy run was reading, and was dropped, and Agent Base had no reason to run the agent again. A foreign agent provider's turn environment now carries `wake`, which config answers by sending the provider's hidden system notice to the agent through the agent system handed to its `beforeStart`. Config sends it itself rather than through a listener another module registers, because it already builds the providers and needs nothing but the agent system to deliver a message.
+
 ## A harness's permission ask reaches the person through user input
 
 Foreign-agent providers are built in config, but asking the person belongs to user input, which

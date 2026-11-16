@@ -1,9 +1,10 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import { BaseSession } from "@/core/BaseSession.js";
 import type { SessionCompaction, SessionCompactionOptions } from "@/core/SessionCompaction.js";
-import type { SessionMessage } from "@/core/SessionContext.js";
+import type { SessionMessage, SessionSystemMessage } from "@/core/SessionContext.js";
 import type { SessionEvent, SessionStream } from "@/core/SessionEvent.js";
 import type { SessionRunRequest } from "@/core/SessionRunRequest.js";
 import type { SessionTool } from "@/core/SessionTool.js";
@@ -18,6 +19,9 @@ import { acpCompactWithAgent } from "@/protocol/acp/impl/acpCompactWithAgent.js"
 import {
     ACP_APPROVED_TOOLS_META,
     ACP_BRIDGED_CALL_META,
+    ACP_TURN_ENDED,
+    ACP_TURN_STARTED,
+    acpTurnEndedSchema,
     type AcpConnection,
 } from "@/protocol/acp/AcpConnection.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
@@ -56,8 +60,19 @@ const CANCEL_GRACE_MS = 2_000;
  * sessions on one account at once — clears within seconds.
  */
 const RATE_LIMIT_RETRY_MS = [3_000, 10_000, 30_000];
+/**
+ * The most updates kept while no turn is live, for a turn the agent may announce right after
+ * them. Beyond it the oldest are dropped.
+ */
+const MAX_UNCLAIMED_UPDATES = 1_000;
 /** The most of an ask's raw input shown to the person, in characters. */
 const MAX_ACTION_INPUT = 50_000;
+/**
+ * The hidden system message that wakes the agent for a turn the foreign agent started on its own.
+ * It only starts the run that shows that turn; the foreign agent is never sent it.
+ */
+export const ACP_SELF_STARTED_NOTICE =
+    "The agent started a turn on its own, such as after a background command finished. Its output follows.";
 const ABORTED = Symbol("acp_aborted");
 const STEERED = Symbol("acp_steered");
 
@@ -90,6 +105,17 @@ interface LiveTurn {
     reading: Promise<TurnItem> | undefined;
     /** The prompt last sent, so one the service refused can be sent again. */
     sent: acp.ContentBlock[] | undefined;
+    /**
+     * The agent started this turn on its own, with no prompt open, and Happy was woken to show it.
+     * The next run takes it over; until then what it reports waits here.
+     */
+    readonly unsolicited: boolean;
+}
+
+/** A turn the agent announced it started on its own, and what releases those waiting for its end. */
+interface SelfStartedTurn {
+    readonly turn: LiveTurn;
+    readonly ended: () => void;
 }
 
 /**
@@ -116,6 +142,16 @@ export class AcpSession extends BaseSession {
      */
     #keptSessionId: string | undefined;
     #turn: LiveTurn | undefined;
+    /** The turn the agent announced it started on its own, until it announces its end. */
+    #selfStarted: SelfStartedTurn | undefined;
+    /**
+     * Updates that arrived while no turn was live. The ACP connection does not hand notifications
+     * to the client in the order the agent sent them, so the first updates of a turn the agent
+     * starts on its own can arrive before the notice that announces it; that turn claims them.
+     */
+    readonly #unclaimed: acp.SessionUpdate[] = [];
+    /** Settles once no turn the agent started on its own is running. */
+    #selfStartedEnd: Promise<void> = Promise.resolve();
     #previousPrompt: Promise<unknown> = Promise.resolve();
     /** Settles once a stopped agent process has exited, so its successor never overlaps it. */
     #stopping: Promise<void> = Promise.resolve();
@@ -149,7 +185,7 @@ export class AcpSession extends BaseSession {
             ctx.lifetime === undefined
                 ? stopped.signal
                 : AbortSignal.any([ctx.lifetime, stopped.signal]);
-        const inner = this.#stream(ctx, lifetime, request);
+        const inner = this.#stream(ctx, lifetime, request, true);
         return {
             [Symbol.asyncIterator]: () => ({
                 next: () => inner.next(),
@@ -162,8 +198,11 @@ export class AcpSession extends BaseSession {
     }
 
     async compact(ctx: Context, options: SessionCompactionOptions): Promise<SessionCompaction> {
+        // A turn the agent started on its own would answer the summary request with its own
+        // output, so compaction waits for it to end.
+        await Promise.race([this.#selfStartedEnd, abortPromise(ctx.lifetime)]);
         const result = await acpCompactWithAgent(ctx, options, (runCtx, request) =>
-            this.#stream(runCtx, runCtx.lifetime, request),
+            this.#stream(runCtx, runCtx.lifetime, request, false),
         );
         if (result.status === "completed") {
             // The foreign session still holds the long context; the next run opens a new one
@@ -178,6 +217,7 @@ export class AcpSession extends BaseSession {
 
     destroy(): void {
         this.#destroyed = true;
+        this.#endSelfStarted();
         this.#abandonTurn();
         this.#bridge?.close();
         this.#bridge = undefined;
@@ -187,15 +227,32 @@ export class AcpSession extends BaseSession {
         connection?.terminate();
     }
 
+    /**
+     * One Happy response. `adopt` lets it take over a turn the agent started on its own; a
+     * compaction's summary request never does.
+     */
     async *#stream(
         ctx: Context,
         signal: AbortSignal | undefined,
-        request: SessionRunRequest,
+        original: SessionRunRequest,
+        adopt: boolean,
     ): AsyncGenerator<SessionEvent> {
         if (signal?.aborted) {
             yield { type: "done", state: "cancelled" };
             return;
         }
+        // Wake notices only start runs; the foreign session never sees them, so what it has
+        // consumed is counted without them.
+        const request: SessionRunRequest = {
+            ...original,
+            context: {
+                ...original.context,
+                messages: original.context.messages.filter(
+                    (message) => !isSelfStartedNotice(message),
+                ),
+            },
+        };
+        const woken = isSelfStartedNotice(original.context.messages.at(-1));
         const environment = this.#options.environment(ctx);
         this.#environment = environment;
         this.#runCtx = ctx;
@@ -204,12 +261,24 @@ export class AcpSession extends BaseSession {
         let connection: AcpConnection | undefined;
         let turn: LiveTurn;
         try {
+            if (
+                woken &&
+                !(adopt && this.#turn?.unsolicited === true) &&
+                (await this.#consumedEverything(request.context.messages))
+            ) {
+                // The turn this notice was sent for is gone — it was shown already, or the daemon
+                // restarted and its output was only ever in memory — and there is nothing new to
+                // send, so the run ends empty instead of prompting the agent.
+                yield { type: "block_stop" };
+                yield { type: "done", state: "normal", tokens: { input: 0, output: 0 } };
+                return;
+            }
             connection = await this.#connect(environment);
             await this.#loadRecord();
             const live = this.#turn;
             if (
                 live !== undefined &&
-                (live.awaiting.size > 0 || live.steering) &&
+                (live.awaiting.size > 0 || live.steering || (adopt && live.unsolicited)) &&
                 this.#acpSessionId !== undefined
             ) {
                 turn = live;
@@ -314,7 +383,7 @@ export class AcpSession extends BaseSession {
                             this.#sendPrompt(connection, turn, turn.sent);
                             continue;
                         }
-                        this.#turn = undefined;
+                        if (this.#turn === turn) this.#turn = undefined;
                         finished = true;
                         yield { type: "block_stop" };
                         if (waited === ABORTED) {
@@ -326,7 +395,7 @@ export class AcpSession extends BaseSession {
                         yield { type: "done", state: "normal", tokens: { input: 0, output: 0 } };
                         return;
                     }
-                    this.#turn = undefined;
+                    if (this.#turn === turn) this.#turn = undefined;
                     finished = true;
                     yield { type: "block_stop" };
                     yield errorDone(item.error, connection.stderr());
@@ -346,7 +415,8 @@ export class AcpSession extends BaseSession {
                     yield { type: "toolcall_end", callId: call.callId, arguments: call.arguments };
                 }
                 const response = item.kind === "prompt_end" ? item.response : undefined;
-                if (response !== undefined) this.#turn = undefined;
+                // The agent may already have started a turn of its own that replaced this one.
+                if (response !== undefined && this.#turn === turn) this.#turn = undefined;
                 const usage = this.#usage(response, events.outputCharacters);
                 const tokens = { input: usage.input, output: usage.output };
                 await this.#commit(request.context.messages);
@@ -439,6 +509,7 @@ export class AcpSession extends BaseSession {
                 void connection.exited.then((error) => {
                     // A stopped agent was already detached; its exit belongs to no current turn.
                     if (this.#connection !== connection) return;
+                    this.#endSelfStarted();
                     this.#turn?.items.push({ kind: "prompt_error", error });
                     this.#connection = undefined;
                     this.#acpSessionId = undefined;
@@ -466,9 +537,96 @@ export class AcpSession extends BaseSession {
                 if (params.update.sessionUpdate === "usage_update") {
                     this.#contextUsed = params.update.used;
                 }
-                this.#turn?.items.push({ kind: "update", update: params.update });
+                const turn = this.#turn;
+                if (turn !== undefined) {
+                    turn.items.push({ kind: "update", update: params.update });
+                    return;
+                }
+                this.#unclaimed.push(params.update);
+                if (this.#unclaimed.length > MAX_UNCLAIMED_UPDATES) this.#unclaimed.shift();
+            },
+            extNotification: async (method, params) => {
+                if (this.#replaying || params["sessionId"] !== this.#acpSessionId) return;
+                if (method === ACP_TURN_STARTED) this.#startSelfStarted();
+                if (method === ACP_TURN_ENDED) {
+                    // The ACP connection hands each incoming message to its handlers without
+                    // waiting for the one before, so an update the agent sent earlier may still be
+                    // on its way. Ending the turn a moment later lets it land in the turn first.
+                    const started = this.#selfStarted;
+                    if (started !== undefined) {
+                        setImmediate(() => this.#finishSelfStarted(started, params));
+                    }
+                }
             },
         };
+    }
+
+    /**
+     * The agent started a turn on its own. A prompt Happy sent has ended by now, even if its
+     * response has not read that yet, so what follows belongs to a new turn: it waits in a live
+     * turn of its own, and the agent is woken so a run takes it over and shows it.
+     */
+    #startSelfStarted(): void {
+        this.#endSelfStarted();
+        const turn: LiveTurn = {
+            items: new AcpTurnQueue(),
+            awaiting: new Map(),
+            deferred: [],
+            steering: false,
+            reading: undefined,
+            sent: undefined,
+            unsolicited: true,
+        };
+        let ended!: () => void;
+        this.#selfStartedEnd = new Promise((resolve) => (ended = resolve));
+        this.#selfStarted = { turn, ended };
+        for (const update of this.#unclaimed.splice(0)) turn.items.push({ kind: "update", update });
+        this.#turn = turn;
+        this.#environment?.wake?.({
+            role: "system",
+            content: [{ type: "text", text: ACP_SELF_STARTED_NOTICE }],
+        });
+    }
+
+    /** The agent ended the turn it started on its own. */
+    #finishSelfStarted(started: SelfStartedTurn, params: Record<string, unknown>): void {
+        if (this.#selfStarted === started) this.#endSelfStarted();
+        else started.ended();
+        if (this.#turn === started.turn) this.#withdrawAsks();
+        if (!Value.Check(acpTurnEndedSchema, params)) {
+            started.turn.items.push({
+                kind: "prompt_error",
+                error: new Error("The agent ended its turn with a report Happy cannot read."),
+            });
+        } else if ("error" in params) {
+            started.turn.items.push({ kind: "prompt_error", error: new Error(params.error) });
+        } else {
+            started.turn.items.push({
+                kind: "prompt_end",
+                response: {
+                    stopReason: params.stopReason,
+                    ...(params.usage === undefined ? {} : { usage: params.usage }),
+                },
+            });
+        }
+    }
+
+    /** Stop tracking the turn the agent started on its own, releasing whatever waits for it. */
+    #endSelfStarted(): void {
+        this.#selfStarted?.ended();
+        this.#selfStarted = undefined;
+    }
+
+    /** Whether the foreign session has already been given every input in `messages`. */
+    async #consumedEverything(messages: readonly SessionMessage[]): Promise<boolean> {
+        await this.#loadRecord();
+        const record = this.#record;
+        if (record === undefined) return false;
+        const inputs = inputMessages(messages);
+        return (
+            record.consumed === inputs.length &&
+            acpTranscriptFingerprint(inputs) === record.fingerprint
+        );
     }
 
     async #loadRecord(): Promise<void> {
@@ -644,7 +802,10 @@ export class AcpSession extends BaseSession {
             steering: false,
             reading: undefined,
             sent: undefined,
+            unsolicited: false,
         };
+        // Whatever arrived between turns belongs to no turn this prompt starts.
+        this.#unclaimed.length = 0;
         this.#turn = turn;
         this.#sendPrompt(connection, turn, prompt);
         return turn;
@@ -837,6 +998,15 @@ export class AcpSession extends BaseSession {
             totalTokens: input + output,
         };
     }
+}
+
+function isSelfStartedNotice(message: SessionMessage | undefined): message is SessionSystemMessage {
+    return (
+        message?.role === "system" &&
+        message.content.length === 1 &&
+        message.content[0]!.type === "text" &&
+        message.content[0]!.text === ACP_SELF_STARTED_NOTICE
+    );
 }
 
 /** Everything the foreign session consumes. Its own responses are never sent back to it. */

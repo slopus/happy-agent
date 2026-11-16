@@ -18,6 +18,8 @@ import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import {
     ACP_APPROVED_TOOLS_META,
     ACP_BRIDGED_CALL_META,
+    ACP_TURN_ENDED,
+    ACP_TURN_STARTED,
     type AcpAgentConnection,
     type AcpConnect,
     type AcpConnection,
@@ -81,18 +83,31 @@ export function claudeAgentConnect(
     };
 }
 
+/** The turn Claude Code is running: from its first message until its result. */
+interface ClaudeTurn {
+    /**
+     * The prompt waiting for this turn to end. A turn Claude Code started on its own has none
+     * until a prompt sent while it runs joins it.
+     */
+    prompt:
+        | {
+              resolve(response: acp.PromptResponse): void;
+              reject(error: Error): void;
+          }
+        | undefined;
+    cancelled: boolean;
+    /**
+     * Claude Code started this turn by itself, such as when a background command it started
+     * finished. No prompt asked for it, so the client is told when it starts and ends.
+     */
+    readonly selfStarted: boolean;
+}
+
 interface ClaudeThread {
     readonly query: Query;
     readonly input: AsyncInputQueue<SDKUserMessage>;
     readonly models: Promise<readonly ModelInfo[]>;
-    /** The prompt waiting for its turn to end. */
-    turn:
-        | {
-              resolve(response: acp.PromptResponse): void;
-              reject(error: Error): void;
-              cancelled: boolean;
-          }
-        | undefined;
+    turn: ClaudeTurn | undefined;
     model: string | undefined;
     effort: string | undefined;
     mode: PermissionMode;
@@ -157,9 +172,21 @@ class ClaudeAgentConnection implements AcpAgentConnection {
 
     async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
         const thread = this.#thread(params.sessionId);
-        if (thread.turn !== undefined) throw new Error("A Claude turn is already running.");
+        const running = thread.turn;
+        if (running !== undefined) {
+            // A prompt sent while Claude Code runs a turn of its own joins that turn at its next
+            // step, as typing into Claude Code does, and is answered when it ends. Sent as an
+            // ordinary message it would wait for that turn to end and be answered by the next.
+            if (!running.selfStarted || running.prompt !== undefined || running.cancelled) {
+                throw new Error("A Claude turn is already running.");
+            }
+            return await new Promise<acp.PromptResponse>((resolve, reject) => {
+                running.prompt = { resolve, reject };
+                thread.input.push(userMessage(params.prompt, "next"));
+            });
+        }
         return await new Promise<acp.PromptResponse>((resolve, reject) => {
-            thread.turn = { resolve, reject, cancelled: false };
+            thread.turn = { prompt: { resolve, reject }, cancelled: false, selfStarted: false };
             thread.input.push(userMessage(params.prompt, undefined));
         });
     }
@@ -368,7 +395,11 @@ class ClaudeAgentConnection implements AcpAgentConnection {
         };
     }
 
-    /** Translate one query's messages into ACP updates and end each prompt at its result. */
+    /**
+     * Translate one query's messages into ACP updates and end each turn at its result. Claude Code
+     * also starts turns by itself, as when a background command finishes: such a turn is
+     * announced to the client before its first update and ended at its own result.
+     */
     async #pump(sessionId: string, thread: ClaudeThread): Promise<void> {
         const updates = claudeAgentUpdates();
         // The context is the prompt of the last main-thread API call, cache included. The result
@@ -394,6 +425,10 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                     });
                     if (usage !== null) this.#onAccountUsage?.(usage);
                 }
+                if (thread.turn === undefined && beginsTurn(message)) {
+                    thread.turn = { prompt: undefined, cancelled: false, selfStarted: true };
+                    await this.#client.extNotification?.(ACP_TURN_STARTED, { sessionId });
+                }
                 for (const update of updates.translate(message)) {
                     await this.#client.sessionUpdate({ sessionId, update });
                 }
@@ -401,17 +436,15 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                 const turn = thread.turn;
                 thread.turn = undefined;
                 const failure = claudeTurnFailure(message);
-                if (failure !== undefined && turn?.cancelled === false) {
-                    // A turn the API refused would otherwise read as one with nothing to say.
-                    turn.reject(new Error(failure));
-                    continue;
-                }
-                turn?.resolve({
-                    stopReason: turn.cancelled
-                        ? "cancelled"
-                        : message.subtype === "error_max_turns"
-                          ? "max_turn_requests"
-                          : "end_turn",
+                // A turn the API refused would otherwise read as one with nothing to say.
+                const failed = failure !== undefined && turn?.cancelled === false;
+                const response: acp.PromptResponse = {
+                    stopReason:
+                        turn?.cancelled === true
+                            ? "cancelled"
+                            : message.subtype === "error_max_turns"
+                              ? "max_turn_requests"
+                              : "end_turn",
                     usage: {
                         inputTokens: context,
                         outputTokens: message.usage.output_tokens,
@@ -419,17 +452,34 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                         cachedWriteTokens: message.usage.cache_creation_input_tokens ?? 0,
                         totalTokens: context + message.usage.output_tokens,
                     },
-                });
+                };
+                if (turn?.selfStarted === true) {
+                    await this.#client.extNotification?.(
+                        ACP_TURN_ENDED,
+                        failed
+                            ? { sessionId, error: failure }
+                            : { sessionId, stopReason: response.stopReason, usage: response.usage },
+                    );
+                }
+                if (failed) turn?.prompt?.reject(new Error(failure));
+                else turn?.prompt?.resolve(response);
             }
         } catch (error) {
             this.#stderr = `${this.#stderr}\n${String(error)}`.slice(-4000);
         }
-        // The query ended: a prompt still waiting gets no more output.
+        // The query ended: a turn still running gets no more output.
         const turn = thread.turn;
         thread.turn = undefined;
-        if (turn?.cancelled === true) turn.resolve({ stopReason: "cancelled" });
-        else turn?.reject(new Error(`Claude Code ended the turn.\n${this.#stderr.trim()}`.trim()));
-        if (this.#threads.get(sessionId) === thread && !this.#closed) {
+        const ended = `Claude Code ended the turn.\n${this.#stderr.trim()}`.trim();
+        const current = this.#threads.get(sessionId) === thread && !this.#closed;
+        if (turn?.selfStarted === true && current) {
+            await Promise.resolve(
+                this.#client.extNotification?.(ACP_TURN_ENDED, { sessionId, error: ended }),
+            ).catch(() => undefined);
+        }
+        if (turn?.cancelled === true) turn.prompt?.resolve({ stopReason: "cancelled" });
+        else turn?.prompt?.reject(new Error(ended));
+        if (current) {
             this.#threads.delete(sessionId);
             this.#exit(new Error(`Claude Code ended the session.\n${this.#stderr.trim()}`));
         }
@@ -521,6 +571,21 @@ function userMessage(
         origin: { kind: "human" },
         ...(priority === undefined ? {} : { priority }),
     };
+}
+
+/**
+ * Whether a message arriving while no turn runs means Claude Code began one by itself. Session
+ * start and bookkeeping between turns — hooks, background task changes, status, rate limits —
+ * do not; the `init` that opens every turn, or the model's own output, do.
+ */
+function beginsTurn(message: SDKMessage): boolean {
+    if (message.type === "system") return message.subtype === "init";
+    return (
+        (message.type === "stream_event" ||
+            message.type === "assistant" ||
+            message.type === "user") &&
+        message.parent_tool_use_id === null
+    );
 }
 
 /** Why a turn's result reports failure, if it does. */
