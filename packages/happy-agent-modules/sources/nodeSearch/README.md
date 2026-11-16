@@ -40,3 +40,9 @@ see, titled or not, rebuilt in the background at most every five seconds, so a s
 on more than the first build. Bots and tasks go by their own names, other conversations by their
 titles, and untitled ones are found only through their messages. The same catalog decides whose
 messages a caller may find: every conversation, but a task and its subtasks only for its members.
+It also records each conversation's parent, which `agent` and `message` results report as
+`parentAgentId`.
+
+A conversation contributes at most three messages, its best, so one long conversation cannot take
+every message result; each message result says in `agentMatchCount` how many of its
+conversation's messages matched.

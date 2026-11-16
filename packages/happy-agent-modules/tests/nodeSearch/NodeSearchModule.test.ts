@@ -62,7 +62,7 @@ const AGENTS: Record<string, { metadata: Record<string, unknown>; children?: str
 };
 
 /** Agents whose messages hold the query, as the history's word index would find them. */
-const MESSAGES = ["untitled", "secretAgent", "hidden1", "chat1", "botAgent"];
+const MESSAGES = ["untitled", "secretAgent", "hidden1", "chat1", "botAgent", "sub1"];
 
 function fixture(
     providers: { vaults?: Search; todos?: Search } = {},
@@ -79,14 +79,17 @@ function fixture(
         },
     } as unknown as SurfacesModule;
     const artifacts = { search: none } as unknown as ArtifactsModule;
+    const perAgentCaps: number[] = [];
     const history = {
         searchMessages: async (
             _ctx: Context,
             q: string,
             agentIds: ReadonlySet<string>,
             limit: number,
-        ) =>
-            MESSAGES.filter((agentId) => q === "launch" && agentIds.has(agentId))
+            perAgent: number,
+        ) => {
+            perAgentCaps.push(perAgent);
+            return MESSAGES.filter((agentId) => q === "launch" && agentIds.has(agentId))
                 .slice(0, limit + 1)
                 .map((agentId) => ({
                     type: "message",
@@ -96,7 +99,9 @@ function fixture(
                     role: "user",
                     snippet: "See you at the launch",
                     createdAt: 7,
-                })),
+                    agentMatchCount: 5,
+                }));
+        },
     } as unknown as HistoryModule;
     const team = {
         enabled: options.team ?? true,
@@ -170,6 +175,8 @@ function fixture(
                 ? undefined
                 : ({ metadata: AGENTS[id].metadata } as AgentConfig),
         childOf: async (_ctx: Context, id: string) => AGENTS[id]?.children ?? [],
+        parentOf: async (_ctx: Context, id: string) =>
+            Object.keys(AGENTS).find((parent) => AGENTS[parent]!.children?.includes(id)) ?? null,
     } as unknown as AgentSystemRef;
     const nodeSearch = new NodeSearchModule(
         surfaces,
@@ -185,7 +192,7 @@ function fixture(
     );
     const ctx = createRootContext();
     nodeSearch.beforeStart(ctx, agents);
-    return { nodeSearch, ctx };
+    return { nodeSearch, ctx, perAgentCaps };
 }
 
 describe("NodeSearchModule", () => {
@@ -255,19 +262,28 @@ describe("NodeSearchModule", () => {
                     result.archived,
                     result.workspaceId,
                     result.projectId,
+                    (result as { parentAgentId?: string | null }).parentAgentId,
                 ])
                 .sort(),
         ).toEqual(
             [
                 // A bot's and a task's agent go by its own name, in its own workspace.
-                ["botAgent", "Launch bot", "bot", true, "botSpace", null],
+                ["botAgent", "Launch bot", "bot", true, "botSpace", null, null],
                 // A project conversation is in the project's root workspace.
-                ["chat1", "Launch chat", "chat", false, "p1", "p1"],
-                ["chat2", "Old launch", "chat", true, "p2", "p2"],
-                // A subtask works in its own workspace, or else its parent's.
-                ["sub1", "Launch subtask", "subtask", false, "w1", "p1"],
-                ["taskAgent", "Launch task", "task", false, "taskSpace", null],
-                ["taskSub", "Launch task subtask", "subtask", false, "taskSpace", null],
+                ["chat1", "Launch chat", "chat", false, "p1", "p1", null],
+                ["chat2", "Old launch", "chat", true, "p2", "p2", null],
+                // A subtask works in its own workspace, or else its parent's, and names its parent.
+                ["sub1", "Launch subtask", "subtask", false, "w1", "p1", "chat1"],
+                ["taskAgent", "Launch task", "task", false, "taskSpace", null, null],
+                [
+                    "taskSub",
+                    "Launch task subtask",
+                    "subtask",
+                    false,
+                    "taskSpace",
+                    null,
+                    "taskAgent",
+                ],
                 // Not hidden subagents, untitled agents, or tasks the caller has not joined.
             ].sort(),
         );
@@ -291,20 +307,29 @@ describe("NodeSearchModule", () => {
     });
 
     it("finds messages of every conversation the caller sees, titled or not, where they are", async () => {
-        const { nodeSearch, ctx } = fixture();
+        const { nodeSearch, ctx, perAgentCaps } = fixture();
         const found = await nodeSearch.search(ctx, { q: "launch", types: ["message"] });
         // Not a hidden subagent's, nor those of a task the caller has not joined.
         expect(
             found.results.map((result) =>
                 result.type === "message"
-                    ? [result.key, result.workspaceId, result.projectId]
+                    ? [
+                          result.key,
+                          result.workspaceId,
+                          result.projectId,
+                          (result as { parentAgentId?: string | null }).parentAgentId,
+                      ]
                     : [result.key],
             ),
         ).toEqual([
-            ["message:m-untitled", "p1", "p1"],
-            ["message:m-chat1", "p1", "p1"],
-            ["message:m-botAgent", "botSpace", null],
+            ["message:m-untitled", "p1", "p1", null],
+            ["message:m-chat1", "p1", "p1", null],
+            ["message:m-botAgent", "botSpace", null, null],
+            // A subtask's message names the conversation it was created under.
+            ["message:m-sub1", "w1", "p1", "chat1"],
         ]);
+        // One long conversation cannot take every message result.
+        expect(perAgentCaps).toEqual([3]);
         expect(found.results[0]).toEqual({
             type: "message",
             key: "message:m-untitled",
@@ -314,8 +339,10 @@ describe("NodeSearchModule", () => {
             role: "user",
             snippet: "See you at the launch",
             createdAt: 7,
+            agentMatchCount: 5,
             workspaceId: "p1",
             projectId: "p1",
+            parentAgentId: null,
         });
     });
 

@@ -27,6 +27,8 @@ export const SEARCH_BUDGET_MS = 250;
 /** How long the conversation catalog is served before it is rebuilt in the background. */
 const AGENT_CATALOG_TTL_MS = 5_000;
 const DEFAULT_LIMIT = 30;
+/** The most messages one conversation contributes, so a long one cannot crowd out the rest. */
+const MESSAGES_PER_AGENT = 3;
 
 /** One provider: the result types it finds, and how it finds them, best first. */
 interface SearchProvider {
@@ -182,7 +184,11 @@ export class NodeSearchModule implements AgentModule {
         }
     }
 
-    async #searchAgents(ctx: Context, q: string, limit: number): Promise<SearchHit<"agent">[]> {
+    async #searchAgents(
+        ctx: Context,
+        q: string,
+        limit: number,
+    ): Promise<(SearchHit<"agent"> & { parentAgentId: string | null })[]> {
         const words = searchQueryWords(q);
         if (words.length === 0) return [];
         const entries = (await this.#visibleAgents(ctx)).filter((entry) => entry.title.length > 0);
@@ -205,20 +211,41 @@ export class NodeSearchModule implements AgentModule {
                     archived: entry.archived,
                     workspaceId: entry.workspaceId,
                     projectId: entry.projectId,
+                    parentAgentId: entry.parentAgentId,
                 };
             });
     }
 
-    /** Messages of the conversations the caller sees, titled or not, with their placements. */
-    async #searchMessages(ctx: Context, q: string, limit: number): Promise<SearchHit<"message">[]> {
+    /**
+     * Messages of the conversations the caller sees, titled or not, with their placements, at
+     * most a few from each conversation.
+     */
+    async #searchMessages(
+        ctx: Context,
+        q: string,
+        limit: number,
+    ): Promise<
+        (SearchHit<"message"> & { parentAgentId: string | null; agentMatchCount: number })[]
+    > {
         if (searchQueryWords(q).length === 0) return [];
         const entries = new Map(
             (await this.#visibleAgents(ctx)).map((entry) => [entry.agentId, entry]),
         );
-        const found = await this.#history.searchMessages(ctx, q, new Set(entries.keys()), limit);
+        const found = await this.#history.searchMessages(
+            ctx,
+            q,
+            new Set(entries.keys()),
+            limit,
+            MESSAGES_PER_AGENT,
+        );
         return found.map((hit) => {
             const entry = entries.get(hit.agentId)!;
-            return { ...hit, workspaceId: entry.workspaceId, projectId: entry.projectId };
+            return {
+                ...hit,
+                workspaceId: entry.workspaceId,
+                projectId: entry.projectId,
+                parentAgentId: entry.parentAgentId,
+            };
         });
     }
 
