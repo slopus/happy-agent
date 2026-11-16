@@ -92,6 +92,12 @@ describe("search", () => {
         ).toBe(true);
         const { workspaceId: _workspaceId, ...withoutWorkspace } = agent;
         expect(Value.Check(searchResultSchema, withoutWorkspace)).toBe(false);
+        // A subtask names its parent; older daemons leave the field out.
+        expect(
+            Value.Check(searchResultSchema, { ...agent, kind: "subtask", parentAgentId: "a0" }),
+        ).toBe(true);
+        expect(Value.Check(searchResultSchema, { ...agent, parentAgentId: null })).toBe(true);
+        expect(Value.Check(searchResultSchema, { ...agent, parentAgentId: "" })).toBe(false);
         const event = {
             type: "calendar_event",
             key: "calendar_event:e1",
@@ -125,6 +131,14 @@ describe("search", () => {
         expect(Value.Check(searchResultSchema, message)).toBe(true);
         expect(Value.Check(searchResultSchema, { ...message, role: "system" })).toBe(false);
         expect(Value.Check(searchResultSchema, { ...message, snippet: null })).toBe(false);
+        expect(
+            Value.Check(searchResultSchema, {
+                ...message,
+                parentAgentId: "a0",
+                agentMatchCount: 7,
+            }),
+        ).toBe(true);
+        expect(Value.Check(searchResultSchema, { ...message, agentMatchCount: 0 })).toBe(false);
         expect(
             Value.Check(searchResultSchema, {
                 type: "user",
