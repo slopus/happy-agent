@@ -720,8 +720,8 @@ routes under `/v0/provider-clis` and the `provider_cli.updated` event reports
 
 Stories is removed. `/v0/stories` routes answer `404 not_found`; Stories tools, events, bot fields,
 and bootstrap fields are absent. Saved user preferences remain opaque and have no effect.
-Historical message quotes and their still-frame route remain available. Stored Stories data and
-migration history are preserved.
+Historical message quotes remain readable, with `frame: null` on current daemons. The still-frame
+route answers `404 not_found`. Stored Stories data and migration history are preserved.
 
 The Feed is additive and does not increment the protocol version. A daemon that serves the routes
 under `/v0/feed` and the `feed.*` events reports `capabilities.feed: true` from health and
@@ -787,12 +787,25 @@ accepts the optional `POST /v0/drain` body and includes `drain` in the drain res
 compatible daemons ignore the request body and omit every `drain` field; clients then cannot tell a
 restart from a shutdown and treat the drain as they did before.
 
+Media is additive and does not increment the protocol version. A daemon that serves the routes
+under `/v0/media` reports `capabilities.media: true` from health and gives every `media` item its
+`id`. Older compatible daemons omit both and answer the routes with `404`; a client then uploads
+through `/v0/agents/:agentId/attachments` and reads an item through its tool-call route, which
+every daemon keeps serving. The `play` variant and the `width`, `height`, and `durationMs` of
+videos are additive too: a daemon without them ignores `variant` and serves the original, which
+is what a client plays whenever it is not given a variant.
+
+Shared measurements, video `thumbhash`, `preview` metadata, the `preview` and `large`
+variants, and `animated: true` on pictures are additive. Older compatible daemons may omit any
+measurement and may ignore `variant`, serving the original. Clients tolerate absent fields and
+fall back to the original on a variant's non-`2xx` answer.
+
 ### Requests and responses
 
 - Request and response bodies are JSON, `content-type: application/json; charset=utf-8`.
 - Responses carry `Cache-Control: no-store` unless an endpoint explicitly documents a cacheable
   response. Avatar, profile-photo, and slash-command image responses are private-cacheable as
-  described below, and artifact files, vault content, and tool-call media document their own caching; JSON and
+  described below, and media, artifact files, vault content, and tool-call media document their own caching; JSON and
   error responses remain non-cacheable. Remote API proxies preserve the upstream caching headers.
 - Timestamps are Unix epoch milliseconds unless stated otherwise.
 
@@ -840,7 +853,9 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   outside the file), `attachment_too_large` (413, an attachment or one upload request over its
   limit), `attachment_not_found` (400, a sent `file` block naming no attachment of the
   conversation), `name_taken` (409, a vault folder or file name already used in its folder),
-  `settings_full` (409, a person's user settings are at their limit), `unsupported` (501),
+  `settings_full` (409, a person's user settings are at their limit), `variant_not_ready` (503,
+  a media variant still being made), `variant_unavailable` (404, a media variant that will not
+  be made), `unsupported` (501),
   `internal` (500).
 
 An error body may carry additional fields alongside `error` and `code` when the endpoint
@@ -1629,6 +1644,8 @@ Fields:
   described under WebSocket tunnels, and the WebSocket keepalive pings described under Keepalive.
   `artifactCovers: true` advertises artifact `cover` and `summary`, described under Artifacts.
   `search: true` advertises `POST /v0/search`, described under Search.
+  `media: true` advertises the routes under `/v0/media` and `id` on `media` items, described
+  under Media.
   `feedSubjectFilter: true` advertises `subjects` on `GET /v0/feed` and
   `POST /v0/feed/read-all`, described under Feed. `dailyUsage: true` advertises
   `GET /v0/usage/daily`, described under Usage.
@@ -6817,6 +6834,356 @@ simply absent, and its first `git.updated` event follows shortly. Watch registra
 per subscription set: a client re-`POST`s its current interest, and workspaces it stops
 mentioning age out of the watcher.
 
+## Media
+
+Media is the bytes the daemon keeps for people and agents to show: the files people attach to
+their messages, the items a tool call shows in a chat, and the files of artifact versions. Each
+is an object of its own, outside any agent, conversation, or artifact. Its ID is the lowercase
+hexadecimal SHA-256 of its bytes, so the same bytes are the same media wherever they came from,
+and the daemon keeps a separate record of what references them: the agents whose messages sent
+them or whose tool calls showed them, and the artifacts whose versions hold them.
+
+```json
+{
+    "id": "4b2f0f6f3b1d0f8c1e9a7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3928",
+    "mimeType": "image/jpeg",
+    "size": 2000000,
+    "kind": "image",
+    "width": 4032,
+    "height": 3024,
+    "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI"
+}
+```
+
+The Media module keeps one measured record per ID, shared by uploads, message attachments,
+tool-call media items, and artifact files. `mimeType` and `kind` come from decoding or probing
+the bytes as a picture or video, independently of the upload's name and `Content-Type`. Only
+when neither succeeds does the daemon fall back to a valid supplied media type or the name's
+extension, and then `application/octet-stream`. `kind` is `"image"`, `"video"`, `"document"`,
+or `"file"`; clients render an unknown kind as a file. A picture is `"image"` only when its
+record includes `width`, `height`, and `thumbhash`; an undecodable picture or one whose
+measurement did not finish is `"file"` until those measurements are available.
+
+An artifact file object's `mimeType` instead comes from its path's extension. The shared record's
+`mimeType` is what `GET /v0/media/:mediaId` serves, so the same bytes may answer different
+`Content-Type` values on the artifact and media routes. Clients render by `kind` and the
+measurements; they use `mimeType` only for downloads and open-with actions.
+
+Pictures are PNG, JPEG, GIF, WebP, or AVIF, and HEIC or HEIF when the host's image decoder
+supports them. A picture with `kind: "image"` carries `width` and `height`, its positive pixel
+size after EXIF orientation, and `thumbhash`, a standard base64 ThumbHash of its first frame,
+at most 128 characters. It may also carry `scale`, pixels per point from its density, greater
+than 1 and at most 4, with absence meaning 1. A probed video may carry `width` and `height` after rotation and
+`durationMs`, its length in whole milliseconds. Its first-frame poster supplies `thumbhash`
+when the host has `ffmpeg` and can read that frame. Pictures or videos with a preview carry
+`preview: { "width", "height" }`, the positive pixel size of the bytes served by
+`?variant=preview`, not the original or the `large` variant. `width` and `height` always describe
+the original as displayed, and `scale` describes its density. Clients reserve layout space from
+those original dimensions and `scale`, and use `thumbhash` until image bytes load; they never
+derive the original's aspect ratio or natural size from preview dimensions. Video measurements,
+`scale`, `preview`, and `animated` are optional. Older attachment and artifact objects may omit
+all measurement fields; the `kind: "image"` requirement applies to newly measured records.
+
+A picture whose `kind` is `"image"` carries optional `animated: true` when its container
+identifies a client-playable animation with more than one frame: animated GIF, animated WebP,
+or APNG (identified by the PNG `acTL` chunk). An AVIF sequence carries it only when the daemon
+detects that sequence.
+Still pictures, HEIC and HEIF (including bursts), and videos never carry this flag. HEIC and
+HEIF are not client-playable animations; clients display their still variants. Older daemons
+may omit the flag for any picture.
+
+The shared media record owns this flag. At startup, the daemon starts a background pass over
+both records without an animation check and artifact-version digests whose bytes it holds
+without a measured record. For an existing record, it performs one bounded container
+inspection without decoding frames, updates the record, and remembers that detection was
+attempted. For a digest without a record, it runs the full bounded measurement, including
+the animation check.
+Every read of uploads, attachments, message history, tool-call media, and artifact files,
+including old versions and their covers, joins `kind`, `width`, `height`, `thumbhash`, `scale`,
+`durationMs`, `preview`, and `animated` field by field: each field comes from the shared record
+when the record has it, otherwise from the stored copy. A read never answers a lower kind than
+its stored copy: a stored `image` or `video` keeps that kind if a later shared record says `file`.
+Joining metadata does not itself inspect or update existing records.
+A record's kind may upgrade from `file` to `image` or `video`, but never downgrades or switches
+between those measured kinds, so a client never loses a picture it already showed. Available
+measurements are retained when later work is incomplete. Per-use fields remain per use: `name`,
+and an artifact file's `path` and `mimeType`. Before preparation finishes, a read may omit
+unavailable fields. No event announces late measurements: a client keeping local history picks
+them up on refetch, as it does `animated`. Clients need not fetch each media object separately.
+
+Old tool-call items without an `id` have no shared record a client can address for variants;
+the client loads the original through the tool-call route, so picture animations still play.
+Artifact files of versions made before media metadata existed may have no measured record.
+The daemon measures those files, including their animation check, on their first global
+variant read or during the same background pass. Once a record exists, response reads join
+its metadata as above.
+
+The daemon measures bytes when they are first uploaded or first referenced, before storing the
+surface that shows them. One message send, completed tool call, or artifact version has a total
+budget of 10 seconds for all its media preparation; an upload has the same 10-second budget for
+its file. First it measures every item: displayed `width` and `height`, video `durationMs`, and
+the first frame's `thumbhash`, using the first-frame poster for a video. Only after that pass
+does it prepare `preview` and `large` for the items, using the remaining budget. Variants are
+the first work omitted when time runs out. The budget covers how long the response waits for
+the whole operation, not 10 seconds per file or host process. Host `ffprobe` and `ffmpeg`
+processes are killed at their own bounded execution limits; an in-process decode may run on
+after the response stops waiting.
+
+In ordinary supported cases, the upload response, the first send response, `message.created`,
+history, tool-call `media` items, and artifact files and covers therefore already carry their
+dimensions and ThumbHash. These surfaces use the same measured record, so a client reserves the
+correct layout and shows a placeholder before fetching bytes. Failure, an unsupported format,
+or an exhausted budget leaves unavailable fields absent and never fails a message send, tool
+call, or artifact version. No measurement is guaranteed in the first response; ordinary pictures
+and videos have them, and a client must lay out sensibly without them.
+
+When the 10-second budget ends, the response proceeds without the missing fields. One bounded
+background queue finishes measurements first and then variants, updating the shared record.
+In-flight work is handed off rather than duplicated, and each background attempt has bounded
+time and resource use. The startup pass resumes work interrupted by a stop; it is the fallback,
+not the normal way late measurements finish. A genuine decode failure is remembered and is not
+retried. Measurements and still variants never wait behind a `play` encode.
+The `play` encode also runs in the background. Later uses of the same ID reuse its
+record; no event announces late measurements, which appear on refetch as described above.
+
+The media object has no name. The same bytes may be called differently wherever they are used,
+so each use names them: a `file` block in a message, a `media` item, and an artifact file each
+carry their own name.
+
+An upload is at most 1 GiB (1,073,741,824 bytes), and one request carries at most 25 MiB
+(26,214,400 bytes); either limit exceeded is `413 attachment_too_large`, the code the attachment
+routes have always used. Media that something references stays. Uploaded media nothing
+references, and an upload still receiving bytes, is discarded 24 hours after it last received
+bytes; uploading the same file again restarts that time.
+
+The daemon has no permissions for single objects. Anyone who may use the API may upload media and
+may read any complete media by its ID. An ID cannot be guessed: only someone who holds the bytes
+or was shown the ID knows it. Uploads emit no events, and media is not listed.
+
+A client uploads a file of a few megabytes in one request, and a larger one in chunks, which
+survive a broken connection and may be sent in parallel.
+
+### `PUT /v0/media?name=<file name>`
+
+The whole file in one request. The body is the raw bytes, `Content-Type` is the file's media type,
+and `name` is the file's name, 1–255 characters with control characters removed; the daemon uses
+it to tell what kind of file this is and as the file name of downloads. Returns
+`201 { "media": {...} }`. Bytes the daemon already holds as uploaded media answer the existing
+media unchanged. A missing or empty `name` is `400 invalid_request`.
+
+### `PUT /v0/media/:mediaId?name=<file name>`
+
+One chunk of a file uploaded in parts. The client hashes the whole file first, so the upload is
+named by the media's ID before any byte is sent. `Content-Range: bytes start-end/size` places the
+body, which must hold exactly `end - start + 1` bytes; `size` is the whole file's length and is the
+same on every request of one upload. Every request carries `name`; the one that starts the upload
+names the file, and its `Content-Type` is the file's media type. While bytes are missing the
+request answers `200 { "upload": {...} }`:
+
+```json
+{
+    "id": "4b2f0f6f3b1d0f8c1e9a7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3928",
+    "name": "IMG_0042.jpg",
+    "size": 20000000,
+    "received": [{ "start": 0, "end": 8388607 }],
+    "expiresAt": 1755386400000
+}
+```
+
+`name` is the name the upload started with. `received` lists the byte ranges the daemon holds,
+inclusive as in `Content-Range`, in order and merged. Chunks may arrive in any order, may overlap,
+and may be sent in parallel. A chunk counts only once its whole body has arrived: after a broken
+connection the client sends that chunk again. When the last missing byte arrives, the daemon checks
+the bytes against the ID. Matching bytes become the media and the request answers
+`201 { "media": {...} }`; otherwise the upload is discarded and the request answers
+`409 hash_mismatch`.
+
+`Content-Range: bytes */size` with an empty body asks where an upload stands without sending bytes,
+and starts the upload when there is none. Without `Content-Range` the body is the whole file, as in
+the one-request route, and is checked against the ID. Whenever the daemon already holds the bytes
+as uploaded media, a request answers `201 { "media": {...} }` and ignores its body, so asking first
+lets a client skip sending a file the daemon already has.
+
+An upload takes at most 4,096 requests that carry bytes, counting chunks sent again and requests
+that broke off; the next one stores nothing and is `400 invalid_request`, and the client cancels the
+upload and starts again. Asking where an upload stands does not count. A range past `size`, a
+`size` that differs from the upload's, or a body of the wrong length is `400 invalid_request`. A
+request still sending when its upload is cancelled or expires is `404 not_found`, and its bytes are
+not kept. An ID that is not 64 lowercase hexadecimal digits is `404 not_found`.
+
+There is one upload per ID on the daemon. Two clients sending the same file at the same time add to
+the same upload, and either one's last chunk finishes it for both.
+
+### `GET /v0/media/:mediaId`
+
+The bytes of any complete media the daemon holds under this ID: an uploaded file, whether or not a
+message has sent it; an item of a tool call's `media` presentation, by the item's `id`; and a file
+of an artifact version, by the file's `sha256`. The response is served exactly as a tool call's
+media item is: the file itself, with `Content-Type`, `Content-Length`, `Accept-Ranges: bytes` and
+single `Range` requests, the sandboxing `Content-Security-Policy`, and
+`X-Content-Type-Options: nosniff`. `ETag` is the quoted ID, a matching `If-None-Match` answers
+`304`, and because an ID never names other bytes, responses carry
+`Cache-Control: private, max-age=31536000, immutable` and `Vary: Authorization`.
+`Content-Type` is the measured media type. The file name in `Content-Disposition: inline` is the
+upload's when the bytes were uploaded, and otherwise that of the earliest recorded use.
+
+With a valid single `Range`, a matching strong ETag in `If-Range` returns `206`; a mismatch
+ignores the range and returns `200` with the whole body. The original, `play`, `preview`, and
+`large` evaluate `If-Range` this same way. A previously received ETag keeps matching for the
+immutable original and `play` addresses. Date-valued `If-Range` never matches, because these
+routes send no `Last-Modified`.
+
+`404` when the daemon holds no media under the ID, while it is still uploading, and once nothing
+keeps it: an upload that expired or was discarded, the items of an erased agent, and the files of
+a deleted artifact, unless something else still references the same bytes. A `media` item shown
+before the daemon served this route may also answer `404`; its tool-call route still serves it.
+
+### `GET /v0/media/:mediaId?variant=play`
+
+A generated variant is HEVC video tagged `hvc1` and AAC stereo audio in an MP4 whose index
+comes before its data, fitted within 1920×1080 in either orientation and never enlarged, with
+the video's rotation applied and its frame rate kept up to 60. This address serves the original
+instead when it meets the rule below. A client's rule is: ask for `play`; on any answer that
+is not `2xx`, play the original from `GET /v0/media/:mediaId`.
+
+The daemon makes the variant once per media, in the background, with its host's `ffmpeg`: with
+the host's hardware HEVC encoder when it has a working one, and in software otherwise. It
+limits software encoding to half the host's available CPU cores, with a minimum of one;
+hardware encoding is unaffected. It examines a video as soon as something references it,
+a message, a tool call's `media` item, or
+an artifact's file, and encodes one video at a time, so a variant is usually there before anyone
+plays the video. Work that was waiting when the daemon stopped continues when it starts again.
+
+The original is fine as it is, and is what this address serves, when all of these hold:
+
+- its container is MP4 or QuickTime, its video is H.264 or HEVC, and its audio is AAC or absent;
+- H.264 is 8-bit 4:2:0 (`yuv420p` or `yuvj420p`), or HEVC is 8- or 10-bit 4:2:0
+  (`yuv420p` or `yuv420p10le`); an unknown pixel format is not eligible;
+- it fits within 3840×2160 in either orientation, after rotation;
+- its overall bitrate is at most 12 Mbit/s.
+
+A 10-bit or HDR HEVC original meeting these conditions is served as it is, including up to 4K.
+Frame rate is not part of this rule: an eligible original may exceed 60 frames per second;
+only a generated variant is capped at 60.
+
+Any other video gets a variant. A source with HDR video, with a PQ or HLG transfer, keeps 10-bit
+colour and its transfer in the variant, without tone mapping; every other source becomes 8-bit.
+
+The answers are:
+
+- `200`, or `206` for a `Range`, with the variant and `Content-Type: video/mp4`, once it is made.
+- `200` or `206` with the original's bytes and the original's `Content-Type`, when the original
+  is fine as it is.
+- `503 variant_not_ready`, with `Retry-After` in seconds and `Cache-Control: no-store`, while the
+  video waits to be examined or encoded. Asking for the variant of a video the daemon has not
+  examined yet queues it.
+- `404 variant_unavailable` when there is no variant to wait for: the media is not a video, the
+  host has no `ffmpeg` and `ffprobe` or no HEVC encoder that works, or encoding this video
+  failed. A video that failed to encode is remembered and not tried again; a host that could not
+  encode is tried again when the daemon next starts.
+- `404 not_found` exactly when `GET /v0/media/:mediaId` answers it.
+- `400 invalid_request` for an unknown `variant`; `preview` and `large` are described below.
+
+A `2xx` answer is served as the original is: `Accept-Ranges: bytes` with single `Range`
+requests, `Cache-Control: private, max-age=31536000, immutable`, `Vary: Authorization`, the
+sandboxing `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, and
+`Content-Disposition: inline`; a variant's file name is the original's with the extension
+`.mp4`. The `ETag` names the bytes served: the quoted media ID for the original, and the quoted
+SHA-256 of the variant's own bytes for the variant. Whichever of the two this address first
+serves for a media it serves from then on, so the answer may be cached as immutable. The variant
+is deleted when its media is, which is when nothing references the media any more.
+`If-Range` uses the same rules as the original route, including nonmatching dates; a previously
+received strong ETag continues to match because this address is immutable.
+
+### `GET /v0/media/:mediaId?variant=preview` and `?variant=large`
+
+Two still-picture variants share the media's ID. `preview` fits within 640×640 pixels and
+`large` within 1920×1920, preserving aspect ratio, applying orientation, and never enlarging.
+They are WebP pictures of the first frame of a picture or the first-frame poster of a video.
+Both variants are always still. An animated GIF, WebP, APNG, or detected AVIF sequence becomes
+a still WebP of its first frame, whatever its size. A PNG with an animation `acTL` chunk
+never passes through as a still PNG. When the original is a still PNG, JPEG, WebP, or
+non-animated GIF that already fits the requested box, the address may serve the original's
+bytes and media type instead, but only with EXIF orientation 1 or no EXIF orientation. Every
+other orientation is applied to generated pixels even when the original fits. Generated WebP
+retains transparency and converts colour to sRGB. AVIF, HEIC, and HEIF are converted even when
+they fit.
+
+The daemon prepares both variants after measuring every item, before storing the surface that
+shows the media and within that operation's total 10-second budget. It shares each variant per
+source SHA-256 and keeps it for as long as it keeps the media, with no timer-based eviction;
+it deletes the variants with the media. It may remake a missing or unusable still variant.
+A remake preserves the previously served pixel dimensions, so stored
+`preview.width` and `preview.height` remain accurate. It replaces the bytes and their digest
+atomically; each response's ETag, body, and range describe the same complete generation.
+When a still variant is absent, including older media or preparation that exhausted its budget,
+the read attempts to generate that variant inline with a total 10-second budget for that call.
+An older artifact file without a measured record is measured first within the same budget.
+An absent record or variant alone is not `404 variant_unavailable`: the daemon attempts the
+missing work first. Only one generation per `(media, variant)` runs at a time; concurrent readers
+wait on that generation. A host-wide concurrency cap bounds generation work, and all waiting,
+including waiting for that cap, counts inside the read's 10-second budget. An inline timeout
+answers `503 variant_not_ready` with `Retry-After` in seconds and `Cache-Control: no-store`.
+The daemon remembers the pending or timed-out work while the background queue finishes it, so
+repeated tile reads wait on that work rather than start another 10-second generation attempt.
+Genuine decode failures are remembered and answer `404 variant_unavailable`, meaning the
+variant will not be made.
+
+The answers are:
+
+- `200`, or `206` for a `Range`, with the still variant and `Content-Type: image/webp`, or
+  with the original and its own `Content-Type` when it already fits.
+- `503 variant_not_ready`, with `Retry-After` in seconds and `Cache-Control: no-store`, when
+  the read's budget ends before generation or its wait finishes; background work continues.
+- `404 variant_unavailable` for a file that is neither a picture nor video, an undecodable
+  picture, or a video whose poster the host cannot read, including a host without `ffmpeg`.
+  A definitive measurement or variant-generation failure also answers this error. This answer carries
+  `Cache-Control: no-store`.
+- `404 not_found` exactly when `GET /v0/media/:mediaId` answers it.
+- `400 invalid_request` for an unknown `variant`.
+
+Successes carry `Accept-Ranges: bytes` and support single `Range` requests, with
+`Cache-Control: private, max-age=2592000` (30 days), `Vary: Authorization`, the
+sandboxing `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, and
+`Content-Disposition: inline`. A generated variant's file name replaces the extension with
+`.webp`. `ETag` is the quoted SHA-256 of the bytes served: the media ID for an original and
+the variant's own digest otherwise. This is a strong ETag. A matching `If-None-Match` answers
+`304`. A still variant may change when remade. With a valid single `Range` and `If-Range`
+matching the current strong ETag, the response is `206` for that range. A nonmatching
+`If-Range` ignores the range and returns `200` with the whole current body. A client resuming
+bytes sends the ETag it already holds in `If-Range`, appends only a matching `206`, and
+replaces its cached bytes on `200`. The original route with no `variant` remains immutable
+because its ID names its bytes. The `play` variant keeps its separate cache contract.
+
+Clients request `preview` or `large` for every `image` or `video` whether or not `preview`
+metadata is present; that field gives only the preview's pixel size and never gates a request.
+Clients load `preview` for tiles and lists. When a picture carries `animated: true` and is on
+screen or opened in a viewer, they load the original for animation; if the client cannot
+decode it, they display `large`. Otherwise a full-width picture or a viewer's first paint
+loads `large`. They fetch the original to zoom when the client can decode its media type;
+otherwise they keep `large`, including while zooming, as for HEIC or unsupported AVIF. Downloads
+always use the original. On `503 variant_not_ready` for `preview` or `large`, clients keep the
+ThumbHash placeholder and retry after `Retry-After`; they do not load the original for that
+timeout. On `404 variant_unavailable` or another non-`2xx` answer, clients may display the
+original if they can decode it. Videos use these stills before playback and ask for `play` to
+play; any non-`2xx` from `play` still falls back to the original video.
+
+### `DELETE /v0/media/:mediaId`
+
+Cancels an upload still receiving bytes, or discards uploaded media nothing references, together
+with its bytes, and returns `200 {}`. A request for that upload still running is `404 not_found`,
+and its bytes are not kept. Media that a message, a tool call, or an artifact references stays:
+deleting it is `409 conflict`. `404` when there is neither an upload nor uploaded media.
+
+### Sending media in a message
+
+`send` names uploaded media in `content` with a `file` block, described under "Sending
+attachments": `{ "type": "file", "attachment": "<media ID>", "name": "IMG_0042.jpg" }`. Media
+uploaded through any route can be sent in any agent's message, in any number of messages, and
+sending it is what keeps it past its 24 hours. Only uploaded media can be sent: bytes the daemon
+holds only as a tool call's item or an artifact's file are `400 attachment_not_found` until they
+are uploaded.
+
 ## Agents
 
 An agent is one conversation running in a workspace: its transcript and its activity. Agents
@@ -7433,17 +7800,17 @@ it. The retained kind is a person's reply to a story:
     "userId": null,
     "caption": "New onboarding is ready to try",
     "expiresAt": 1755486400000,
-    "frame": { "mimeType": "image/png", "thumbhash": "1QcSHQRnh493V4dIh4eXh1h4kJUI" }
+    "frame": null
 }
 ```
 
 `agentId` is the story's agent, also this conversation's. `userId` is the person who reposted it
 when the story is a repost, and its author; otherwise it is `null` and the agent is the author.
 `caption` is the story's, or `null`. After `expiresAt` the story cannot be opened, but the quote
-stays. `frame` is `null` or a still of the story's first frame, with an optional base64 ThumbHash
-placeholder, served by `GET /v0/agents/:agentId/messages/:messageId/story-frame`: an image story's
-own image, or for a video, a still taken when the agent posted it. Clients ignore a quote kind
-they do not recognize. The field is additive and does not increment the protocol version.
+stays. `quote.frame` is always `null` on current daemons. Older daemons may return a frame
+object with `mimeType` and an optional base64 `thumbhash`. The rest of the quote stays unchanged.
+Clients ignore a quote kind they do not recognize. The field is additive and does not increment
+the protocol version.
 
 A historical user message may carry `quickReply` provenance. Clients tolerate it as opaque data;
 current daemons do not create it from sends.
@@ -8106,6 +8473,7 @@ running and appears only when the call completes successfully.
     "type": "media",
     "items": [
         {
+            "id": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
             "kind": "image",
             "name": "tz4a98xxat96iws9zmbrgj3b.png",
             "mimeType": "image/png",
@@ -8114,29 +8482,50 @@ running and appears only when the call completes successfully.
             "height": 1024,
             "thumbhash": "3OcRJYB4d3h/iIeHeEh3eIhw+j3A"
         },
-        { "kind": "document", "name": "report.pdf", "mimeType": "application/pdf", "size": 482113 }
+        {
+            "id": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+            "kind": "document",
+            "name": "report.pdf",
+            "mimeType": "application/pdf",
+            "size": 482113
+        }
     ]
 }
 ```
 
 `items` holds one to ten items in the order they were presented; an item's zero-based position
 is its `index` in `GET /v0/agents/:agentId/tool-calls/:toolCallId/media/:index`, which serves its
-bytes. Every item carries `kind`, `name` (the file's base name, at most 255 characters, for
-display and downloads only), `mimeType`, and `size` in bytes. `kind` is:
+bytes. Every item carries `id`, its media ID, the lowercase hexadecimal SHA-256 of its bytes, which
+`GET /v0/media/:mediaId` serves as well (see Media); older daemons omit it. Every item also
+carries `kind`, `name` (the file's base name, at most 255 characters, for display and downloads
+only), `mimeType`, and `size` in bytes. On every read, display metadata is joined from the shared
+record field by field as described under Media, falling back to stored fields when absent and
+never lowering the stored kind. `kind` is:
 
-- `"image"` — a picture the daemon decoded: PNG, JPEG, GIF, WebP, or AVIF. It always carries
-  `width` and `height`, the positive pixel dimensions as displayed (after EXIF orientation), and
+- `"image"` — a picture the daemon decoded: PNG, JPEG, GIF, WebP, AVIF, or HEIC/HEIF when
+  supported by the host. It carries `width` and `height`, the positive pixel dimensions as
+  displayed (after EXIF orientation), and
   `thumbhash`, the standard base64 encoding of a [ThumbHash](https://evanw.github.io/thumbhash/)
   placeholder of at most 128 characters. `mimeType` names the decoded format rather than the file
   extension. Clients show the ThumbHash at the given aspect ratio until the bytes load.
-- `"video"` — a file with a `video/*` media type, such as MP4, WebM, QuickTime, or Ogg video.
+- `"video"` — a file probed as video, or named with a `video/*` media type when probing is
+  unavailable, such as MP4, WebM, QuickTime, or Ogg video. It
+  may carry `width` and `height`, its size as shown after rotation, and `durationMs`, its length
+  in milliseconds: the daemon measures them with its host's `ffprobe`, and omits all three when
+  the host has none or cannot read the file. Its first-frame poster may supply `thumbhash`.
+  `GET /v0/media/:mediaId?variant=play` serves it in a
+  form every phone plays.
 - `"document"` — a PDF.
 - `"file"` — anything else, including an image the daemon could not decode.
 
-Videos, documents, and files currently carry no `width`, `height`, or `thumbhash`; clients must
-tolerate their presence on any kind. Media types of non-images come from the file extension, and
-`application/octet-stream` when it is unknown. The set of kinds may grow; a client renders an
-unknown kind as a `"file"`.
+Pictures and videos may carry `preview: { "width", "height" }`, pictures may carry `scale`,
+and client-playable animated pictures may carry `animated: true`, as the shared media object
+does. The daemon sets `animated` only on `kind: "image"`; clients ignore it on other kinds.
+The added measurement fields are optional; decoded picture items keep their existing required
+`width`, `height`, and `thumbhash`. Clients tolerate measurements on any kind. Measurements
+and media types come from the Media module's one
+record per ID, described under Media. The set of kinds may grow; a client renders an unknown
+kind as a `"file"`.
 
 Any item may carry `source`, `{ "path", "absolutePath" }`, naming the file the item came from on
 the agent's machine: `path` exactly as the agent wrote it, such as `Read`'s `file_path`,
@@ -8270,9 +8659,11 @@ daemon sets it to `2` or `3` when the file's PNG `pHYs` chunk, JPEG JFIF header,
 resolution records 144 or 216 pixels per inch, within 2%, the same on both axes. Absent means 1.
 `scale` is additive and does not increment the protocol version.
 
-`Read`, `view_image`, and `ReadMediaFile` show every image they read to the person as well. The
-call snapshots the original file, not the copy the model receives, and its completed presentation
-is `media` with one image item and `{ "type": "columns", "columns": 2 }`. A read whose snapshot
+`Read`, `view_image`, and `ReadMediaFile` show every image they read to the person as well.
+`view_image` given an `attachment_id` shows the person nothing new, since the picture is already in
+their message, and has no presentation. The call snapshots the original file, not the copy the
+model receives, and its completed presentation is `media` with one image item and
+`{ "type": "columns", "columns": 2 }`. A read whose snapshot
 fails, such as an image the chat cannot show, still succeeds for the model and keeps its
 `exploration` presentation. Reads of other files are unchanged.
 
@@ -8691,6 +9082,10 @@ The HTML is layout only, in the subset `present_files`' `layout` takes: the same
 `style` grammar, and limits. The daemon stores and returns message text exactly as written; no
 route rewrites it, and the HTML never reaches a renderer as HTML.
 
+Each resolved item reserves space using its displayed original `width`, `height`, and `scale`,
+with its `thumbhash` as the placeholder. A preview's dimensions describe only its own bytes and
+never replace those layout measurements.
+
 **Blocks.** A layout block starts at the start of a line indented at most three spaces, outside a
 fenced code block and outside a code span, with a start tag `<div`, `<section`, `<figure`, `<p`,
 or `<img` in any letter case, followed by whitespace, `>`, `/`, or the end of the line. It may
@@ -8853,12 +9248,21 @@ are unchanged.
 
 ### Attachments
 
-A person attaches a file to a message by uploading its bytes to the conversation first and then
-naming it in `send`. An attachment's ID is the lowercase hexadecimal SHA-256 of its bytes, so the
-same bytes uploaded to the same conversation are the same attachment. Attachments belong to one
-agent's conversation: the same file uploaded to another agent is a separate attachment there. The
-object and the one-request upload are those of Happy Cloud's conversation attachments, so a client
-written against either works with both.
+A person attaches a file to a message by uploading its bytes first and then naming them in `send`.
+The uploaded bytes are media, described under Media, and the attachment routes are the media
+routes under an older address, kept for clients written before `/v0/media` and for parity with
+Happy Cloud's conversation attachments: the object and the one-request upload are Happy Cloud's, so
+a client written against either works with both. An attachment's ID is its media ID, the lowercase
+hexadecimal SHA-256 of its bytes.
+
+Each attachment route does exactly what its media route does, to the same media, with three
+differences. The agent in the path must exist: anyone who may send messages to it may upload and
+cancel, an agent that takes no messages refuses uploads as it refuses `send`, and anyone who may
+read its conversation may download. Answers carry `{ "attachment": {...} }` where the media route
+carries `{ "media": {...} }`; `{ "upload": {...} }` is the same. And a download's
+`Content-Disposition` is always `attachment`.
+
+The attachment object is the media object with a `name`:
 
 ```json
 {
@@ -8873,86 +9277,39 @@ written against either works with both.
 }
 ```
 
-`name` is the file name the upload gave, 1–255 characters with control characters removed.
-`mimeType` is the upload's `Content-Type`; when that is missing, `application/octet-stream`, or not
-a media type, it comes from the name. `kind` is `"image"`, `"video"`, `"document"`, or `"file"`,
-as for a `media` item, and clients render an unknown kind as a file. A file is an `"image"` only
-when the daemon decodes it as PNG, JPEG, GIF, or WebP; it then takes the decoded format's
-`mimeType` and has `width`, `height`, `thumbhash`, and optional `scale`, measured as for a `media`
-image item. Another file named as an image, including AVIF, or one larger than 32 MiB, is a
-`"file"`. Attachments
-Happy Cloud stored before it measured them have no `kind` or image fields, so clients treat them as
-optional.
+`name` is the file name the request gave, 1–255 characters with control characters removed, also
+when the daemon already held the bytes under another name. A video attachment may carry
+`width`, `height`, `durationMs`, `thumbhash`, and `preview`, as its media object does. Pictures
+may also carry `preview` and `animated: true`. Attachments Happy Cloud stored
+before it measured them have no `kind` or image fields, so clients treat them as optional.
 
-An attachment is at most 1 GiB (1,073,741,824 bytes), and one request carries at most 25 MiB
-(26,214,400 bytes); either limit exceeded is `413 attachment_too_large`. An attachment no message has sent yet, and an
-upload still receiving bytes, is discarded 24 hours after it last received bytes; uploading the
-same file again restarts that time. A sent attachment stays as long as the conversation. Anyone who
-may send messages to the agent may upload, send, and cancel its attachments, and anyone who may
-read the conversation may download them. An agent that takes no messages refuses uploads as it
-refuses `send`. Uploads emit no events and are not listed.
-
-A client uploads a file of a few megabytes in one request, and a larger one in chunks, which
-survive a broken connection and may be sent in parallel.
+Media is shared by the whole daemon, so the agent in the path does not own what is uploaded
+through it. The same bytes uploaded through two agents, or through `/v0/media`, are one media;
+anything uploaded can be sent in any agent's message and read through `GET /v0/media/:mediaId`;
+and cancelling affects every client that was about to send the same bytes.
 
 #### `PUT /v0/agents/:agentId/attachments?name=<file name>`
 
-The whole file in one request. The body is the raw bytes, and `Content-Type` is the file's media
-type. Returns `201 { "attachment": {...} }`. Bytes the conversation already holds answer the
-existing attachment unchanged. A missing or empty `name` is `400 invalid_request`.
+`PUT /v0/media?name=<file name>` under its older address. Returns `201 { "attachment": {...} }`.
 
 #### `PUT /v0/agents/:agentId/attachments/:attachmentId?name=<file name>`
 
-One chunk of a file uploaded in parts. The client hashes the whole file first, so the upload is
-named by the attachment's ID before any byte is sent. `Content-Range: bytes start-end/size` places
-the body, which must hold exactly `end - start + 1` bytes; `size` is the whole file's length and is
-the same on every request of one upload. Every request carries `name`; the one that starts the
-upload names the file, and its `Content-Type` is the file's media type. While bytes are missing the
-request answers `200 { "upload": {...} }`:
-
-```json
-{
-    "id": "4b2f0f6f3b1d0f8c1e9a7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3928",
-    "name": "IMG_0042.jpg",
-    "size": 20000000,
-    "received": [{ "start": 0, "end": 8388607 }],
-    "expiresAt": 1755386400000
-}
-```
-
-`received` lists the byte ranges the daemon holds, inclusive as in `Content-Range`, in order and
-merged. Chunks may arrive in any order, may overlap, and may be sent in parallel. A chunk counts
-only once its whole body has arrived: after a broken connection the client sends that chunk again.
-When the last missing byte arrives, the daemon checks the bytes against the ID. Matching bytes
-become the attachment and the request answers `201 { "attachment": {...} }`; otherwise the upload
-is discarded and the request answers `409 hash_mismatch`.
-
-`Content-Range: bytes */size` with an empty body asks where an upload stands without sending bytes,
-and starts the upload when there is none. Without `Content-Range` the body is the whole file, as in
-the one-request route, and is checked against the ID. Whenever the conversation already holds the
-attachment, a request answers `201 { "attachment": {...} }` and ignores its body, so asking first
-lets a client skip sending a file the conversation already has.
-
-An upload takes at most 4,096 requests that carry bytes, counting chunks sent again and requests
-that broke off; the next one stores nothing and is `400 invalid_request`, and the client cancels the
-upload and starts again. Asking where an upload stands does not count. A range past `size`, a
-`size` that differs from the upload's, or a body of the wrong length is `400 invalid_request`. A
-request still sending when its upload is cancelled or expires is `404 not_found`, and its bytes are
-not kept. An ID that is not 64 lowercase hexadecimal digits is `404 not_found`.
+`PUT /v0/media/:mediaId?name=<file name>` under its older address, with the same `Content-Range`
+chunks, `bytes */size` question, limits, and errors. Returns `200 { "upload": {...} }` while bytes
+are missing and `201 { "attachment": {...} }` once the file is whole or already held.
 
 #### `GET /v0/agents/:agentId/attachments/:attachmentId`
 
-The attachment's bytes, served exactly as a tool call's media item, except that
-`Content-Disposition` is always `attachment`. `ETag` is the quoted ID, and the URL never names
-other bytes, so responses are cached as immutable. `404` when the conversation holds no such
-attachment, including one still uploading.
+`GET /v0/media/:mediaId` under its older address, including `?variant=play`, `preview`, or
+`large`, except that
+`Content-Disposition` is always `attachment`. `404` when the agent does not exist or the daemon
+holds no such complete media.
 
 #### `DELETE /v0/agents/:agentId/attachments/:attachmentId`
 
-Cancels an upload still receiving bytes, or discards an attachment no message has sent, together
-with its bytes, and returns `200 {}`. A request for that upload still running is `404 not_found`,
-and its bytes are not kept. An attachment a message has sent stays with that message: deleting it is
-`409 conflict`. `404` when there is neither.
+`DELETE /v0/media/:mediaId` under its older address: `200 {}`, `409 conflict` when a message, a
+tool call, or an artifact references the media, and `404` when there is neither an upload nor
+uploaded media.
 
 #### Sending attachments
 
@@ -8962,14 +9319,16 @@ and its bytes are not kept. An attachment a message has sent stays with that mes
 { "type": "file", "attachment": "4b2f0f6f…5b4a3928", "name": "IMG_0042.jpg" }
 ```
 
-`name` is how this message shows the file, 1–255 characters; control characters are removed, and
-a name left empty takes the attachment's own. A message names at most 32 files. An ID that is not
-an attachment of this conversation, including one still uploading, cancelled, or expired, is
-`400 attachment_not_found`, and nothing is sent. The same attachment may be sent in any number of
-messages, and sending it ends its 24 hours.
+`attachment` is the ID of uploaded media, whichever route it was uploaded through. `name` is how
+this message shows the file, 1–255 characters; control characters are removed, and a name left
+empty takes the name the media was uploaded under. A message names at most 32 files. An ID the
+daemon does not hold as complete uploaded media, including one still uploading, cancelled, or
+expired, is `400 attachment_not_found`, and nothing is sent. The same media may be sent in any
+number of messages of any agent, and sending it ends its 24 hours.
 
-The message stores the block with the attachment's details, so the send response,
-`message.created`, and history carry them and never the bytes:
+The message stores the block with the attachment's details as a fallback. The send response,
+`message.created`, and history carry metadata joined from its shared media record when one exists,
+and never the bytes. Later history reads pick up late measurements as described under Media:
 
 ```json
 {
@@ -8985,12 +9344,16 @@ The message stores the block with the attachment's details, so the send response
 }
 ```
 
-The model reads one line per file naming its ID, name, type, and size. A picture up to 5 MB
-follows it in the message, sized for the model, and so does a file of UTF-8 text up to 256 KB,
-inside `<file name="…">` and `</file>`. Any other file is only named. The `read_attachment` tool
-opens any sent attachment again: an image is shown, text is read a page at a time, and other files
-are described. Given a path, the tool also saves a copy there on the agent's machine, under the
-turn's own permissions.
+A video's block may carry `width`, `height`, `durationMs`, and its poster's `thumbhash`.
+Pictures and videos may carry `preview`, and animated pictures may carry `animated: true`,
+as their shared media object does. All are optional.
+
+The model reads one line per file naming its ID, name, type, and size, and nothing the file
+contains. It looks at a picture with the `view_image` tool and saves a copy of any file on its
+machine with `copy_attachment`, under the turn's own permissions. Both take only the IDs of files
+that messages of the agent's own conversation sent; an agent cannot open other media by its ID.
+`view_image` shows an attached image to a model that takes image input. An agent without a
+machine is not offered `copy_attachment`.
 
 ### `POST /v0/agents/:agentId/send`
 
@@ -9053,11 +9416,13 @@ Request:
   environment the agent is told; it is not part of the public `metadata` object. An ID the person
   has not reported from is accepted and treated as no device. Send it only to a daemon that
   supports user environments, as described under Versioning.
-- `content` — optional rich blocks accompanying the text: text, inline images, and at most one
-  `tool_call_request`. Image bytes travel **inline**, base64 in the block, exactly as they later
-  appear in history — there is no separate upload step or attachment store. A tool-call request
-  is retained on the pending and accepted user message, but Base executes it only after
-  acceptance at the same safe boundary where that message would otherwise reach inference.
+- `content` — optional rich blocks accompanying the text: text, `file` blocks, inline images, and
+  at most one `tool_call_request`. A file is uploaded as media first and then named by a `file`
+  block, as described under "Sending attachments", so its bytes never travel in the message. An
+  `image` block still carries its bytes **inline**, base64 in the block, exactly as they later
+  appear in history. A tool-call request is retained on the pending and accepted user message,
+  but Base executes it only after acceptance at the same safe boundary where that message would
+  otherwise reach inference.
 - `delivery` — optional, default `"queue"`. `"queue"` waits behind the current run; `"steer"`
   takes priority at the next inference boundary. The current assistant response and its complete
   tool-call batch finish without interruption, then pending steering messages are accepted before
@@ -9213,7 +9578,8 @@ snapshot. When one is accepted it appears in its run, announced atomically by `r
 The bytes of one item of a completed tool call's `media` presentation. `toolCallId` is the
 tool-call block's `id`, and `index` is the item's zero-based position in `items`, written in
 decimal without leading zeros. The daemon serves the private copy it took when the call ran, so
-the response never changes for the same URL.
+the response never changes for the same URL. `GET /v0/media/:mediaId` serves the same bytes by the
+item's `id`, without naming the agent or the call.
 
 The response is the file itself, not JSON: `Content-Type` is the item's `mimeType`, with
 `; charset=utf-8` added for `text/*` types, and `Content-Length` its size. `ETag` is a quoted
@@ -9236,13 +9602,6 @@ presentation, or when the daemon no longer holds the copy. Errors are JSON and
 including through `/v0/connections/:id/api/*`. A client that renders media through an element
 rather than `fetch` points it at this URL through a transport that adds the token, as with
 artifact files.
-
-### `GET /v0/agents/:agentId/messages/:messageId/story-frame`
-
-The still frame a user message's story `quote` shows, served exactly as a tool call's media item, including its
-immutable caching. An image story's frame is its image; a video story's is a still of its first
-frame, taken when the agent posted it. The frame outlives the story. `404` when the agent or
-message does not exist, or the message's `quote.frame` is `null`.
 
 ### Questions
 
@@ -13084,11 +13443,12 @@ post-like plain text a client shows under the title.
 - A cover is a raster image: `image/png`, `image/jpeg`, `image/webp`, or `image/gif`, decided by
   its path's extension, and its bytes must be that format. WebP, still or animated, is the preferred
   format; a GIF is accepted but should be converted to an animated WebP first, for example with
-  `ffmpeg -i in.gif -c:v libwebp -loop 0 -q:v 75 cover.webp`. An animated cover plays where a client
-  shows it; there is no separate flag for it. The size of a WebP or GIF comes from its container
-  header, the canvas of an extended WebP or a GIF's logical screen, so an animation is measured
-  without decoding every frame. SVG is refused, because not every client can draw one: render it to
-  WebP or PNG first. The file is at most 32 MiB.
+  `ffmpeg -i in.gif -c:v libwebp -loop 0 -q:v 75 cover.webp`. An animated cover's file carries
+  `animated: true` from the shared media record; a client loads its original when the cover is
+  on screen, falling back to `large` if decoding fails. The size of a WebP or GIF comes from
+  its container header, the canvas of an extended WebP or a GIF's logical screen, so an
+  animation is measured without decoding every frame. SVG is refused, because not every client
+  can draw one: render it to WebP or PNG first. The file is at most 32 MiB.
 - A summary is post-like plain text, as in a tweet or a short post: what the artifact is and its
   key takeaway, in a few sentences. The daemon turns CRLF line ends into `\n` and trims the text;
   it must then hold 1–5,000 characters, counted as Unicode code points, and no control characters
@@ -13253,9 +13613,9 @@ Fields:
 - `cover` — this version's cover, `{ "path", "mimeType", "width", "height", "aspect", "thumbhash" }`,
   or `null` for none. `path` is one of `files`; `width` and `height` are the pixel size, `aspect` is
   `"wide"` or `"square"`, a set that may grow, and `thumbhash` is the base64 ThumbHash of its first
-  frame or `null` when it could not be decoded. The daemon computes the ThumbHash when the version is
-  made and reuses it while the cover's path and digest are unchanged; versions made before ThumbHashes
-  existed keep `null` until the next version. `preview` is optional: the `{ "width", "height" }` of
+  frame or `null` when it could not be decoded. Display measurements and ThumbHash are joined from
+  the cover file's shared media record on every read, with each stored field as the fallback
+  when the record lacks it, so old versions also pick up late measurements on refetch. `preview` is optional: the `{ "width", "height" }` of
   the cover file's still preview, exactly as on its file object, and absent when it has none.
   `thumbhash` and `preview` are absent on older daemons, and `cover` itself is absent on still older
   ones.
@@ -13284,47 +13644,76 @@ Fields:
   1–255 per segment. A segment is never empty, `.`, or `..` and holds no `\` or control
   character, so a path never starts or ends with `/`. Paths are case-sensitive. One version never
   holds a file at a path that another of its files uses as a folder, such as `a` beside `a/b`.
-- `mimeType` — the media type the daemon decided from the path's extension.
+- `mimeType` — the media type from the file path's extension, using the table below, or
+  `application/octet-stream` for an extension the daemon does not know. The shared media record
+  supplies display metadata without changing the artifact file's media type.
 - `size` — the length in bytes, at least 1.
-- `sha256` — the lowercase hexadecimal SHA-256 of the bytes. Equal digests mean equal content.
+- `sha256` — the lowercase hexadecimal SHA-256 of the bytes. Equal digests mean equal content. It
+  is also the file's media ID: `GET /v0/media/:mediaId` serves the same bytes while the artifact is
+  not deleted (see Media).
 - `width`, `height` — optional; the picture's or video's positive pixel size as displayed, after
   EXIF orientation or a video's rotation. See "Media metadata" below.
 - `durationMs` — optional; a video's length in whole milliseconds.
+- `kind`, `scale` — optional; the shared media record's display kind and picture density,
+  as described under Media.
+- `animated` — optional `true` for a client-playable picture animation, as defined under Media;
+  never set on videos or HEIC/HEIF. Older daemons may omit it.
 - `thumbhash` — optional; the standard base64 encoding of a
   [ThumbHash](https://evanw.github.io/thumbhash/) placeholder of the first frame, at most 128
   characters, in the same format as chat `media` items.
-- `preview` — optional; `{ "width", "height" }`, the pixel size of the still preview served by
-  `GET /v0/artifacts/:artifactId/versions/:number/previews/*path`. Present only when the daemon
-  made one.
+- `preview` — optional; `{ "width", "height" }`, the pixel size of the file's still preview.
+  Its absence does not say whether a variant can be read: clients request global `preview` or
+  `large` for every `image` or `video` regardless. The artifact preview route may answer `404`;
+  then the client uses `GET /v0/media/:mediaId?variant=preview` with the file's `sha256`.
 
-**Media metadata.** The daemon measures the files people show as pictures and videos, as it does
-for chat `media` items, so a client lays them out and shows a placeholder before any bytes load:
+**Media metadata.** Artifact files reference the Media module's one measured record per digest,
+the same record uploads, attachments, and chat media use. Before storing the version, the daemon
+first measures every placed file and the cover, then prepares previews and large variants within
+one total 10-second budget, as described under Media. In ordinary supported cases a client lays
+out every item and shows a placeholder before any bytes load:
 
-- Every image file of an `image`, `image_series`, or `gen_ui` version, and every version's cover
-  file of any type, gets `width`, `height`, and `thumbhash` when the daemon can decode it: PNG, JPEG, GIF,
-  WebP, or AVIF, still or animated. SVG files get none. The size of a WebP or GIF comes from its
+- Every decodable picture gets `width`, `height`, and `thumbhash`: PNG, JPEG, GIF, WebP, AVIF,
+  or HEIC/HEIF when supported by the host, still or animated. SVG files get none.
+  The size of a WebP or GIF comes from its
   container header, like a cover's.
-- The video file of a `video` artifact gets `width`, `height`, `durationMs`, and `thumbhash`, and a
+- A video gets `width`, `height`, `durationMs`, and `thumbhash`, and a
   poster taken from its first frame, when the daemon's host has `ffprobe` and `ffmpeg` on its
   `PATH`. The daemon runs them itself on its stored copy of the file, whichever client or agent
-  made the version, and gives each at most 15 seconds. Without them, or when they fail, the fields
+  made the version, within the operation's remaining budget. Without them, or when they fail, the fields
   are absent. The poster itself is not served; its preview is.
 - Each of those pictures and each poster gets a `preview`: a still WebP of the first frame, fitted
   within 640×640 pixels and never enlarged, so a list or grid shows a small image instead of the
-  whole file. The daemon stores each preview once per source digest.
+  whole file, when the budget permits. The daemon stores each preview once per source digest
+  and retains it with its media.
 
-The daemon measures a file when the version that places it is made, and reuses what it measured
-for the same digest and media type in later versions and other artifacts. A file that cannot be
-measured simply lacks the fields; it never refuses the version. Versions made before media
-metadata existed have none, and their kept files get it from the next version on. A client treats
-every one of these fields as optional, because older daemons omit them all.
+The daemon measures a file when it is first uploaded or referenced, and reuses what it measured
+for the same digest in later versions and other artifacts. A file that cannot be
+measured simply lacks unavailable fields; it never refuses the version. A picture has
+`kind: "image"` only with `width`, `height`, and `thumbhash`; otherwise its kind is `"file"`.
+Versions made before media
+metadata existed may have no measured record; their first global variant read or the startup
+background pass measures them, including the animation check. Every response joins `kind`,
+`width`, `height`, `thumbhash`, `scale`, `durationMs`, `preview`, and `animated` from the shared
+record field by field, falling back to stored fields when absent and never lowering the stored
+kind, as described under Media. A client
+treats every one of these fields as optional, because older daemons
+omit them all.
 
 A client showing an artifact in a list or grid loads a preview rather than the whole file: the
 cover's when there is a cover, otherwise its media file's (an image's picture, an image series'
 first picture, a video's poster), with that file's `thumbhash` as the placeholder, and the type's
-glyph when there is neither. A Feed post still loads the whole cover, which may be animated, with the
-cover's `thumbhash` as its placeholder. A video viewer shows the poster preview until playback
-starts.
+glyph when there is neither. A Feed post loads the cover's `preview` first. When the post is
+on screen it loads the original if the cover file has `animated: true`, otherwise `large`,
+using the cover file's `sha256` as the media ID and the cover's
+`thumbhash` as its placeholder. If the client cannot decode the original media type, it keeps
+`large` in the viewer, including while zooming; downloads use the original. A video viewer shows
+the poster preview until playback starts.
+
+Existing artifact file objects pick up shared measurements on refetch; their per-use `path`
+and extension-derived `mimeType` remain unchanged. The artifact preview address serves a still
+WebP within 640×640 when the version has one, including when the global preview address can
+serve a small original instead. Numbered artifact previews remain immutable; a missing one is
+not generated lazily at that address, and clients then use the global media variant route.
 
 The extensions the daemon knows, case-insensitively:
 
@@ -13486,10 +13875,20 @@ route, with the same decoding and the same `404` for any name the version does n
 response is the preview's bytes with `Content-Type: image/webp` and `Content-Length`; `ETag`,
 `If-None-Match`, `Cache-Control`, `Vary`, `X-Content-Type-Options`, and `Content-Security-Policy`
 behave as on the file route, and `Content-Disposition: inline` carries the source's name with a
-`.webp` extension. It takes no `Range`.
+`.webp` extension. It takes no `Range`. This route serves a still WebP within 640×640 for that
+file when the version has one; it does not generate a missing preview lazily. The bytes at a
+numbered version's address never change. Numbered versions retain
+`Cache-Control: private, max-age=31536000, immutable`; `latest` retains
+`Cache-Control: private, no-cache`.
+
+Its ETag identifies the artifact preview entity, not the source media's bytes: the quoted
+source SHA-256 with the suffix `-preview`. The global media preview's ETag instead identifies
+the actual bytes served at that address. Clients scope caches and validators by the full
+resource URL, never by ETag alone across these two routes.
 
 `404` when the artifact, the version, or the file does not exist, when the artifact is deleted, or
-when the file has no `preview`.
+when the version has no preview for the file. A client then requests the global media preview
+using the file's `sha256`, whether or not the file object carries `preview` metadata.
 
 ### `POST /v0/artifact-uploads`
 
