@@ -70,7 +70,6 @@ import { archiveAgentTool } from "./tools/archive_agent.js";
 import { createAgentTool } from "./tools/create_agent.js";
 import { interruptAgentTool } from "./tools/interrupt_agent.js";
 import { sendMessageTool } from "./tools/send_message.js";
-import { happyUrlPattern, writeHappyMarkdownLink } from "../utils/writeHappyLinks.js";
 
 /**
  * Collaboration lets one agent put another to work.
@@ -129,15 +128,6 @@ export class CollaborationModule implements AgentModule {
     }
 
     /** The same curated choices serve ordinary collaborators and interactive subtasks. */
-    /** How an agent mentions a collaborator in chat: an empty-label share link to it. */
-    formatCollaboratorLink(agentId: string): string {
-        return writeHappyMarkdownLink(
-            this.#config.loadedInstanceId,
-            { type: "reference", reference: { kind: "agent", id: agentId } },
-            { as: "subagent" },
-        );
-    }
-
     availableModels(): readonly AgentModel[] {
         return this.#availableModels();
     }
@@ -587,7 +577,7 @@ export class CollaborationModule implements AgentModule {
             const parent = await this.#requireAgents().parentOf(ctx, scope.agent.id);
             const lines: string[] = [
                 `Your Agent ID is ${scope.agent.id}.`,
-                fileLinkInstructions(this.#config.loadedInstanceId, scope.agent.id),
+                `When a file you mention will be read outside your own chat (a message to another agent, a report to your creator, or files from another agent's workspace), link it as [Foo.tsx:42](happy://agents/${scope.agent.id}/files/<path from your workspace root>#L42-L50), percent-encoding spaces and other special characters. For a file elsewhere, use its agent's ID, or happy://workspaces/<workspace ID>/files/<path>. Copy happy:// and happy-file:// links you receive unchanged. Otherwise keep writing path:line.`,
             ];
             if (parent !== null) {
                 lines.push(
@@ -1355,20 +1345,4 @@ function isArchived(metadata: AgentMetadata | undefined): boolean {
 function belongsToWorkflow(metadata: AgentMetadata | undefined): boolean {
     const workflow = metadata?.["workflow"];
     return workflow !== null && typeof workflow === "object" && !Array.isArray(workflow);
-}
-
-/**
- * How an agent links a file read outside its own chat, through its own agent ID, in the share link
- * form naming `instanceId`. A received link of any Happy form is copied as it is.
- */
-function fileLinkInstructions(instanceId: string | undefined, agentId: string): string {
-    const own = happyUrlPattern(
-        instanceId,
-        `agents/${agentId}/files/<path from your workspace root>`,
-        {
-            lines: "42-50",
-        },
-    );
-    const elsewhere = happyUrlPattern(instanceId, "workspaces/<workspace ID>/files/<path>");
-    return `When a file you mention will be read outside your own chat (a message to another agent, a report to your creator, or files from another agent's workspace), link it as [](${own}) with nothing between the brackets, percent-encoding spaces and other special characters; people see the file's path as the link text. For a file elsewhere, use its agent's ID, or [](${elsewhere}). Copy Happy links you receive unchanged, whether they start with https://link.happy.page/, happy://, or happy-file://. Otherwise keep writing path:line.`;
 }

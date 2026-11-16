@@ -1,4 +1,4 @@
-import { mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { rm, stat, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -97,7 +97,7 @@ class BotAgents {
 }
 
 const BOT_REFERENCE_INSTRUCTIONS =
-    "When you mention a bot in a reply, link it as [](happy://agents/<agentId>) with the bot's agent ID, not its bot ID, and nothing between the brackets; people see its live name as the link text. The bot tools give you the exact link.";
+    "When you mention a bot in a reply, link it as [its name](happy://agents/<agentId>) with the bot's agent ID, not its bot ID; people see its live name as the link text. The bot tools give you the exact link.";
 
 describe("BotsModule", () => {
     it.each(["Release Steward", "New Bot"])(
@@ -847,7 +847,7 @@ describe("BotsModule", () => {
                 {
                     type: "text",
                     text: expect.stringContaining(
-                        `mention it as [](happy://agents/${pictured.agentId})`,
+                        `mention it as [${pictured.name}](happy://agents/${pictured.agentId})`,
                     ),
                 },
             ]);
@@ -914,18 +914,7 @@ describe("BotsModule", () => {
                 {
                     type: "text",
                     text: expect.stringContaining(
-                        `Mention it in chat as [](happy://agents/${child.agentId}).`,
-                    ),
-                },
-            ]);
-            // Once the runtime has read this installation's identity, the link is a share link.
-            await mkdir(fixture.config.configuration.paths.agentHome, { recursive: true });
-            const instanceId = await fixture.config.instanceId();
-            expect(create?.toLLM(child)).toEqual([
-                {
-                    type: "text",
-                    text: expect.stringContaining(
-                        `Mention it in chat as [](https://link.happy.page/#1/${instanceId}/agents/${child.agentId}?as=bot).`,
+                        `Mention it in chat as [${child.name}](happy://agents/${child.agentId}).`,
                     ),
                 },
             ]);
@@ -1148,7 +1137,6 @@ async function started(name: string, workspacesEnabled: boolean, script: Scripte
     return {
         agents,
         bots,
-        config,
         tasks,
         database,
         events,

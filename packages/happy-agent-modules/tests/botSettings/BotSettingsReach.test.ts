@@ -127,7 +127,6 @@ describe("bot settings reach", () => {
             };
             const createWorkspace = vi.fn(async () => undefined);
             const module = new SubtasksModule(
-                {} as never,
                 {
                     forAgent: async (_ctx: Context, id: string) =>
                         id === "botagent" ? { status: "active" } : undefined,

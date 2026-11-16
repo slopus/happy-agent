@@ -1,6 +1,7 @@
 import { defineAgentTool, type AgentKV } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 import type { Context } from "@steve.kite/stdlib";
+import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 
 import { taskRecordSchema, taskStatusSchema, type TaskRecord } from "../Task.js";
 import type { TasksModule } from "../TasksModule.js";
@@ -75,7 +76,7 @@ export function listTasksTool(tasks: TasksModule, kv: AgentKV) {
                     total === 0
                         ? "No tasks found."
                         : [
-                              ...listed.map((item) => formatTaskLine(tasks, item)),
+                              ...listed.map(formatTaskLine),
                               ...(nextOffset === undefined
                                   ? []
                                   : [
@@ -103,14 +104,14 @@ async function listScope(
     return (await tasks.listForMember(ctx, member)).map(({ task }) => task);
 }
 
-function formatTaskLine(tasks: TasksModule, { task, owner }: ListedTask): string {
+function formatTaskLine({ task, owner }: ListedTask): string {
     const status = task.status === "archived" ? " (archived)" : "";
     const facts = [
         `id ${task.id}`,
         ...(owner === null ? [] : [`owner ${owner}`]),
         ...(task.creatorAgentId === undefined ? [] : [`created by agent ${task.creatorAgentId}`]),
         `folder ${task.path}`,
-        `mention it as ${tasks.formatTaskLink(task.agentId)}`,
+        `mention it as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "agent", id: task.agentId } }, task.name)}`,
     ];
     return `- ${task.name}${status} — ${facts.join(", ")}`;
 }

@@ -18,7 +18,7 @@ import type { TeamModule } from "../../sources/team/index.js";
 import { DurableFunctionsModule } from "../../sources/durableFunctions/index.js";
 import { SurfacesModule, type SurfaceEvent } from "../../sources/surfaces/index.js";
 import { SurfacesPersistence } from "../../sources/surfaces/persistence/SurfacesPersistence.js";
-import { surfaceReferenceInstructions } from "../../sources/surfaces/impl/surfaceReferenceInstructions.js";
+import { SURFACE_REFERENCE_INSTRUCTIONS } from "../../sources/surfaces/impl/surfaceReferenceInstructions.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
 const close: (() => void)[] = [];
@@ -157,7 +157,7 @@ describe("installation-owned Surface state", () => {
         const f = await fixture();
         const scope = { agent: { id: "ordinary" } } as AgentModuleScope;
         expect(await f.hooks.instructions!(f.db.context, scope)).toBe(
-            surfaceReferenceInstructions(f.surfaces.config.loadedInstanceId),
+            SURFACE_REFERENCE_INSTRUCTIONS,
         );
     });
 

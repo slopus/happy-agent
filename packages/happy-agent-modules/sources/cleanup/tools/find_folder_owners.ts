@@ -3,7 +3,7 @@ import { Type, type Static } from "@sinclair/typebox";
 
 import type { CleanupModule } from "../CleanupModule.js";
 import { cleanupFolderOwnersSchema, type CleanupFolderRelation } from "../CleanupSearch.js";
-import { formatCleanupAgent } from "../impl/formatCleanupItem.js";
+import { formatCleanupAgent, formatCleanupItem } from "../impl/formatCleanupItem.js";
 
 const findFolderOwnersInputSchema = Type.Object(
     {
@@ -63,7 +63,7 @@ export function findFolderOwnersTool(cleanup: CleanupModule, actingAgentId: stri
                 const agents = owners.agents.filter((owner) => owner.relation === relation);
                 if (items.length === 0 && agents.length === 0) continue;
                 lines.push(`${RELATION_HEADINGS[relation]}:`);
-                lines.push(...items.map(({ item }) => cleanup.formatItem(item, owners.at)));
+                lines.push(...items.map(({ item }) => formatCleanupItem(item, owners.at)));
                 if (agents.length > 0) {
                     lines.push("Agents:");
                     lines.push(...agents.map(({ agent }) => formatCleanupAgent(agent, owners.at)));

@@ -159,7 +159,7 @@ reopen it. A task gets a project workspace through `create_subtask` with a works
 no workspace or project to create a child under.
 
 Every agent offered these tools is also told to mention a workspace as
-`[](https://link.happy.page/#1/<instanceId>/workspaces/<workspaceId>)`, a share link naming this installation, and the two creation tools return that exact link.
+`[name](happy://workspaces/<workspaceId>)`, and the two creation tools return that exact link.
 Clients show the workspace's live name as the link text.
 
 - **`create_child_workspace`** — `{ name, baseRef? }`. Creates a named workspace directly below the

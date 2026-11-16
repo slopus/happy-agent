@@ -311,9 +311,8 @@ describe("artifacts published by agents", () => {
             createdBy: { kind: "agent", agentId, botId: null },
             updatedBy: { kind: "agent", agentId, botId: null },
         });
-        const share = `https://link.happy.page/#1/${(await gym.client.getHealth()).instanceId!}`;
         expect(created.text).toContain(
-            `Mention it in chat as [](${share}/artifacts/${artifact.id}).`,
+            `Mention it in chat as [Q3 revenue report](happy://artifacts/${artifact.id}).`,
         );
         const updated = await call(agentId, "update_artifact", {
             artifactId: artifact.id,
@@ -321,7 +320,7 @@ describe("artifacts published by agents", () => {
             major: 2,
         });
         expect(updated.text).toContain(`Artifact ${artifact.id} is now at version 5 (2.0)`);
-        expect(updated.text).toContain(`](${share}/artifacts/${artifact.id}?version=5)`);
+        expect(updated.text).toContain(`](happy://artifacts/${artifact.id}?version=5)`);
 
         // The agent reads what it published back.
         const read = await call(agentId, "read_artifact", { artifactId: artifact.id });

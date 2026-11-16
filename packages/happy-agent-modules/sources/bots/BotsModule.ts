@@ -85,7 +85,6 @@ import { setBotAvatarTool } from "./tools/set_bot_avatar.js";
 import { setBotNameTool } from "./tools/set_bot_name.js";
 import { updateBotSettingsTool } from "./tools/update_bot_settings.js";
 import { requireDurableCommit } from "../impl/durableCommit.js";
-import { happyUrlPattern, writeHappyMarkdownLink } from "../utils/writeHappyLinks.js";
 
 const BOT_NAME_ATTEMPTED_KEY = "bot-name-attempted";
 /** The bot name the current history was last told. */
@@ -101,9 +100,8 @@ const namingArgumentsSchema = Type.Object({
 /** The catalog manages its bots' folders; the agent sandbox does not apply to that work. */
 const PRODUCT = computePermissions("full_access");
 /** How an agent offered the bot tools mentions a bot, so people see its live name as a link. */
-function botReferenceInstructions(instanceId: string | undefined): string {
-    return `When you mention a bot in a reply, link it as [](${happyUrlPattern(instanceId, "agents/<agentId>", { as: "bot" })}) with the bot's agent ID, not its bot ID, and nothing between the brackets; people see its live name as the link text. The bot tools give you the exact link.`;
-}
+const BOT_REFERENCE_INSTRUCTIONS =
+    "When you mention a bot in a reply, link it as [its name](happy://agents/<agentId>) with the bot's agent ID, not its bot ID; people see its live name as the link text. The bot tools give you the exact link.";
 
 export class BotsModule implements AgentModule {
     readonly name = "bots";
@@ -206,7 +204,6 @@ export class BotsModule implements AgentModule {
             await this.#ensureChiefOfStaffWhenPossible(ctx);
         },
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> => {
-            const botReference = botReferenceInstructions(this.#config.loadedInstanceId);
             const bot = await readBotByAgent(ctx, scope.agent.id);
             const roster = await this.#offersRoster(ctx, scope.agent.id);
             if (bot !== undefined) {
@@ -214,7 +211,7 @@ export class BotsModule implements AgentModule {
                     bot.systemKey === CHIEF_OF_STAFF_SYSTEM_KEY
                         ? formatChiefOfStaffInstructions(bot)
                         : formatBotIdentityPrompt(bot);
-                return roster ? `${identity}\n\n${botReference}` : identity;
+                return roster ? `${identity}\n\n${BOT_REFERENCE_INSTRUCTIONS}` : identity;
             }
             // A bot that keeps its agents inside its own tree gives them no other bots to mention.
             if (!roster) return "";
@@ -226,12 +223,12 @@ export class BotsModule implements AgentModule {
                         ? undefined
                         : await readBotByAgent(ctx, task.creatorAgentId);
                 return creator === undefined
-                    ? botReference
-                    : `${formatTaskCreatorPrompt(creator)}\n\n${botReference}`;
+                    ? BOT_REFERENCE_INSTRUCTIONS
+                    : `${formatTaskCreatorPrompt(creator)}\n\n${BOT_REFERENCE_INSTRUCTIONS}`;
             }
             // A subagent is offered no bot tools, so it has no bots to mention.
             if ((await this.#requireAgents().parentOf(ctx, scope.agent.id)) !== null) return "";
-            return botReference;
+            return BOT_REFERENCE_INSTRUCTIONS;
         },
         /**
          * Tell a bot its name with the next message it receives, and again when the name changed.
@@ -344,15 +341,6 @@ export class BotsModule implements AgentModule {
     onEventTransactional(listener: BotEventListener): BotUnsubscribe {
         this.#transactionalListeners.add(listener);
         return () => this.#transactionalListeners.delete(listener);
-    }
-
-    /** How an agent mentions a bot in chat: an empty-label share link to its agent. */
-    formatBotLink(agentId: string): string {
-        return writeHappyMarkdownLink(
-            this.#config.loadedInstanceId,
-            { type: "reference", reference: { kind: "agent", id: agentId } },
-            { as: "bot" },
-        );
     }
 
     async list(ctx: Context): Promise<readonly BotRecord[]> {

@@ -36,7 +36,6 @@ function fixture(children: Record<string, Record<string, unknown>>, parentId = "
         {} as never,
         {} as never,
         {} as never,
-        {} as never,
         { onEventTransactional: vi.fn() } as never,
         { register: vi.fn() } as never,
         {} as never,

@@ -73,7 +73,6 @@ function fixture() {
         {} as never,
         {} as never,
         {} as never,
-        {} as never,
         workspacesModule as never,
         durableFunctions as never,
         abort as never,

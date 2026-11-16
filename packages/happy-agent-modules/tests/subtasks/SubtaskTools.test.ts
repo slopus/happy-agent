@@ -48,7 +48,6 @@ describe("subtask instructions", () => {
         "guides substantial, shallow delegation for subtask=%s",
         async (subtask) => {
             const module = new SubtasksModule(
-                { loadedInstanceId: "k3x9q2m7p0a4b8c1d5e6f7g2" } as never,
                 { forAgent: async () => ({}) } as never,
                 {} as never,
                 {} as never,
@@ -71,46 +70,22 @@ describe("subtask instructions", () => {
                 "Usually create second-level subtasks only on explicit user request.",
             );
             expect(instructions).toContain(
-                "When you mention a subtask in a reply, link it as [](https://link.happy.page/#1/k3x9q2m7p0a4b8c1d5e6f7g2/agents/<agentId>?as=subtask) with nothing between the brackets",
+                "When you mention a subtask in a reply, link it as [its title](happy://agents/<agentId>)",
             );
         },
     );
 });
 
 describe("subtask creation result", () => {
-    const subtasks = (loadedInstanceId: string | undefined) =>
-        new SubtasksModule(
-            { loadedInstanceId } as never,
-            {} as never,
-            {} as never,
-            {} as never,
-            { onEventTransactional: vi.fn() } as never,
-            { register: vi.fn() } as never,
-            {} as never,
-            {} as never,
-        );
-    const tool = (module: SubtasksModule) =>
-        createSubtaskTool(
-            module,
+    it("gives the coordinator the exact link to mention the new subtask", () => {
+        const tool = createSubtaskTool(
+            {} as unknown as SubtasksModule,
             "parent",
             { provider: "codex", model: undefined },
             "auto",
             "OPTIONS-LISTING",
         );
-
-    it("gives the coordinator the exact share link to mention the new subtask", () => {
-        expect(
-            tool(subtasks("k3x9q2m7p0a4b8c1d5e6f7g2")).toLLM({ agentId: "subtaskagent1" }),
-        ).toEqual([
-            {
-                type: "text",
-                text: "Created subtask subtaskagent1 sharing your filesystem. It runs independently; use send_agent_message to coordinate with it. Mention it in chat as [](https://link.happy.page/#1/k3x9q2m7p0a4b8c1d5e6f7g2/agents/subtaskagent1?as=subtask).",
-            },
-        ]);
-    });
-
-    it("links plainly outside the runtime", () => {
-        expect(tool(subtasks(undefined)).toLLM({ agentId: "subtaskagent1" })).toEqual([
+        expect(tool.toLLM({ agentId: "subtaskagent1" })).toEqual([
             {
                 type: "text",
                 text: "Created subtask subtaskagent1 sharing your filesystem. It runs independently; use send_agent_message to coordinate with it. Mention it in chat as [](happy://agents/subtaskagent1).",

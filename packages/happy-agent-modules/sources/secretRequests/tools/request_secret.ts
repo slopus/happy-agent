@@ -99,7 +99,7 @@ export function requestSecretTool(
             {
                 type: "text" as const,
                 text: [
-                    `Asked the user to ${result.exists ? "change" : "add"} ${result.secretId === null ? "a secret" : `the secret ${JSON.stringify(result.secretId)}`} with ${result.variables.join(", ")}, in ${JSON.stringify(result.title)}, ${artifacts.formatArtifactLink(result.artifactId)}.`,
+                    `Asked the user to ${result.exists ? "change" : "add"} ${result.secretId === null ? "a secret" : `the secret ${JSON.stringify(result.secretId)}`} with ${result.variables.join(", ")}, in [${result.title}](happy://artifacts/${result.artifactId}).`,
                     "The user sees the card in this chat. You will get a message when they save it; do not wait for it.",
                 ].join(" "),
             },

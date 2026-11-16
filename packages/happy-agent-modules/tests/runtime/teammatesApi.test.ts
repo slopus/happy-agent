@@ -115,10 +115,8 @@ describe("looping in a teammate", () => {
         expect(await hooks.instructions!(ctx, scope("someotheragent"))).toBe("");
         const tools = await hooks.tools!(ctx, scope(task.agentId));
         expect(tools.map((tool) => tool.name)).toEqual(["list_teammates", "loop_in_teammate"]);
-        const instanceId = runtime.modules.config.loadedInstanceId!;
-        const share = `https://link.happy.page/#1/${instanceId}`;
         expect(await hooks.instructions!(ctx, scope(task.agentId))).toContain(
-            `[](${share}/users/<userId>) with nothing between the brackets`,
+            "[their name](happy://users/<userId>)",
         );
         const loopIn = tools.find((tool) => tool.name === "loop_in_teammate")!;
         expect(loopIn.shouldReviewInAutoMode?.({} as never, {} as never)).toBe(false);
@@ -132,7 +130,7 @@ describe("looping in a teammate", () => {
             userId: steve!.id,
             name: "Steve",
             joined: true,
-            mention: `[](${share}/users/${steve!.id})`,
+            mention: `[${steve!.name}](happy://users/${steve!.id})`,
         });
 
         // Steve's own views carry the mark; nobody else's do.
@@ -246,8 +244,7 @@ describe("mentioning a teammate and counting what is unread", () => {
             permissionMode: "auto",
         } as const;
         await aliceClient.sendMessage(task.agentId, {
-            // A share link names Steve here; the older happy:// form still reads.
-            text: `Can [Steve](https://link.happy.page/#1/${runtime.modules.config.loadedInstanceId!}/users/${steve!.id}) check this? Also [guest](happy://users/${guest.id}) and \`[x](happy://users/${steve!.id})\`.`,
+            text: `Can [Steve](happy://users/${steve!.id}) check this? Also [guest](happy://users/${guest.id}) and \`[x](happy://users/${steve!.id})\`.`,
             mode,
         });
         // The join commits with the message: it is there as soon as the send answers.

@@ -27,8 +27,7 @@ describe("mentioning a teammate in a task", () => {
             expect.arrayContaining([aliceId, bobId]),
         );
 
-        const share = `https://link.happy.page/#1/${(await gym.client.getHealth()).instanceId!}`;
-        await gym.send(`Can [Bob](${share}/users/${bobId}) check the refund path?`, {
+        await gym.send(`Can [Bob](happy://users/${bobId}) check the refund path?`, {
             sessionId: task.agent.id,
         });
         const membership = async (client: HappyAgentClient) =>

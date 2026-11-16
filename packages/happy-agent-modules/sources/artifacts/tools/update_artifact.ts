@@ -18,6 +18,7 @@ import {
 import {
     formatArtifactBackground,
     formatArtifactCover,
+    formatArtifactLink,
     formatArtifactVersion,
     formatFileCount,
 } from "../impl/formatArtifact.js";
@@ -211,7 +212,7 @@ export function updateArtifactTool(
                         : [
                               `Live content: ${JSON.stringify(artifact.live.url)}, through the original network ${JSON.stringify(artifact.live.networkId)}.`,
                           ]),
-                    `Mention it in chat as ${artifacts.formatArtifactLink(artifact.id)}, or as ${artifacts.formatArtifactLink(artifact.id, artifact.latestVersion)} for this version only.`,
+                    `Mention it in chat as ${formatArtifactLink(artifact.id, artifact.title)}, or as ${formatArtifactLink(artifact.id, artifact.title, artifact.latestVersion)} for this version only.`,
                 ].join(" "),
             },
         ],

@@ -132,7 +132,7 @@ import {
     type GenUiBundleFile,
 } from "./impl/genUiEntry.js";
 import type { GenUiDocument } from "../impl/genUi/validateGenUiDocument.js";
-import { ARTIFACT_COVER_INSTRUCTIONS, artifactReferenceInstructions } from "./tools/common.js";
+import { ARTIFACT_COVER_INSTRUCTIONS, ARTIFACT_REFERENCE_INSTRUCTIONS } from "./tools/common.js";
 import { connectArtifactNetwork, describeArtifactNetworkExposure } from "./impl/artifactNetwork.js";
 import {
     LIVE_ARTIFACT_FALLBACK,
@@ -147,8 +147,6 @@ import { readArtifactFileTool } from "./tools/read_artifact_file.js";
 import { readArtifactTool } from "./tools/read_artifact.js";
 import { updateArtifactTool } from "./tools/update_artifact.js";
 import { writeArtifactFileTool } from "./tools/write_artifact_file.js";
-import { happyUrlPattern } from "../utils/writeHappyLinks.js";
-import { formatArtifactLink } from "./impl/formatArtifact.js";
 
 /** Who is acting and where, as an agent's own conversation decides it. */
 export interface ArtifactActor {
@@ -251,8 +249,7 @@ export class ArtifactsModule implements AgentModule {
     }
 
     readonly #hooks: AgentModuleHooks = {
-        instructions: () =>
-            `${artifactReferenceInstructions(this.#config.loadedInstanceId)}\n\n${ARTIFACT_COVER_INSTRUCTIONS}`,
+        instructions: () => `${ARTIFACT_REFERENCE_INSTRUCTIONS}\n\n${ARTIFACT_COVER_INSTRUCTIONS}`,
         tools: async (_ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => [
             createArtifactTool(this, this.#compute, scope.agent.id),
             writeArtifactFileTool(this, scope.agent.id),
@@ -291,16 +288,6 @@ export class ArtifactsModule implements AgentModule {
     onEventTransactional(listener: ArtifactEventListener): ArtifactUnsubscribe {
         this.#transactionalListeners.add(listener);
         return () => this.#transactionalListeners.delete(listener);
-    }
-
-    /** How an agent mentions an artifact, or one of its versions, in chat: an empty-label share link. */
-    formatArtifactLink(id: string, version?: number): string {
-        return formatArtifactLink(this.#config.loadedInstanceId, id, version);
-    }
-
-    /** The link an agent is told to write for an artifact, with `<artifactId>` to fill in. */
-    artifactUrlPattern(): string {
-        return happyUrlPattern(this.#config.loadedInstanceId, "artifacts/<artifactId>");
     }
 
     /** One artifact, a tombstone included. */

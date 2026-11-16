@@ -73,7 +73,7 @@ describe("project creation tools", () => {
         expect(createProjectTool(projects).toLLM!(first)).toEqual([
             expect.objectContaining({
                 text: expect.stringContaining(
-                    `Project registered. Mention it in chat as [](happy://projects/${first.id}).`,
+                    `Project registered. Mention it in chat as [${first.name}](happy://projects/${first.id}).`,
                 ),
             }),
         ]);

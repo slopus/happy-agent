@@ -8,7 +8,7 @@ import {
     requireWritableArtifact,
     shouldReviewArtifactWrite,
 } from "../impl/artifactWriteAccess.js";
-import { formatArtifactVersion } from "../impl/formatArtifact.js";
+import { formatArtifactLink, formatArtifactVersion } from "../impl/formatArtifact.js";
 import {
     ARTIFACT_TOOL_CAPABILITY,
     artifactFileWriteResultSchema,
@@ -74,7 +74,7 @@ export function writeArtifactFileTool(artifacts: ArtifactsModule, agentId: strin
             {
                 type: "text",
                 text: result.changed
-                    ? `Wrote ${JSON.stringify(result.path)}: artifact ${result.id} is now at ${formatArtifactVersion(result)}. Mention it in chat as ${artifacts.formatArtifactLink(result.id)}.`
+                    ? `Wrote ${JSON.stringify(result.path)}: artifact ${result.id} is now at ${formatArtifactVersion(result)}. Mention it in chat as ${formatArtifactLink(result.id, result.title)}.`
                     : `${JSON.stringify(result.path)} already held exactly this content, so artifact ${result.id} stays at ${formatArtifactVersion(result)}.`,
             },
         ],

@@ -50,7 +50,6 @@ function fixture() {
     };
     const durableFunctions = { register: vi.fn(), invoke: vi.fn(), cancel: vi.fn() };
     const module = new SubtasksModule(
-        {} as never,
         {
             forAgent: async (_ctx: Context, id: string) =>
                 id === "botagent" ? { status: "active" } : undefined,

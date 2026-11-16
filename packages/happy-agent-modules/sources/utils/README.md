@@ -21,9 +21,3 @@ as Surface references do, without importing the API module's projection code.
 ranks short in-memory lists with BM25, so every search provider agrees on what a word is.
 `SearchHit` is the shape a provider returns before fusion assigns its rank. `htmlSearchText`
 reads HTML as the text a reader sees, for every provider that indexes HTML.
-
-`writeHappyLinks` is how every module writes Happy links for models and people: an empty-label share
-link naming this installation, `[](https://link.happy.page/#1/<instanceId>/…)`, or the
-pattern an agent is told to fill in. A module passes the config module's `loadedInstanceId`;
-without one, as in a unit test with a stub config, it writes the plain `happy://` link.
-`isHappyLinkHere` tells a link naming this installation from one naming another.

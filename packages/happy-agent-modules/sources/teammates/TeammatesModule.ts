@@ -7,14 +7,8 @@ import type {
 import { parseHappyLinks } from "@slopus/happy-agent-client";
 import type { Context } from "@steve.kite/stdlib";
 
-import { ConfigModule } from "../config/index.js";
 import { TasksModule, type TaskMembership } from "../tasks/index.js";
 import { TeamModule, type TeamUser } from "../team/index.js";
-import {
-    happyUrlPattern,
-    isHappyLinkHere,
-    writeHappyMarkdownLink,
-} from "../utils/writeHappyLinks.js";
 import { listTeammatesTool } from "./tools/list_teammates.js";
 import { loopInTeammateTool } from "./tools/loop_in_teammate.js";
 
@@ -33,14 +27,12 @@ export class TeammateNotFoundError extends Error {
     }
 }
 
-function teammatesInstructions(instanceId: string | undefined): string {
-    return [
-        "# Teammates",
-        "",
-        "Other people on the team can join this task. list_teammates shows each one's user ID, name, role, and what they follow. When this work clearly concerns what a teammate follows or does, or project instructions say to involve someone, loop them in with loop_in_teammate and say why in one sentence; it adds the task to their list and highlights it for them. Do not loop in someone already working with you here, and do not loop people in for work they would not care about.",
-        `When you mention a person in a reply, link them as [](${happyUrlPattern(instanceId, "users/<userId>")}) with nothing between the brackets; people see their current name as the link text. list_teammates and loop_in_teammate give you the exact link.`,
-    ].join("\n");
-}
+const TEAMMATES_INSTRUCTIONS = [
+    "# Teammates",
+    "",
+    "Other people on the team can join this task. list_teammates shows each one's user ID, name, role, and what they follow. When this work clearly concerns what a teammate follows or does, or project instructions say to involve someone, loop them in with loop_in_teammate and say why in one sentence; it adds the task to their list and highlights it for them. Do not loop in someone already working with you here, and do not loop people in for work they would not care about.",
+    "When you mention a person in a reply, link them as [their name](happy://users/<userId>); people see their current name as the link text. list_teammates and loop_in_teammate give you the exact link.",
+].join("\n");
 
 /**
  * The people on the team, as agents see them, and looping one of them into a task.
@@ -51,21 +43,17 @@ function teammatesInstructions(instanceId: string | undefined): string {
  */
 export class TeammatesModule implements AgentModule {
     readonly name = "teammates";
-    readonly #config: ConfigModule;
     readonly #tasks: TasksModule;
     readonly #team: TeamModule;
 
-    constructor(config: ConfigModule, tasks: TasksModule, team: TeamModule) {
-        this.#config = config;
+    constructor(tasks: TasksModule, team: TeamModule) {
         this.#tasks = tasks;
         this.#team = team;
     }
 
     readonly #hooks: AgentModuleHooks = {
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> =>
-            (await this.#offersTools(ctx, scope.agent.id))
-                ? teammatesInstructions(this.#config.loadedInstanceId)
-                : "",
+            (await this.#offersTools(ctx, scope.agent.id)) ? TEAMMATES_INSTRUCTIONS : "",
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             const task = this.#team.enabled
                 ? await this.#tasks.forAgent(ctx, scope.agent.id)
@@ -76,14 +64,6 @@ export class TeammatesModule implements AgentModule {
     };
 
     readonly beforeStart = (): AgentModuleHooks => this.#hooks;
-
-    /** How an agent mentions a person in chat: an empty-label share link. */
-    formatTeammateLink(userId: string): string {
-        return writeHappyMarkdownLink(this.#config.loadedInstanceId, {
-            type: "reference",
-            reference: { kind: "user", id: userId },
-        });
-    }
 
     /** Every person who signs in, guests left out, in name order. */
     async list(ctx: Context): Promise<readonly Teammate[]> {
@@ -126,8 +106,8 @@ export class TeammatesModule implements AgentModule {
     }
 
     /**
-     * A team member wrote `text` in the task: every other member it links as a user of this
-     * installation, in a share link or `happy://users/<userId>`, is looped in through the same join as an agent's, marked as
+     * A team member wrote `text` in the task: every other member it links as
+     * `happy://users/<userId>` is looped in through the same join as an agent's, marked as
      * mentioned by the writer from `at`. Guests and unknown people are left out, and an archived
      * task takes nobody. Runs inside the caller's transaction, the one storing the message.
      */
@@ -142,12 +122,10 @@ export class TeammatesModule implements AgentModule {
     ): Promise<readonly Teammate[]> {
         if (!this.#team.enabled) return [];
         const ids = new Set<string>();
-        const instanceId = this.#config.loadedInstanceId;
         for (const segment of parseHappyLinks(input.text)) {
             if (segment.type !== "link" || segment.image) continue;
             const link = segment.link;
             if (link?.type !== "reference" || link.reference.kind !== "user") continue;
-            if (!isHappyLinkHere(instanceId, link)) continue;
             if (link.reference.id !== input.senderUserId) ids.add(link.reference.id);
         }
         if (ids.size === 0) return [];

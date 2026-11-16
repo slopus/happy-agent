@@ -63,11 +63,6 @@ all a person reading along there learns of it. Those rows say what was shown: th
 an artifact as an empty-label Happy link in the tool-call description, and the same pass names
 it, as plain words rather than Markdown, because a description is not Markdown.
 
-Agents now write those links as share links, `[](https://link.happy.page/#1/<instanceId>/…)`.
-The pass reads each share link as the link it carries first, names only entities of this
-installation, and leaves a link to another installation as its label, since an ID means nothing
-across installations.
-
 File links, `[label](happy://…/files/…)` or `[label](happy-file://…)`, get the same treatment for
 the same reason: the phone cannot open another workspace's file, and a raw URL means nothing
 there. The client package's `renderHappyLinksAsText` replaces each with its label in the same

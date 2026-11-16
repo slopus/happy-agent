@@ -270,9 +270,8 @@ the catalog on each inference so renaming a bot reaches its next turn immediatel
 
 ## A bot is mentioned by its agent ID
 
-Like tasks, a bot is mentioned in chat by the bot's agent ID, not its bot ID, because the link names
-the conversation a client opens. It is a share link, as Kirill decided for every Happy link agents
-write: `[](https://link.happy.page/#1/<instanceId>/agents/<agentId>?as=bot)`. `create_bot` and
+Like tasks, a bot is mentioned in chat as `[name](happy://agents/<agentId>)` with the bot's agent
+ID, not its bot ID, because the link names the conversation a client opens. `create_bot` and
 `list_bots` give the exact link, and every agent offered the bot tools, task agents included, is
 told to use it.
 
@@ -314,5 +313,3 @@ credentials, used to be described in prose. The Chief of Staff now links the pag
 link, `happy://settings/<page>`, and may show it as a button with the link title `button`. The
 link only navigates, so the Chief of Staff still does every step it can itself and never asks for a
 token or key in the chat. This is prompt guidance; nothing in code emits or requires these links.
-Settings links stay `happy://`: they name a page of the client, not something on an installation,
-so link.happy.page has no share form for them.

@@ -55,7 +55,6 @@ function fixture() {
         createAgent: vi.fn(async () => ({ agentId: "created" })),
     };
     const module = new SubtasksModule(
-        {} as never,
         {
             forAgent: async (_ctx: Context, id: string) =>
                 id === "botagent" ? { status: "active" } : undefined,

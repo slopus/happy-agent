@@ -151,7 +151,6 @@ import {
     projectProvisionResultSchema,
     type ProjectProvisionResult,
 } from "./ProjectDurableFunctions.js";
-import { happyUrlPattern, writeHappyMarkdownLink } from "../utils/writeHappyLinks.js";
 
 /** Where a project's folder is, as clients are shown it. */
 export type ProjectCompute =
@@ -161,9 +160,8 @@ export type ProjectCompute =
 /** The product manages its own folders; the agent sandbox does not apply to that work. */
 const PRODUCT = computePermissions("full_access");
 /** How an agent offered the project tools mentions one, so people see its live name as a link. */
-function projectReferenceInstructions(instanceId: string | undefined): string {
-    return `When you mention a project in a reply, link it as [](${happyUrlPattern(instanceId, "projects/<projectId>")}) with nothing between the brackets; people see its live name as the link text.`;
-}
+const PROJECT_REFERENCE_INSTRUCTIONS =
+    "When you mention a project in a reply, link it as [its name](happy://projects/<projectId>); people see its live name as the link text.";
 
 /** How many projects one page may carry, and how much text a page may spend on them. */
 export const PROJECT_PAGE_SIZE = 50;
@@ -332,9 +330,7 @@ export class ProjectsModule implements AgentModule {
 
     readonly #hooks: AgentModuleHooks = {
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> =>
-            (await this.#offersTools(ctx, scope.agent.id))
-                ? projectReferenceInstructions(this.#config.loadedInstanceId)
-                : "",
+            (await this.#offersTools(ctx, scope.agent.id)) ? PROJECT_REFERENCE_INSTRUCTIONS : "",
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             if (!(await this.#offersTools(ctx, scope.agent.id))) return [];
             return [
@@ -1993,14 +1989,6 @@ export class ProjectsModule implements AgentModule {
                 ? {}
                 : { worktreeUnsupportedReason: boundedReason(probe.worktreeSupportReason) }),
             ...(probe.facts === undefined ? {} : { git: projectGitFactsFrom(probe.facts) }),
-        });
-    }
-
-    /** How an agent mentions a project in chat: an empty-label share link. */
-    formatProjectLink(projectId: string): string {
-        return writeHappyMarkdownLink(this.#config.loadedInstanceId, {
-            type: "reference",
-            reference: { kind: "project", id: projectId },
         });
     }
 

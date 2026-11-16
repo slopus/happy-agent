@@ -1,4 +1,5 @@
 import { defineAgentTool } from "@slopus/happy-agent-base";
+import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 import { Type } from "@sinclair/typebox";
 
 import type { TeammatesModule } from "../TeammatesModule.js";
@@ -36,7 +37,7 @@ export function listTeammatesTool(teammates: TeammatesModule) {
                         : list
                               .map(
                                   (person) =>
-                                      `- ${person.name} — user ID ${person.id}, role: ${person.role ?? "not set"}, follows: ${person.follows ?? "not set"}, mention as ${teammates.formatTeammateLink(person.id)}`,
+                                      `- ${person.name} — user ID ${person.id}, role: ${person.role ?? "not set"}, follows: ${person.follows ?? "not set"}, mention as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "user", id: person.id } }, person.name)}`,
                               )
                               .join("\n"),
             },

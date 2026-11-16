@@ -43,5 +43,5 @@ briefly, which reaches the coordinator as its ordinary report. `send_agent_messa
 same fields for a switch that comes with new instructions.
 Archival is final: a subtask is never restored. Durable Functions owns post-commit compute
 cleanup. Agent Base remains unchanged.
-Coordinators are told to mention a subtask as `[](https://link.happy.page/#1/<instanceId>/agents/<agentId>?as=subtask)`, and
+Coordinators are told to mention a subtask as `[title](happy://agents/<agentId>)`, and
 `create_subtask` returns that exact link; clients show the subtask's live title as the link text.

@@ -653,7 +653,6 @@ export async function startHappyAgentRuntime(
             async (shutdownCtx) => await artifactData.close(shutdownCtx),
         );
         const subtasks = new SubtasksModule(
-            config,
             bots,
             tasks,
             collaboration,
@@ -759,7 +758,7 @@ export async function startHappyAgentRuntime(
             await system?.close(shutdownCtx);
             await codeMode.close();
         });
-        const teammates = new TeammatesModule(config, tasks, team);
+        const teammates = new TeammatesModule(tasks, team);
         const attachments = new AttachmentsModule(
             config,
             durableFunctions,

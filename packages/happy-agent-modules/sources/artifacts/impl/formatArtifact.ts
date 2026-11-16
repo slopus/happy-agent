@@ -1,3 +1,5 @@
+import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
+
 import type {
     ArtifactAuthor,
     ArtifactCover,
@@ -7,21 +9,16 @@ import type {
 } from "../Artifact.js";
 import { ARTIFACT_TYPE_RULES, formatBytes } from "../ArtifactTypes.js";
 import { modelArtifactFileCount } from "./genUiEntry.js";
-import { writeHappyMarkdownLink } from "../../utils/writeHappyLinks.js";
 
-/**
- * The ready-to-paste Markdown link to an artifact, or to one of its versions: an empty-label share
- * link naming the installation `instanceId`, which clients show with the artifact's live title.
- */
-export function formatArtifactLink(
-    instanceId: string | undefined,
-    id: string,
-    version?: number,
-): string {
-    return writeHappyMarkdownLink(instanceId, {
-        type: "reference",
-        reference: { kind: "artifact", id, ...(version === undefined ? {} : { version }) },
-    });
+/** The ready-to-paste Markdown link to an artifact, or to one of its versions, labeled with `title`. */
+export function formatArtifactLink(id: string, title: string, version?: number): string {
+    return formatHappyMarkdownLink(
+        {
+            type: "reference",
+            reference: { kind: "artifact", id, ...(version === undefined ? {} : { version }) },
+        },
+        title,
+    );
 }
 
 /** One catalog line a model reads: identity, kind, title, latest version, size, and last change. */

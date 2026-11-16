@@ -14,7 +14,7 @@ import {
 import { Value } from "@sinclair/typebox/value";
 import { parseHappyShareUrl, parseHappyUrl } from "@slopus/happy-agent-client";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1477,48 +1477,19 @@ describe("collaboration", () => {
 
     it("tells an agent to link files that are read outside its own chat through its Agent ID", async () => {
         const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
-        await mkdir(config.configuration.paths.agentHome, { recursive: true });
-        const instanceId = await config.instanceId();
         const { hooks, ctx } = await started(new Collection(), config);
 
         const instructions = await hooks.instructions!(ctx, { agent: { id: "a1b2" } } as never);
 
         expect(instructions).toContain(
-            `link it as [](https://link.happy.page/#1/${instanceId}/agents/a1b2/files/<path from your workspace root>?lines=42-50) with nothing between the brackets`,
+            "link it as [Foo.tsx:42](happy://agents/a1b2/files/<path from your workspace root>#L42-L50)",
         );
         expect(instructions).toContain(
-            `or [](https://link.happy.page/#1/${instanceId}/workspaces/<workspace ID>/files/<path>)`,
-        );
-        expect(instructions).toContain(
-            "Copy Happy links you receive unchanged, whether they start with https://link.happy.page/, happy://, or happy-file://.",
+            "Copy happy:// and happy-file:// links you receive unchanged.",
         );
         expect(instructions).toContain("Otherwise keep writing path:line.");
         // The example the model copies, with its path filled in, is a link the shared parser accepts.
-        const example = /\((https:\/\/link\.happy\.page\/[^)]*)\)/.exec(instructions)?.[1] ?? "";
-        expect(
-            parseHappyShareUrl(
-                example.replace("<path from your workspace root>", "packages/app/Foo.tsx"),
-            ),
-        ).toEqual({
-            link: {
-                type: "file",
-                file: {
-                    target: { type: "agent", agentId: "a1b2" },
-                    path: "packages/app/Foo.tsx",
-                    lines: { start: 42, end: 50 },
-                },
-                instanceId,
-            },
-        });
-    });
-
-    it("tells an agent outside the runtime to link files with plain Happy links", async () => {
-        const config = await temporaryTestConfig(NO_CROSS_WORKSPACE_TOML);
-        const { hooks, ctx } = await started(new Collection(), config);
-
-        const instructions = await hooks.instructions!(ctx, { agent: { id: "a1b2" } } as never);
-
-        const example = /\[\]\((happy:\/\/[^)]*)\)/.exec(instructions)?.[1] ?? "";
+        const example = /\(happy:\/\/[^)]*\)/.exec(instructions)?.[0].slice(1, -1) ?? "";
         expect(
             parseHappyUrl(
                 example.replace("<path from your workspace root>", "packages/app/Foo.tsx"),
@@ -1974,7 +1945,7 @@ describe("collaboration", () => {
         expect(create.toLLM({ agentId: "created" })).toEqual([
             {
                 type: "text",
-                text: "Created collaborator created and sent it the task. Anything it has to say will arrive as a message; nothing is waiting on it. Mention it in chat as [](happy://agents/created).",
+                text: "Created collaborator created and sent it the task. Anything it has to say will arrive as a message; nothing is waiting on it.",
             },
         ]);
         expect(send.toLLM(undefined)).toEqual([

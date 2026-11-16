@@ -21,7 +21,6 @@ import { WorkspacesModule } from "../workspaces/index.js";
 import {
     cleanupSearchQuerySchema,
     type CleanupFolderOwners,
-    type CleanupItem,
     type CleanupOrphanFolders,
     type CleanupSearchPage,
     type CleanupSearchQuery,
@@ -44,7 +43,6 @@ import { deletePermanentlyTool } from "./tools/delete_permanently.js";
 import { findOrphanFoldersTool } from "./tools/find_orphan_folders.js";
 import { previewDeleteTool } from "./tools/preview_delete.js";
 import { searchInstanceTool } from "./tools/search_instance.js";
-import { formatCleanupItem } from "./impl/formatCleanupItem.js";
 
 const CLEANUP_DELETE_FUNCTION = "cleanup-delete";
 
@@ -159,11 +157,6 @@ export class CleanupModule implements AgentModule {
             ),
         ];
         return await findOrphanFolders(this.#config, this.#runners, known);
-    }
-
-    /** One item as one line a model can act on, with the share link it mentions the item by. */
-    formatItem(item: CleanupItem, now: number): string {
-        return formatCleanupItem(item, now, this.#config.loadedInstanceId);
     }
 
     /** Everything deleting one item would remove, for the agent that would ask. */

@@ -1,5 +1,6 @@
+import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
+
 import type { CleanupAgent, CleanupItem } from "../CleanupSearch.js";
-import { writeHappyMarkdownLink } from "../../utils/writeHappyLinks.js";
 
 const KIND_LABELS: Record<CleanupItem["kind"], string> = {
     bot: "Bot",
@@ -9,25 +10,18 @@ const KIND_LABELS: Record<CleanupItem["kind"], string> = {
     workspace: "Workspace",
 };
 
-/**
- * One row as one line a model can act on: identity first, then what decides cleanup. `instanceId`
- * names this installation in the share link the item is mentioned by.
- */
-export function formatCleanupItem(
-    item: CleanupItem,
-    now: number,
-    instanceId: string | undefined,
-): string {
+/** One row as one line a model can act on: identity first, then what decides cleanup. */
+export function formatCleanupItem(item: CleanupItem, now: number): string {
     const facts = [
         `id ${item.id}`,
         ...(item.agentId === undefined
             ? []
             : [
-                  `mention it as ${writeHappyMarkdownLink(instanceId, { type: "reference", reference: { kind: "agent", id: item.agentId } }, item.kind === "bot" || item.kind === "task" || item.kind === "subtask" ? { as: item.kind } : {})}`,
+                  `mention it as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: "agent", id: item.agentId } }, item.name)}`,
               ]),
         ...(item.kind === "workspace" || item.kind === "project"
             ? [
-                  `mention it as ${writeHappyMarkdownLink(instanceId, { type: "reference", reference: { kind: item.kind, id: item.id } })}`,
+                  `mention it as ${formatHappyMarkdownLink({ type: "reference", reference: { kind: item.kind, id: item.id } }, item.name)}`,
               ]
             : []),
         item.running

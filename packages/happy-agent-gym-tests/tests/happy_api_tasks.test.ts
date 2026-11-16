@@ -58,7 +58,7 @@ describe("tasks over the API", () => {
         expect(tasks).toHaveLength(1);
         const task = tasks[0]!;
         expect(result.text).toContain(
-            `Mention it in chat as [](https://link.happy.page/#1/${(await gym.client.getHealth()).instanceId!}/agents/${task.agent.id}?as=task).`,
+            `Mention it in chat as [Fix login redirect](happy://agents/${task.agent.id}).`,
         );
         expect(task).toMatchObject({
             name: "Fix login redirect",

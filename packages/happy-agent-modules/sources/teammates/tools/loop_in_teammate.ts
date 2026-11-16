@@ -1,4 +1,5 @@
 import { cuid2Schema, defineAgentTool } from "@slopus/happy-agent-base";
+import { formatHappyMarkdownLink } from "@slopus/happy-agent-client";
 import { Type, type Static } from "@sinclair/typebox";
 
 import { taskLoopInReasonSchema } from "../../tasks/index.js";
@@ -51,7 +52,10 @@ export function loopInTeammateTool(teammates: TeammatesModule, taskId: string, a
                 userId: result.teammate.id,
                 name: result.teammate.name,
                 joined: result.joined,
-                mention: teammates.formatTeammateLink(result.teammate.id),
+                mention: formatHappyMarkdownLink(
+                    { type: "reference", reference: { kind: "user", id: result.teammate.id } },
+                    result.teammate.name,
+                ),
             };
         },
         toLLM: (result) => [

@@ -13,7 +13,6 @@ import { Value } from "@sinclair/typebox/value";
 import { backoff, type Context } from "@steve.kite/stdlib";
 
 import { BotsModule } from "../bots/index.js";
-import { ConfigModule } from "../config/index.js";
 import { AbortModule } from "../abort/index.js";
 import type { BotSettingsModule } from "../botSettings/index.js";
 import { CollaborationModule, type CollaborationCreator } from "../collaboration/index.js";
@@ -53,17 +52,14 @@ import { subtaskOrderKeyBetween } from "./subtaskOrderKeyBetween.js";
 import { createSubtaskTool } from "./tools/create_subtask.js";
 import { archiveSubtaskTool } from "./tools/archive_subtask.js";
 import { switchSubtaskModelTool } from "./tools/switch_subtask_model.js";
-import { happyUrlPattern, writeHappyMarkdownLink } from "../utils/writeHappyLinks.js";
 
 /** How a coordinator mentions a subtask, so people see its live title as a link. */
-function subtaskReferenceInstructions(instanceId: string | undefined): string {
-    return `When you mention a subtask in a reply, link it as [](${happyUrlPattern(instanceId, "agents/<agentId>", { as: "subtask" })}) with nothing between the brackets; people see its live title as the link text. create_subtask gives you the exact link.`;
-}
+const SUBTASK_REFERENCE_INSTRUCTIONS =
+    "When you mention a subtask in a reply, link it as [its title](happy://agents/<agentId>); people see its live title as the link text. create_subtask gives you the exact link.";
 
 /** User-interactive delegation, with ordinary Agent Base ancestry and durable initial delivery. */
 export class SubtasksModule implements AgentModule {
     readonly name = "subtasks";
-    readonly #config: ConfigModule;
     readonly #bots: BotsModule;
     readonly #tasks: TasksModule;
     readonly #abort: AbortModule;
@@ -83,7 +79,6 @@ export class SubtasksModule implements AgentModule {
      * when the workspace is on one. Without it, a subtask is told about its parent's machine.
      */
     constructor(
-        config: ConfigModule,
         bots: BotsModule,
         tasks: TasksModule,
         collaboration: CollaborationModule,
@@ -94,7 +89,6 @@ export class SubtasksModule implements AgentModule {
         botSettings?: BotSettingsModule,
         runners?: RunnersModule,
     ) {
-        this.#config = config;
         this.#botSettings = botSettings;
         this.#runners = runners;
         this.#bots = bots;
@@ -148,15 +142,6 @@ export class SubtasksModule implements AgentModule {
             const now = Date.now();
             await this.#updateVersionedMetadata(txCtx, agentId, config, now, { archivedAt: now });
         });
-    }
-
-    /** How a coordinator mentions a subtask in chat: an empty-label share link to its agent. */
-    formatSubtaskLink(agentId: string): string {
-        return writeHappyMarkdownLink(
-            this.#config.loadedInstanceId,
-            { type: "reference", reference: { kind: "agent", id: agentId } },
-            { as: "subtask" },
-        );
     }
 
     isSubtask(config: AgentConfig | AgentModuleAgent | undefined): boolean {
@@ -718,7 +703,7 @@ export class SubtasksModule implements AgentModule {
                     const role = Value.Check(conversationSubtaskMetadataSchema, config?.metadata)
                         ? "You are a user-visible subtask holding one conversation for your parent; users may talk to you directly."
                         : "You are a user-visible subtask managed by your parent; users may talk to you directly. Keep your assigned work in this subtask and its workspace. Your parent receives only your final message when you stop, so put your findings, diffs, verification, and anything still open there.";
-                    return `${role} Prefer create_subtask by default only for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. If the user explicitly asks for a subtask, use create_subtask within the two-level limit below your bot or task; explain if blocked. Use create_agent for internal research. Coordinate via send_agent_message and archive_subtask; do not wait for subtasks. Switch a subtask's model with switch_subtask_model only when its model is failing or wrong for the work. Keep delegated work in the child subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants and archives the task with its own workspace, if it has one; a shared folder stays. History is kept, but archival is final.\n\n${subtaskReferenceInstructions(this.#config.loadedInstanceId)}`;
+                    return `${role} Prefer create_subtask by default only for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. If the user explicitly asks for a subtask, use create_subtask within the two-level limit below your bot or task; explain if blocked. Use create_agent for internal research. Coordinate via send_agent_message and archive_subtask; do not wait for subtasks. Switch a subtask's model with switch_subtask_model only when its model is failing or wrong for the work. Keep delegated work in the child subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants and archives the task with its own workspace, if it has one; a shared folder stays. History is kept, but archival is final.\n\n${SUBTASK_REFERENCE_INSTRUCTIONS}`;
                 }
                 if (
                     (await this.#bots.forAgent(ctx, scope.agent.id)) !== undefined ||
@@ -726,7 +711,7 @@ export class SubtasksModule implements AgentModule {
                 ) {
                     return (
                         "Reserve subtasks for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. Subtasks share your folder or use new project workspaces. Only bots, tasks, and subtasks create them: at most two levels below a bot or task, not two siblings. Coordinate via send_agent_message and archive_subtask; do not wait. Switch a subtask's model with switch_subtask_model only when its model is failing or wrong for the work. Keep delegated work in its subtask: ask its agent for progress, findings, diffs, verification, or follow-up changes instead of directly inspecting or modifying its files or running commands in its workspace. Direct access to another workspace often requires elevated permissions and review by the reviewer model; talking to its agent avoids unnecessary permission reviews. Archival stops the task and descendants and archives the task with its own workspace, if it has one; a shared folder stays. History is kept, but archival is final.\n\n" +
-                        subtaskReferenceInstructions(this.#config.loadedInstanceId)
+                        SUBTASK_REFERENCE_INSTRUCTIONS
                     );
                 }
                 return "";

@@ -100,7 +100,7 @@ describe("WorkspacesModule", () => {
             expect(
                 await hooks.instructions?.(database.context, { agent: { id: "agent-1" } } as never),
             ).toBe(
-                "When you mention a workspace in a reply, link it as [](happy://workspaces/<workspaceId>) with nothing between the brackets; people see its live name as the link text.",
+                "When you mention a workspace in a reply, link it as [its name](happy://workspaces/<workspaceId>); people see its live name as the link text.",
             );
         } finally {
             database.close();

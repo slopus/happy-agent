@@ -17,6 +17,7 @@ import {
     formatArtifactBackground,
     formatArtifactCover,
     formatArtifactFile,
+    formatArtifactLink,
     formatArtifactSource,
     formatFileCount,
 } from "../impl/formatArtifact.js";
@@ -87,14 +88,16 @@ export function readArtifactTool(artifacts: ArtifactsModule) {
                     : { entryText: decoded.text, entryTextTruncated: read.more }),
             };
         },
-        toLLM: (read) => [{ type: "text", text: formatArtifactRead(artifacts, read) }],
+        toLLM: (read) => [{ type: "text", text: formatArtifactRead(read) }],
     });
 }
 
-function formatArtifactRead(
-    artifacts: ArtifactsModule,
-    { artifact, version, entryText, entryTextTruncated }: ArtifactRead,
-): string {
+function formatArtifactRead({
+    artifact,
+    version,
+    entryText,
+    entryTextTruncated,
+}: ArtifactRead): string {
     const lines = [
         `Artifact ${artifact.id}: ${JSON.stringify(artifact.title)}, ${ARTIFACT_TYPE_RULES[artifact.type].label}.`,
         `Created ${new Date(artifact.createdAt).toISOString()} by ${formatArtifactAuthor(artifact.createdBy)}${artifact.source === undefined ? "" : ` in ${formatArtifactSource(artifact.source)}`}.`,
@@ -107,7 +110,7 @@ function formatArtifactRead(
     }
     lines.push(
         `Version ${String(version.number)} of ${String(artifact.latestVersion)}, made ${new Date(version.createdAt).toISOString()} by ${formatArtifactAuthor(version.createdBy)}${version.source === undefined ? "" : ` in ${formatArtifactSource(version.source)}`}: ${JSON.stringify(version.title)}.`,
-        `Mention it in chat as ${artifacts.formatArtifactLink(artifact.id)}${version.number === artifact.latestVersion ? "" : `, or this version as ${artifacts.formatArtifactLink(artifact.id, version.number)}`}.`,
+        `Mention it in chat as ${formatArtifactLink(artifact.id, artifact.title)}${version.number === artifact.latestVersion ? "" : `, or this version as ${formatArtifactLink(artifact.id, version.title, version.number)}`}.`,
         `${formatFileCount(version.files.length)}, opening ${JSON.stringify(version.entry.path)}${formatArtifactBackground(version.background)}${formatArtifactCover(version)}:`,
         ...version.files.map(formatArtifactFile),
     );

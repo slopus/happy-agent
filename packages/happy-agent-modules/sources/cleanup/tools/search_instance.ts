@@ -12,6 +12,7 @@ import {
     MAX_CLEANUP_QUERY_LENGTH,
     type CleanupSearchQuery,
 } from "../CleanupSearch.js";
+import { formatCleanupItem } from "../impl/formatCleanupItem.js";
 
 const timeSchema = (description: string) =>
     Type.String({ minLength: 4, maxLength: 64, description });
@@ -96,7 +97,7 @@ export function searchInstanceTool(cleanup: CleanupModule, actingAgentId: string
             await cleanup.searchForAgent(ctx, actingAgentId, toQuery(input)),
         toLLM: (page) => {
             const shown = page.results.length;
-            const lines = page.results.map(({ item }) => cleanup.formatItem(item, page.at));
+            const lines = page.results.map(({ item }) => formatCleanupItem(item, page.at));
             const footer =
                 page.total === 0
                     ? "Nothing matched."

@@ -173,7 +173,6 @@ import {
     readWorkspaceChildren,
     touchWorkspace,
 } from "./store/workspaceRecords.js";
-import { happyUrlPattern, writeHappyMarkdownLink } from "../utils/writeHappyLinks.js";
 
 /** How many workspaces one page may carry, and how much text a page may spend on them. */
 export const WORKSPACE_PAGE_SIZE = 50;
@@ -203,9 +202,8 @@ export interface WorkspaceAgentPlacement {
 /** The catalog manages its own folders; the agent sandbox does not apply to that work. */
 const PRODUCT = computePermissions("full_access");
 /** How an agent offered the workspace tools mentions one, so people see its live name as a link. */
-function workspaceReferenceInstructions(instanceId: string | undefined): string {
-    return `When you mention a workspace in a reply, link it as [](${happyUrlPattern(instanceId, "workspaces/<workspaceId>")}) with nothing between the brackets; people see its live name as the link text.`;
-}
+const WORKSPACE_REFERENCE_INSTRUCTIONS =
+    "When you mention a workspace in a reply, link it as [its name](happy://workspaces/<workspaceId>); people see its live name as the link text.";
 /**
  * This module's settings on an agent that works for a task. They are fixed when the agent is
  * created, and every agent created under it copies them.
@@ -360,9 +358,7 @@ export class WorkspacesModule implements AgentModule {
 
     readonly #hooks: AgentModuleHooks = {
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> =>
-            (await this.#offersTools(ctx, scope.agent.id))
-                ? workspaceReferenceInstructions(this.#config.loadedInstanceId)
-                : "",
+            (await this.#offersTools(ctx, scope.agent.id)) ? WORKSPACE_REFERENCE_INSTRUCTIONS : "",
         tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
             if (!(await this.#offersTools(ctx, scope.agent.id))) return [];
             return [
@@ -2698,14 +2694,6 @@ export class WorkspacesModule implements AgentModule {
             throw new Error("Workspace operation output exceeds its model-output bound.");
         }
         return output;
-    }
-
-    /** How an agent mentions a workspace in chat: an empty-label share link. */
-    formatWorkspaceLink(workspaceId: string): string {
-        return writeHappyMarkdownLink(this.#config.loadedInstanceId, {
-            type: "reference",
-            reference: { kind: "workspace", id: workspaceId },
-        });
     }
 
     formatWorkspaceForModel(workspace: Workspace): string {
