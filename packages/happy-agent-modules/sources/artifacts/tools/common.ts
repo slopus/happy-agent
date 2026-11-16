@@ -22,7 +22,7 @@ export const ARTIFACT_TOOL_CAPABILITY =
  * title, and surfaces that cannot show links get the title as plain text.
  */
 export function artifactReferenceInstructions(instanceId: string | undefined): string {
-    return `When you mention an artifact in a reply, link it as [](${happyUrlPattern(instanceId, "artifacts/<artifactId>")}) with nothing between the brackets; add ?version=N to point at one version. The artifact tools give you the exact link. People see the artifact's current title as the link text, so do not repeat the title beside the link. A link inside code stays literal. Inside an artifact's own content, such as a document or HTML page you write, a Happy link may carry a label, [label](https://link.happy.page/…), which is shown there as written; in chat and in messages to agents, keep the brackets empty.`;
+    return `When you mention an artifact in a reply, link it as [](${happyUrlPattern(instanceId, "artifacts/<artifactId>")}) with nothing between the brackets; add ?version=N to point at one version. The artifact tools give you the exact link. People see the artifact's current title as the link text, so do not repeat the title beside the link. A link inside code stays literal.`;
 }
 
 /**
