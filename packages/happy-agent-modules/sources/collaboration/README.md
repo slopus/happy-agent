@@ -86,8 +86,8 @@ a restart and the same list must not read as news.
 The Agent ID also addresses the agent's files. A bare `path:line` is read against the reader's own
 workspace, so a file mentioned in a message, a report, or a relay from another workspace is written
 as a share link to the file through the agent (or a workspace) instead, as API.md specifies under
-"Share links" and "File links". Links received from other agents, as share links or in the
-`happy://` or the API's `happy-file://` form, are copied unchanged.
+"Share links" and "File links". Links received from other agents are copied unchanged; the prompt
+teaches share links only.
 
 ### A collaborator's answer comes back on its own
 

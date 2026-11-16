@@ -1359,7 +1359,7 @@ function belongsToWorkflow(metadata: AgentMetadata | undefined): boolean {
 
 /**
  * How an agent links a file read outside its own chat, through its own agent ID, in the share link
- * form naming `instanceId`. A received link of any Happy form is copied as it is.
+ * form naming `instanceId`. A received Happy link is copied as it is.
  */
 function fileLinkInstructions(instanceId: string | undefined, agentId: string): string {
     const own = happyUrlPattern(
@@ -1370,5 +1370,5 @@ function fileLinkInstructions(instanceId: string | undefined, agentId: string): 
         },
     );
     const elsewhere = happyUrlPattern(instanceId, "workspaces/<workspace ID>/files/<path>");
-    return `When a file you mention will be read outside your own chat (a message to another agent, a report to your creator, or files from another agent's workspace), link it as [](${own}) with nothing between the brackets, percent-encoding spaces and other special characters; people see the file's path as the link text. For a file elsewhere, use its agent's ID, or [](${elsewhere}). Copy Happy links you receive unchanged, whether they start with https://link.happy.page/, happy://, or happy-file://. Otherwise keep writing path:line.`;
+    return `When a file you mention will be read outside your own chat (a message to another agent, a report to your creator, or files from another agent's workspace), link it as [](${own}) with nothing between the brackets, percent-encoding spaces and other special characters; people see the file's path as the link text. For a file elsewhere, use its agent's ID, or [](${elsewhere}). Copy Happy links you receive unchanged. Otherwise keep writing path:line.`;
 }

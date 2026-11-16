@@ -144,8 +144,9 @@ agent ID, to use another agent's or a workspace's ID for files elsewhere, and to
 links unchanged. Steve first chose `happy://` for links agents write in Markdown, keeping
 `happy-file://` as the API's form. Kirill then decided agents write every Happy link as a share
 link, `[](https://link.happy.page/#1/<instanceId>/agents/<own ID>/files/<path>?lines=…)`,
-so it opens outside Happy too. Every form stays valid, so a `happy://` or `happy-file://` link an
-agent receives is copied as it is. Plain `path:line` remains the default
+so it opens outside Happy too. Kirill then dropped every mention of the older `happy://` and
+`happy-file://` forms from the prompt: agents are taught share links only and told to copy any Happy
+link they receive unchanged. The daemon still reads the older forms in stored history. Plain `path:line` remains the default
 inside the agent's own chat. The guidance lives here because the Agent ID it builds on does.
 
 ## A message carries the mutation its sending run answers
