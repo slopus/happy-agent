@@ -9259,7 +9259,8 @@ Without that capability (older daemons and Happy Cloud), attachments belong to o
 the same bytes uploaded to another agent are a separate attachment, `GET` and `DELETE` answer
 `404` for another conversation's attachment, and `send` accepts only attachments uploaded to
 that agent. `mimeType` comes from the upload's `Content-Type`, then the name. A client that needs
-a file in another conversation uploads it there again.
+a file in another conversation uploads it there again. Without it, these routes take the same
+whole-file and chunked upload protocol as `PUT /v0/media`, within their conversation.
 
 A person attaches a file to a message by uploading its bytes first and then naming them in `send`.
 On media-capable daemons, the uploaded bytes are media, described under Media, and the attachment
@@ -9290,8 +9291,10 @@ On media-capable daemons, the attachment object is the media object with a `name
 }
 ```
 
-`name` is the file name the request gave, 1–255 characters with control characters removed, also
-when the daemon already held the bytes under another name. A video attachment may carry
+On media-capable daemons, `name` is the file name the request gave, 1–255 characters with control
+characters removed, also when the daemon already held the bytes under another name. Without it,
+bytes the conversation already holds answer the existing attachment, under the name it was first
+uploaded with. A video attachment may carry
 `width`, `height`, `durationMs`, `thumbhash`, and `preview`, as its media object does. Pictures
 may also carry `preview` and `animated: true`. Attachments Happy Cloud stored
 before it measured them have no `kind` or image fields, so clients treat them as optional.
