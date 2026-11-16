@@ -12,7 +12,7 @@ import {
     type AgentSystemRef,
 } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
-import { parseHappyUrl } from "@slopus/happy-agent-client";
+import { parseHappyShareUrl, parseHappyUrl } from "@slopus/happy-agent-client";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,7 +44,6 @@ import { testConfig } from "../support/computeModule.js";
 import { temporaryTestConfig } from "../support/configModule.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
-import { parseHappyShareUrl } from "../../sources/utils/happyShareLinks.js";
 
 const MODELS: readonly AgentModel[] = [
     {

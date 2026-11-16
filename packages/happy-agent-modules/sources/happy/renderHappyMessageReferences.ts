@@ -9,7 +9,6 @@ import {
 } from "@slopus/happy-agent-client";
 
 import type { HappySessionProtocolMessage } from "./HappyProtocol.js";
-import { readHappyShareLinks } from "../utils/happyShareLinks.js";
 import { isHappyLinkHere } from "../utils/writeHappyLinks.js";
 
 /**
@@ -52,9 +51,8 @@ export async function renderHappyMessageReferences(
         }
         if (ev.t === "tool-call-start") {
             // A row's description is plain words, not Markdown, so a title goes in as written.
-            const read = readHappyShareLinks(ev.description);
-            const description = (await resolve(read))
-                ? replaceHappyLinks(read, (match) => plainWords(match, named))
+            const description = (await resolve(ev.description))
+                ? replaceHappyLinks(ev.description, (match) => plainWords(match, named))
                 : ev.description;
             rendered.push(
                 description === ev.description
@@ -68,9 +66,7 @@ export async function renderHappyMessageReferences(
             continue;
         }
         // Layout blocks arrange media the phone already shows in order; their HTML would show raw.
-        const laidOut = readHappyShareLinks(
-            ev.t === "text" ? stripMediaLayoutBlocks(ev.text) : ev.text,
-        );
+        const laidOut = ev.t === "text" ? stripMediaLayoutBlocks(ev.text) : ev.text;
         if (laidOut.trim() === "") continue;
         const text = (await resolve(laidOut)) ? renderHappyLinksAsText(laidOut, named) : laidOut;
         rendered.push(

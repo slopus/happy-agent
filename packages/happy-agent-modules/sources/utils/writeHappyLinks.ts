@@ -1,15 +1,12 @@
 import {
     formatHappyMarkdownLink,
-    formatHappyUrl,
-    type HappyLink,
-} from "@slopus/happy-agent-client";
-
-import {
     formatHappyShareMarkdownLink,
     formatHappyShareUrl,
+    formatHappyUrl,
     HAPPY_SHARE_URL_PREFIX,
+    type HappyLink,
     type HappyShareLinkRole,
-} from "./happyShareLinks.js";
+} from "@slopus/happy-agent-client";
 
 /*
  * How the daemon writes Happy links for models and people: always a share link naming this

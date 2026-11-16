@@ -1,7 +1,11 @@
-import { parseHappyLinks, parseHappyUrl, type HappyLink } from "@slopus/happy-agent-client";
+import {
+    parseHappyLinks,
+    parseHappyShareUrl,
+    parseHappyUrl,
+    type HappyLink,
+} from "@slopus/happy-agent-client";
 import { describe, expect, it } from "vitest";
 
-import { parseHappyShareUrl, readHappyShareLinks } from "../../sources/utils/happyShareLinks.js";
 import {
     happyUrlPattern,
     isHappyLinkHere,
@@ -73,35 +77,9 @@ describe("writing Happy links", () => {
 });
 
 describe("reading share links", () => {
-    it("reads share link destinations outside code as the links they carry", () => {
-        const markdown = [
-            `See [the plan](${PAGE}/agents/${ID}?as=task "button") and [notes](<${PAGE}/workspaces/${ID}/files/a.md?lines=2-3>).`,
-            `Theirs: [x](https://link.happy.page/#1/${OTHER}/users/${ID}).`,
-            `Literal: \`[y](${PAGE}/users/${ID})\` and bare ${PAGE}/users/${ID} and [web](https://example.com/).`,
-            "```",
-            `[z](${PAGE}/users/${ID})`,
-            "```",
-            `Broken: [b](${PAGE}/agents/${ID}?title=x)`,
-        ].join("\n");
-        expect(readHappyShareLinks(markdown)).toBe(
-            [
-                `See [the plan](happy://${INSTANCE}/agents/${ID} "button") and [notes](<happy://${INSTANCE}/workspaces/${ID}/files/a.md#L2-L3>).`,
-                `Theirs: [x](happy://${OTHER}/users/${ID}).`,
-                `Literal: \`[y](${PAGE}/users/${ID})\` and bare ${PAGE}/users/${ID} and [web](https://example.com/).`,
-                "```",
-                `[z](${PAGE}/users/${ID})`,
-                "```",
-                `Broken: [b](${PAGE}/agents/${ID}?title=x)`,
-            ].join("\n"),
-        );
-        expect(readHappyShareLinks("No links here.")).toBe("No links here.");
-    });
-
     it("tells this installation's links from another's", () => {
         const links = parseHappyLinks(
-            readHappyShareLinks(
-                `[a](${PAGE}/users/${ID}) [b](https://link.happy.page/#1/${OTHER}/users/${ID}) [c](happy://users/${ID})`,
-            ),
+            `[a](${PAGE}/users/${ID}) [b](https://link.happy.page/#1/${OTHER}/users/${ID}) [c](happy://users/${ID})`,
         ).flatMap((segment) => (segment.type === "link" && segment.link ? [segment.link] : []));
         expect(links.map((link) => isHappyLinkHere(INSTANCE, link))).toEqual([true, false, true]);
         expect(isHappyLinkHere(undefined, parseHappyUrl(`happy://${INSTANCE}/users/${ID}`)!)).toBe(

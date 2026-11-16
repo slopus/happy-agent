@@ -10,7 +10,6 @@ import type { Context } from "@steve.kite/stdlib";
 import { ConfigModule } from "../config/index.js";
 import { TasksModule, type TaskMembership } from "../tasks/index.js";
 import { TeamModule, type TeamUser } from "../team/index.js";
-import { readHappyShareLinks } from "../utils/happyShareLinks.js";
 import {
     happyUrlPattern,
     isHappyLinkHere,
@@ -144,7 +143,7 @@ export class TeammatesModule implements AgentModule {
         if (!this.#team.enabled) return [];
         const ids = new Set<string>();
         const instanceId = this.#config.loadedInstanceId;
-        for (const segment of parseHappyLinks(readHappyShareLinks(input.text))) {
+        for (const segment of parseHappyLinks(input.text)) {
             if (segment.type !== "link" || segment.image) continue;
             const link = segment.link;
             if (link?.type !== "reference" || link.reference.kind !== "user") continue;

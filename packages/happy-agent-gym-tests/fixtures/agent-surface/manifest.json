@@ -59,8 +59,8 @@
     "flows/provider-cli-sign-in.codex.json"
   ],
   "generatedBy": "pnpm --filter @slopus/happy-agent-gym-tests export:agent-surface",
-  "happyAgentCommit": "bd2ec1a4f55edd7f62a7691257a1192061ca24b2",
-  "protocol": 35,
+  "happyAgentCommit": "2f3daeb71cbb1a63ad4a51415df6fcb6bc2a887d",
+  "protocol": 36,
   "wire": {
     "bedrock": {
       "Bash": "19cc06c866ba274041847b5c40756bed3d3d3c50cd199982f97e2456a6a957bd",
@@ -873,7 +873,7 @@
       "ToolSearch": "59c6a9f11182fd5f9216fb29b3a1c7e4f9b8dbd2075324928642271478fa3372",
       "Write": "8f1a6ea16235b34d62f0010d772c1dc67463462ea3c3710763283b58c089033d",
       "cancel_ask": "e626663c75cd9177a17d82593e2a819f976ad38e4ba025a7b6a1f1db1a97ce52",
-      "read_attachment": "680bf8d68cbe22438ae2e608ca3faa79cf21407876a8394d721f00c094b5948c",
+      "read_attachment": "ce6bdd6d807435d017cf4632fc0d3a84d820693626546da5f97dd322b1f857ca",
       "read_user_input": "def781e0781f4b7bb5d40ea6fe85f4d2ebe4acb2fae825002e6700faf46f9927",
       "request_user_input": "d06cd440f096101bf102757101bb1fe2e75f1ee3b2f34d3ee81951c34c3e297d"
     },
