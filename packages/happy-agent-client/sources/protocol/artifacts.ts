@@ -141,6 +141,11 @@ export const artifactCoverSchema = Type.Object({
     mimeType: Type.String(),
     /** The file's `path` in the same version. */
     path: artifactPathSchema,
+    /** Shared display measurements, absent on older daemons. */
+    kind: Type.Optional(attachmentKindSchema),
+    animated: Type.Optional(Type.Literal(true)),
+    scale: Type.Optional(Type.Number({ exclusiveMinimum: 1, maximum: 4 })),
+    durationMs: Type.Optional(Type.Integer({ minimum: 0 })),
     width: Type.Integer({ minimum: 1 }),
     height: Type.Integer({ minimum: 1 }),
     aspect: artifactCoverAspectSchema,
