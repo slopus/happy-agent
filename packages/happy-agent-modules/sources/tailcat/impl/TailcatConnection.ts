@@ -5,7 +5,7 @@ type CarrierRun = { child: ChildProcess; exited: Promise<void> };
 
 /** A persistent Tailcat SOCKS carrier with native TCP sockets on both Node and Bun. */
 export class TailcatConnection {
-    readonly #executable: string;
+    readonly #executable: () => string;
     readonly #address: string;
     readonly #onClose: () => void;
     readonly #sockets = new Set<Socket>();
@@ -14,8 +14,17 @@ export class TailcatConnection {
     #run: CarrierRun | undefined;
     #resetting: Promise<void> | undefined;
 
-    constructor(executable: string, address: string, onClose: () => void = () => undefined) {
-        this.#executable = executable;
+    /**
+     * A resolver passed as `executable` is called for every carrier. Release binaries extract
+     * Tailcat to a temporary folder that can be deleted while the agent runs; a path kept from the
+     * first carrier then failed every later one until the agent restarted.
+     */
+    constructor(
+        executable: string | (() => string),
+        address: string,
+        onClose: () => void = () => undefined,
+    ) {
+        this.#executable = typeof executable === "string" ? () => executable : executable;
         this.#address = address;
         this.#onClose = onClose;
     }
@@ -102,7 +111,7 @@ export class TailcatConnection {
 
     async #start(): Promise<number> {
         const child = spawn(
-            this.#executable,
+            this.#executable(),
             ["--key=new", "socks", "--listen=127.0.0.1:0", this.#address],
             { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
         );

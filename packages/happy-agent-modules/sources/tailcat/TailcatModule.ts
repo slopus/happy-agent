@@ -54,7 +54,7 @@ export class TailcatModule implements AgentModule {
         if (this.#closed || !Value.Check(tailcatAddressSchema, address)) {
             throw new Error("The remote Tailcat connection is unavailable.");
         }
-        const connection = new TailcatConnection(resolveTailcatExecutable(), address, () =>
+        const connection = new TailcatConnection(resolveTailcatExecutable, address, () =>
             this.#outbound.delete(connection),
         );
         this.#outbound.add(connection);

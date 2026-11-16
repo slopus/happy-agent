@@ -20,5 +20,5 @@ export function openTailcatRemote(address: string): TailcatRemote {
     if (!Value.Check(tailcatAddressSchema, address)) {
         throw new Error("The Tailcat address is not an address Tailcat printed.");
     }
-    return new TailcatConnection(resolveTailcatExecutable(), address);
+    return new TailcatConnection(resolveTailcatExecutable, address);
 }
