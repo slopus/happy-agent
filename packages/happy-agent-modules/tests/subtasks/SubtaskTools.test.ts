@@ -97,7 +97,11 @@ describe("subtask creation result", () => {
 describe("subtask archival tool", () => {
     it("reviews stopping work without elevating and captures the coordinator identity", async () => {
         const archive = vi.fn(async () => ({ agentId: "child" }));
-        const tool = archiveSubtaskTool({ archive } as unknown as SubtasksModule, "parent");
+        const archivedWorkNotice = () => "Uncommitted work is saved for 30 days.";
+        const tool = archiveSubtaskTool(
+            { archive, archivedWorkNotice } as unknown as SubtasksModule,
+            "parent",
+        );
         const ctx = createRootContext();
         const input = { agentId: "child" };
         expect(tool.durable).toBe(true);
@@ -106,6 +110,7 @@ describe("subtask archival tool", () => {
         expect(tool.shouldRunInFullAccessInAutoMode).toBeUndefined();
         expect(tool.describeAutoPermissionAction!(input, ctx)).toContain('"child"');
         expect(tool.describeAutoPermissionAction!(input, ctx)).toContain("running descendants");
+        expect(tool.describeAutoPermissionAction!(input, ctx)).toContain("saved for 30 days");
         await tool.execute(ctx, input, {} as never);
         expect(archive).toHaveBeenCalledWith(ctx, "parent", "child");
     });

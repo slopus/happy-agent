@@ -23,7 +23,7 @@ export async function runGitCommand(
         const result = await execFile("git", ["-C", cwd, ...args], {
             encoding: "utf8",
             windowsHide: true,
-            env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+            env: { ...process.env, ...options.environment, GIT_TERMINAL_PROMPT: "0" },
             maxBuffer: options.maxOutputBytes ?? GIT_OUTPUT_LIMIT,
             signal: options.signal,
             // Fetch is allowed a deliberately generous foreground budget, but workspace creation

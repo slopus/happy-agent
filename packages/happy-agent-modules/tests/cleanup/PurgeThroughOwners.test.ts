@@ -270,6 +270,7 @@ describe("deleting a worktree's branch", () => {
         // Git refuses while a worktree still has the branch checked out.
         await expect(
             deleteWorkspaceBranch({
+                archivedRef: "refs/happy/archived/doomed",
                 branch: "worktree/doomed",
                 git: module,
                 projectPath: repository,
@@ -277,13 +278,17 @@ describe("deleting a worktree's branch", () => {
         ).rejects.toThrow('Git could not delete the branch "worktree/doomed"');
 
         git(repository, "worktree", "remove", "--force", join(root, "wt"));
+        git(repository, "update-ref", "refs/happy/archived/doomed", "HEAD");
         await deleteWorkspaceBranch({
+            archivedRef: "refs/happy/archived/doomed",
             branch: "worktree/doomed",
             git: module,
             projectPath: repository,
         });
         expect(git(repository, "branch", "--list", "worktree/doomed")).toBe("");
+        expect(git(repository, "for-each-ref", "refs/happy/archived")).toBe("");
         await deleteWorkspaceBranch({
+            archivedRef: "refs/happy/archived/doomed",
             branch: "worktree/doomed",
             git: module,
             projectPath: repository,

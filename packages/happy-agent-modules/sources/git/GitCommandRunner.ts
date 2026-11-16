@@ -14,6 +14,8 @@ export const gitCommandResultSchema = Type.Object(
 export type GitCommandResult = Static<typeof gitCommandResultSchema>;
 
 export interface GitCommandOptions {
+    /** Variables added to Git's environment for this one command. */
+    readonly environment?: Readonly<Record<string, string>>;
     readonly maxOutputBytes?: number;
     readonly signal?: AbortSignal;
     readonly timeoutMs?: number;
