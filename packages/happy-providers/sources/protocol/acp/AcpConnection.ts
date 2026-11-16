@@ -1,4 +1,26 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import type { SessionCompactionMessage, SessionMessage } from "@/core/SessionContext.js";
+import type { SessionUsage } from "@/core/SessionUsage.js";
+import type { SessionRunRequest } from "@/core/SessionRunRequest.js";
+import type { SessionCompaction, SessionCompactionOptions } from "@/core/SessionCompaction.js";
+import type { AcpConfigOptionValue } from "@/protocol/acp/AcpProvider.js";
+
+/** A first-party native agent's committed context, before its next output. */
+export interface AcpNativeCompaction {
+    readonly checkpointId: string;
+    readonly compaction: SessionCompactionMessage;
+    readonly messages: readonly SessionMessage[];
+    readonly preservedMessages: readonly SessionMessage[];
+    readonly usage: SessionUsage;
+}
+
+/** Only in-process agents can supply a verified native checkpoint. It is not an ACP wire extension. */
+export interface AcpAgentClient extends acp.Client {
+    contextCompacted?(params: {
+        readonly sessionId: string;
+        readonly checkpoint: AcpNativeCompaction;
+    }): Promise<void>;
+}
 
 /**
  * The agent side of ACP that {@link AcpSession} drives. An ACP server process provides it over
@@ -6,6 +28,18 @@ import type * as acp from "@agentclientprotocol/sdk";
  */
 export interface AcpAgentConnection {
     newSession(params: acp.NewSessionRequest): Promise<acp.NewSessionResponse>;
+    /** In-process native drivers can restore structured history instead of flattening it. */
+    replaySession?(
+        params: acp.NewSessionRequest,
+        request: SessionRunRequest,
+    ): Promise<acp.NewSessionResponse>;
+    /** Native compaction, when the first-party driver can invoke its own compact command. */
+    compactSession?(
+        params: acp.NewSessionRequest,
+        options: SessionCompactionOptions,
+        signal?: AbortSignal,
+        configuration?: readonly AcpConfigOptionValue[],
+    ): Promise<SessionCompaction>;
     loadSession(params: acp.LoadSessionRequest): Promise<acp.LoadSessionResponse>;
     resumeSession(params: acp.ResumeSessionRequest): Promise<acp.ResumeSessionResponse>;
     setSessionConfigOption(
@@ -54,4 +88,4 @@ export const ACP_APPROVED_TOOLS_META = "happy/approvedTools";
 export const ACP_BRIDGED_CALL_META = "happy/bridgedCall";
 
 /** Start a foreign agent working in `cwd` that reports to `client`. */
-export type AcpConnect = (cwd: string, client: acp.Client) => Promise<AcpConnection>;
+export type AcpConnect = (cwd: string, client: AcpAgentClient) => Promise<AcpConnection>;

@@ -199,12 +199,18 @@ describe("Claude replay ending on a user-role entry", () => {
 });
 
 /**
- * The request's conversation without Claude Code's environment message, after checking that no
- * placeholder reached the API.
+ * The request's conversation without Claude Code's environment prompt, after checking that no
+ * placeholder reached the API and that the replay added no system message of its own. Claude Code
+ * owns that prompt: on resume it replays the stored prompt and appends the current one, and sends
+ * both where they differ, as they do with `$SHELL` unset in a Docker build.
  */
 function conversation(request: CapturedRequest): CapturedRequest["messages"] {
     expect(JSON.stringify(request.messages)).not.toContain("No response requested.");
-    expect(request.messages.filter((message) => message.role === "system")).toHaveLength(1);
+    const system = request.messages.filter((message) => message.role === "system");
+    expect(system.length).toBeGreaterThanOrEqual(1);
+    for (const message of system) {
+        expect(blocks(message)[0]?.text).toMatch(/^# Environment\n/);
+    }
     return request.messages.filter((message) => message.role !== "system");
 }
 

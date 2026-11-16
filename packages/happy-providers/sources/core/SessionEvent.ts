@@ -1,3 +1,4 @@
+import type { CompletedSessionCompaction } from "@/core/SessionCompaction.js";
 import type { SessionUsage } from "@/core/SessionUsage.js";
 import type { SessionProviderError } from "@/core/SessionProviderError.js";
 import type { SessionOutputBlock } from "@/core/SessionContext.js";
@@ -20,6 +21,8 @@ export interface SessionTokens {
 
 /** Streaming events emitted during a single session run. */
 export type SessionEvent =
+    // A native agent replaced its context while keeping the current response open.
+    | { type: "context_compacted"; checkpointId: string; result: CompletedSessionCompaction }
     | { type: "block_start" }
     | { type: "block_stop" }
     | { type: "block_reset" }

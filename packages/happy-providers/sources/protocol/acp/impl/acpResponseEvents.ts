@@ -1,10 +1,25 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 
 import type { SessionOutputBlock } from "@/core/SessionContext.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
 
 /** The MCP server name Happy's tools are served under inside the foreign agent. */
 export const ACP_BRIDGE_NAME = "happy";
+const nativeTool = Type.Object({
+    type: Type.Union([Type.Literal("tool_use"), Type.Literal("mcp_tool_use")]),
+    id: Type.String(),
+    name: Type.String(),
+    input: Type.Unknown(),
+    server_name: Type.Optional(Type.String()),
+});
+const nativeResult = Type.Object({
+    type: Type.Literal("tool_result"),
+    tool_use_id: Type.String(),
+    content: Type.Optional(Type.Unknown()),
+    is_error: Type.Optional(Type.Boolean()),
+});
 
 /**
  * One Happy response being assembled from a foreign agent's updates.
@@ -21,6 +36,10 @@ export class AcpResponseEvents {
 
     constructor(closed: Set<string>) {
         this.#closed = closed;
+    }
+
+    get hasUnsettledCalls(): boolean {
+        return [...this.#calls.values()].some((call) => !call.settled);
     }
 
     get outputCharacters(): number {
@@ -82,6 +101,8 @@ export class AcpResponseEvents {
 
     *#toolCall(update: acp.ToolCall | acp.ToolCallUpdate): Generator<SessionEvent> {
         const id = update.toolCallId;
+        const tool = update._meta?.["happy_claude_tool"];
+        const native = Value.Check(nativeTool, tool) && tool.id === id ? tool : undefined;
         if (this.#closed.has(id)) return;
         let call = this.#calls.get(id);
         if (call === undefined) {
@@ -96,13 +117,17 @@ export class AcpResponseEvents {
             yield {
                 type: "toolcall_start",
                 callId: id,
-                name: update.kind ?? "other",
+                name: native?.name ?? update.kind ?? "other",
                 server: true,
             };
         }
         // Agents announce a call before its input is known and fill it in with later updates;
         // the call is recorded with what was known when it settled.
         if (update.title != null) call.title = update.title;
+        if (native !== undefined) call.native = native;
+        const result = update._meta?.["happy_claude_result"];
+        if (Value.Check(nativeResult, result) && result.tool_use_id === id)
+            call.nativeResult = result;
         if (update.rawInput !== undefined && !isEmptyObject(update.rawInput)) {
             call.input = update.rawInput;
         }
@@ -126,14 +151,40 @@ export class AcpResponseEvents {
         yield {
             type: "toolcall_end",
             callId: id,
-            arguments: JSON.stringify({
-                // ACP titles describe the invocation; history uses description for that text.
-                ...(call.title === undefined ? {} : { title: call.title, description: call.title }),
-                ...(call.input === undefined ? {} : { input: call.input }),
-                ...(call.paths === undefined ? {} : { paths: call.paths }),
-            }),
+            arguments:
+                call.native === undefined
+                    ? JSON.stringify({
+                          // ACP titles describe the invocation; history uses description for that text.
+                          ...(call.title === undefined
+                              ? {}
+                              : { title: call.title, description: call.title }),
+                          ...(call.input === undefined ? {} : { input: call.input }),
+                          ...(call.paths === undefined ? {} : { paths: call.paths }),
+                      })
+                    : JSON.stringify(call.native.input),
+            ...(call.native === undefined
+                ? {}
+                : {
+                      vendor: {
+                          type: "claude_tool_use",
+                          wireName: call.native.name,
+                          native: call.native,
+                      },
+                  }),
         };
-        yield { type: "toolcall_result_start", callId: id };
+        yield {
+            type: "toolcall_result_start",
+            callId: id,
+            ...(call.nativeResult === undefined
+                ? {}
+                : {
+                      vendor: {
+                          type: "claude_native_tool_result",
+                          outputBlock: JSON.stringify(call.nativeResult),
+                          native: call.nativeResult,
+                      },
+                  }),
+        };
         yield {
             type: "toolcall_result_end",
             callId: id,
@@ -149,6 +200,19 @@ interface ForeignCall {
     title?: string;
     input?: unknown;
     paths?: string[];
+    native?: {
+        type: "tool_use" | "mcp_tool_use";
+        id: string;
+        name: string;
+        input: unknown;
+        server_name?: string;
+    };
+    nativeResult?: {
+        type: "tool_result";
+        tool_use_id: string;
+        content?: unknown;
+        is_error?: boolean;
+    };
 }
 
 function isEmptyObject(value: unknown): boolean {

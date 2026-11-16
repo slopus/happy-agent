@@ -1,4 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import { BaseSession } from "@/core/BaseSession.js";
@@ -18,7 +20,9 @@ import { acpCompactWithAgent } from "@/protocol/acp/impl/acpCompactWithAgent.js"
 import {
     ACP_APPROVED_TOOLS_META,
     ACP_BRIDGED_CALL_META,
+    type AcpAgentClient,
     type AcpConnection,
+    type AcpNativeCompaction,
 } from "@/protocol/acp/AcpConnection.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
 import {
@@ -41,6 +45,11 @@ import {
 } from "@/protocol/acp/impl/AcpToolBridgeServer.js";
 import { AcpTurnQueue } from "@/protocol/acp/impl/AcpTurnQueue.js";
 import { acpAcceptsConfigValue, acpConfigOptionId } from "@/protocol/acp/impl/acpConfigOptions.js";
+import {
+    assertAcpRecoveryAllowed,
+    clearAcpRecoveryFailure,
+    recordAcpRecoveryFailure,
+} from "@/protocol/acp/impl/acpRecoveryFailure.js";
 
 export interface AcpSessionOptions extends AcpProviderOptions {
     readonly instructions: string;
@@ -62,6 +71,12 @@ const ABORTED = Symbol("acp_aborted");
 const STEERED = Symbol("acp_steered");
 
 type TurnItem =
+    | {
+          readonly kind: "native_compaction";
+          readonly checkpoint: AcpNativeCompaction;
+          resolve(): void;
+          reject(error: Error): void;
+      }
     | { readonly kind: "update"; readonly update: acp.SessionUpdate }
     | { readonly kind: "bridge_call"; readonly call: AcpBridgeCall }
     | { readonly kind: "prompt_end"; readonly response: acp.PromptResponse }
@@ -74,6 +89,7 @@ type TurnItem =
  */
 interface LiveTurn {
     readonly items: AcpTurnQueue<TurnItem>;
+    readonly checkpointWaiters: Set<(error: Error) => void>;
     /** Bridged calls handed to the caller whose results have not arrived yet. */
     readonly awaiting: Map<string, AcpBridgeCall>;
     /** Input that arrived while the prompt was still open; sent as the next prompt. */
@@ -162,9 +178,31 @@ export class AcpSession extends BaseSession {
     }
 
     async compact(ctx: Context, options: SessionCompactionOptions): Promise<SessionCompaction> {
-        const result = await acpCompactWithAgent(ctx, options, (runCtx, request) =>
-            this.#stream(runCtx, runCtx.lifetime, request),
+        await clearAcpRecoveryFailure(
+            this.#options.recoveryDirectory ?? this.#options.stateDirectory,
+            this.id,
         );
+        const environment = this.#options.environment(ctx);
+        const connection = await this.#connect(environment);
+        const result =
+            connection.conn.compactSession === undefined
+                ? await acpCompactWithAgent(ctx, options, (runCtx, request) =>
+                      this.#stream(runCtx, runCtx.lifetime, request),
+                  )
+                : await connection.conn.compactSession(
+                      { cwd: environment.cwd, mcpServers: await this.#mcpServers(connection) },
+                      options,
+                      ctx.lifetime,
+                      [
+                          ...(this.#options.profile?.modelOptions?.(options.model, undefined) ??
+                              []),
+                          ...(environment.permissionMode === undefined
+                              ? []
+                              : (this.#options.profile?.permissionOptions?.(
+                                    environment.permissionMode,
+                                ) ?? [])),
+                      ],
+                  );
         if (result.status === "completed") {
             // The foreign session still holds the long context; the next run opens a new one
             // from the summary instead.
@@ -172,6 +210,18 @@ export class AcpSession extends BaseSession {
             this.#record = undefined;
         } else {
             this.#abandonTurn();
+            if (result.status === "failed" && result.kind === "invalid_summary") {
+                await recordAcpRecoveryFailure(
+                    this.#options.recoveryDirectory ?? this.#options.stateDirectory,
+                    this.id,
+                    {
+                        context: options.context,
+                        ...(options.model === undefined ? {} : { model: options.model }),
+                    },
+                    this.#bridgedTools,
+                    { code: "context_compaction_no_progress" },
+                );
+            }
         }
         return result;
     }
@@ -204,6 +254,12 @@ export class AcpSession extends BaseSession {
         let connection: AcpConnection | undefined;
         let turn: LiveTurn;
         try {
+            await assertAcpRecoveryAllowed(
+                this.#options.recoveryDirectory ?? this.#options.stateDirectory,
+                this.id,
+                request,
+                this.#bridgedTools,
+            );
             connection = await this.#connect(environment);
             await this.#loadRecord();
             const live = this.#turn;
@@ -222,12 +278,20 @@ export class AcpSession extends BaseSession {
                 turn = this.#startTurn(connection, prompt);
             }
         } catch (error) {
+            await recordAcpRecoveryFailure(
+                this.#options.recoveryDirectory ?? this.#options.stateDirectory,
+                this.id,
+                request,
+                this.#bridgedTools,
+                error,
+            );
             yield { type: "block_stop" };
             yield errorDone(error, connection?.stderr() ?? "");
             return;
         }
 
-        const events = new AcpResponseEvents(this.#closedCalls);
+        let events = new AcpResponseEvents(this.#closedCalls);
+        let committedMessages = request.context.messages;
         const aborted = abortPromise(signal);
         // Steering ends this response so Agent Base can deliver the new input on the next run.
         const steered = abortPromise(request.steered).then((): typeof STEERED => STEERED);
@@ -244,7 +308,7 @@ export class AcpSession extends BaseSession {
                 if (item === STEERED) {
                     yield* events.close();
                     yield* events.settleAll();
-                    await this.#commit(request.context.messages);
+                    await this.#commit(committedMessages);
                     // An agent whose loop takes input mid-turn keeps going; the steering joins it
                     // on the next run. Any other agent is interrupted.
                     if (connection.conn.steer !== undefined) turn.steering = true;
@@ -267,12 +331,75 @@ export class AcpSession extends BaseSession {
                     yield* events.settleAll();
                     // The agent already saw this turn's input, so the next run sends only what is
                     // new rather than repeating a request the user stopped.
-                    await this.#commit(request.context.messages);
+                    await this.#commit(committedMessages);
                     this.#stopTurn(connection);
                     finished = true;
                     yield { type: "block_stop" };
                     yield { type: "done", state: "cancelled" };
                     return;
+                }
+                if (item.kind === "native_compaction") {
+                    // A native checkpoint proves the prompt was acted on, even before text.
+                    // Replaying the original prompt into that compacted session would duplicate it.
+                    reported = true;
+                    let adopted = false;
+                    try {
+                        const checkpointFingerprint = acpTranscriptFingerprint([
+                            item.checkpoint.compaction,
+                        ]);
+                        if (
+                            committedMessages.some(
+                                (message) =>
+                                    message.role === "compaction" &&
+                                    acpTranscriptFingerprint([message]) === checkpointFingerprint,
+                            )
+                        ) {
+                            // A resumed native session may repeat its last boundary. The caller
+                            // already has it, including any later input and output: keep that prefix.
+                            adopted = true;
+                            item.resolve();
+                            continue;
+                        }
+                        if (turn.awaiting.size > 0 || events.hasUnsettledCalls) {
+                            throw new Error(
+                                "Claude compacted while a tool was still awaiting its result.",
+                            );
+                        }
+                        yield* events.close();
+                        const result = {
+                            status: "completed" as const,
+                            compaction: item.checkpoint.compaction,
+                            preservedMessages: item.checkpoint.preservedMessages,
+                            usage: item.checkpoint.usage,
+                            context: {
+                                instructions: request.context.instructions,
+                                messages: item.checkpoint.messages,
+                            },
+                        };
+                        yield {
+                            type: "context_compacted",
+                            checkpointId: item.checkpoint.checkpointId,
+                            result,
+                        };
+                        // Resumption means the caller adopted the replacement. This account's
+                        // resume marker advances only then; a failed commit keeps the old marker.
+                        committedMessages = result.context.messages;
+                        await this.#commit(committedMessages);
+                        await clearAcpRecoveryFailure(
+                            this.#options.recoveryDirectory ?? this.#options.stateDirectory,
+                            this.id,
+                        );
+                        this.#contextUsed = 0;
+                        events = new AcpResponseEvents(this.#closedCalls);
+                        adopted = true;
+                        item.resolve();
+                    } finally {
+                        if (!adopted)
+                            item.reject(
+                                new Error("The native compaction checkpoint was not adopted."),
+                            );
+                    }
+                    continue;
                 }
                 if (item.kind === "update") {
                     reported = true;
@@ -326,6 +453,16 @@ export class AcpSession extends BaseSession {
                         yield { type: "done", state: "normal", tokens: { input: 0, output: 0 } };
                         return;
                     }
+                    this.#acpSessionId = undefined;
+                    this.#record = undefined;
+                    await acpSessionRecordClear(this.#options.stateDirectory, this.id, ctx);
+                    await recordAcpRecoveryFailure(
+                        this.#options.recoveryDirectory ?? this.#options.stateDirectory,
+                        this.id,
+                        request,
+                        this.#bridgedTools,
+                        item.error,
+                    );
                     this.#turn = undefined;
                     finished = true;
                     yield { type: "block_stop" };
@@ -349,7 +486,11 @@ export class AcpSession extends BaseSession {
                 if (response !== undefined) this.#turn = undefined;
                 const usage = this.#usage(response, events.outputCharacters);
                 const tokens = { input: usage.input, output: usage.output };
-                await this.#commit(request.context.messages);
+                await this.#commit(committedMessages);
+                await clearAcpRecoveryFailure(
+                    this.#options.recoveryDirectory ?? this.#options.stateDirectory,
+                    this.id,
+                );
                 finished = true;
                 yield { type: "token_usage", usage };
                 yield { type: "block_stop" };
@@ -370,7 +511,7 @@ export class AcpSession extends BaseSession {
         } finally {
             // A consumer that stopped reading mid-turn stopped it: this is how Agent Base aborts.
             if (!finished) {
-                void this.#commit(request.context.messages).catch(() => undefined);
+                void this.#commit(committedMessages).catch(() => undefined);
                 this.#stopTurn(connection);
             }
         }
@@ -455,8 +596,30 @@ export class AcpSession extends BaseSession {
         return await this.#connecting;
     }
 
-    #client(): acp.Client {
+    #client(): AcpAgentClient {
         return {
+            contextCompacted: async ({ sessionId, checkpoint }) => {
+                const turn = this.#turn;
+                if (sessionId !== this.#acpSessionId || turn === undefined) {
+                    throw new Error("The native compaction belongs to no active Happy response.");
+                }
+                await new Promise<void>((resolve, reject) => {
+                    turn.checkpointWaiters.add(reject);
+                    turn.items.push({
+                        kind: "native_compaction",
+                        checkpoint,
+
+                        resolve: () => {
+                            turn.checkpointWaiters.delete(reject);
+                            resolve();
+                        },
+                        reject: (error) => {
+                            turn.checkpointWaiters.delete(reject);
+                            reject(error);
+                        },
+                    });
+                });
+            },
             requestPermission: async (params) => this.#answerPermission(params),
             sessionUpdate: async (params) => {
                 if (this.#replaying || params.sessionId !== this.#acpSessionId) return;
@@ -497,14 +660,22 @@ export class AcpSession extends BaseSession {
             if (this.#acpSessionId === record.acpSessionId && this.#cwd === environment.cwd) {
                 return delta;
             }
-            if (await this.#restoreSession(connection, record, environment)) return delta;
+            if (
+                record.replayRequired !== true &&
+                (await this.#restoreSession(connection, record, environment))
+            )
+                return delta;
         }
 
-        const response = await connection.conn.newSession({
+        const params = {
             cwd: environment.cwd,
             mcpServers: await this.#mcpServers(connection),
             _meta: this.#sessionMeta(),
-        } as acp.NewSessionRequest);
+        } as acp.NewSessionRequest;
+        const response =
+            connection.conn.replaySession === undefined
+                ? await connection.conn.newSession(params)
+                : await connection.conn.replaySession(params, request);
         this.#acpSessionId = response.sessionId;
         this.#advertised = response.configOptions ?? undefined;
         this.#cwd = environment.cwd;
@@ -512,6 +683,7 @@ export class AcpSession extends BaseSession {
         this.#record = undefined;
         // The replaced session must not be continued by a later process before this one is kept.
         await acpSessionRecordClear(this.#options.stateDirectory, this.id, ctx);
+        if (connection.conn.replaySession !== undefined) return [];
         let lastResponse = -1;
         messages.forEach((message, index) => {
             if (message.role === "assistant") lastResponse = index;
@@ -639,6 +811,7 @@ export class AcpSession extends BaseSession {
     #startTurn(connection: AcpConnection, prompt: acp.ContentBlock[]): LiveTurn {
         const turn: LiveTurn = {
             items: new AcpTurnQueue(),
+            checkpointWaiters: new Set(),
             awaiting: new Map(),
             deferred: [],
             steering: false,
@@ -734,6 +907,9 @@ export class AcpSession extends BaseSession {
         const turn = this.#turn;
         this.#turn = undefined;
         if (turn === undefined) return;
+        for (const reject of turn.checkpointWaiters)
+            reject(new Error("The native compaction was interrupted."));
+        turn.checkpointWaiters.clear();
         for (const call of turn.awaiting.values()) {
             call.resolve({
                 content: [{ type: "text", text: "The Happy turn was cancelled." }],
@@ -751,6 +927,7 @@ export class AcpSession extends BaseSession {
             cwd: this.#cwd,
             consumed: inputs.length,
             fingerprint: acpTranscriptFingerprint(inputs),
+            ...(this.#connection?.conn.replaySession === undefined ? {} : { replayRequired: true }),
         };
         // Stored once the agent is known to keep the session; until then it lives only here.
         if (this.#record.acpSessionId === this.#keptSessionId) {
@@ -892,9 +1069,30 @@ function isRateLimited(error: unknown): boolean {
     );
 }
 
+const contextErrorSchema = Type.Object({
+    code: Type.Union([
+        Type.Literal("context_compaction_required"),
+        Type.Literal("context_fixed_too_large"),
+        Type.Literal("context_compaction_no_progress"),
+        Type.Literal("context_recovery_blocked"),
+    ]),
+});
+
 function errorDone(error: unknown, stderr: string): SessionEvent {
     const message = errorText(error);
     const tail = stderr.trim().split("\n").slice(-5).join("\n");
+    if (Value.Check(contextErrorSchema, error)) {
+        return {
+            type: "done",
+            state: "error",
+            kind:
+                error.code === "context_compaction_required"
+                    ? "context_overflow"
+                    : "internal_error",
+            message,
+            providerError: { type: "unclassified", diagnostics: { code: error.code } },
+        };
+    }
     return {
         type: "done",
         state: "error",

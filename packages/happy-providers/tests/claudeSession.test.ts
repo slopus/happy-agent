@@ -262,6 +262,9 @@ describe("ClaudeSession", () => {
             await vi.advanceTimersByTimeAsync(idleMs * 2);
             expect(compactClose).not.toHaveBeenCalled();
             finish.resolve();
+            // The real SDK's checkpoint reader schedules its store reconstruction; flush that
+            // scheduler without advancing the idle deadline this scenario is checking.
+            await vi.advanceTimersByTimeAsync(0);
             expect(await compacting).toMatchObject({ status: "completed", summary: "SUMMARY" });
             expect(compactClose).toHaveBeenCalledOnce();
             expect(vi.getTimerCount()).toBe(0);
@@ -941,14 +944,12 @@ describe("ClaudeSession", () => {
                     messages: [
                         {
                             role: "assistant",
-                            content: [
-                                ...[{ callId: "call-1", name: "Read", arguments: "{}" }].map(
-                                    (call) => ({
-                                        type: "tool_call" as const,
-                                        ...call,
-                                    }),
-                                ),
-                            ],
+                            content: [{ callId: "call-1", name: "Read", arguments: "{}" }].map(
+                                (call) => ({
+                                    type: "tool_call" as const,
+                                    ...call,
+                                }),
+                            ),
                         },
                         {
                             role: "tool",
@@ -1093,17 +1094,15 @@ describe("ClaudeSession", () => {
                         {
                             role: "assistant",
                             content: [
-                                ...[
-                                    {
-                                        callId: "usage-call",
-                                        name: "Bash",
-                                        arguments: '{"command":"pwd"}',
-                                    },
-                                ].map((call) => ({
-                                    type: "tool_call" as const,
-                                    ...call,
-                                })),
-                            ],
+                                {
+                                    callId: "usage-call",
+                                    name: "Bash",
+                                    arguments: '{"command":"pwd"}',
+                                },
+                            ].map((call) => ({
+                                type: "tool_call" as const,
+                                ...call,
+                            })),
                         },
                         {
                             role: "tool",
@@ -1169,17 +1168,15 @@ describe("ClaudeSession", () => {
                         {
                             role: "assistant",
                             content: [
-                                ...[
-                                    {
-                                        callId: "missing-usage-call",
-                                        name: "Bash",
-                                        arguments: '{"command":"pwd"}',
-                                    },
-                                ].map((call) => ({
-                                    type: "tool_call" as const,
-                                    ...call,
-                                })),
-                            ],
+                                {
+                                    callId: "missing-usage-call",
+                                    name: "Bash",
+                                    arguments: '{"command":"pwd"}',
+                                },
+                            ].map((call) => ({
+                                type: "tool_call" as const,
+                                ...call,
+                            })),
                         },
                         {
                             role: "tool",
@@ -1247,17 +1244,15 @@ describe("ClaudeSession", () => {
                         {
                             role: "assistant",
                             content: [
-                                ...[
-                                    {
-                                        callId: "call-1",
-                                        name: "Bash",
-                                        arguments: '{"command":"echo done"}',
-                                    },
-                                ].map((call) => ({
-                                    type: "tool_call" as const,
-                                    ...call,
-                                })),
-                            ],
+                                {
+                                    callId: "call-1",
+                                    name: "Bash",
+                                    arguments: '{"command":"echo done"}',
+                                },
+                            ].map((call) => ({
+                                type: "tool_call" as const,
+                                ...call,
+                            })),
                         },
                         {
                             role: "tool",
@@ -1332,17 +1327,15 @@ describe("ClaudeSession", () => {
                         {
                             role: "assistant",
                             content: [
-                                ...[
-                                    {
-                                        callId: "call-1",
-                                        name: "Bash",
-                                        arguments: '{"command":"echo done"}',
-                                    },
-                                ].map((call) => ({
-                                    type: "tool_call" as const,
-                                    ...call,
-                                })),
-                            ],
+                                {
+                                    callId: "call-1",
+                                    name: "Bash",
+                                    arguments: '{"command":"echo done"}',
+                                },
+                            ].map((call) => ({
+                                type: "tool_call" as const,
+                                ...call,
+                            })),
                         },
                         {
                             role: "tool",
@@ -1413,22 +1406,20 @@ describe("ClaudeSession", () => {
                         {
                             role: "assistant",
                             content: [
-                                ...[
-                                    {
-                                        callId: "parallel-read",
-                                        name: "Read",
-                                        arguments: '{"file_path":"/tmp/a"}',
-                                    },
-                                    {
-                                        callId: "parallel-glob",
-                                        name: "Glob",
-                                        arguments: '{"pattern":"**/*.md"}',
-                                    },
-                                ].map((call) => ({
-                                    type: "tool_call" as const,
-                                    ...call,
-                                })),
-                            ],
+                                {
+                                    callId: "parallel-read",
+                                    name: "Read",
+                                    arguments: '{"file_path":"/tmp/a"}',
+                                },
+                                {
+                                    callId: "parallel-glob",
+                                    name: "Glob",
+                                    arguments: '{"pattern":"**/*.md"}',
+                                },
+                            ].map((call) => ({
+                                type: "tool_call" as const,
+                                ...call,
+                            })),
                         },
                         {
                             role: "tool",
@@ -1784,14 +1775,12 @@ describe("ClaudeSession", () => {
                     messages: [
                         {
                             role: "assistant",
-                            content: [
-                                ...[{ callId: "call-1", name: "Read", arguments: "{}" }].map(
-                                    (call) => ({
-                                        type: "tool_call" as const,
-                                        ...call,
-                                    }),
-                                ),
-                            ],
+                            content: [{ callId: "call-1", name: "Read", arguments: "{}" }].map(
+                                (call) => ({
+                                    type: "tool_call" as const,
+                                    ...call,
+                                }),
+                            ),
                         },
                         {
                             role: "tool",
@@ -1993,24 +1982,21 @@ describe("ClaudeSession", () => {
             status: "completed",
             summary: "SUMMARY",
             usage: {
-                input: 121,
-                output: 11,
-                cacheRead: 101,
-                cacheWrite: 13,
-                totalTokens: 132,
+                input: 100,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 100,
             },
             context: {
                 instructions: "Rig system instructions.",
                 messages: [
                     {
-                        role: "system",
-                        content: [{ type: "text", text: "Project instructions." }],
+                        role: "compaction",
+                        content: "SUMMARY",
+                        vendor: { type: "claude_code_compaction" },
                     },
-                    {
-                        role: "system",
-                        content: [{ type: "text", text: "Golden skill description." }],
-                    },
-                    { role: "user", content: [{ type: "text", text: "SUMMARY" }] },
+                    { role: "assistant", content: [{ type: "text", text: "SWITCHED" }] },
                 ],
             },
         });
@@ -2101,7 +2087,7 @@ describe("ClaudeSession", () => {
         }
     });
 
-    it("uses exact compaction usage reported under Claude's canonical model key", async () => {
+    it("uses native checkpoint size instead of cumulative canonical-model usage", async () => {
         const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
         if (credential === null) throw new Error("Expected test credential.");
         const session = new ClaudeSession("fable-compaction", {
@@ -2135,11 +2121,11 @@ describe("ClaudeSession", () => {
             status: "completed",
             summary: "SUMMARY",
             usage: {
-                input: 121,
-                output: 11,
-                cacheRead: 101,
-                cacheWrite: 13,
-                totalTokens: 132,
+                input: 100,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 100,
             },
         });
     });
@@ -2209,16 +2195,7 @@ describe("ClaudeSession", () => {
                 context: {
                     instructions: "Rig system instructions.",
                     messages: [
-                        systemMessage,
-                        {
-                            role: "user",
-                            content: [
-                                {
-                                    type: "text" as const,
-                                    text: "<conversation_summary>\nSUMMARY\n</conversation_summary>",
-                                },
-                            ],
-                        },
+                        ...(compacted.status === "completed" ? compacted.context.messages : []),
                         retainedMessage,
                     ],
                 },
@@ -2227,18 +2204,24 @@ describe("ClaudeSession", () => {
 
         expect(compacted).toMatchObject({
             status: "completed",
-            preservedMessages: [systemMessage],
+            preservedMessages: [
+                { role: "assistant", content: [{ type: "text", text: "OLD ANSWER" }] },
+            ],
             context: {
                 instructions: "Rig system instructions.",
                 messages: [
-                    systemMessage,
-                    { role: "user", content: [{ type: "text", text: "SUMMARY" }] },
+                    {
+                        role: "compaction",
+                        content: "SUMMARY",
+                        vendor: { type: "claude_code_compaction" },
+                    },
+                    { role: "assistant", content: [{ type: "text", text: "OLD ANSWER" }] },
                 ],
             },
         });
         expect(JSON.stringify(replayEntries[0])).not.toContain(retainedMessage.content);
         expect(JSON.stringify(replayEntries[1])).not.toContain("OLD QUESTION");
-        expect(JSON.stringify(replayEntries[1])).not.toContain("OLD ANSWER");
+        expect(JSON.stringify(replayEntries[1])).toContain("OLD ANSWER");
         expect(JSON.stringify(replayEntries[1])).toContain("SUMMARY");
         expect(postCompactionPrompt).toMatchObject({
             type: "user",
@@ -2315,17 +2298,15 @@ describe("ClaudeSession", () => {
                         {
                             role: "assistant",
                             content: [
-                                ...[
-                                    {
-                                        callId: "call-1",
-                                        name: "Bash",
-                                        arguments: '{"command":"echo done"}',
-                                    },
-                                ].map((call) => ({
-                                    type: "tool_call" as const,
-                                    ...call,
-                                })),
-                            ],
+                                {
+                                    callId: "call-1",
+                                    name: "Bash",
+                                    arguments: '{"command":"echo done"}',
+                                },
+                            ].map((call) => ({
+                                type: "tool_call" as const,
+                                ...call,
+                            })),
                         },
                         {
                             role: "tool",
@@ -2689,14 +2670,12 @@ describe("ClaudeSession", () => {
                         {
                             role: "assistant",
                             content: [
-                                ...[
-                                    { callId: "call-1", name: "Bash", arguments: "{}" },
-                                    { callId: "call-2", name: "Bash", arguments: "{}" },
-                                ].map((call) => ({
-                                    type: "tool_call" as const,
-                                    ...call,
-                                })),
-                            ],
+                                { callId: "call-1", name: "Bash", arguments: "{}" },
+                                { callId: "call-2", name: "Bash", arguments: "{}" },
+                            ].map((call) => ({
+                                type: "tool_call" as const,
+                                ...call,
+                            })),
                         },
                         {
                             role: "tool",
@@ -3183,22 +3162,51 @@ function fakeNativeCompactQuery(
                 );
             }
         }
-        await parameters.options?.sessionStore?.append(
-            { projectKey: "test", sessionId: parameters.options.resume ?? "session-id" },
-            [
-                {
-                    type: "user",
-                    isCompactSummary: true,
-                    message: { role: "user", content: summary },
+        const sessionId = parameters.options?.resume ?? parameters.options?.sessionId;
+        if (sessionId === undefined) throw new Error("Native compaction needs a session identity.");
+        const key = { projectKey: "test", sessionId };
+        const history = (await parameters.options?.sessionStore?.load(key)) ?? [];
+        const retained = history
+            .filter((entry) => entry.type === "user" || entry.type === "assistant")
+            .slice(-1);
+        const boundaryId = "01000000-0000-4000-8000-000000000001";
+        const summaryId = "01000000-0000-4000-8000-000000000002";
+        await parameters.options?.sessionStore?.append(key, [
+            {
+                type: "system",
+                subtype: "compact_boundary",
+                uuid: boundaryId,
+                sessionId,
+                parentUuid: null,
+                compactMetadata: {
+                    trigger: "manual",
+                    preTokens: 100,
+                    postTokens: 10,
+                    ...(retained.length === 0
+                        ? {}
+                        : {
+                              preservedMessages: {
+                                  anchorUuid: summaryId,
+                                  uuids: retained.map((entry) => entry.uuid!),
+                              },
+                          }),
                 },
-            ],
-        );
+            },
+            {
+                type: "user",
+                uuid: summaryId,
+                sessionId,
+                parentUuid: boundaryId,
+                isCompactSummary: true,
+                message: { role: "user", content: summary },
+            },
+        ]);
         yield {
             type: "system",
             subtype: "compact_boundary",
             compact_metadata: { trigger: "manual", pre_tokens: 100, post_tokens: 10 },
-            uuid: "compact-boundary",
-            session_id: "session-id",
+            uuid: boundaryId,
+            session_id: sessionId,
         };
         yield {
             type: "system",

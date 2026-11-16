@@ -5,19 +5,23 @@ import type {
     SDKUserMessage,
     SessionStore,
     SessionStoreEntry,
+    SessionMessage as NativeSessionMessage,
+    SDKCompactBoundaryMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { setTimeout as delay } from "node:timers/promises";
+import { Type, type Static } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
+import { deterministicStringify } from "@steve.kite/stdlib";
 
 import type {
     SessionAgentMessage,
     SessionAssistantBlock,
     SessionAssistantMessage,
     SessionContext,
-    SessionImageBlock,
     SessionInputBlock,
     SessionMessage,
     SessionReasoningBlock,
     SessionSystemMessage,
-    SessionTextBlock,
     SessionToolResultMessage,
     SessionToolResultBlock,
     SessionUserMessage,
@@ -26,42 +30,74 @@ import { toSessionAgentNotificationMessage } from "@/core/toSessionAgentNotifica
 import { toSessionReminderMessage } from "@/core/toSessionReminderMessage.js";
 import { claudeSessionAttachments } from "@/vendors/claude/impl/claudeSessionAttachments.js";
 import { CLAUDE_IMAGE_BASE64_LIMIT } from "@/vendors/claude/impl/fitClaudeImages.js";
+import { claudeNativeCompactionContext } from "@/vendors/claudeAgent/impl/claudeNativeCompactionContext.js";
+import {
+    readClaudeNativeCompaction,
+    ClaudeNativeCompactionPendingError,
+} from "@/vendors/claudeAgent/impl/readClaudeNativeCompaction.js";
+import type { AcpNativeCompaction } from "@/protocol/acp/AcpConnection.js";
 
 /** A message Claude can replay, once system notices have been projected onto the user role. */
 type ReplayMessage = Exclude<SessionMessage, SessionSystemMessage | SessionAgentMessage>;
 
 export interface ClaudeSessionReplay {
     compactionSummary(): string | undefined;
+    nativeCompaction(boundary: SDKCompactBoundaryMessage): Promise<AcpNativeCompaction>;
     entries(): readonly SessionStoreEntry[];
     message: SDKUserMessage;
     options: Pick<
         ClaudeSdkOptions,
-        "persistSession" | "resume" | "resumeSessionAt" | "sessionStore"
+        "persistSession" | "resume" | "resumeSessionAt" | "sessionStore" | "sessionStoreFlush"
     >;
     prompt: AsyncIterable<SDKUserMessage>;
 }
 
 export function createClaudeSessionReplay(options: {
-    /** A native `/compact` query, which Claude Code never answers with a placeholder. */
+    /** A native `/compact` query; its replay anchor also suppresses the loader placeholder. */
     compaction?: boolean;
     context: SessionContext;
     /** The directory the live query runs in; defaults to this process's own, as the SDK does. */
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     model: string;
+    /**
+     * The context's messages as stored, when `context` is this request's copy with its images
+     * fitted: a native checkpoint replays its own entries, so it is checked against these.
+     */
+    retained?: readonly SessionMessage[];
     sessionId: string;
 }): ClaudeSessionReplay {
     const messages = toReplayMessages(options.context.messages);
+    const retained =
+        options.retained === undefined ? messages : toReplayMessages(options.retained);
+    if (retained.length !== messages.length)
+        throw new Error("Claude's request history does not match the history it was fitted from.");
     const splitIndex = findPromptStart(messages);
     const history = messages.slice(0, splitIndex);
     const promptMessages = messages.slice(splitIndex);
-    const entries = toSessionStoreEntries(history, {
-        cwd: options.cwd ?? process.cwd(),
-        env: options.env ?? process.env,
-        model: options.model,
-        sessionId: options.sessionId,
-    });
+    const entries = toSessionStoreEntries(
+        history,
+        {
+            cwd: options.cwd ?? process.cwd(),
+            env: options.env ?? process.env,
+            model: options.model,
+            sessionId: options.sessionId,
+        },
+        retained.slice(0, splitIndex),
+    );
     let compactionSummary: string | undefined;
+    const mirroredEntries = options.compaction === true ? [...entries] : [];
+    const mirrorIndex = new Map(
+        mirroredEntries.flatMap((entry, index) =>
+            entry.uuid === undefined ? [] : [[entry.uuid, index] as const],
+        ),
+    );
+    let mirrorBytes = mirroredEntries.reduce(
+        (total, entry) => total + Buffer.byteLength(JSON.stringify(entry)),
+        0,
+    );
+    if (mirrorBytes > 64 * 1024 * 1024 || mirroredEntries.length > 100_000)
+        throw new Error("The native compaction transcript exceeds its bounded size.");
     const sessionStore: SessionStore = {
         append: (key, appendedEntries) => {
             // Rig owns the conversation. Ignore Claude's transcript mirror instead of making a
@@ -69,6 +105,30 @@ export function createClaudeSessionReplay(options: {
             // observe: its replacement summary is a result, not resumable session state.
             if (key.sessionId === options.sessionId) {
                 compactionSummary = findCompactionSummary(appendedEntries) ?? compactionSummary;
+                if (options.compaction === true && key.subpath === undefined) {
+                    for (const entry of appendedEntries) {
+                        const index =
+                            entry.uuid === undefined ? undefined : mirrorIndex.get(entry.uuid);
+                        const bytes = Buffer.byteLength(JSON.stringify(entry));
+                        const replaced =
+                            index === undefined
+                                ? 0
+                                : Buffer.byteLength(JSON.stringify(mirroredEntries[index]));
+                        if (
+                            mirrorBytes + bytes - replaced > 64 * 1024 * 1024 ||
+                            (index === undefined && mirroredEntries.length >= 100_000)
+                        )
+                            throw new Error(
+                                "The native compaction transcript exceeds its bounded size.",
+                            );
+                        mirrorBytes += bytes - replaced;
+                        if (index === undefined) {
+                            if (entry.uuid !== undefined)
+                                mirrorIndex.set(entry.uuid, mirroredEntries.length);
+                            mirroredEntries.push(entry);
+                        } else mirroredEntries[index] = entry;
+                    }
+                }
             }
             return Promise.resolve();
         },
@@ -82,14 +142,31 @@ export function createClaudeSessionReplay(options: {
     // a transcript whose last message entry is user-role; attachments do not count as the end.
     // The model would take that line as its own. `--reply-on-resume` suppresses it only in the
     // interactive REPL, but the loader applies `resumeSessionAt` after the splice, so resuming at
-    // the last replayed entry cuts the placeholder off. Native `/compact` sends no placeholder,
-    // and given an anchor it drops the turns after the last assistant reply, so it gets none.
+    // the last replayed entry cuts the placeholder off. The same anchor is required for native
+    // `/compact`: otherwise recent Claude Code preserves the placeholder in its checkpoint.
     const lastEntry = entries.at(-1);
     const endsOnUserTurn =
-        options.compaction !== true &&
         entries.findLast((entry) => entry.type !== "attachment")?.type === "user";
     return {
         compactionSummary: () => compactionSummary,
+        nativeCompaction: async (boundary) => {
+            for (let attempt = 0; ; attempt++) {
+                try {
+                    return claudeNativeCompactionContext(
+                        await readClaudeNativeCompaction({
+                            sessionId: options.sessionId,
+                            cwd: options.cwd ?? process.cwd(),
+                            boundary,
+                            entries: mirroredEntries,
+                        }),
+                    );
+                } catch (error) {
+                    if (!(error instanceof ClaudeNativeCompactionPendingError) || attempt === 2)
+                        throw error;
+                    await delay(attempt === 0 ? 125 : 500);
+                }
+            }
+        },
         entries: () => entries,
         message,
         options: {
@@ -99,6 +176,7 @@ export function createClaudeSessionReplay(options: {
                 ? { resumeSessionAt: lastEntry.uuid }
                 : {}),
             sessionStore,
+            ...(options.compaction === true ? { sessionStoreFlush: "eager" as const } : {}),
         },
         prompt: singleMessagePrompt(message),
     };
@@ -169,7 +247,10 @@ function toPromptMessage(messages: readonly ReplayMessage[]): SDKUserMessage {
 function toSessionStoreEntries(
     messages: readonly ReplayMessage[],
     options: { cwd: string; env: NodeJS.ProcessEnv; model: string; sessionId: string },
+    retained: readonly ReplayMessage[] = messages,
 ): SessionStoreEntry[] {
+    const native = nativeCheckpointEntries(messages, options, retained);
+    if (native !== undefined) return native;
     let parentUuid: string | null = null;
     const assistantUuidByToolCallId = new Map<string, string>();
     const entries: SessionStoreEntry[] = [];
@@ -240,7 +321,9 @@ function toSessionStoreEntries(
                         if (
                             typeof block === "object" &&
                             block !== null &&
-                            block.type === "tool_use"
+                            (block.type === "tool_use" ||
+                                block.type === "mcp_tool_use" ||
+                                block.type === "server_tool_use")
                         ) {
                             assistantUuidByToolCallId.set(block.id, blockUuid);
                         }
@@ -333,6 +416,127 @@ function toSessionStoreEntries(
     return entries;
 }
 
+const nativeCheckpointSchema = Type.Object({
+    type: Type.Literal("claude_code_compaction"),
+    checkpointId: Type.String(),
+    messages: Type.Array(
+        Type.Object({
+            type: Type.Union([Type.Literal("user"), Type.Literal("assistant")]),
+            uuid: Type.String(),
+            session_id: Type.String(),
+            message: Type.Unknown(),
+        }),
+        { minItems: 1 },
+    ),
+});
+
+/**
+ * A portable checkpoint is for other vendors. Claude must resume its opaque native payload:
+ * re-encoding its portable projection loses tool references, documents and signed blocks.
+ * Verify the complete projection before replacing it, so no later work can be swallowed.
+ * The projection is checked against the history as stored (`retained`), not this request's copy
+ * with its images fitted: the checkpoint replays its own entries, images as Claude Code accepted
+ * them, and only the work after it is sent from that copy.
+ */
+function nativeCheckpointEntries(
+    messages: readonly ReplayMessage[],
+    options: { cwd: string; env: NodeJS.ProcessEnv; model: string; sessionId: string },
+    retained: readonly ReplayMessage[],
+): SessionStoreEntry[] | undefined {
+    const index = messages.findLastIndex(
+        (message) =>
+            message.role === "compaction" && message.vendor?.type === "claude_code_compaction",
+    );
+    if (index === -1) return undefined;
+    const checkpoint = messages[index]!;
+    if (
+        checkpoint.role !== "compaction" ||
+        checkpoint.content === null ||
+        !Value.Check(nativeCheckpointSchema, checkpoint.vendor)
+    ) {
+        throw new Error("Claude cannot replay an invalid native checkpoint.");
+    }
+    const native = checkpoint.vendor.messages as NativeSessionMessage[];
+    const summaries = native.filter(
+        (message) =>
+            message.type === "user" &&
+            (message.message as { content?: unknown }).content === checkpoint.content,
+    );
+    if (summaries.length !== 1)
+        throw new Error("Claude cannot identify the native checkpoint summary.");
+    const expected = toReplayMessages(
+        claudeNativeCompactionContext({
+            boundaryId: checkpoint.vendor.checkpointId,
+            summaryId: summaries[0]!.uuid,
+            summary: checkpoint.content,
+            messages: native,
+            preTokens: 0,
+        }).messages,
+    );
+    if (
+        index !== expected.findIndex((message) => message.role === "compaction") ||
+        messages.length < expected.length
+    ) {
+        throw new Error("Claude's native checkpoint does not match its retained history.");
+    }
+    const tail = messages.slice(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+        const actual = retained[i]!;
+        const wanted = expected[i]!;
+        // Base joins adjacent assistant blocks on reload. Keep the later blocks outside the
+        // checkpoint even when they share the last retained assistant message.
+        if (
+            i === expected.length - 1 &&
+            actual.role === "assistant" &&
+            wanted.role === "assistant"
+        ) {
+            if (
+                deterministicStringify(actual.content.slice(0, wanted.content.length)) !==
+                deterministicStringify(wanted.content)
+            ) {
+                throw new Error("Claude's native checkpoint does not match its retained history.");
+            }
+            const sent = messages[i]!;
+            if (sent.role === "assistant" && sent.content.length > wanted.content.length) {
+                tail.unshift({ ...sent, content: sent.content.slice(wanted.content.length) });
+            }
+        } else if (deterministicStringify(actual) !== deterministicStringify(wanted)) {
+            throw new Error("Claude's native checkpoint does not match its retained history.");
+        }
+    }
+    let parentUuid: string | null = null;
+    const nativeIds = new Set(native.map((message) => message.uuid));
+    if (nativeIds.size !== native.length) {
+        throw new Error("Claude's native checkpoint contains duplicate message identities.");
+    }
+    const entries: SessionStoreEntry[] = native.map((message, i) => {
+        // A native fork retains message identities. Metadata such as sourceToolAssistantUUID
+        // and summarized-turn references must keep pointing at the exact preserved entries.
+        const uuid = message.uuid;
+        const entry = {
+            ...message,
+            cwd: options.cwd,
+            entrypoint: "sdk-ts",
+            isSidechain: false,
+            parentUuid,
+            sessionId: options.sessionId,
+            timestamp: new Date(i).toISOString(),
+            userType: "external",
+            version: "happy-providers",
+            uuid,
+            type: message.type,
+            message: structuredClone(message.message),
+            ...(message.uuid === summaries[0]!.uuid ? { isCompactSummary: true } : {}),
+        };
+        parentUuid = uuid;
+        return entry;
+    });
+    const later = toSessionStoreEntries(tail, options);
+    // The first later entry joins this checkpoint; later entries already have a local chain.
+    if (later[0] !== undefined) later[0] = { ...later[0], parentUuid };
+    return [...entries, ...later];
+}
+
 function toSdkUserMessage(message: SessionUserMessage): SDKUserMessage {
     return {
         type: "user",
@@ -349,6 +553,8 @@ function toSdkAssistantMessage(message: SessionAssistantMessage, model: string, 
             if (block.type === "reasoning") return toThinkingBlock(block);
             if (block.type === "text") return [{ type: "text" as const, text: block.text }];
             if (block.type === "tool_result") return [];
+            const native = nativeClaudeToolCall(block.vendor, block.callId);
+            if (native !== undefined) return [native];
             return [
                 {
                     type: "tool_use" as const,
@@ -390,6 +596,34 @@ function claudeToolWireName(block: { name: string; vendor?: unknown }): string {
         : block.name;
 }
 
+const nativeToolCallSchema = Type.Object({
+    type: Type.Union([
+        Type.Literal("tool_use"),
+        Type.Literal("mcp_tool_use"),
+        Type.Literal("server_tool_use"),
+    ]),
+    id: Type.String(),
+    name: Type.String(),
+    input: Type.Record(Type.String(), Type.Unknown()),
+});
+const nativeToolResultSchema = Type.Object({
+    type: Type.Literal("tool_result"),
+    tool_use_id: Type.String(),
+});
+const nativeEnvelopeSchema = Type.Object({ type: Type.String(), native: Type.Unknown() });
+
+function nativeClaudeToolCall(
+    vendor: unknown,
+    callId: string,
+): Record<string, unknown> | undefined {
+    if (!Value.Check(nativeEnvelopeSchema, vendor) || vendor.type !== "claude_tool_use")
+        return undefined;
+    if (!Value.Check(nativeToolCallSchema, vendor.native) || vendor.native.id !== callId) {
+        throw new Error("Claude cannot replay an invalid native tool call.");
+    }
+    return structuredClone(vendor.native);
+}
+
 function toThinkingBlock(
     reasoning: SessionReasoningBlock,
 ): (
@@ -410,6 +644,8 @@ function toThinkingBlock(
 }
 
 function toToolResultBlock(message: SessionToolResultMessage) {
+    const native = nativeClaudeToolResult(message.vendor);
+    if (native !== undefined) return { ...native, tool_use_id: message.callId };
     return {
         type: "tool_result" as const,
         tool_use_id: message.callId,
@@ -430,7 +666,15 @@ function toInlineToolResultBlock(block: SessionToolResultBlock) {
         : { ...native, tool_use_id: block.callId };
 }
 
-function nativeClaudeToolResult(vendor: unknown): Record<string, unknown> | undefined {
+function nativeClaudeToolResult(
+    vendor: unknown,
+): Static<typeof nativeToolResultSchema> | undefined {
+    if (Value.Check(nativeEnvelopeSchema, vendor) && vendor.type === "claude_native_tool_result") {
+        if (!Value.Check(nativeToolResultSchema, vendor.native)) {
+            throw new Error("Claude cannot replay an invalid native tool result.");
+        }
+        return structuredClone(vendor.native);
+    }
     if (
         typeof vendor !== "object" ||
         vendor === null ||
@@ -441,12 +685,7 @@ function nativeClaudeToolResult(vendor: unknown): Record<string, unknown> | unde
     }
     try {
         const block: unknown = JSON.parse(vendor.outputBlock);
-        return typeof block === "object" &&
-            block !== null &&
-            "type" in block &&
-            block.type === "tool_result"
-            ? (block as Record<string, unknown>)
-            : undefined;
+        return Value.Check(nativeToolResultSchema, block) ? block : undefined;
     } catch {
         return undefined;
     }
