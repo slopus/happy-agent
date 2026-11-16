@@ -1,5 +1,6 @@
 import type {
     BaseSession,
+    CompletedSessionCompaction,
     SessionAssistantBlock,
     SessionDoneState,
     SessionErrorKind,
@@ -152,6 +153,25 @@ const CONTINUATION_NOTICE: SessionSystemMessage = {
 /** Ethan-mode failures start quickly, then back off enough to avoid hammering a broken service. */
 const FAILURE_RETRY_INITIAL_MS = 100;
 const FAILURE_RETRY_MAX_MS = 60_000;
+const TERMINAL_CONTEXT_FAILURE_CODES = new Set([
+    "context_fixed_too_large",
+    "context_compaction_no_progress",
+    "context_recovery_blocked",
+]);
+
+/** Repeating the same context cannot repair a failed or ineffective replacement. */
+class NonRetryableCompactionError extends Error {}
+
+/** The provider stream's committed native checkpoint, named structurally until the dependency publishes the union member. */
+interface NativeCompactionEvent {
+    readonly type: "context_compacted";
+    readonly checkpointId: string;
+    readonly result: CompletedSessionCompaction;
+}
+
+function isNativeCompaction(event: SessionEvent | NativeCompactionEvent): event is NativeCompactionEvent {
+    return (event as { type?: string }).type === "context_compacted";
+}
 
 /** How a message queue drains: one message per model response, or every queued message at once. */
 export type AgentBaseQueueMode = "one-at-a-time" | "all";
@@ -501,6 +521,10 @@ export class AgentBase {
     #failureRetryAttempt = 0;
     /** What the last collected response failed with; a context overflow may reset and retry. */
     #responseErrorKind: SessionErrorKind | undefined;
+    /** A provider preflight asks the outer loop to replace context before submitting it. */
+    #responseRequiresCompaction = false;
+    /** Repeating a known impossible/unchanged context is not an inference retry. */
+    #responseTerminalContextFailure = false;
     /** Stops a retry backoff promptly when this instance drains or closes. */
     readonly #stopFailureRetries = new AbortController();
 
@@ -532,8 +556,6 @@ export class AgentBase {
      * anything runs.
      */
     #pendingToolsUndispatched = false;
-    /** How many tool batches are running, so a caller can tell a waiting turn from a busy one. */
-    #toolsRunning = 0;
     /** The in-flight or finished load of the durable state; cleared at the start of every turn. */
     #loaded: Promise<void> | undefined;
     /**
@@ -543,6 +565,7 @@ export class AgentBase {
      * turn was already committed to continue across that replacement.
      */
     #lastRecordType: AgentRecord["type"] | undefined;
+    #nativeCheckpointId: string | undefined;
     /**
      * Whether this instance has checked whether a cut-off run should resume inference. The
      * question is only meaningful once, against the state the agent first loaded: afterwards a
@@ -1636,7 +1659,7 @@ export class AgentBase {
      */
     async waitForIdle(): Promise<void> {
         while (this.#admitted.size > 0 || this.#runPromise !== undefined) {
-            await Promise.allSettled([...this.#admitted]);
+            await Promise.allSettled(this.#admitted);
             await this.#runPromise;
         }
     }
@@ -1715,14 +1738,14 @@ export class AgentBase {
     /** Wait until no response iterator is still releasing the provider session. */
     async #streamsReleased(): Promise<void> {
         while (this.#streamCleanup.size > 0) {
-            await Promise.allSettled([...this.#streamCleanup]);
+            await Promise.allSettled(this.#streamCleanup);
         }
     }
 
     /** Wait until nothing from an earlier response is still holding the provider session. */
     async #settled(): Promise<void> {
         while (this.#settling.size > 0) {
-            await Promise.allSettled([...this.#settling]);
+            await Promise.allSettled(this.#settling);
         }
     }
 
@@ -1941,7 +1964,7 @@ export class AgentBase {
             // Each admitted operation can still request a turn, and that turn can be the thing
             // that finishes the work, so both are drained until neither has anything left.
             while (this.#admitted.size > 0 || this.#runPromise !== undefined) {
-                await Promise.allSettled([...this.#admitted]);
+                await Promise.allSettled(this.#admitted);
                 await this.#runPromise?.catch(() => undefined);
             }
             this.#settlePendingCompaction("The agent was closed before the compaction ran.");
@@ -2168,7 +2191,7 @@ export class AgentBase {
             );
             await this.#invokeHook(ctx, this.#hooks.beforeAgentLoop, loop);
             if (this.#stopAtSafeEdgeRequested()) return "shutdown";
-            do {
+            for (;;) {
                 const outcome = await this.#span(
                     ctx,
                     "agent.turn",
@@ -2181,7 +2204,7 @@ export class AgentBase {
                 // Each turn cancels on its own scope. Reopening it here rather than at the top
                 // keeps the run's first turn under the scope its opening hook already ran in.
                 abort = this.#openAbortScope();
-            } while (true);
+            }
             await this.#enterStage(
                 ctx,
                 "inference",
@@ -2534,33 +2557,6 @@ export class AgentBase {
     }
 
     /**
-     * Ask a lifecycle hook what to do next and carry its actions out: queue steering, sent
-     * messages, or system notices through their durable paths, or trigger compaction. Every
-     * returned action is applied before the loop continues.
-     * Neither a throwing hook nor a failing action ever fails the run. Unlike `#applyActions`
-     * this belongs to no turn's scope, so nothing can cancel the answer out from under it.
-     */
-    async #applyActionsAlways<Arguments extends readonly unknown[]>(
-        ctx: Context,
-        hook:
-            | ((
-                  ctx: Context,
-                  ...args: Arguments
-              ) => MaybePromise<readonly AgentModuleAction[] | undefined>)
-            | undefined,
-        ...args: Arguments
-    ): Promise<void> {
-        if (hook === undefined) return;
-        let actions: readonly AgentModuleAction[] | undefined;
-        try {
-            actions = await hook(this.#workContext(ctx), ...args);
-        } catch {
-            return;
-        }
-        await this.#carryOutActions(ctx, actions);
-    }
-
-    /**
      * Carry out what a hook asked for. User messages keep their ordinary queues; system notices
      * enter a separate durable queue consumed only at a safe history boundary.
      */
@@ -2810,10 +2806,37 @@ export class AgentBase {
                 // describes a new context and must be eligible for the next preparation check.
                 preparedContextTokens = UNPREPARED_CONTEXT;
                 const { content, state } = response;
+                if (state === "error" && content.length === 0 && this.#responseRequiresCompaction) {
+                    if (contextReset) {
+                        throw new NonRetryableCompactionError(
+                            response.errorMessage ??
+                                "The compacted context still does not fit the provider request.",
+                        );
+                    }
+                    // The provider owns measurement and the native mechanism, but this loop
+                    // owns scheduling and adopting the replacement. Never reset away history
+                    // for a preflight refusal, and never resubmit it unchanged on failure.
+                    contextReset = true;
+                    const completion = this.#ensureCompaction();
+                    completion.catch(() => undefined);
+                    try {
+                        await this.#runCompaction(ctx, abort.signal, abortPromise, true, false);
+                        await completion;
+                    } catch (error) {
+                        if (abort.signal.aborted) break;
+                        throw new NonRetryableCompactionError(
+                            error instanceof Error ? error.message : String(error),
+                        );
+                    }
+                    if (abort.signal.aborted) break;
+                    needsInference = true;
+                    continue;
+                }
                 if (
                     state === "error" &&
                     content.length === 0 &&
                     !contextReset &&
+                    !this.#responseTerminalContextFailure &&
                     this.#responseErrorKind === "context_overflow"
                 ) {
                     // Nothing visible was said, so the turn can start over in a fresh context
@@ -2863,6 +2886,7 @@ export class AgentBase {
                     needsInference = true;
                     continue;
                 }
+                if (state === "error" && this.#responseTerminalContextFailure) break;
                 if ((state === "error" || state === undefined) && this.#retryForever) {
                     const message =
                         response.errorMessage ??
@@ -2907,6 +2931,8 @@ export class AgentBase {
             );
             if (
                 this.#retryForever &&
+                !this.#responseTerminalContextFailure &&
+                !(error instanceof NonRetryableCompactionError) &&
                 (await this.#waitForFailureRetry(ctx, abort.signal, message))
             ) {
                 if (callsSettled) {
@@ -3378,10 +3404,11 @@ export class AgentBase {
         signal: AbortSignal,
         abortPromise: Promise<typeof ABORTED>,
         continueWithInference: boolean,
+        retryFailures = true,
     ): Promise<void> {
         if (this.#compaction === undefined) return;
         await this.#span(ctx, "agent.compaction", {}, (compactionCtx) =>
-            this.#compactHistory(compactionCtx, signal, abortPromise, continueWithInference),
+            this.#compactHistory(compactionCtx, signal, abortPromise, continueWithInference, retryFailures),
         );
     }
 
@@ -3391,6 +3418,7 @@ export class AgentBase {
         signal: AbortSignal,
         abortPromise: Promise<typeof ABORTED>,
         continueWithInference: boolean,
+        retryFailures: boolean,
     ): Promise<void> {
         for (;;) {
             if (
@@ -3399,6 +3427,7 @@ export class AgentBase {
                     signal,
                     abortPromise,
                     continueWithInference,
+                    retryFailures,
                 )) !== "retry"
             ) {
                 return;
@@ -3412,6 +3441,7 @@ export class AgentBase {
         signal: AbortSignal,
         abortPromise: Promise<typeof ABORTED>,
         continueWithInference: boolean,
+        retryFailures: boolean,
     ): Promise<"complete" | "retry"> {
         const pending = this.#compaction;
         if (pending === undefined) return "complete";
@@ -3469,64 +3499,17 @@ export class AgentBase {
                     ...compactionStart,
                     result,
                 });
-                throw new Error(result.message);
+                throw result.kind === "invalid_summary"
+                    ? new NonRetryableCompactionError(result.message)
+                    : new Error(result.message);
             }
             if (result.status === "completed") {
-                const replacement = baseContextMessages(
-                    result.context.messages,
-                    this.#providerToolIds,
+                hookResult = await this.#applyCompletedCompaction(
+                    ctx,
+                    compactionStart,
+                    result,
+                    continueWithInference,
                 );
-                const preserved = baseContextMessages(
-                    result.preservedMessages,
-                    this.#providerToolIds,
-                );
-                const publicResult = {
-                    ...result,
-                    preservedMessages: preserved.messages,
-                    context: { ...result.context, messages: replacement.messages },
-                };
-                hookResult = publicResult;
-                const completed: AgentBaseCompletedCompaction = {
-                    ...compactionStart,
-                    result: publicResult,
-                };
-                await this.#runPersistenceStep(this.#workContext(ctx), async (lockCtx) => {
-                    // Physically delete the superseded records and write the replacement —
-                    // which keeps the messages that stay — in one atomic step.
-                    await this.#recordTransaction(lockCtx, async (txCtx) => {
-                        await this.#deleteRecordIdentities(
-                            txCtx,
-                            await this.#persistence.load(txCtx),
-                        );
-                        await this.#historyKV.clear(txCtx);
-                        await this.#persistence.clearRecords(txCtx);
-                        if (this.#hooks.historyErasedTransact !== undefined) {
-                            await this.#withTransactionalContext(txCtx, (hookCtx) =>
-                                this.#hooks.historyErasedTransact?.(hookCtx, completed),
-                            );
-                        }
-                        await this.#persistence.append(txCtx, {
-                            type: "compaction",
-                            contextToolIds: storedContextToolIds(replacement.toolIds),
-                            messages: replacement.messages,
-                        });
-                        if (continueWithInference) {
-                            // The replacement and the response it still owes are one durable
-                            // transition. Reserving the inference identity here distinguishes an
-                            // active automatic compaction from standalone maintenance even if the
-                            // process stops before the provider request can open.
-                            this.#inferenceId ??= createId();
-                            await this.#recordPending(txCtx, "inference", true);
-                        }
-                    });
-                    this.#rotateHistoryKV();
-                    this.#messages = replacement.messages;
-                    this.#providerToolIds = replacement.toolIds;
-                    this.#lastRecordType = "compaction";
-                });
-                // The conversation the measurement described is gone; its size is unknown
-                // again until the next response measures the replacement.
-                await this.#recordContextTokens(ctx, undefined);
             }
             if (result.status !== "completed") {
                 await this.#preserveCompactionContinuation(
@@ -3538,6 +3521,11 @@ export class AgentBase {
                 ...compactionStart,
                 result: hookResult,
             });
+            if (result.status === "cancelled" && !retryFailures) {
+                throw new NonRetryableCompactionError(
+                    "Context recovery was cancelled before a replacement was committed.",
+                );
+            }
             this.#failureRetryAttempt = 0;
             this.#compaction = undefined;
             pending.resolve();
@@ -3548,11 +3536,109 @@ export class AgentBase {
                 continueWithInference && !signal.aborted,
             );
             const message = error instanceof Error ? error.message : String(error);
-            if (await this.#waitForFailureRetry(ctx, signal, message)) return "retry";
+            if (
+                retryFailures &&
+                !(error instanceof NonRetryableCompactionError) &&
+                (await this.#waitForFailureRetry(ctx, signal, message))
+            )
+                return "retry";
             this.#compaction = undefined;
             pending.reject(error);
             return "complete";
         }
+    }
+
+    /** Commit either a requested or a native in-stream compaction through the same atomic owner. */
+    async #applyCompletedCompaction(
+        ctx: Context,
+        start: AgentBaseCompactionStart,
+        result: CompletedSessionCompaction,
+        continueWithInference: boolean,
+        checkpointId?: string,
+    ): Promise<CompletedSessionCompaction> {
+        const replacement = baseContextMessages(result.context.messages, this.#providerToolIds);
+        const preserved = baseContextMessages(result.preservedMessages, this.#providerToolIds);
+        const publicResult: CompletedSessionCompaction = {
+            ...result,
+            preservedMessages: preserved.messages,
+            context: { ...result.context, messages: replacement.messages },
+        };
+        const completed: AgentBaseCompletedCompaction = { ...start, result: publicResult };
+        await this.#runPersistenceStep(this.#workContext(ctx), async (lockCtx) => {
+            await this.#recordTransaction(lockCtx, async (txCtx) => {
+                await this.#deleteRecordIdentities(txCtx, await this.#persistence.load(txCtx));
+                await this.#historyKV.clear(txCtx);
+                await this.#persistence.clearRecords(txCtx);
+                if (this.#hooks.historyErasedTransact !== undefined) {
+                    await this.#withTransactionalContext(txCtx, (hookCtx) =>
+                        this.#hooks.historyErasedTransact?.(hookCtx, completed),
+                    );
+                }
+                await this.#persistence.append(txCtx, {
+                    type: "compaction",
+                    ...(checkpointId === undefined ? {} : { checkpointId }),
+                    contextToolIds: storedContextToolIds(replacement.toolIds),
+                    messages: replacement.messages,
+                });
+                // The old measurement and history become obsolete in the same commit.
+                await this.#persistence.deleteValue(txCtx, "context");
+                if (continueWithInference) {
+                    this.#inferenceId ??= createId();
+                    await this.#recordPending(txCtx, "inference", true);
+                }
+            });
+            this.#rotateHistoryKV();
+            this.#messages = replacement.messages;
+            this.#providerToolIds = replacement.toolIds;
+            this.#lastRecordType = "compaction";
+            this.#nativeCheckpointId = checkpointId;
+            this.#contextTokens = undefined;
+        });
+        return publicResult;
+    }
+
+    /** A native checkpoint has already happened; retain it before consuming any later output. */
+    async #acceptNativeCompaction(
+        ctx: Context,
+        event: NativeCompactionEvent,
+    ): Promise<boolean> {
+        if (event.checkpointId === this.#nativeCheckpointId) return false;
+        if (
+            event.checkpointId.length === 0 ||
+            event.checkpointId.length > 256 ||
+            event.result.context.messages.length === 0 ||
+            this.#unansweredCalls(event.result.context.messages).length > 0
+        ) {
+            throw new Error("The native compaction checkpoint is incomplete.");
+        }
+        const start: AgentBaseCompactionStart = {
+            loopId: this.#loopId ?? createId(),
+            turnId: this.#turnId ?? createId(),
+            compactionId: createId(),
+            contextTokens: this.#contextTokens,
+        };
+        await this.#invokeHook(ctx, this.#hooks.beforeCompaction, start);
+        try {
+            const result = await this.#applyCompletedCompaction(
+                ctx,
+                start,
+                event.result,
+                true,
+                event.checkpointId,
+            );
+            await this.#invokeHook(ctx, this.#hooks.afterCompaction, { ...start, result });
+        } catch (error) {
+            await this.#invokeHook(ctx, this.#hooks.afterCompaction, {
+                ...start,
+                result: {
+                    status: "failed",
+                    kind: "inference_error",
+                    message: "The native compaction checkpoint could not be committed.",
+                },
+            });
+            throw error;
+        }
+        return true;
     }
 
     /** Keep a response owed when an automatic compaction did not reach its replacement commit. */
@@ -4292,6 +4378,9 @@ export class AgentBase {
             const records = await this.#persistence.load(lockCtx);
             const last = records[records.length - 1];
             this.#lastRecordType = last?.type;
+            this.#nativeCheckpointId = records.findLast(
+                (record) => record.type === "compaction",
+            )?.checkpointId;
             const restored = contextFromRecords(records);
             const steering = await this.#persistence.readValues(lockCtx, "steering.");
             const sends = await this.#persistence.readValues(lockCtx, "send.");
@@ -4415,7 +4504,9 @@ export class AgentBase {
         } else {
             await this.#enterStage(ctx, "tools");
         }
-        const results: (SessionToolResultMessage | undefined)[] = new Array(entries.length);
+        const results = Array.from<SessionToolResultMessage | undefined>({
+            length: entries.length,
+        });
         // Every execution actually started, whether or not its result reached the conversation.
         const running: Promise<SessionToolResultMessage | typeof RELOADABLE_STOPPED>[] = [];
         let closedDuringTools = false;
@@ -4496,7 +4587,6 @@ export class AgentBase {
                 release();
             }
         };
-        this.#toolsRunning += 1;
         const batch = Promise.all(
             entries.map(async (entry, index) => {
                 let outcome: SessionToolResultMessage | typeof ABORTED | typeof RELOADABLE_STOPPED;
@@ -4562,7 +4652,6 @@ export class AgentBase {
         try {
             await batch;
         } finally {
-            this.#toolsRunning -= 1;
             this.#settleLater(Promise.allSettled(running), "tool");
         }
         // An abort or failure may settle the conversation or block the batch without settling the
@@ -5107,6 +5196,8 @@ export class AgentBase {
         readonly errorMessage?: string;
     }> {
         this.#responseErrorKind = undefined;
+        this.#responseRequiresCompaction = false;
+        this.#responseTerminalContextFailure = false;
         const content: SessionAssistantBlock[] = [];
         // Blocks that finished and were durably appended. An abort keeps exactly these, so the
         // in-memory assistant message never diverges from what a reload would rebuild.
@@ -5206,6 +5297,42 @@ export class AgentBase {
                     break;
                 }
                 const providerEvent = next.value;
+                if (isNativeCompaction(providerEvent)) {
+                    // A native agent can compact between its own tool batches. Never apply a
+                    // replacement over unfinished output or an unresolved caller-owned tool.
+                    const current = [
+                        ...this.#messages,
+                        { role: "assistant" as const, content: persisted },
+                    ];
+                    const settledCalls = new Set(
+                        persisted
+                            .filter((block) => block.type === "tool_result")
+                            .map((block) => block.callId),
+                    );
+                    const openResponseCall = content.some(
+                        (block) => block.type === "tool_call" && !settledCalls.has(block.callId),
+                    );
+                    if (
+                        content.length !== persisted.length ||
+                        deferredToolCalls.size > 0 ||
+                        openResponseCall ||
+                        this.#unansweredCalls(current).length > 0
+                    ) {
+                        throw new Error(
+                            "The native agent compacted before its tools and output settled.",
+                        );
+                    }
+                    if (await this.#acceptNativeCompaction(ctx, providerEvent)) {
+                        content.length = 0;
+                        persisted.length = 0;
+                        toolCallIndexes.clear();
+                        toolResultIndexes.clear();
+                        toolPolicies.clear();
+                        responseToolIds.clear();
+                        persistedToolIds.clear();
+                    }
+                    continue;
+                }
                 const event = baseSessionEvent(
                     providerEvent,
                     responseToolIds,
@@ -5429,6 +5556,15 @@ export class AgentBase {
                             await flushCompletedCallOnlyTools();
                         }
                         this.#responseErrorKind = event.state === "error" ? event.kind : undefined;
+                        this.#responseRequiresCompaction =
+                            event.state === "error" &&
+                            event.providerError?.diagnostics?.code ===
+                                "context_compaction_required";
+                        this.#responseTerminalContextFailure =
+                            event.state === "error" &&
+                            TERMINAL_CONTEXT_FAILURE_CODES.has(
+                                event.providerError?.diagnostics?.code ?? "",
+                            );
                         return {
                             // Only blocks that finished, which are exactly the blocks that were
                             // durably appended. A response ending mid-block leaves half of
