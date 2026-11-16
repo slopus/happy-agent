@@ -851,8 +851,9 @@ Failed requests return an appropriate 4xx/5xx status with a JSON body:
   `method_not_allowed` (405, a withdrawn write method on a resource that remains readable),
   `too_large` (413), `range_not_satisfiable` (416, an artifact, vault, or attachment file `Range`
   outside the file), `attachment_too_large` (413, an attachment or one upload request over its
-  limit), `attachment_not_found` (400, a sent `file` block naming no attachment of the
-  conversation), `name_taken` (409, a vault folder or file name already used in its folder),
+  limit), `attachment_not_found` (400, a sent `file` block naming no complete uploaded media
+  the daemon holds; on older daemons, no attachment of that conversation), `name_taken` (409,
+  a vault folder or file name already used in its folder),
   `settings_full` (409, a person's user settings are at their limit), `variant_not_ready` (503,
   a media variant still being made), `variant_unavailable` (404, a media variant that will not
   be made), `unsupported` (501),
@@ -7177,12 +7178,16 @@ deleting it is `409 conflict`. `404` when there is neither an upload nor uploade
 
 ### Sending media in a message
 
-`send` names uploaded media in `content` with a `file` block, described under "Sending
-attachments": `{ "type": "file", "attachment": "<media ID>", "name": "IMG_0042.jpg" }`. Media
+On daemons reporting `capabilities.media: true`, `send` names uploaded media in `content`
+with a `file` block, described under "Sending attachments":
+`{ "type": "file", "attachment": "<media ID>", "name": "IMG_0042.jpg" }`. Media
 uploaded through any route can be sent in any agent's message, in any number of messages, and
 sending it is what keeps it past its 24 hours. Only uploaded media can be sent: bytes the daemon
 holds only as a tool call's item or an artifact's file are `400 attachment_not_found` until they
 are uploaded.
+
+Without `capabilities.media`, attachments belong to one conversation, as described under
+Attachments; a client uploads the file to the target agent before sending it there.
 
 ## Agents
 
@@ -7807,8 +7812,9 @@ it. The retained kind is a person's reply to a story:
 `agentId` is the story's agent, also this conversation's. `userId` is the person who reposted it
 when the story is a repost, and its author; otherwise it is `null` and the agent is the author.
 `caption` is the story's, or `null`. After `expiresAt` the story cannot be opened, but the quote
-stays. `quote.frame` is always `null` on current daemons. Older daemons may return a frame
-object with `mimeType` and an optional base64 `thumbhash`. The rest of the quote stays unchanged.
+stays. Older daemons may return a frame object with `mimeType` and an optional base64 `thumbhash`,
+served by `GET /v0/agents/:agentId/messages/:messageId/story-frame`. Current daemons return
+`quote.frame: null` and answer `404 not_found` at that route. The rest of the quote stays unchanged.
 Clients ignore a quote kind they do not recognize. The field is additive and does not increment
 the protocol version.
 
@@ -9248,21 +9254,28 @@ are unchanged.
 
 ### Attachments
 
+On daemons that report `capabilities.media: true`, attachments are media as described below.
+Without that capability (older daemons and Happy Cloud), attachments belong to one conversation:
+the same bytes uploaded to another agent are a separate attachment, `GET` and `DELETE` answer
+`404` for another conversation's attachment, and `send` accepts only attachments uploaded to
+that agent. `mimeType` comes from the upload's `Content-Type`, then the name. A client that needs
+a file in another conversation uploads it there again.
+
 A person attaches a file to a message by uploading its bytes first and then naming them in `send`.
-The uploaded bytes are media, described under Media, and the attachment routes are the media
-routes under an older address, kept for clients written before `/v0/media` and for parity with
-Happy Cloud's conversation attachments: the object and the one-request upload are Happy Cloud's, so
-a client written against either works with both. An attachment's ID is its media ID, the lowercase
+On media-capable daemons, the uploaded bytes are media, described under Media, and the attachment
+routes are the media routes under an older address, kept for clients written before `/v0/media`
+and for parity with Happy Cloud's conversation attachments: the object and the one-request upload
+are Happy Cloud's, so a client written against either works with both. An attachment's ID is its media ID, the lowercase
 hexadecimal SHA-256 of its bytes.
 
-Each attachment route does exactly what its media route does, to the same media, with three
-differences. The agent in the path must exist: anyone who may send messages to it may upload and
-cancel, an agent that takes no messages refuses uploads as it refuses `send`, and anyone who may
-read its conversation may download. Answers carry `{ "attachment": {...} }` where the media route
+On those daemons, each attachment route does exactly what its media route does, to the same media,
+with three differences. The agent in the path must exist: anyone who may send messages to it may
+upload and cancel, an agent that takes no messages refuses uploads as it refuses `send`, and
+anyone who may read its conversation may download. Answers carry `{ "attachment": {...} }` where the media route
 carries `{ "media": {...} }`; `{ "upload": {...} }` is the same. And a download's
 `Content-Disposition` is always `attachment`.
 
-The attachment object is the media object with a `name`:
+On media-capable daemons, the attachment object is the media object with a `name`:
 
 ```json
 {
@@ -9283,33 +9296,35 @@ when the daemon already held the bytes under another name. A video attachment ma
 may also carry `preview` and `animated: true`. Attachments Happy Cloud stored
 before it measured them have no `kind` or image fields, so clients treat them as optional.
 
-Media is shared by the whole daemon, so the agent in the path does not own what is uploaded
-through it. The same bytes uploaded through two agents, or through `/v0/media`, are one media;
-anything uploaded can be sent in any agent's message and read through `GET /v0/media/:mediaId`;
+With `capabilities.media: true`, media is shared by the whole daemon, so the agent in the path
+does not own what is uploaded through it. The same bytes uploaded through two agents, or through
+`/v0/media`, are one media; anything uploaded can be sent in any agent's message and read through
+`GET /v0/media/:mediaId`;
 and cancelling affects every client that was about to send the same bytes.
 
 #### `PUT /v0/agents/:agentId/attachments?name=<file name>`
 
-`PUT /v0/media?name=<file name>` under its older address. Returns `201 { "attachment": {...} }`.
+On media-capable daemons, `PUT /v0/media?name=<file name>` under its older address.
+Returns `201 { "attachment": {...} }`.
 
 #### `PUT /v0/agents/:agentId/attachments/:attachmentId?name=<file name>`
 
-`PUT /v0/media/:mediaId?name=<file name>` under its older address, with the same `Content-Range`
-chunks, `bytes */size` question, limits, and errors. Returns `200 { "upload": {...} }` while bytes
-are missing and `201 { "attachment": {...} }` once the file is whole or already held.
+On media-capable daemons, `PUT /v0/media/:mediaId?name=<file name>` under its older address,
+with the same `Content-Range` chunks, `bytes */size` question, limits, and errors. Returns
+`200 { "upload": {...} }` while bytes are missing and `201 { "attachment": {...} }` once the file
+is whole or already held.
 
 #### `GET /v0/agents/:agentId/attachments/:attachmentId`
 
-`GET /v0/media/:mediaId` under its older address, including `?variant=play`, `preview`, or
-`large`, except that
-`Content-Disposition` is always `attachment`. `404` when the agent does not exist or the daemon
-holds no such complete media.
+On media-capable daemons, `GET /v0/media/:mediaId` under its older address, including
+`?variant=play`, `preview`, or `large`, except that `Content-Disposition` is always `attachment`.
+`404` when the agent does not exist or the daemon holds no such complete media.
 
 #### `DELETE /v0/agents/:agentId/attachments/:attachmentId`
 
-`DELETE /v0/media/:mediaId` under its older address: `200 {}`, `409 conflict` when a message, a
-tool call, or an artifact references the media, and `404` when there is neither an upload nor
-uploaded media.
+On media-capable daemons, `DELETE /v0/media/:mediaId` under its older address: `200 {}`,
+`409 conflict` when a message, a tool call, or an artifact references the media, and `404` when
+there is neither an upload nor uploaded media.
 
 #### Sending attachments
 
@@ -9319,16 +9334,20 @@ uploaded media.
 { "type": "file", "attachment": "4b2f0f6f…5b4a3928", "name": "IMG_0042.jpg" }
 ```
 
-`attachment` is the ID of uploaded media, whichever route it was uploaded through. `name` is how
+With `capabilities.media: true`, `attachment` is the ID of uploaded media, whichever route it was
+uploaded through. Without it, the attachment must have been uploaded to this agent. `name` is how
 this message shows the file, 1–255 characters; control characters are removed, and a name left
-empty takes the name the media was uploaded under. A message names at most 32 files. An ID the
+empty takes the name it was uploaded under. A message names at most 32 files. An ID the
 daemon does not hold as complete uploaded media, including one still uploading, cancelled, or
-expired, is `400 attachment_not_found`, and nothing is sent. The same media may be sent in any
-number of messages of any agent, and sending it ends its 24 hours.
+expired, is `400 attachment_not_found`, and nothing is sent. Older daemons also give that error
+for another conversation's attachment. With media support, the same media may be sent in any
+number of messages of any agent, and sending it ends its 24 hours; without it, an attachment
+may be reused only within its conversation.
 
-The message stores the block with the attachment's details as a fallback. The send response,
-`message.created`, and history carry metadata joined from its shared media record when one exists,
-and never the bytes. Later history reads pick up late measurements as described under Media:
+On media-capable daemons, the message stores the block with the attachment's details as a fallback.
+The send response, `message.created`, and history carry metadata joined from its shared media
+record when one exists, and never the bytes. Later history reads pick up late measurements as
+described under Media:
 
 ```json
 {
@@ -9348,12 +9367,15 @@ A video's block may carry `width`, `height`, `durationMs`, and its poster's `thu
 Pictures and videos may carry `preview`, and animated pictures may carry `animated: true`,
 as their shared media object does. All are optional.
 
-The model reads one line per file naming its ID, name, type, and size, and nothing the file
-contains. It looks at a picture with the `view_image` tool and saves a copy of any file on its
-machine with `copy_attachment`, under the turn's own permissions. Both take only the IDs of files
+On media-capable daemons, the model reads one line per file naming its ID, name, type, and size,
+and nothing the file contains. It looks at a picture with the `view_image` tool and saves a copy
+of any file on its machine with `copy_attachment`, under the turn's own permissions. Both take only the IDs of files
 that messages of the agent's own conversation sent; an agent cannot open other media by its ID.
 `view_image` shows an attached image to a model that takes image input. An agent without a
 machine is not offered `copy_attachment`.
+
+Older daemons offer `read_attachment` instead and may inject attached images and small text files
+directly into the model's context.
 
 ### `POST /v0/agents/:agentId/send`
 

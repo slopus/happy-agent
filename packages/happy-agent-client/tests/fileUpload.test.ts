@@ -410,14 +410,19 @@ describe("streaming file uploads", () => {
     }, 30_000);
 
     it.each([
-        [false, 4096],
-        [true, 4096],
-        [false, 8192],
-        [true, 8192],
+        [false, 4096, "carrying"],
+        [true, 4096, "carrying"],
+        [false, 8192, "carrying"],
+        [true, 8192, "carrying"],
+        [false, 4096, "with"],
+        [true, 4096, "with"],
     ] as const)(
-        "normalizes the daemon's persisted cap (attachment=%s, cap=%i)",
-        async (attachment, cap) => {
-            const causeMessage = `An upload takes at most ${String(cap)} requests carrying bytes; cancel it and upload the file again.`;
+        "normalizes the server's persisted cap (attachment=%s, cap=%i, wording=%s)",
+        async (attachment, cap, wording) => {
+            const causeMessage =
+                wording === "with"
+                    ? "An upload takes at most 4096 requests with bytes; cancel it and start again."
+                    : `An upload takes at most ${String(cap)} requests carrying bytes; cancel it and upload the file again.`;
             const fetch = vi.fn(async () =>
                 Response.json({ error: causeMessage, code: "invalid_request" }, { status: 400 }),
             );

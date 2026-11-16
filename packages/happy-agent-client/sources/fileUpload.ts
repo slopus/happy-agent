@@ -100,7 +100,7 @@ export async function fileUpload<T>(
                 error instanceof HappyAgentApiError &&
                 error.status === 400 &&
                 error.code === "invalid_request" &&
-                /^An upload takes at most \d+ requests carrying bytes/u.test(error.message)
+                /^An upload takes at most \d+ requests (?:carrying|with) bytes/u.test(error.message)
             ) {
                 throw new HappyAgentUploadLimitError({ cause: error });
             }

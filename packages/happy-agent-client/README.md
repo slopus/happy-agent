@@ -93,6 +93,17 @@ original bytes or a variant, with optional `range` and `ifNoneMatch`; `mediaUrl(
 builds the URL for a token transport. `deleteMedia(id)` cancels an upload or discards uploaded
 media nothing references.
 
+Without `capabilities.media` (older daemons and Happy Cloud), attachments belong to one
+conversation. Upload the file to each target agent: another conversation's attachment answers
+`404` on `GET` and `DELETE` and cannot be sent there. Its `mimeType` comes from the upload's
+`Content-Type`, then the file name. Older daemons offer the model `read_attachment` instead of
+`view_image` and `copy_attachment`, and may put attached images and small text files directly
+in its context.
+
+Historical story quotes can carry a frame on older daemons, served through
+`storyQuoteFrameUrl(agentId, messageId)`. Current daemons return `quote.frame: null` and that
+deprecated route answers `404 not_found`.
+
 `uploadMediaFile({ name, data, contentType }, options)` also accepts a `Blob` or `File` in
 `data`, or `{ size, read(start, end) }` with an exclusive `end`. It reads at most 4 MiB at a
 time to hash large files incrementally with the portable JavaScript SHA-256 implementation in
