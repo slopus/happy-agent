@@ -29,6 +29,12 @@ batch before applying it; a disable closes the provider gate and aborts live inf
 and verification. `verify(ctx, providerId, level)` supports local credentials, the vendor's
 authenticated usage endpoint when one exists, and a minimal no-tool inference on a curated cheap
 model. Authentication falls back to inference when the provider has no auth-only request. A
-successful verification is remembered, while a failure exposes no raw vendor error and changes no
-earlier discovery. Hidden providers support the same credential, authentication, and inference
+successful verification is remembered, while a failure changes no earlier discovery. A failure
+returns `failure: { kind, message }`: `describeVerificationFailure` classifies the problem
+(missing credentials, authentication, network, TLS, timeout, unavailable model, quota, provider
+error, no model, or unknown) and writes an actionable sentence that names only non-secret
+configuration such as the provider type, endpoint host, region, AWS profile, credential variable
+name, and model ID. Any vendor text passes through `sanitizeVerificationDiagnostic`, which keeps
+URL origins and paths and replaces credentials, opaque tokens, and local paths; the message is at
+most 500 characters. The daemon log keeps the unsanitized reason. Hidden providers support the same credential, authentication, and inference
 verification levels. A successful verification cannot unhide the provider for direct selection.

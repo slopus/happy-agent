@@ -187,6 +187,7 @@ describe("ProviderScanModule", () => {
             requestedLevel: "inference",
             status: "passed",
         });
+        expect(verification).not.toHaveProperty("failure");
         expect(config.isProviderEnabled("codex")).toBe(false);
 
         const restartedConfig = await ConfigModule.load(join(installationRoot, "happy"), {
@@ -280,7 +281,7 @@ describe("ProviderScanModule", () => {
         },
     );
 
-    it("logs why an inference verification failed without returning the provider error", async () => {
+    it("logs why an inference verification failed and returns a sanitized failure", async () => {
         const installationRoot = await root();
         const providers = new AgentProviders();
         providers.add("gateway", new EmptyResponseProvider(), "openai_compatible");
@@ -302,18 +303,53 @@ describe("ProviderScanModule", () => {
 
         const result = await new ProviderScanModule(config).verify(ctx, "gateway", "inference");
 
-        expect(result).toMatchObject({ performedLevel: "inference", status: "failed" });
-        expect(JSON.stringify(result)).not.toContain("zero output tokens");
+        expect(result).toEqual({
+            checkedAt: expect.any(Number),
+            failure: {
+                kind: "provider_error",
+                message:
+                    "The OpenAI-compatible endpoint had a problem on its side. Try again in a few minutes. Details: Gateway returned a response with zero output tokens for key [redacted].",
+            },
+            modelId: "gateway/model",
+            performedLevel: "inference",
+            providerId: "gateway",
+            requestedLevel: "inference",
+            status: "failed",
+        });
         expect(warnings).toContainEqual([
             "Provider verification failed.",
             {
                 modelId: "gateway/model",
                 performedLevel: "inference",
                 providerId: "gateway",
-                reason: "The model request failed: Gateway returned a response with zero output tokens.",
+                reason: "The model request failed: Gateway returned a response with zero output tokens for key sk-proj-0123456789abcdef.",
                 requestedLevel: "inference",
             },
         ]);
+    });
+
+    it("explains missing Bedrock credentials with the configured AWS profile", async () => {
+        const config = await testConfigRootedAt(
+            await root(),
+            '[providers.bedrock]\ntype = "bedrock"\ncredential_isolation = true\nprofile = "corp-sso"\nregion = "us-east-1"\n',
+        );
+
+        const result = await new ProviderScanModule(config).verify(
+            createRootContext(),
+            "bedrock",
+            "inference",
+        );
+
+        expect(result).toMatchObject({
+            failure: {
+                kind: "credentials_missing",
+                message:
+                    "No AWS credentials found for profile `corp-sso`. Run `aws sso login --profile corp-sso` or add credentials for that profile, then try again.",
+            },
+            modelId: null,
+            performedLevel: "inference",
+            status: "failed",
+        });
     });
 
     it("does not apply a live override when its durable write fails", async () => {
@@ -403,7 +439,9 @@ class EmptyResponseProvider extends BaseProvider {
                         type: "done",
                         state: "error",
                         kind: "unknown",
-                        message: "Gateway returned a response with zero output tokens.",
+                        message:
+                            "Gateway returned a response with zero output tokens for key sk-proj-0123456789abcdef.",
+                        providerError: { type: "empty_response" },
                     } as const;
                 })();
             }

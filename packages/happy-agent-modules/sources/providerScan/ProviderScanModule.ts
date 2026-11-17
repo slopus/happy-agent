@@ -11,6 +11,12 @@ import type { BaseSession, SessionReasoningEffort } from "@slopus/happy-provider
 import { asyncLock, detach, withLifetime, type AsyncLock, type Context } from "@steve.kite/stdlib";
 
 import { ConfigModule } from "../config/index.js";
+import {
+    describeVerificationFailure,
+    verificationProblemReason,
+    type VerificationProblem,
+    type VerificationTarget,
+} from "./describeVerificationFailure.js";
 
 const PROVIDER_PROBE_TIMEOUT_MS = 10_000;
 const VERIFICATION_TIMEOUT_MS = 30_000;
@@ -72,7 +78,7 @@ export class ProviderScanModule implements AgentModule {
         });
     }
 
-    /** Verify one configured provider without exposing any credential or vendor diagnostic. */
+    /** Verify one configured provider, explaining a failure with a sanitized diagnostic. */
     async verify(
         ctx: Context,
         providerId: string,
@@ -84,20 +90,21 @@ export class ProviderScanModule implements AgentModule {
         const active = this.#verifications.get(providerId) ?? new Set<AbortController>();
         active.add(controller);
         this.#verifications.set(providerId, active);
-        const timeout = setTimeout(
-            () => controller.abort(new Error("Provider verification timed out.")),
-            VERIFICATION_TIMEOUT_MS,
-        );
+        let timedOut = false;
+        const timeout = setTimeout(() => {
+            timedOut = true;
+            controller.abort(new Error("Provider verification timed out."));
+        }, VERIFICATION_TIMEOUT_MS);
         timeout.unref();
 
         let performedLevel = requestedLevel;
         let modelId: string | null = null;
         let passed = false;
-        let failure: string | undefined;
+        let problem: VerificationProblem | undefined;
         try {
             const credentials = await this.#probe(providerId);
             if (credentials !== "available") {
-                failure = `Local credential discovery reported "${credentials}".`;
+                problem = { type: "credentials", status: credentials };
             }
             if (requestedLevel === "credentials") {
                 passed = credentials === "available";
@@ -116,47 +123,100 @@ export class ProviderScanModule implements AgentModule {
                         );
                         modelId = inference.modelId;
                         passed = inference.passed;
-                        failure = inference.failure;
+                        problem = inference.problem;
                     } else {
                         passed = true;
                     }
                 } catch (error) {
                     passed = false;
-                    failure = `The account check failed: ${describe(error)}`;
+                    problem = { type: "account_check", error };
                 }
             } else if (credentials === "available" && requestedLevel === "inference") {
                 const inference = await this.#verifyInference(ctx, providerId, controller.signal);
                 modelId = inference.modelId;
                 passed = inference.passed;
-                failure = inference.failure;
+                problem = inference.problem;
             }
         } catch (error) {
             passed = false;
-            failure = describe(error);
+            problem = { type: "thrown", error };
         } finally {
             clearTimeout(timeout);
             active.delete(controller);
             if (active.size === 0) this.#verifications.delete(providerId);
         }
 
-        if (passed) await this.#remember(ctx, providerId);
-        else {
-            // The response withholds provider errors; the daemon log keeps the reason for support.
-            ctx.log.warn("Provider verification failed.", {
+        if (passed) {
+            await this.#remember(ctx, providerId);
+            return {
+                checkedAt: Date.now(),
+                modelId,
+                performedLevel,
                 providerId,
                 requestedLevel,
-                performedLevel,
-                modelId,
-                reason: failure ?? "The check did not pass.",
-            });
+                status: "passed",
+            };
         }
+        if (timedOut) {
+            problem = { type: "timeout", seconds: VERIFICATION_TIMEOUT_MS / 1_000 };
+        } else if (controller.signal.aborted) {
+            problem = { type: "aborted" };
+        }
+        // The daemon log keeps the unsanitized reason for support; the response carries only the
+        // classified, sanitized failure.
+        ctx.log.warn("Provider verification failed.", {
+            providerId,
+            requestedLevel,
+            performedLevel,
+            modelId,
+            reason:
+                problem === undefined
+                    ? "The check did not pass."
+                    : verificationProblemReason(problem),
+        });
         return {
             checkedAt: Date.now(),
+            failure: describeVerificationFailure(
+                this.#verificationTarget(providerId, modelId),
+                problem ?? { type: "incomplete", state: null },
+            ),
             modelId,
             performedLevel,
             providerId,
             requestedLevel,
-            status: passed ? "passed" : "failed",
+            status: "failed",
+        };
+    }
+
+    /** Non-secret provider facts for failure messages: names, hosts, and regions only. */
+    #verificationTarget(providerId: string, modelId: string | null): VerificationTarget {
+        const type = this.#config.providers.typeOf(providerId);
+        const configured = this.#config.configuration.values.providers[providerId];
+        const host =
+            configured !== undefined && "baseUrl" in configured
+                ? hostOf(configured.baseUrl)
+                : undefined;
+        return {
+            label:
+                configured?.name ??
+                providerLabel(type ?? configured?.type ?? null, providerId, host),
+            modelId,
+            type: type ?? configured?.type ?? null,
+            ...(host === undefined ? {} : { host }),
+            ...(configured?.type === "bedrock"
+                ? {
+                      ...(configured.region === undefined ? {} : { region: configured.region }),
+                      ...(configured.profile === undefined
+                          ? {}
+                          : { awsProfile: configured.profile }),
+                      ...(configured.bearerTokenEnvVar === undefined
+                          ? {}
+                          : { credentialEnvVar: configured.bearerTokenEnvVar }),
+                  }
+                : {}),
+            ...(configured?.type === "openai_compatible" && configured.apiKeyEnv !== undefined
+                ? { credentialEnvVar: configured.apiKeyEnv }
+                : {}),
         };
     }
 
@@ -286,7 +346,7 @@ export class ProviderScanModule implements AgentModule {
     ): Promise<{
         readonly modelId: string | null;
         readonly passed: boolean;
-        readonly failure?: string;
+        readonly problem?: VerificationProblem;
     }> {
         const model = verificationModel(
             this.#config.offeredModels,
@@ -294,11 +354,7 @@ export class ProviderScanModule implements AgentModule {
             this.#config.providers.typeOf(providerId),
         );
         if (model === undefined) {
-            return {
-                modelId: null,
-                passed: false,
-                failure: "The provider offers no model to check inference with.",
-            };
+            return { modelId: null, passed: false, problem: { type: "no_model" } };
         }
         let session: BaseSession | undefined;
         try {
@@ -307,11 +363,7 @@ export class ProviderScanModule implements AgentModule {
                 rejectWhenAborted(signal),
             ]);
             if (provider === null) {
-                return {
-                    modelId: model.id,
-                    passed: false,
-                    failure: "The provider could not be prepared for inference.",
-                };
+                return { modelId: model.id, passed: false, problem: { type: "unprepared" } };
             }
             session = await Promise.race([
                 provider.session(`provider-verification:${createId()}`, {
@@ -322,7 +374,7 @@ export class ProviderScanModule implements AgentModule {
                 rejectWhenAborted(signal),
             ]);
             const runCtx = verificationContext(ctx, signal);
-            const consume = async (): Promise<string | undefined> => {
+            const consume = async (): Promise<VerificationProblem | undefined> => {
                 for await (const event of session!.run(runCtx, {
                     context: {
                         instructions: "Reply with OK.",
@@ -336,17 +388,24 @@ export class ProviderScanModule implements AgentModule {
                     if (event.type !== "done") continue;
                     if (event.state === "normal") return undefined;
                     return event.state === "error"
-                        ? `The model request failed: ${event.message}`
-                        : `The model request ended in the "${event.state}" state.`;
+                        ? {
+                              type: "session_error",
+                              kind: event.kind,
+                              message: event.message,
+                              ...(event.providerError === undefined
+                                  ? {}
+                                  : { providerError: event.providerError }),
+                          }
+                        : { type: "incomplete", state: event.state };
                 }
-                return "The model stream ended without a final result.";
+                return { type: "incomplete", state: null };
             };
-            const failure = await Promise.race([consume(), rejectWhenAborted(signal)]);
-            return failure === undefined
+            const problem = await Promise.race([consume(), rejectWhenAborted(signal)]);
+            return problem === undefined
                 ? { modelId: model.id, passed: true }
-                : { modelId: model.id, passed: false, failure };
+                : { modelId: model.id, passed: false, problem };
         } catch (error) {
-            return { modelId: model.id, passed: false, failure: describe(error) };
+            return { modelId: model.id, passed: false, problem: { type: "thrown", error } };
         } finally {
             if (session !== undefined) {
                 await Promise.resolve(session.destroy()).catch(() => undefined);
@@ -406,8 +465,24 @@ function rejectWhenAborted(signal: AbortSignal): Promise<never> {
     });
 }
 
-function describe(error: unknown): string {
-    return error instanceof Error && error.message !== "" ? error.message : "An unknown error.";
+function providerLabel(type: string | null, providerId: string, host: string | undefined): string {
+    const labels: Readonly<Record<string, string>> = {
+        bedrock: "Amazon Bedrock",
+        claude: "Claude",
+        codex: "Codex",
+        grok: "Grok",
+        openai_compatible: host ?? "The OpenAI-compatible endpoint",
+    };
+    return labels[type ?? providerId] ?? `Provider "${providerId}"`;
+}
+
+function hostOf(url: string | undefined): string | undefined {
+    if (url === undefined) return undefined;
+    try {
+        return new URL(url).host || undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 function replaceSet<T>(target: Set<T>, source: ReadonlySet<T>): void {
