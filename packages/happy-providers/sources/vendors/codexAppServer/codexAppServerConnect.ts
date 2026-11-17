@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnHidden } from "@/core/hiddenChildProcess.js";
 import { createInterface } from "node:readline";
 
 import type * as acp from "@agentclientprotocol/sdk";
@@ -114,13 +114,12 @@ class CodexAppServer implements AcpAgentConnection {
     ) {
         this.#client = client;
         this.#onAccountUsage = onAccountUsage;
-        this.#child = spawn(launch.command, [...(launch.args ?? [])], {
+        this.#child = spawnHidden(launch.command, [...(launch.args ?? [])], {
             cwd,
             // A process group of its own, so stopping it reaches the commands it runs.
             detached: process.platform !== "win32",
             env: { ...process.env, ...launch.env },
             stdio: ["pipe", "pipe", "pipe"],
-            windowsHide: true,
         });
         this.#child.stderr.on("data", (chunk: Buffer) => {
             this.#stderr = (this.#stderr + chunk.toString("utf8")).slice(-4000);

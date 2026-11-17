@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnHidden } from "../../utils/hiddenChildProcess.js";
 
 import { delay, isAbortedError, type Context } from "@steve.kite/stdlib";
 
@@ -98,9 +99,8 @@ export class MenuBarApp {
     }> {
         // Standard input stays open and carries nothing: closing it is how the app learns the
         // daemon is gone even when the daemon had no chance to stop it.
-        const child = spawn(this.#app, [...this.#args], {
+        const child = spawnHidden(this.#app, [...this.#args], {
             stdio: ["pipe", "ignore", "pipe"],
-            windowsHide: true,
         });
         this.#child = child;
         ctx.log.debug(`menu-bar:started pid=${String(child.pid ?? 0)}`);

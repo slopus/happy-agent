@@ -1,4 +1,5 @@
-import { spawn as spawnChildProcess, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnHidden } from "../hiddenChildProcess.js";
 import { shellCommandArgs } from "./shellCommandArgs.js";
 
 import { spawn as spawnPty } from "@lydell/node-pty";
@@ -93,12 +94,11 @@ function startPipeTransport(
     args: readonly string[],
     options: ProcessStartOptions,
 ): ProcessTransport {
-    const child: ChildProcess = spawnChildProcess(executable, [...args], {
+    const child: ChildProcess = spawnHidden(executable, [...args], {
         cwd: options.cwd,
         detached: process.platform !== "win32",
         env: options.env ?? process.env,
         stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
     });
     child.stdin?.on("error", () => undefined);
     const listeners: (() => void)[] = [];

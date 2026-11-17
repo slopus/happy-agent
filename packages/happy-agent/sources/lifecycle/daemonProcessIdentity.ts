@@ -1,8 +1,8 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../utils/hiddenChildProcess.js";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = promisify(execFileHidden);
 
 /** Distinguish a live daemon from an unrelated process that reused a stale PID. */
 export async function daemonProcessIdentity(pid: number): Promise<string> {

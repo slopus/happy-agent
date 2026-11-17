@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "@/core/hiddenChildProcess.js";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = promisify(execFileHidden);
 const MACOS_KEYCHAIN_TIMEOUT_MS = 500;
 const MACOS_KEYCHAIN_ATTEMPTS = 3;
 const MACOS_KEYCHAIN_RETRY_DELAY_MS = 20;

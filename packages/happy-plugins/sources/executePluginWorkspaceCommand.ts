@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnHidden } from "./hiddenChildProcess.js";
 
 import type { ExecuteWorkspaceCommandResponse } from "./types.js";
 import { HAPPY_PLUGIN_MAX_COMMAND_OUTPUT_BYTES } from "./types.js";
@@ -14,11 +14,10 @@ export function executePluginWorkspaceCommand(
     return new Promise<ExecuteWorkspaceCommandResponse>((resolve, reject) => {
         let child;
         try {
-            child = spawn("bash", ["-c", command], {
+            child = spawnHidden("bash", ["-c", command], {
                 cwd: workspaceRoot,
                 detached: process.platform !== "win32",
                 stdio: ["ignore", "pipe", "pipe"],
-                windowsHide: true,
             });
         } catch (error) {
             reject(toPluginWorkspaceOperationError(error, "execute"));
@@ -100,7 +99,7 @@ export function executePluginWorkspaceCommand(
 function killProcessTree(pid: number, signal: NodeJS.Signals): void {
     if (process.platform === "win32") {
         try {
-            const killer = spawn(
+            const killer = spawnHidden(
                 "taskkill",
                 signal === "SIGKILL"
                     ? ["/F", "/T", "/PID", String(pid)]
@@ -108,7 +107,6 @@ function killProcessTree(pid: number, signal: NodeJS.Signals): void {
                 {
                     detached: true,
                     stdio: "ignore",
-                    windowsHide: true,
                 },
             );
             killer.unref();

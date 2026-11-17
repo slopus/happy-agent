@@ -27,3 +27,9 @@ reads HTML as the text a reader sees, for every provider that indexes HTML.
 fallback, or by plain words for what the link names. Modules call it instead of the client's
 `formatHappyMarkdownLink`, whose label may be left empty. `isHappyLinkHere` tells a link someone
 wrote that names this installation, including a pasted share link, from one naming another.
+
+`hiddenChildProcess` is the only way any module starts a program: `spawnHidden`,
+`spawnSyncHidden`, `execFileHidden`, and `execFileSyncHidden` always pass `windowsHide: true`, so
+Windows never flashes a console window. Each package that starts programs carries an identical
+copy; `scripts/windows/hiddenChildProcess.test.ts` keeps them identical and rejects any other way
+to start one.

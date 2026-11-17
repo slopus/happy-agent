@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../../utils/hiddenChildProcess.js";
 import { hostname } from "node:os";
 import { promisify } from "node:util";
 import { nodeNameSchema } from "@slopus/happy-agent-client";
@@ -8,7 +8,7 @@ import { Value } from "@sinclair/typebox/value";
 export async function resolveDefaultNodeName(): Promise<string> {
     if (process.platform === "darwin") {
         try {
-            const { stdout } = await promisify(execFile)(
+            const { stdout } = await promisify(execFileHidden)(
                 "/usr/sbin/scutil",
                 ["--get", "ComputerName"],
                 {

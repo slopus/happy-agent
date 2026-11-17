@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnHidden } from "../hiddenChildProcess.js";
 
 import type { Context } from "@steve.kite/stdlib";
 
@@ -17,10 +17,9 @@ function signalProcessTree(pid: number, signal: NodeJS.Signals): void {
                 signal === "SIGKILL"
                     ? ["/F", "/T", "/PID", String(pid)]
                     : ["/T", "/PID", String(pid)];
-            const killer = spawn("taskkill", args, {
+            const killer = spawnHidden("taskkill", args, {
                 detached: true,
                 stdio: "ignore",
-                windowsHide: true,
             });
             killer.unref();
         } catch {

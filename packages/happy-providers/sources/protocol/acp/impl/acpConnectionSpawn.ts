@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnHidden } from "@/core/hiddenChildProcess.js";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
@@ -19,12 +19,11 @@ export async function acpConnectionSpawn(
     client: acp.Client,
 ): Promise<AcpConnection> {
     // The agent leads its own process group so it does not die with the daemon's terminal.
-    const child = spawn(launch.command, [...(launch.args ?? [])], {
+    const child = spawnHidden(launch.command, [...(launch.args ?? [])], {
         cwd,
         detached: process.platform !== "win32",
         env: { ...process.env, ...launch.env },
         stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
     });
     // Agents leave a running command alive when their turn is cancelled, and some start each
     // command in a process group of its own, so stopping ends every group in the agent's tree.

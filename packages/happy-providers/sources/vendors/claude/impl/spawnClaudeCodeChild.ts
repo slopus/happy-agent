@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnHidden } from "@/core/hiddenChildProcess.js";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -50,12 +51,11 @@ export function spawnClaudeCodeChild(
     options: SpawnOptions,
     settings: ClaudeCodeChildSettings = {},
 ) {
-    const child = spawn(options.command, options.args, {
+    const child = spawnHidden(options.command, options.args, {
         cwd: options.cwd,
         env: options.env,
         detached: settings.detached ?? false,
         stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
     });
     if (settings.onStderr === undefined) {
         // A full pipe would stall Claude Code.

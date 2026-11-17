@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnHidden } from "../../utils/hiddenChildProcess.js";
 import { connect, type Socket } from "node:net";
 
 type CarrierRun = { child: ChildProcess; exited: Promise<void> };
@@ -101,10 +102,10 @@ export class TailcatConnection {
     }
 
     async #start(): Promise<number> {
-        const child = spawn(
+        const child = spawnHidden(
             this.#executable,
             ["--key=new", "socks", "--listen=127.0.0.1:0", this.#address],
-            { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+            { stdio: ["ignore", "pipe", "pipe"] },
         );
         const exited = new Promise<void>((resolve) => child.once("close", () => resolve()));
         const run = { child, exited };

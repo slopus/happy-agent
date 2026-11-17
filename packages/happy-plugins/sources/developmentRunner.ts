@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawnHidden } from "./hiddenChildProcess.js";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
@@ -40,7 +40,7 @@ async function main(): Promise<void> {
             );
         },
     });
-    const child = spawn(process.execPath, [resolve(options.entry)], {
+    const child = spawnHidden(process.execPath, [resolve(options.entry)], {
         env: { ...process.env, ...host.environment },
         stdio: "inherit",
     });

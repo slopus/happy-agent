@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../../utils/hiddenChildProcess.js";
 
 /** Share of one quota window a foreign agent says is left. */
 export interface HarnessUsageWindow {
@@ -24,14 +24,13 @@ export async function readAntigravityUsage(
 ): Promise<readonly HarnessUsageWindow[]> {
     const binary = environment["AGY_BIN"] ?? (process.platform === "win32" ? "agy.exe" : "agy");
     const stdout = await new Promise<string>((resolve, reject) => {
-        const child = execFile(
+        const child = execFileHidden(
             binary,
             ["-p", "/usage"],
             {
                 env: environment,
                 timeout: USAGE_TIMEOUT_MS,
                 maxBuffer: 1024 * 1024,
-                windowsHide: true,
             },
             (error, out) => (error === null ? resolve(out) : reject(error)),
         );

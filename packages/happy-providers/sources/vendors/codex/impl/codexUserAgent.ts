@@ -1,8 +1,8 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "@/core/hiddenChildProcess.js";
 import { arch, platform, release, type } from "node:os";
 import { promisify } from "node:util";
 
-const run = promisify(execFile);
+const run = promisify(execFileHidden);
 let cached: Promise<string> | undefined;
 
 export function resolveCodexUserAgent(): Promise<string> {

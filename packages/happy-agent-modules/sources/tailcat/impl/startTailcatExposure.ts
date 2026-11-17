@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnHidden } from "../../utils/hiddenChildProcess.js";
 import { randomUUID } from "node:crypto";
 import { chmod, link, lstat, mkdir, open, rm, writeFile } from "node:fs/promises";
 
@@ -273,9 +274,8 @@ function spawnCommand(
     arguments_: readonly string[],
     environment: NodeJS.ProcessEnv = process.env,
 ): TailcatRun {
-    const child = spawn(executable, [...arguments_], {
+    const child = spawnHidden(executable, [...arguments_], {
         env: environment,
-        windowsHide: true,
         stdio: ["ignore", "ignore", "pipe"],
     });
     let stderr = "";

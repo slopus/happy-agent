@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../utils/hiddenChildProcess.js";
 import { win32 } from "node:path";
 import { type Static, Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -137,10 +137,10 @@ async function invokeSandboxHelper(command: "setup" | "status", retry: boolean, 
 
     const binary = resolveSupervisorBinary();
     return await new Promise<{ error: Error | null; stdout: string; stderr: string }>((resolve) => {
-        execFile(
+        execFileHidden(
             binary,
             nativeArgs,
-            { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024, env: process.env },
+            { encoding: "utf8", maxBuffer: 64 * 1024, env: process.env },
             (error, stdout, stderr) => resolve({ error, stdout, stderr }),
         );
     });

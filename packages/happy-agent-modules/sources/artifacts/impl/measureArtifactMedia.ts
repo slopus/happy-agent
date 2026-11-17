@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../../utils/hiddenChildProcess.js";
 import { randomUUID } from "node:crypto";
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -227,7 +227,7 @@ async function videoFrame(contentPath: string): Promise<Uint8Array | undefined> 
 /** One run of a host tool's standard output, or undefined when it is missing, fails, or overruns. */
 async function run(command: string, args: readonly string[]): Promise<Buffer | undefined> {
     return await new Promise((resolve) => {
-        execFile(
+        execFileHidden(
             command,
             args,
             {
@@ -235,7 +235,6 @@ async function run(command: string, args: readonly string[]): Promise<Buffer | u
                 killSignal: "SIGKILL",
                 maxBuffer: MAX_FRAME_BYTES,
                 timeout: VIDEO_TOOL_TIMEOUT_MS,
-                windowsHide: true,
             },
             (error, stdout) => resolve(error === null ? stdout : undefined),
         );

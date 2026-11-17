@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../../utils/hiddenChildProcess.js";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { join, normalize } from "node:path";
@@ -61,10 +61,14 @@ async function readPictureAttribute(record: string): Promise<Uint8Array | null> 
 }
 
 async function readAttribute(record: string, key: string, maxBuffer: number): Promise<string> {
-    const { stdout } = await promisify(execFile)("/usr/bin/dscl", [".", "-read", record, key], {
-        timeout: COMMAND_TIMEOUT_MS,
-        maxBuffer,
-    });
+    const { stdout } = await promisify(execFileHidden)(
+        "/usr/bin/dscl",
+        [".", "-read", record, key],
+        {
+            timeout: COMMAND_TIMEOUT_MS,
+            maxBuffer,
+        },
+    );
     return stdout;
 }
 
@@ -76,10 +80,14 @@ function attributeValue(output: string): string {
 
 async function convertToPng(input: string, directory: string): Promise<Uint8Array | null> {
     const output = join(directory, "picture.png");
-    await promisify(execFile)("/usr/bin/sips", ["-s", "format", "png", input, "--out", output], {
-        timeout: COMMAND_TIMEOUT_MS,
-        maxBuffer: 65_536,
-    });
+    await promisify(execFileHidden)(
+        "/usr/bin/sips",
+        ["-s", "format", "png", input, "--out", output],
+        {
+            timeout: COMMAND_TIMEOUT_MS,
+            maxBuffer: 65_536,
+        },
+    );
     const facts = await stat(output);
     if (!facts.isFile() || facts.size === 0 || facts.size > MAX_MANAGED_IMAGE_BYTES) return null;
     return await readFile(output);

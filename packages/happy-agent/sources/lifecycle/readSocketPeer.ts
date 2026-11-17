@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../utils/hiddenChildProcess.js";
 import { readFile, readlink } from "node:fs/promises";
 import { promisify } from "node:util";
 
@@ -89,7 +89,7 @@ export async function describeLocalProcess(pid: number) {
             try {
                 const path = Buffer.alloc(4096);
                 const length = library.symbols.proc_pidpath!(pid, path, path.length);
-                const { stdout } = await promisify(execFile)(
+                const { stdout } = await promisify(execFileHidden)(
                     "/bin/ps",
                     ["-p", String(pid), "-o", "uid=,ppid="],
                     { timeout: 2000 },

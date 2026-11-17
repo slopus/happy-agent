@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { ChildProcessByStdio } from "node:child_process";
+import { spawnHidden } from "../../utils/hiddenChildProcess.js";
 import type { Readable, Writable } from "node:stream";
 
 import { RunnerLink, RunnerUnavailableError } from "@slopus/happy-agent-compute";
@@ -110,7 +111,7 @@ export class LocalUserRunner {
     async #start(): Promise<void> {
         let child: RunnerProcess;
         try {
-            child = spawn(this.#command.program, [...this.#command.args], {
+            child = spawnHidden(this.#command.program, [...this.#command.args], {
                 // The daemon's own working directory is private to the daemon's user; the runner
                 // starts somewhere every user can stand and works in its own home from there.
                 cwd: "/",

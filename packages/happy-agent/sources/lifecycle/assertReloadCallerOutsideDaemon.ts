@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../utils/hiddenChildProcess.js";
 import { promisify } from "node:util";
 
 import { Type } from "@sinclair/typebox";
@@ -6,7 +6,7 @@ import { Value } from "@sinclair/typebox/value";
 
 import { AgentDaemonError } from "./AgentDaemonError.js";
 
-const execute = promisify(execFile);
+const execute = promisify(execFileHidden);
 const processRow = Type.Tuple([
     Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
     Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
@@ -39,7 +39,7 @@ export async function assertReloadCallerOutsideDaemon(
                       '$ErrorActionPreference = "Stop"; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -gt 0 } | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }',
                   ]
                 : ["-A", "-o", "pid=,ppid="],
-            { timeout: 5_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true, encoding: "utf8" },
+            { timeout: 5_000, maxBuffer: 2 * 1024 * 1024, encoding: "utf8" },
         );
         const parents = new Map<number, number>();
         for (const line of stdout.trim().split(/\r?\n/)) {

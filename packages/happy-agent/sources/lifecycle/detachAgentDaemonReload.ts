@@ -1,5 +1,5 @@
 import { ensurePrivateDirectory } from "@slopus/happy-agent-compute";
-import { spawn } from "node:child_process";
+import { spawnHidden } from "../utils/hiddenChildProcess.js";
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -43,10 +43,9 @@ export async function detachAgentDaemonReload(): Promise<string> {
     const log = await open(logPath, "a", 0o600);
     try {
         await log.chmod(0o600);
-        const child = spawn(command.executable, command.arguments, {
+        const child = spawnHidden(command.executable, command.arguments, {
             cwd: homedir(),
             detached: true,
-            windowsHide: true,
             env: process.env,
             stdio: ["ignore", log.fd, log.fd],
         });

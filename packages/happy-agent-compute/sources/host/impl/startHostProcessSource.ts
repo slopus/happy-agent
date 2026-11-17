@@ -1,4 +1,4 @@
-import { spawn as spawnChildProcess } from "node:child_process";
+import { spawnHidden } from "../../processes/hiddenChildProcess.js";
 
 import type { ComputeProcessExit, ComputeProcessSignal } from "../../ComputeProcesses.js";
 import { spawnAcceptingCtrlC } from "./spawnAcceptingCtrlC.js";
@@ -40,13 +40,12 @@ export async function startHostProcessSource(
 }
 
 async function startPipes(options: HostProcessSourceOptions): Promise<HostProcessSource> {
-    const child = spawnChildProcess(options.command, [...options.args], {
+    const child = spawnHidden(options.command, [...options.args], {
         cwd: options.cwd,
         // Its own process group, so a signal reaches everything the program started.
         detached: process.platform !== "win32",
         env: options.env,
         stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
     });
     await new Promise<void>((resolve, reject) => {
         child.once("spawn", resolve);

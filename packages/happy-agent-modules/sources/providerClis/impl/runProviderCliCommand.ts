@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnHidden } from "../../utils/hiddenChildProcess.js";
 
 const MAX_OUTPUT = 64 * 1_024;
 
@@ -29,15 +29,14 @@ export async function runProviderCliCommand(
             clearTimeout(timer);
             resolve({ code, stdout, stderr });
         };
-        let child: ReturnType<typeof spawn>;
+        let child: ReturnType<typeof spawnHidden>;
         try {
             // Windows starts batch files, such as npm's launchers, only through its shell.
             const batch = /\.(cmd|bat)$/i.test(command);
-            child = spawn(batch ? `"${command}"` : command, args, {
+            child = spawnHidden(batch ? `"${command}"` : command, args, {
                 env: { ...env },
                 shell: batch,
                 stdio: ["ignore", "pipe", "pipe"],
-                windowsHide: true,
             });
         } catch {
             resolve({ code: null, stdout, stderr });

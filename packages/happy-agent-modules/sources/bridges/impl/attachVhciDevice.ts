@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnHidden } from "../../utils/hiddenChildProcess.js";
 import type { Socket } from "node:net";
 import { join } from "node:path";
 
@@ -73,7 +73,7 @@ async function writeAttachment(
     attachPath: string,
     line: string,
 ): Promise<{ readonly socket: Socket } | { readonly error: string }> {
-    const child = spawn(
+    const child = spawnHidden(
         "/bin/sh",
         ["-c", 'printf "%s" "$1" > "$2"', "happy-agent-usb-attach", line, attachPath],
         {

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../../utils/hiddenChildProcess.js";
 import { basename, dirname } from "node:path";
 
 /** How long the process listing is given; the menu bar starts regardless once it passes. */
@@ -43,7 +43,7 @@ export function orphanedMenuBarApps(listing: string, executable: string): number
 export async function reapOrphanedMenuBarApps(executable: string): Promise<number[]> {
     if (process.platform !== "darwin") return [];
     const listing = await new Promise<string>((resolve) => {
-        execFile(
+        execFileHidden(
             "/bin/ps",
             ["-x", "-o", "pid=,ppid=,comm="],
             { timeout: LISTING_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },

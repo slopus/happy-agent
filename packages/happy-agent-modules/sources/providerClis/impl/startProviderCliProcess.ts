@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnHidden } from "../../utils/hiddenChildProcess.js";
 
 const MAX_TEXT = 64 * 1_024;
 // Colors, cursor movement, and window titles; the programs print them even into pipes.
@@ -57,11 +58,10 @@ export function startProviderCliProcess(
     try {
         // Windows starts batch files, such as npm's launchers, only through its shell.
         const batch = /\.(cmd|bat)$/i.test(command);
-        child = spawn(batch ? `"${command}"` : command, args, {
+        child = spawnHidden(batch ? `"${command}"` : command, args, {
             env: { ...env },
             shell: batch,
             stdio: ["pipe", "pipe", "pipe"],
-            windowsHide: true,
         });
     } catch {
         resolveExit(null);

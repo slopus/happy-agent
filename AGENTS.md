@@ -272,6 +272,10 @@ ad hoc validation.
 
 A file should hold one coherent piece of behavior. Most product code lands at one function per file; keep small helpers alongside the thing they serve rather than splitting every function out on principle. Match the surrounding package — `happy-providers` deliberately keeps larger files and documents why.
 
+## Starting programs
+
+Every child process launch must go through the package's `hiddenChildProcess.ts` helper so no console window ever shows on Windows; never import `node:child_process` to start one directly. See [`master-plans/29-windows.md`](master-plans/29-windows.md).
+
 ## Context and lifetimes
 
 `Context` is an immutable carrier for cross-cutting execution state. This includes the current database scope and, while a transaction is active, the transaction available through `ctx.tx`. Never mutate a context in place. Derive another context with its namespace or `with...` helper, such as `withTransaction`, and pass the derived context through the work that should see that value.

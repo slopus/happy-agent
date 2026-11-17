@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../../utils/hiddenChildProcess.js";
 import { open, opendir, readdir, stat, statfs } from "node:fs/promises";
 import os from "node:os";
 import { promisify } from "node:util";
@@ -27,7 +27,7 @@ import { parseWindowsDisks, parseWindowsGpus, parseWindowsProcesses } from "./pa
 import { parseNvidia } from "./parseNvidia.js";
 import { numberOrNull, type RawProcess } from "./parseProcess.js";
 
-const runFile = promisify(execFile);
+const runFile = promisify(execFileHidden);
 const MAX_PROCESSES = 20000;
 /** Even procfs/sysfs reads have a hard allocation bound. No command lines or environments are opened. */
 export async function readBounded(path: string, maxBytes = 262144): Promise<string> {
@@ -58,7 +58,6 @@ export class HostProbes {
             timeout: 1000,
             maxBuffer: 2 * 1024 ** 2,
             killSignal: "SIGKILL",
-            windowsHide: true,
             env: { ...process.env, LC_ALL: "C", LANG: "C" },
             ...(this.ctx.lifetime === undefined ? {} : { signal: this.ctx.lifetime }),
         });

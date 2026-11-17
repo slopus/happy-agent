@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnHidden } from "../utils/hiddenChildProcess.js";
 import { randomUUID } from "node:crypto";
 import { appendFile, open } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -160,11 +160,10 @@ async function spawnDaemon(
     await rotateDaemonLog(logPath).catch(() => undefined);
     const log = await open(logPath, "a", 0o600);
     try {
-        const child = spawn(command.executable, command.arguments, {
+        const child = spawnHidden(command.executable, command.arguments, {
             cwd: homedir(),
             env: environment,
             stdio: ["ignore", log.fd, log.fd],
-            windowsHide: true,
         });
         const exited = new Promise<{ code: number | null; signal: string | null }>((resolve) => {
             child.once("exit", (code, signal) => resolve({ code, signal }));

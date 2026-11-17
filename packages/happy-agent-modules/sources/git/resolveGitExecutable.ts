@@ -1,7 +1,7 @@
-import { execFile as execFileCallback } from "node:child_process";
+import { execFileHidden } from "../utils/hiddenChildProcess.js";
 import { promisify } from "node:util";
 
-const execFile = promisify(execFileCallback);
+const execFile = promisify(execFileHidden);
 let cached: Promise<string> | undefined;
 
 export function resolveGitExecutable(): Promise<string> {

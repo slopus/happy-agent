@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnHidden } from "../utils/hiddenChildProcess.js";
 import { constants } from "node:os";
 
 import { AgentDaemonError } from "../lifecycle/AgentDaemonError.js";
@@ -31,7 +31,7 @@ export async function runBunCommand(
             { hint: "Run the installed happy-agent binary, or use your own bun instead." },
         );
     }
-    const child = spawn(runtime.executable, [...commandArguments], {
+    const child = spawnHidden(runtime.executable, [...commandArguments], {
         env: { ...runtime.environment, BUN_BE_BUN: "1" },
         stdio: "inherit",
     });

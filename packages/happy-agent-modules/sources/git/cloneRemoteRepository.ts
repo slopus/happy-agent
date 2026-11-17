@@ -1,4 +1,4 @@
-import { execFile as execFileCallback } from "node:child_process";
+import { execFileHidden } from "../utils/hiddenChildProcess.js";
 import { lstat, mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve, type PlatformPath } from "node:path";
 import { promisify } from "node:util";
@@ -9,7 +9,7 @@ import { runGitCommandOrThrow } from "./GitCommandRunner.js";
 import type { GitRemoteSource } from "./types.js";
 import { normalizeProjectCwd } from "./normalizeProjectCwd.js";
 
-const execFile = promisify(execFileCallback);
+const execFile = promisify(execFileHidden);
 const GIT_CLONE_OUTPUT_LIMIT = 1024 * 1024;
 export const GIT_CLONE_TIMEOUT_MS = 60 * 60 * 1_000;
 const GITHUB_REPOSITORY_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$/u;
@@ -37,7 +37,6 @@ export interface GitCloneExecFileOptions {
     env: NodeJS.ProcessEnv;
     maxBuffer: number;
     timeout: number;
-    windowsHide: boolean;
 }
 
 export type GitCloneExecFile = (
@@ -90,7 +89,6 @@ export async function cloneRemoteRepository(options: CloneRemoteRepositoryOption
     try {
         await (options.execFile ?? runExecFile)("git", ["clone", "--", remote, stagingPath], {
             encoding: "utf8",
-            windowsHide: true,
             env: environment,
             maxBuffer: GIT_CLONE_OUTPUT_LIMIT,
             timeout: GIT_CLONE_TIMEOUT_MS,

@@ -27,7 +27,7 @@
         "test:gym": "pnpm --filter @slopus/happy-agent-gym-tests test:gym",
         "test:gym:api": "pnpm --filter @slopus/happy-agent-gym-tests test:gym:api",
         "test:gym:node": "pnpm --filter @slopus/happy-agent-gym-tests test:gym:node",
-        "test:scripts": "TMPDIR=\"$PWD/.local\" tsx --test scripts/release/*.test.ts scripts/recipes/*.test.ts scripts/genui/*.test.ts"
+        "test:scripts": "TMPDIR=\"$PWD/.local\" tsx --test scripts/release/*.test.ts scripts/recipes/*.test.ts scripts/genui/*.test.ts scripts/windows/*.test.ts"
     },
     "devDependencies": {
         "@sinclair/typebox": "^0.34.49",

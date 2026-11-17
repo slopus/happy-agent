@@ -1,10 +1,10 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../utils/hiddenChildProcess.js";
 import { lstat } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = promisify(execFileHidden);
 
 /** Named pipes have a kernel lifetime and must never be treated as filesystem entries. */
 export function isWindowsNamedPipe(path: string): boolean {
@@ -29,7 +29,7 @@ export async function readAgentSocketInformation(path: string): Promise<{
             const { stdout } = await execFileAsync(
                 join(process.env.SystemRoot ?? "C:\\Windows", "System32", "fsutil.exe"),
                 ["reparsepoint", "query", path],
-                { windowsHide: true, timeout: 5_000, maxBuffer: 16_384 },
+                { timeout: 5_000, maxBuffer: 16_384 },
             );
             if (/\b0x80000023\b/i.test(stdout.split(/\r?\n/, 1)[0] ?? "")) {
                 return { isSocket: () => true };

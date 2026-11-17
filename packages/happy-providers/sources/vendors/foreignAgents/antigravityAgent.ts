@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFileHidden } from "@/core/hiddenChildProcess.js";
 
 import type { SessionReasoningEffort } from "@/core/SessionRunRequest.js";
 import type { AcpAgentLaunch } from "@/protocol/acp/AcpProvider.js";
@@ -171,7 +171,7 @@ function model(
 async function requireAgyVersion(launch: AcpAgentLaunch): Promise<void> {
     const required = MIN_AGY_VERSION.join(".");
     const output = await new Promise<string>((resolve, reject) => {
-        execFile(
+        execFileHidden(
             launch.command,
             ["--version"],
             { env: { ...process.env, ...launch.env }, timeout: VERSION_TIMEOUT_MS },

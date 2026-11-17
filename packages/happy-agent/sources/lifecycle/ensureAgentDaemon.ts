@@ -1,5 +1,6 @@
 import { ensurePrivateDirectory } from "@slopus/happy-agent-compute";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnHidden } from "../utils/hiddenChildProcess.js";
 import { open } from "node:fs/promises";
 import { homedir } from "node:os";
 
@@ -233,12 +234,11 @@ async function spawnAgentDaemon(
     const log = await open(paths.logPath, "a", 0o600);
     try {
         await log.chmod(0o600);
-        const child = spawn(command.executable, command.arguments, {
+        const child = spawnHidden(command.executable, command.arguments, {
             // A desktop launch starts in `/`, and anything the daemon runs without its own
             // directory would otherwise start reading from the root of the disk.
             cwd: homedir(),
             detached: true,
-            windowsHide: true,
             env: daemonLaunchEnvironment(),
             stdio: ["ignore", log.fd, log.fd],
         });

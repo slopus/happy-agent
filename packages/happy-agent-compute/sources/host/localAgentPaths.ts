@@ -1,11 +1,11 @@
 /// <reference types="node" />
-import { execFile } from "node:child_process";
+import { execFileHidden } from "../processes/hiddenChildProcess.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdir } from "node:fs/promises";
 import { join, win32 } from "node:path";
 import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = promisify(execFileHidden);
 
 /** One local endpoint shared by the daemon, launchers, and native clients. */
 export function localAgentSocketPath(
@@ -55,7 +55,6 @@ export async function ensurePrivateDirectory(directory: string): Promise<void> {
         ],
         {
             env: { ...process.env, HAPPY_PRIVATE_DIRECTORY: directory },
-            windowsHide: true,
             timeout: 15_000,
             maxBuffer: 16_384,
         },

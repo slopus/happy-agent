@@ -1,4 +1,5 @@
-import { execFileSync, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { execFileSyncHidden } from "@/core/hiddenChildProcess.js";
 
 /**
  * End a detached agent process and everything below it. Agents leave a running command alive
@@ -14,9 +15,8 @@ export function terminateProcessTree(
         // Windows has no process groups; taskkill ends the whole tree below the agent.
         if (child.pid !== undefined) {
             try {
-                execFileSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+                execFileSyncHidden("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
                     stdio: "ignore",
-                    windowsHide: true,
                 });
             } catch {
                 // Already gone.
@@ -50,7 +50,7 @@ export function processTreeGroups(root: number | undefined): number[] {
     if (root === undefined || process.platform === "win32") return [];
     let table: string;
     try {
-        table = execFileSync("ps", ["-A", "-o", "pid=,ppid=,pgid="], { encoding: "utf8" });
+        table = execFileSyncHidden("ps", ["-A", "-o", "pid=,ppid=,pgid="], { encoding: "utf8" });
     } catch {
         return [];
     }

@@ -1,10 +1,10 @@
-import { execFile as execFileCallback } from "node:child_process";
+import { execFileHidden } from "../utils/hiddenChildProcess.js";
 import { promisify } from "node:util";
 
 import type { GitCommandOptions, GitCommandResult, GitCommandRunner } from "./GitCommandRunner.js";
 import { runScanGit } from "./runScanGit.js";
 
-const execFile = promisify(execFileCallback);
+const execFile = promisify(execFileHidden);
 const GIT_TIMEOUT_MS = 5_000;
 const NETWORK_GIT_TIMEOUT_MS = 5 * 60 * 1_000;
 const GIT_OUTPUT_LIMIT = 1024 * 1024;
@@ -22,7 +22,6 @@ export async function runGitCommand(
     try {
         const result = await execFile("git", ["-C", cwd, ...args], {
             encoding: "utf8",
-            windowsHide: true,
             env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
             maxBuffer: options.maxOutputBytes ?? GIT_OUTPUT_LIMIT,
             signal: options.signal,
