@@ -379,6 +379,8 @@ describe("Happy Agent onboarding and usage matrix", () => {
             );
             expect(providers.find((provider) => provider.providerId === "codex")?.models).toEqual(
                 [
+                    { id: "openai/gpt-6.2-sol", enabled: false },
+                    { id: "openai/gpt-6.2-astra", enabled: false },
                     { id: "openai/gpt-6.1-sol", enabled: false },
                     { id: "openai/gpt-6.1-terra", enabled: false },
                     { id: "openai/gpt-6-astra", enabled: false },

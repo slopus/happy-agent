@@ -82,7 +82,7 @@ describe("opt-in models", () => {
             'model = "openai/unknown"',
             "[providers.codex]",
             "enabled = true",
-            'exclude_models = ["openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "openai/gpt-6-astra"]',
+            'exclude_models = ["openai/gpt-6.2-sol", "openai/gpt-6.2-astra", "openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "openai/gpt-6-astra"]',
         );
 
         expect(config.models[0]?.id).toBe("openai/gpt-6-luna");
@@ -95,7 +95,7 @@ describe("opt-in models", () => {
             'model = "openai/unknown"',
             "[providers.codex]",
             "enabled = true",
-            'exclude_models = ["openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "openai/gpt-6-astra", "openai/gpt-6-luna"]',
+            'exclude_models = ["openai/gpt-6.2-sol", "openai/gpt-6.2-astra", "openai/gpt-6.1-sol", "openai/gpt-6.1-terra", "openai/gpt-6-astra", "openai/gpt-6-luna"]',
         );
         expect(only.models.map((model) => model.id)).toEqual([SOL]);
         expect(only.visibleModels).toEqual([]);

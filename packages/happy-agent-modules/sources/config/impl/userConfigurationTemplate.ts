@@ -9,7 +9,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 
 # [defaults]
 # provider = "codex"
-# model = "openai/gpt-6.1-sol"
+# model = "openai/gpt-6.2-sol"
 # effort = "medium"
 # permission_mode = "auto"
 # service_tier = "default"
@@ -181,7 +181,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # transport = "auto"
 # GPT-6 Sol is opt-in: GPT-6.1 Sol replaces it in pickers. Name it in include_models, beside every
 # other model this account should offer, to offer it again.
-# include_models = ["openai/gpt-6.1-sol"]
+# include_models = ["openai/gpt-6.2-sol"]
 # exclude_models = []
 # include_subagent_models = ["openai/gpt-6.1-terra"]
 # exclude_subagent_models = []

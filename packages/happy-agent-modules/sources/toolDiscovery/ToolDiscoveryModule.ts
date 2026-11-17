@@ -46,6 +46,9 @@ const CLAUDE_TOOL_SEARCH_MODELS = [
 ] as const;
 
 const CODEX_TOOL_SEARCH_MODELS = [
+    // OpenAI's model pages list tool_search among both models' Responses tools.
+    "openai/gpt-6.2-sol",
+    "openai/gpt-6.2-astra",
     "openai/gpt-6.1-sol",
     // supports_search_tool=true in openai/codex@126a0ee92e models-manager/models.json.
     "openai/gpt-6.1-terra",

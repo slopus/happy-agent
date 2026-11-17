@@ -89,6 +89,14 @@ describe("SystemPromptModule", () => {
         expect(terra).not.toContain("# Plugins");
     });
 
+    it("gives GPT-6.2 the Codex fallback until Codex publishes a 6.2 template", () => {
+        for (const model of ["openai/gpt-6.2-sol", "openai/gpt-6.2-astra"]) {
+            expect(systemPromptForModel({ model })).toBe(
+                systemPromptForModel({ providerKind: "codex" }),
+            );
+        }
+    });
+
     it("gives each model the prompt it was written for", async () => {
         const { instructions } = await moduleWithCatalog();
 
@@ -164,6 +172,8 @@ describe("SystemPromptModule", () => {
                 "anthropic/opus-5",
                 "anthropic/sonnet-5-5",
                 "anthropic/sonnet-5",
+                "openai/gpt-6.2-sol",
+                "openai/gpt-6.2-astra",
                 "openai/gpt-6.1-sol",
                 "openai/gpt-6.1-terra",
                 "openai/gpt-6-sol",

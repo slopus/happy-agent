@@ -181,7 +181,7 @@ describe("ConfigModule", () => {
         });
         expect(configuration.sources.global.exists).toBe(false);
         expect(configuration.sources.runtime.exists).toBe(false);
-        expect(configuration.values.defaults.modelId).toBe("openai/gpt-6.1-sol");
+        expect(configuration.values.defaults.modelId).toBe("openai/gpt-6.2-sol");
         expect(configuration.values.features.crossWorkspace).toBe(true);
         expect(configuration.values.feature.codemode.enabled).toBe(false);
         expect(configuration.values.feature.codemode.engine).toBe("monty");
@@ -934,12 +934,17 @@ describe("ConfigModule", () => {
 
         const module = await ConfigModule.load(join(root, ".happy"));
 
-        expect(module.catalog.filter((model) => model.providerId === "codex")[0]).toMatchObject({
+        expect(
+            module.catalog.find(
+                (model) => model.providerId === "codex" && model.id === "openai/gpt-6.1-sol",
+            ),
+        ).toMatchObject({
             autoCompactWindow: 244_800,
             contextWindow: 272_000,
             defaultEffort: "high",
             effortLevels: ["low", "medium", "high", "xhigh", "max"],
             enabled: true,
+            hidden: false,
             id: "openai/gpt-6.1-sol",
             name: "GPT-6.1 Sol",
             serviceTiers: ["priority"],
@@ -949,12 +954,14 @@ describe("ConfigModule", () => {
                 (model) => model.providerId === "bedrock" && model.id === "openai/gpt-6.1-sol",
             ),
         ).toBe(false);
-        // Bedrock keeps reselling exactly the documented subset it offered before.
+        // Bedrock resells exactly its explicit subset: GPT-6.2 first, then what it offered before.
         expect(
             module.catalog
                 .filter((model) => model.providerId === "bedrock")
                 .map((model) => model.id),
         ).toEqual([
+            "openai/gpt-6.2-sol",
+            "openai/gpt-6.2-astra",
             "openai/gpt-6-astra",
             "openai/gpt-6-sol",
             "openai/gpt-6-luna",
@@ -970,6 +977,56 @@ describe("ConfigModule", () => {
             "moonshotai/kimi-k3",
             "zai/glm-5.3",
         ]);
+    });
+
+    it("starts on GPT-6.2 Sol and offers both GPT-6.2 models on Codex and Bedrock", async () => {
+        const root = await mkdtemp(join(tmpdir(), "happy-agent-gpt-6-2-catalog-"));
+        temporaryDirectories.push(root);
+        const folder = join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config");
+        await mkdir(folder, { recursive: true });
+        await writeFile(
+            join(folder, "happy.toml"),
+            "[providers.codex]\nenabled = true\n[providers.bedrock]\nenabled = true\n",
+        );
+        const config = await ConfigModule.load(join(root, ".happy"));
+
+        expect(config.models[0]?.id).toBe("openai/gpt-6.2-sol");
+        expect(
+            config.catalog.find(
+                (model) => model.providerId === "codex" && model.id === "openai/gpt-6.2-sol",
+            ),
+        ).toMatchObject({
+            name: "GPT-6.2 Sol",
+            defaultEffort: "high",
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            serviceTiers: ["priority"],
+        });
+        expect(
+            config.catalog.find(
+                (model) => model.providerId === "codex" && model.id === "openai/gpt-6.2-astra",
+            ),
+        ).toMatchObject({
+            name: "GPT-6.2 Astra",
+            defaultEffort: "high",
+            effortLevels: ["low", "medium", "high", "xhigh", "max"],
+            serviceTiers: ["priority"],
+            hidden: false,
+        });
+        expect(config.modelContext("codex", "openai/gpt-6.2-sol")).toEqual({
+            contextWindow: 500_000,
+            autoCompactWindow: 450_000,
+        });
+        expect(config.modelContext("codex", "openai/gpt-6.2-astra")).toEqual({
+            contextWindow: 272_000,
+            autoCompactWindow: 244_800,
+        });
+        for (const id of ["openai/gpt-6.2-sol", "openai/gpt-6.2-astra"]) {
+            const bedrock = config.catalog.find(
+                (model) => model.providerId === "bedrock" && model.id === id,
+            );
+            expect(bedrock).toMatchObject({ enabled: true, hidden: false });
+            expect(bedrock).not.toHaveProperty("serviceTiers");
+        }
     });
 
     it("offers GPT-6.1 Terra and retires GPT-5.6 from the picker catalog", async () => {
@@ -997,6 +1054,8 @@ describe("ConfigModule", () => {
         expect(
             config.catalog.filter((model) => model.providerId === "codex").map((model) => model.id),
         ).toEqual([
+            "openai/gpt-6.2-sol",
+            "openai/gpt-6.2-astra",
             "openai/gpt-6.1-sol",
             "openai/gpt-6.1-terra",
             "openai/gpt-6-astra",

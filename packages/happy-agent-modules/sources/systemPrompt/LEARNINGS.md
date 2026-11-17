@@ -30,7 +30,9 @@ instruction templates. Terra originally fell through to the generic GPT-5.6 prom
 match its published harness. Its separate literal copy now follows OpenAI's catalog at
 126a0ee92ed2c5e73cd8a8f7e37563e8527552d7, preserving Terra's wording rather than silently inheriting
 later Sol changes. Other Codex models still share the GPT-5.6 template taken the same way, even
-where Codex now ships a newer one for them.
+where Codex now ships a newer one for them. GPT-6.2 Astra and Sol use that shared template too,
+because Codex at c08843a5bd16de5524129b2f4270490447991984 had no 6.2 entry. Copying 6.1 Sol's
+template would pass a guess off as a vendor prompt. Give each its own copy once Codex publishes one.
 
 ## Prompts mention only what Happy Agent has
 

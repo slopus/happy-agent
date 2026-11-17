@@ -149,6 +149,16 @@ const MODEL_CONTEXTS: Readonly<Record<string, AgentModelContext>> = Object.freez
         contextWindow: 272_000,
         autoCompactWindow: 244_800,
     }),
+    // Codex's subscription defaults from OpenAI's Codex models page; both reach 1M only as opt-in.
+    // https://learn.chatgpt.com/docs/models
+    "openai/gpt-6.2-astra": Object.freeze({
+        contextWindow: 272_000,
+        autoCompactWindow: 244_800,
+    }),
+    "openai/gpt-6.2-sol": Object.freeze({
+        contextWindow: 500_000,
+        autoCompactWindow: 450_000,
+    }),
     "openai/gpt-6.1-sol": Object.freeze({
         contextWindow: 272_000,
         autoCompactWindow: 244_800,
@@ -216,6 +226,10 @@ const ALL_BUT_OFF: AgentModel["effortLevels"] = ["low", "medium", "high", "xhigh
  * conversations already on a superseded model keep working while new choices go to its successor.
  */
 const CATALOG: readonly CuratedAgentModel[] = [
+    // Codex starts new chats on GPT-6.2 Sol and still lists GPT-6.1 Sol and GPT-6 Astra beside
+    // both 6.2 models, so neither predecessor becomes opt-in.
+    model("codex", "openai/gpt-6.2-sol", "GPT-6.2 Sol", ALL_BUT_OFF, "high", ["priority"]),
+    model("codex", "openai/gpt-6.2-astra", "GPT-6.2 Astra", ALL_BUT_OFF, "high", ["priority"]),
     model("codex", "openai/gpt-6.1-sol", "GPT-6.1 Sol", ALL_BUT_OFF, "high", ["priority"]),
     // Same source as MODEL_CONTEXTS: low by default, Fast=priority (1.5x speed).
     // Like Sol, omit upstream's automatic-delegation "ultra" from Happy's effort surface.
@@ -243,10 +257,13 @@ const CATALOG: readonly CuratedAgentModel[] = [
 ];
 
 /**
- * The native models AWS documents on Bedrock. A model added to its native catalog stays off Bedrock
- * until AWS serves it and its Bedrock route is known.
+ * The native models Bedrock resells. A model added to its native catalog stays off Bedrock until
+ * AWS serves it and its Bedrock route is known. GPT-6.2 Astra and Sol are the exception: OpenAI
+ * launches its models on Bedrock, so they ship before AWS documents them, on GPT-6's ID pattern.
  */
 const BEDROCK_RESOLD_MODEL_IDS: ReadonlySet<string> = new Set([
+    "openai/gpt-6.2-sol",
+    "openai/gpt-6.2-astra",
     "openai/gpt-6-astra",
     "openai/gpt-6-sol",
     "openai/gpt-6-luna",

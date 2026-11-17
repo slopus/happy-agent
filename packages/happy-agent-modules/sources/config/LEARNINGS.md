@@ -18,6 +18,16 @@ and priority Fast at 1.5x speed. The native catalog and CLI fallback use those v
 window do not replace the subscription default. Keep provenance beside curated model data and
 check the upstream entry before adding or changing a model rather than inferring from its name.
 
+## GPT-6.2 follows Codex's published picks
+
+GPT-6.2 Astra and Sol arrived before Codex's `models.json` listed them, so their profile comes
+from OpenAI's Codex models page: 272k default windows for Astra and 500k for Sol in Codex, compacting
+at 244.8k and 450k. The 1M maximum is opt-in there too. Codex starts new chats on GPT-6.2 Sol, so it
+is the default. Codex still lists GPT-6.1 Sol and GPT-6 Astra, so neither becomes opt-in. Default
+efforts follow the GPT-6.1 Sol and GPT-6 Astra rows until Codex publishes a 6.2 entry. The voice
+default stays GPT-6.1 Sol because API.md names it. An unpinned default has no provider, so with
+Bedrock and Codex both enabled it takes the first provider serving the model, which is Bedrock.
+
 ## Selectable catalogs follow generations
 
 Model size used to outrank generation in Claude's catalog, and GPT-5.6 remained selectable after
@@ -338,6 +348,12 @@ native entry, so the rule held only by convention; it is now an explicit list of
 GPT-6.1 Sol showed why: Codex lists it, but AWS documents no GPT-6.1 model and Codex's own Bedrock
 catalog omits it, so it stays off Bedrock until AWS documents its Bedrock model ID. Bedrock
 still serves GPT through GPT-6 Astra, Sol, and Luna, the GPT-5.6 family, and GPT-5.4.
+
+GPT-6.2 Astra and Sol are the deliberate exception. The user ruled that OpenAI releases its models on
+Bedrock, so both ship there at launch, before AWS documents them. Their IDs follow GPT-6's
+pattern: `openai.gpt-6.2-astra` and `openai.gpt-6.2-sol` on Mantle, and `global.` profiles on
+Runtime, which is their default route like GPT-6's. Check them against AWS's model cards once
+published.
 
 Sonnet 5 uses `anthropic.claude-sonnet-5` on Mantle, but AWS documents in-region
 availability only in N. Virginia, GovCloud West, Stockholm, Ireland, and Melbourne.
