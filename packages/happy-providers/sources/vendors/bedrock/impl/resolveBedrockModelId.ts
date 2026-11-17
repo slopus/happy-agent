@@ -8,6 +8,8 @@ const BEDROCK_MODEL_IDS: Readonly<Record<string, string>> = {
     "anthropic/sonnet-5-5": "anthropic.claude-sonnet-5-5",
     "anthropic/sonnet-5": "anthropic.claude-sonnet-5",
     "openai/gpt-5.4": "openai.gpt-5.4",
+    "openai/gpt-6.2-astra": "openai.gpt-6.2-astra",
+    "openai/gpt-6.2-sol": "openai.gpt-6.2-sol",
     "openai/gpt-6-astra": "openai.gpt-6-astra",
     "openai/gpt-6-sol": "openai.gpt-6-sol",
     "openai/gpt-6-luna": "openai.gpt-6-luna",

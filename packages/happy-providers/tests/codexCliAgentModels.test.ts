@@ -15,3 +15,10 @@ it("uses Terra's published subscription limits in the CLI fallback and selector"
         contextWindow: 500_000,
     });
 });
+
+it("offers GPT-6.2 Sol and Astra first in the CLI fallback with their published windows", () => {
+    expect(codexCliAgent.models.slice(0, 2)).toMatchObject([
+        { id: "codex-cli/gpt-6.2-sol", contextWindow: 500_000, defaultEffort: "high" },
+        { id: "codex-cli/gpt-6.2-astra", contextWindow: 272_000, defaultEffort: "high" },
+    ]);
+});

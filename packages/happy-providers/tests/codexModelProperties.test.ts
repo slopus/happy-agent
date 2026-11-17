@@ -110,6 +110,35 @@ describe("Codex model properties", () => {
         }
     });
 
+    it.each([
+        ["gpt-6.2-astra", 272_000],
+        ["gpt-6.2-sol", 500_000],
+    ] as const)(
+        "uses the published Codex window and the GPT-6.1 Sol contract for %s",
+        (model, window) => {
+            expect(getCodexModelProperties(model)).toEqual({
+                compactionHash: "3000",
+                contextWindow: window,
+                defaultEffort: "low",
+                responsesLite: true,
+            });
+            expect(resolveCodexReasoningEffort(model, undefined)).toBe("low");
+            expect(isCodexV2Model(model)).toBe(true);
+            for (const bedrockModel of [
+                `openai.${model}`,
+                `global.openai.${model}`,
+                `us.openai.${model}`,
+            ]) {
+                expect(getCodexModelProperties(bedrockModel)).toEqual({
+                    compactionHash: "2911",
+                    contextWindow: window,
+                    defaultEffort: "low",
+                    responsesLite: false,
+                });
+            }
+        },
+    );
+
     it("uses Codex's own GPT-6.1 Sol contract: Responses Lite, hash 3000, low by default", () => {
         expect(getCodexModelProperties("gpt-6.1-sol")).toEqual({
             compactionHash: "3000",

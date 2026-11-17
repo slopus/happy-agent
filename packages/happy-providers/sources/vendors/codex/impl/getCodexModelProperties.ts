@@ -26,6 +26,21 @@ const MODEL_PROPERTIES: Readonly<Record<string, CodexModelProperties>> = {
         defaultEffort: "medium",
         responsesLite: false,
     },
+    // OpenAI's Codex models page gives the subscription windows (Astra 272k, Sol 500k, both up to
+    // 1M opt-in): https://learn.chatgpt.com/docs/models. Codex's models.json has no 6.2 entry yet,
+    // so the hash, Lite shape, and low default follow the GPT-6.1 Sol and GPT-6 Astra entries.
+    "gpt-6.2-astra": {
+        compactionHash: "3000",
+        contextWindow: 272_000,
+        defaultEffort: "low",
+        responsesLite: true,
+    },
+    "gpt-6.2-sol": {
+        compactionHash: "3000",
+        contextWindow: 500_000,
+        defaultEffort: "low",
+        responsesLite: true,
+    },
     "gpt-6.1-sol": {
         compactionHash: "3000",
         contextWindow: 272_000,

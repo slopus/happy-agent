@@ -21,6 +21,8 @@ describe("Rig model IDs", () => {
         [resolveBedrockModelId, "anthropic/fable-5-1", "anthropic.claude-fable-5-1"],
         [resolveBedrockModelId, "anthropic/opus-5-5", "anthropic.claude-opus-5-5"],
         [resolveBedrockModelId, "anthropic/opus-5", "anthropic.claude-opus-5"],
+        [resolveCodexModelId, "openai/gpt-6.2-astra", "gpt-6.2-astra"],
+        [resolveCodexModelId, "openai/gpt-6.2-sol", "gpt-6.2-sol"],
         [resolveCodexModelId, "openai/gpt-6.1-sol", "gpt-6.1-sol"],
         [resolveCodexModelId, "openai/gpt-6.1-terra", "gpt-6.1-terra"],
         [resolveCodexModelId, "openai/gpt-6-astra", "gpt-6-astra"],
@@ -32,6 +34,8 @@ describe("Rig model IDs", () => {
         [resolveGrokModelId, "xai/grok-4.5", "grok-4.5"],
         [resolveBedrockModelId, "anthropic/sonnet-5-5", "anthropic.claude-sonnet-5-5"],
         [resolveBedrockModelId, "anthropic/sonnet-5", "anthropic.claude-sonnet-5"],
+        [resolveBedrockModelId, "openai/gpt-6.2-astra", "openai.gpt-6.2-astra"],
+        [resolveBedrockModelId, "openai/gpt-6.2-sol", "openai.gpt-6.2-sol"],
         [resolveBedrockModelId, "openai/gpt-6-astra", "openai.gpt-6-astra"],
         [resolveBedrockModelId, "openai/gpt-6-sol", "openai.gpt-6-sol"],
         [resolveBedrockModelId, "openai/gpt-6-luna", "openai.gpt-6-luna"],
@@ -58,5 +62,15 @@ describe("Rig model IDs", () => {
         expect(resolveCodexSessionModelId("openai/gpt-6-luna", true, "runtime")).toBe(
             "global.openai.gpt-6-luna",
         );
+        expect(resolveCodexSessionModelId("openai/gpt-6.2-astra", true, "runtime")).toBe(
+            "global.openai.gpt-6.2-astra",
+        );
+        expect(resolveCodexSessionModelId("openai/gpt-6.2-sol", true, "runtime")).toBe(
+            "global.openai.gpt-6.2-sol",
+        );
+        expect(resolveCodexSessionModelId("openai/gpt-6.2-sol", true, "mantle")).toBe(
+            "openai.gpt-6.2-sol",
+        );
+        expect(resolveCodexSessionModelId("openai/gpt-6.2-sol", false)).toBe("gpt-6.2-sol");
     });
 });

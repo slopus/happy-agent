@@ -129,6 +129,12 @@ The reviewed model contracts are:
 - `gpt-5.5`: ordinary Responses request shape, compaction hash `2911`, default medium effort;
 - `gpt-6-astra`: Responses Lite by default and ordinary Responses for parallel tool calls,
   compaction hash `3000`, default low effort, and API efforts low through max;
+- `gpt-6.2-astra` and `gpt-6.2-sol`: Codex subscription windows of 272,000 and 500,000 tokens
+  from OpenAI's Codex models page; Codex's `models.json` has no 6.2 entry yet, so the rest of the
+  contract (Responses Lite, hash `3000`, default low effort) follows GPT-6.1 Sol. The API rejects
+  effort `none`. Bedrock IDs follow the GPT-6 pattern (`openai.gpt-6.2-astra` on Mantle,
+  `global.openai.gpt-6.2-astra` on Runtime by default) before AWS documents them; not yet
+  verified live;
 - `gpt-6.1-sol`: same contract as Astra with default low effort, as Codex's `models.json` lists
   it; not served by Bedrock, which documents no GPT-6.1 model, and not yet verified live;
 - `gpt-6-sol`: same contract as Astra with default low effort; live tool-less inference verified

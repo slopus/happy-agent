@@ -12,6 +12,8 @@ import { getCodexModelProperties } from "@/vendors/codex/impl/getCodexModelPrope
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 const models: readonly ForeignAgentModel[] = [
+    model("gpt-6.2-sol", "Codex · GPT-6.2 Sol", "high"),
+    model("gpt-6.2-astra", "Codex · GPT-6.2 Astra", "high"),
     model("gpt-6.1-sol", "Codex · GPT-6.1 Sol", "high"),
     model("gpt-6.1-terra", "Codex · GPT-6.1 Terra", "low"),
     model("gpt-6-sol", "Codex · GPT-6 Sol", "high"),
