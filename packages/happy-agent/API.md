@@ -533,6 +533,9 @@ The model definition's `autoCompactWindow` is additive and does not increment th
 version. Older daemons omit it; a client that shows remaining context counts down to
 `contextWindow` when the field is absent.
 
+The provider verification `failure` is additive and does not increment the protocol version.
+Older daemons omit it; a client then reports a failed verification without a reason.
+
 Tasks are additive and do not increment the protocol version. Clients detect them through
 `GET /v0/tasks`: `404` means the daemon has no tasks, not that the list is empty. The bootstrap
 `tasks` and `taskMemberships` fields and the `task.*` events are absent on older compatible
@@ -2325,9 +2328,46 @@ Response — `200`:
 ```
 
 `performedLevel` reports the check that actually ran. `modelId` is the model used for an inference
-check and is `null` otherwise. `status` is `"passed"` or `"failed"`. The response never carries
-credential material, credential-file paths, environment values, model output, or raw provider
-errors.
+check and is `null` otherwise. `status` is `"passed"` or `"failed"`.
+
+A failed verification also carries `failure`, which explains why the check did not pass:
+
+```json
+{
+    "providerId": "bedrock",
+    "requestedLevel": "inference",
+    "performedLevel": "inference",
+    "status": "failed",
+    "checkedAt": 1755400000000,
+    "modelId": "anthropic/fable-5",
+    "failure": {
+        "kind": "network",
+        "message": "Couldn't connect to bedrock-runtime.us-east-1.amazonaws.com (connection refused). Check your network or proxy settings."
+    }
+}
+```
+
+`failure` is present only when `status` is `"failed"`; it is omitted on success and by older
+daemons. `kind` is one of:
+
+- `"credentials_missing"` — no usable local credentials were found.
+- `"authentication"` — the provider rejected the credentials.
+- `"network"` — the request did not reach the provider: DNS, refused or reset connections, or a
+  proxy failure.
+- `"tls"` — the provider's certificate was not trusted, for example behind a TLS-inspecting proxy.
+- `"timeout"` — the check did not finish within its time bound.
+- `"model_unavailable"` — the verification model is not available to this account or region.
+- `"quota"` — a rate limit, exhausted credits, or a billing problem.
+- `"provider_error"` — the provider failed on its side: a server error, an overload, or an empty
+  response.
+- `"no_model"` — the provider offers no model to check inference with.
+- `"unknown"` — any other failure.
+
+Clients treat a `kind` they do not recognize as `"unknown"`. `message` is a human-readable,
+actionable English sentence of at most 500 characters. It may name non-secret context such as the
+provider type, host, region, AWS profile name, and model ID, and may include a short sanitized
+provider diagnostic. The response never carries credential material, tokens, authorization
+headers, credential-file paths, environment values, request bodies, or model output.
 
 ### `GET /v0/config/instructions`
 
