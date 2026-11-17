@@ -9909,7 +9909,8 @@ grant, in the same atomic change that answers the question. The answer's `answer
 events, and the transcript contain only the secret ID.
 
 Questions have their own events (`question.created`, `question.updated`) so watching clients
-show and clear the prompt in real time; aborting the run cancels an open question.
+show and clear the prompt in real time. An open question is canceled by aborting the run, or
+canceled when the person sends a message instead of answering.
 
 ### `POST /v0/agents/:agentId/abort`
 
@@ -16025,8 +16026,9 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
   `pendingQuestionId` is set (its own `agent.updated` accompanies this). The question object
   names its agent and run itself.
     - `question` (full question object) — `status` is `"pending"`.
-- `question.updated` — the question resolved: answered by a client, canceled by an abort, or
-  auto-resolved at its deadline. `changes` carries `status`, `answers`, and `answeredAt`.
+- `question.updated` — the question resolved: answered by a client, canceled by an abort,
+  auto-resolved at its deadline, or canceled when the person sends a message instead of answering.
+  `changes` carries `status`, `answers`, and `answeredAt`.
     - `questionId` (ID string), `previousVersion`, `version`, `changes`.
     - When the answer settles a secret request, the same commit also emits `secret.attached` for
       the asking agent's new exact-agent grant, unless that grant already existed.
