@@ -17,11 +17,21 @@ describe("compiled API projection checks", () => {
     });
 
     it("accepts and rejects tool presentations exactly as the interpreted check does", () => {
-        const created = Value.Create(historyToolPresentationSchema);
+        // Value.Create would build the first union member, and an empty Gen UI document is invalid.
+        const created = {
+            type: "gen_ui",
+            document: {
+                genuiRender: 1,
+                compiler: "1.0.0",
+                root: "text",
+                elements: { text: { type: "text", props: { text: "Revenue was $1.24M." } } },
+            },
+        };
         expect(Value.Check(historyToolPresentationSchema, created)).toBe(true);
         for (const input of [
             created,
-            { ...(created as object), extra: true },
+            { ...created, extra: true },
+            { ...created, document: { ...created.document, elements: {} } },
             { type: "unknown" },
             [],
             {},

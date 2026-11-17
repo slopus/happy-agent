@@ -287,15 +287,21 @@ async function main() {
         process.stdout.write("Standalone image processing is healthy.\n");
 
         process.stdout.write("Checking standalone file indexing.\n");
-        await waitFor(async () => {
-            const files = await client.searchFiles(project.id, {
-                limit: 10,
-                query: "binary-compatibility",
-            });
-            return files.files.some((file) => file.path === "binary-compatibility.txt")
-                ? true
-                : undefined;
-        }, daemon);
+        // The first search lists the folder with the same sandboxed Git reads as project setup,
+        // so on a fresh Windows runner it has taken 8 to 20 seconds and once more than thirty.
+        await waitFor(
+            async () => {
+                const files = await client.searchFiles(project.id, {
+                    limit: 10,
+                    query: "binary-compatibility",
+                });
+                return files.files.some((file) => file.path === "binary-compatibility.txt")
+                    ? true
+                    : undefined;
+            },
+            daemon,
+            120_000,
+        );
         process.stdout.write("Standalone file indexing is healthy.\n");
 
         if (process.platform !== "win32" && !process.argv.includes("--bun-source")) {
