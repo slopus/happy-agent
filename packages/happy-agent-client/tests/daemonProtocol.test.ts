@@ -163,6 +163,29 @@ describe("provider control schemas", () => {
             }),
         ).toBe(true);
     });
+
+    it("explains a failed verification", () => {
+        const failed = {
+            checkedAt: 1_755_400_000_000,
+            failure: {
+                kind: "network",
+                message:
+                    "Couldn't connect to bedrock-runtime.us-east-1.amazonaws.com (connection refused). Check your network or proxy settings.",
+            },
+            modelId: "anthropic/fable-5",
+            performedLevel: "inference",
+            providerId: "bedrock",
+            requestedLevel: "inference",
+            status: "failed",
+        };
+        expect(Value.Check(providerVerificationResponseSchema, failed)).toBe(true);
+        expect(
+            Value.Check(providerVerificationResponseSchema, {
+                ...failed,
+                failure: { kind: "network", message: "x".repeat(501) },
+            }),
+        ).toBe(false);
+    });
 });
 
 describe("modelDefinitionSchema", () => {

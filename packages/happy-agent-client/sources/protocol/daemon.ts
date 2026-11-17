@@ -641,9 +641,33 @@ export const providerVerificationRequestSchema = Type.Object({
 });
 export type ProviderVerificationRequest = Static<typeof providerVerificationRequestSchema>;
 
+/** Why a provider verification failed. Clients treat an unrecognized kind as `"unknown"`. */
+export const providerVerificationFailureKindSchema = Type.Union([
+    Type.Literal("credentials_missing"),
+    Type.Literal("authentication"),
+    Type.Literal("network"),
+    Type.Literal("tls"),
+    Type.Literal("timeout"),
+    Type.Literal("model_unavailable"),
+    Type.Literal("quota"),
+    Type.Literal("provider_error"),
+    Type.Literal("no_model"),
+    Type.Literal("unknown"),
+]);
+export type ProviderVerificationFailureKind = Static<typeof providerVerificationFailureKindSchema>;
+
+/** A sanitized, actionable explanation of a failed verification; never carries credentials. */
+export const providerVerificationFailureSchema = Type.Object({
+    kind: providerVerificationFailureKindSchema,
+    message: Type.String({ maxLength: 500, minLength: 1 }),
+});
+export type ProviderVerificationFailure = Static<typeof providerVerificationFailureSchema>;
+
 /** The outcome of a completed provider verification. */
 export const providerVerificationResponseSchema = Type.Object({
     checkedAt: timestampSchema,
+    /** Present only when `status` is `"failed"`; older daemons omit it. */
+    failure: Type.Optional(providerVerificationFailureSchema),
     /** The model used for inference verification; `null` for credential and auth-only checks. */
     modelId: Nullable(Type.String()),
     /** The check that actually ran after any authentication fallback. */
