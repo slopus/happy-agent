@@ -1,5 +1,13 @@
 # Provider CLIs learnings
 
+## Pasting a setup token configures Happy Agent, not the CLI's login
+
+Desktop's setup-token submission used to hit a missing route on every platform. Claude now
+advertises `signIn.acceptsToken`, and saving delegates normalization and live persistence to
+Config before scanning providers and announcing the refreshed CLI object. The token is never
+included in CLI state or events. The installed program's sign-in status remains its own; a saved
+token does not claim that Claude Code's credential files changed or that Anthropic accepted it.
+
 ## Happy uses the vendors' own sign-in, never its own
 
 Rig deliberately has no login flow of its own. Signing in means running the vendor's program and

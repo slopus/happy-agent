@@ -41,6 +41,46 @@ afterEach(async () => {
 });
 
 describe("ProviderScanModule", () => {
+    it("scans newly saved credentials after an older scan finishes", async () => {
+        const installationRoot = await root();
+        const started = deferred<void>();
+        const release = deferred<void>();
+        let saved = false;
+        const providers = new AgentProviders();
+        providers.add(
+            "codex",
+            async () => {
+                const available = saved;
+                if (!available) {
+                    started.resolve(undefined);
+                    await release.promise;
+                    throw new Error("No credential in the old snapshot.");
+                }
+                return new PassingProvider();
+            },
+            "codex",
+        );
+        const config = await ConfigModule.load(join(installationRoot, "happy"), {
+            inference: { models: [MODEL], providers },
+        });
+        const scan = new ProviderScanModule(config);
+        const old = scan.open(createRootContext());
+        await started.promise;
+        saved = true;
+        const fresh = Promise.resolve().then(() =>
+            scan.scanAfterCredentialChange(createRootContext()),
+        );
+        release.resolve(undefined);
+        await old;
+        expect((await fresh).providers).toContainEqual({
+            providerId: "codex",
+            credentials: "available",
+            enabled: true,
+            enablement: "scan",
+            remembered: true,
+        });
+    });
+
     it("starts automatic providers disabled and enables one only after its scan finds credentials", async () => {
         const { config, root } = await scriptedConfig();
         const scan = new ProviderScanModule(config);

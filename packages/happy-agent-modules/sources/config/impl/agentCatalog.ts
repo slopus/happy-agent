@@ -608,6 +608,7 @@ export function agentProviders(
     credentialFailures?: ProviderCredentialFailures,
     accountFailures?: ProviderAccountFailures,
     askHarnessPermission?: ForeignAgentPermissionAsker,
+    readConfiguration: () => HappyAgentConfiguration = () => configuration,
 ): AgentProviders {
     const providers = new AgentProviders();
     const retryLimit = configuration.values.settings.inferenceMaxRetries;
@@ -645,13 +646,17 @@ export function agentProviders(
         providers.add(
             id,
             async ({ model: selected }) => {
+                // Runtime credentials apply to new sessions while existing sessions keep their
+                // own credential snapshot and the registry keeps its cancellation boundaries.
+                const current = readConfiguration();
+                const provider = current.values.providers[id]!;
                 hostName ??=
                     configuration.values.node.name === undefined
                         ? resolveDefaultNodeName()
                         : Promise.resolve(configuration.values.node.name);
                 const sources = new CredentialDiagnosticSources(id, [hostname(), await hostName]);
                 try {
-                    const foreign = foreignAgentRouteForModel(configuration, id, selected);
+                    const foreign = foreignAgentRouteForModel(current, id, selected);
                     if (foreign === undefined && isForeignAgentProvider(provider)) {
                         throw new Error(`Provider "${id}" does not serve "${selected ?? ""}".`);
                     }

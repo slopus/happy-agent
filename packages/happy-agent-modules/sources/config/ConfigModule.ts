@@ -44,6 +44,7 @@ import {
 import { parse, stringify, TomlDate, type TomlTable, type TomlValue } from "smol-toml";
 
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
+import { normalizeClaudeSetupToken } from "./ClaudeSetupToken.js";
 import type { HarnessPermissionAsker } from "./HarnessPermission.js";
 import { getManagedWorkspacesDirectory } from "../impl/managedWorkspacesDirectory.js";
 import { machinePaths } from "../impl/machinePaths.js";
@@ -1871,7 +1872,11 @@ export class ConfigModule implements AgentModule {
         this.#executionObservations.endAgent(agentId);
     }
     readonly name = "config";
-    readonly configuration: HappyAgentConfiguration;
+    #configuration: HappyAgentConfiguration;
+
+    get configuration(): HappyAgentConfiguration {
+        return this.#configuration;
+    }
 
     readonly #scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined;
     readonly #environment: Readonly<NodeJS.ProcessEnv>;
@@ -2236,7 +2241,7 @@ export class ConfigModule implements AgentModule {
         scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined,
         environment: Readonly<NodeJS.ProcessEnv>,
     ) {
-        this.configuration = configuration;
+        this.#configuration = configuration;
         this.#mcpServers = configuration.values.mcpServers;
         this.#runtimeValues = structuredClone(runtimeValues);
         // A default model chosen while running is kept in the generated runtime configuration.
@@ -3143,6 +3148,48 @@ export class ConfigModule implements AgentModule {
         return this.configuration.values.providers[providerId]?.autoEnable;
     }
 
+    /** Save a vendor-issued setup token and apply it to new sessions without restarting. */
+    async saveClaudeSetupToken(ctx: Context, token: string): Promise<void> {
+        const normalized = normalizeClaudeSetupToken(token);
+        await this.#runtimeLock.runInLock(ctx, async () => {
+            const provider = this.configuration.values.providers.claude;
+            if (provider?.type !== "claude") {
+                throw new Error("The Claude provider is not configured.");
+            }
+            const next = structuredClone(this.#runtimeValues);
+            next.providers = {
+                ...next.providers,
+                claude: { ...next.providers?.claude, type: "claude", oauth_token: normalized },
+            };
+            const configuration = deepFreeze({
+                ...this.configuration,
+                sources: {
+                    ...this.configuration.sources,
+                    runtime: {
+                        ...this.configuration.sources.runtime,
+                        exists: true,
+                        values: normalizeSourceValues(next),
+                    },
+                },
+                provenance: {
+                    ...this.configuration.provenance,
+                    "providers.claude.oauthToken": "runtime" as const,
+                },
+                values: {
+                    ...this.configuration.values,
+                    providers: {
+                        ...this.configuration.values.providers,
+                        claude: { ...provider, oauthToken: normalized },
+                    },
+                },
+            });
+            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            this.#runtimeValues = next;
+            this.#configuration = configuration;
+            this.#credentialFailures.clear("claude");
+        });
+    }
+
     /** Canonically rewrite the daemon-owned runtime configuration. */
     async writeRuntimeConfiguration(ctx: Context): Promise<void> {
         await this.#runtimeLock.runInLock(ctx, async () => {
@@ -3719,6 +3766,7 @@ export class ConfigModule implements AgentModule {
                 this.#accountFailures,
                 (ctx, harnessId, question, signal) =>
                     this.#askHarnessPermission(ctx, harnessId, question, signal),
+                () => this.configuration,
             );
             // A test-owned inference registry is already authenticated. Initialize all its
             // accounts as usable, including canonical IDs whose production defaults are off. This

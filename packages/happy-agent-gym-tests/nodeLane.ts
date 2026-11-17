@@ -27,6 +27,7 @@ export const nodeLaneScenarios: readonly string[] = [
     "new_task_and_bot_names_survive_transient_failures.test.ts",
     // A representative core sample.
     "happy_api_platform.test.ts",
+    "claude_setup_token_is_saved_without_restart.test.ts",
     "happy_api_workspaces.test.ts",
     "happy_api_agent_catalog.test.ts",
 ];

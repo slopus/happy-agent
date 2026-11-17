@@ -57,6 +57,7 @@ export const providerCliSignInSchema = Type.Object(
             Type.Null(),
         ]),
         methods: Type.Array(providerCliSignInMethodSchema),
+        acceptsToken: Type.Optional(Type.Boolean()),
     },
     { additionalProperties: false },
 );

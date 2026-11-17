@@ -1,5 +1,11 @@
 # Provider scan learnings
 
+## New credentials require a scan begun after they were saved
+
+Joining a scan already in flight could reuse its missing-credential result after a setup token
+was saved. Credential mutations now wait for that scan and start or join a later one. Ordinary
+concurrent scans still coalesce, and explicit enablement decisions still take precedence.
+
 ## Verification tries the cheapest models and never Fable
 
 Verification used to pick one hard-coded model per provider type (Fable 5 on Bedrock, Sonnet 5 on

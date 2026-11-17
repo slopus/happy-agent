@@ -26,7 +26,7 @@ function withExecution(
     execution: { user: string; bots?: Record<string, string>; executable?: string } | undefined,
 ): ConfigModule {
     return new Proxy(testConfig, {
-        get(target, property, receiver) {
+        get(target, property) {
             if (property === "execution") {
                 return execution === undefined
                     ? undefined
@@ -37,7 +37,9 @@ function withExecution(
                       };
             }
             if (property === "runners") return { entries: {} };
-            const value = Reflect.get(target, property, receiver) as unknown;
+            // Class accessors need the same real receiver as bound methods, including the
+            // configuration snapshot getter used after runtime credential changes.
+            const value = Reflect.get(target, property, target) as unknown;
             return typeof value === "function" ? value.bind(target) : value;
         },
     });

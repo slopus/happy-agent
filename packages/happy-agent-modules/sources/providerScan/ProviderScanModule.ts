@@ -66,6 +66,12 @@ export class ProviderScanModule implements AgentModule {
         return await running;
     }
 
+    /** Do not let a scan that already read the old credentials stand in for the new ones. */
+    async scanAfterCredentialChange(ctx: Context): Promise<ProviderScanResponse> {
+        if (this.#scanPromise !== undefined) await this.#scanPromise;
+        return await this.scan(ctx);
+    }
+
     /** Persist a complete batch of explicit provider enablement changes. */
     async setOverrides(
         ctx: Context,

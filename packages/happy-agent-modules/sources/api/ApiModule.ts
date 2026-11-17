@@ -25,6 +25,8 @@ import {
 } from "../live/index.js";
 
 import { createId } from "@paralleldrive/cuid2";
+import { claudeSetupTokenRequestSchema } from "@slopus/happy-agent-client";
+import { ClaudeSetupTokenError } from "../config/index.js";
 import {
     ProviderCliRequestError,
     ProviderClisModule,
@@ -9707,6 +9709,31 @@ export class ApiModule implements AgentModule {
     ): Promise<void> {
         if (this.#team.enabled) {
             throw unsupported("Installing and signing in assistants is unavailable in team mode.");
+        }
+        if (url.pathname === "/v0/provider-clis/claude/setup-token") {
+            if (request.method !== "POST") throw notFound("Route not found.");
+            const body = await bodyAs(
+                request,
+                claudeSetupTokenRequestSchema,
+                "Claude setup token",
+                64 * 1_024,
+            );
+            try {
+                const providerCli = await this.#withMutationId(body.mutationId, async () => {
+                    const result = await providerClis.saveClaudeSetupToken(
+                        ctx,
+                        body.token,
+                        body.mutationId,
+                    );
+                    this.#journal.append("config.updated", {});
+                    return result;
+                });
+                sendJson(response, 200, { providerCli });
+            } catch (error) {
+                if (error instanceof ClaudeSetupTokenError) throw invalidRequest(error.message);
+                throw error;
+            }
+            return;
         }
         if (url.pathname === "/v0/provider-clis") {
             if (request.method !== "GET") throw notFound("Route not found.");

@@ -165,6 +165,23 @@ export class ProviderClisModule implements AgentModule {
         return this.#project(id);
     }
 
+    /** Save a pasted token for Happy Agent, independently of the installed program's login. */
+    async saveClaudeSetupToken(
+        ctx: Context,
+        token: string,
+        mutationId?: string,
+    ): Promise<ProviderCli> {
+        return await this.#lock.runInLock(ctx, async () => {
+            await this.#config.saveClaudeSetupToken(ctx, token);
+            await this.#providerScan.scanAfterCredentialChange(ctx);
+            await this.#refresh(ctx, "claude");
+            this.#touch("claude");
+            const providerCli = this.#project("claude");
+            this.#emitSnapshot(providerCli, mutationId);
+            return providerCli;
+        });
+    }
+
     /** Start, or join, installing the assistant with its vendor's official installer. */
     async install(ctx: Context, id: ProviderCliId, mutationId?: string): Promise<ProviderCli> {
         await this.#refresh(ctx, id);
@@ -623,6 +640,10 @@ export class ProviderClisModule implements AgentModule {
     #emit(id: ProviderCliId): void {
         const providerCli = this.#project(id);
         const mutationId = this.#entry(id).mutationId;
+        this.#emitSnapshot(providerCli, mutationId);
+    }
+
+    #emitSnapshot(providerCli: ProviderCli, mutationId: string | undefined): void {
         for (const listener of this.#listeners) {
             try {
                 listener(providerCli, mutationId);
@@ -659,7 +680,11 @@ export class ProviderClisModule implements AgentModule {
             installation: entry.installation,
             installer: cli.installer(process.platform),
             commands: cli.commands,
-            signIn: { ...entry.signIn, methods: installed ? cli.methods.slice() : [] },
+            signIn: {
+                ...entry.signIn,
+                methods: installed ? cli.methods.slice() : [],
+                ...(id === "claude" ? { acceptsToken: true } : {}),
+            },
             operation: entry.operation,
             version: entry.version,
             updatedAt: entry.updatedAt,

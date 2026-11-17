@@ -1,5 +1,14 @@
 # Config module learnings
 
+## Pasted Claude tokens are live runtime credentials
+
+Onboarding offered a setup token but the daemon had no way to save it. The shared
+`saveClaudeSetupToken` method removes all whitespace, including Unicode NEL and BOM, validates
+the token, and atomically merges it into `runtime.toml`. It replaces the frozen configuration
+snapshot only after the write succeeds. Existing provider registry factories read that snapshot
+when opening a new provider, so saving takes effect without a restart or replacing cancellation
+boundaries. Provider enablement overrides and unrelated runtime settings remain unchanged.
+
 ## Public endpoint selection is daemon configuration
 
 Public reachability was initially put under mobile connector settings. The endpoint belongs to the
