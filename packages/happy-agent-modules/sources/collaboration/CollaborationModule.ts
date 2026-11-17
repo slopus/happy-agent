@@ -45,6 +45,7 @@ import {
     collaborationCreateInputSchema,
     collaborationCreateOptionsSchema,
     collaborationModelChoiceSchema,
+    collaborationServiceTierSchema,
     collaborationSendInputSchema,
     type CollaborationAgentSelection,
     type CollaborationCreateInput,
@@ -243,10 +244,14 @@ export class CollaborationModule implements AgentModule {
             )
                 ? currentProviderId
                 : undefined);
-        const selection = this.#validateSelection(models, {
-            ...input,
-            ...(provider === undefined ? {} : { provider }),
-        });
+        const selection = this.#validateSelection(
+            models,
+            {
+                ...input,
+                ...(provider === undefined ? {} : { provider }),
+            },
+            creator?.serviceTier,
+        );
         const selected = models.find(
             (model) =>
                 model.id === selection.model &&
@@ -319,6 +324,7 @@ export class CollaborationModule implements AgentModule {
                       ...input,
                       provider: retained.model.providerId,
                   },
+            creator?.serviceTier,
         );
         const model = models.find(
             (candidate) =>
@@ -734,7 +740,7 @@ export class CollaborationModule implements AgentModule {
                 createAgentTool(
                     this,
                     scope.agent.id,
-                    creator,
+                    { ...creator, serviceTier: scope.agent.tier },
                     // The agent's own persistent mode, never one an Auto review lent a single call.
                     scope.agent.permissionMode,
                     shown,
@@ -1127,6 +1133,7 @@ export class CollaborationModule implements AgentModule {
     #validateSelection(
         models: readonly AgentModel[],
         input: CollaborationModelChoice,
+        inheritedServiceTier?: CollaborationCreator["serviceTier"],
     ): CollaborationAgentSelection {
         if (input.provider === undefined) {
             const providers = new Set(
@@ -1158,7 +1165,14 @@ export class CollaborationModule implements AgentModule {
                 `Effort "${input.effort}" is not available for collaborator model "${input.model}".`,
             );
         }
-        const tier = input.serviceTier;
+        // Inheritance is a default, not a request for an unsupported tier. Explicit choices
+        // still fail validation below rather than silently falling back to ordinary service.
+        const tier =
+            input.serviceTier ??
+            (Value.Check(collaborationServiceTierSchema, inheritedServiceTier) &&
+            byEffort.some((model) => model.serviceTiers?.includes(inheritedServiceTier) === true)
+                ? inheritedServiceTier
+                : undefined);
         if (
             tier !== undefined &&
             !byEffort.some((model) => model.serviceTiers?.includes(tier) === true)

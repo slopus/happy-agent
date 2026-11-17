@@ -686,7 +686,7 @@ export class SubtasksModule implements AgentModule {
                     createSubtaskTool(
                         this,
                         scope.agent.id,
-                        creator,
+                        { ...creator, serviceTier: scope.agent.tier },
                         // The agent's own persistent mode, never one an Auto review lent a call.
                         scope.agent.permissionMode,
                         await this.#collaboration.shownAgentOptions(toolCtx, scope.kv, creator),

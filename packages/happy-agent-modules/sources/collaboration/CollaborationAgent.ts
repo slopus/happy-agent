@@ -1,4 +1,8 @@
-import { agentMetadataSchema, agentPermissionModeSchema } from "@slopus/happy-agent-base";
+import {
+    agentMetadataSchema,
+    agentPermissionModeSchema,
+    type AgentModuleAgent,
+} from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 
 import { delegatedPermissionFlagSchemas } from "../impl/delegatedPermissionMode.js";
@@ -178,6 +182,8 @@ export const collaborationCreateResultSchema = Type.Object(
 export interface CollaborationCreator {
     readonly provider: string;
     readonly model: string | undefined;
+    /** Creation inherits this tier when the selected route supports it and no tier was supplied. */
+    readonly serviceTier?: AgentModuleAgent["tier"];
 }
 
 export type CollaborationAgentId = Static<typeof collaborationAgentIdSchema>;

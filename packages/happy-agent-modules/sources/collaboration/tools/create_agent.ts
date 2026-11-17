@@ -82,6 +82,7 @@ function createAgentDescription(
         "The collaborator works on its own. This call returns as soon as the task is delivered, and the collaborator's final message arrives later as its report — nothing here waits for it. Its intermediate messages never reach you; it may still message you on purpose.",
         `One root agent tree may contain at most ${maxCollaborators} ordinary collaborators. Reuse one with send_agent_message after reaching the limit, or archive one that can no longer work (for example, its provider fails) with archive_agent to free its place. The maximum depth is ${maxCollaborationDepth} agents including the root. Subtasks belong to the tree but count toward neither limit; collaborators they create do count.`,
         "Choose an exact model and effort; harness and provider default to yours when they serve the model. Switch them later only when needed, with model fields on send_agent_message.",
+        "When serviceTier is omitted, the collaborator inherits your tier if the chosen model and provider support it; otherwise it uses regular service.",
         "The collaborator runs in your current permission mode. Set read_only to run it in Read only. Set full_mode to run it in Full access, which is allowed only while you are in Full access yourself.",
         "",
         options,

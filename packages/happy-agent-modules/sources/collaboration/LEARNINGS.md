@@ -1,5 +1,15 @@
 # Collaboration learnings
 
+## Created children inherit supported service tiers
+
+A Fast parent created regular-service collaborators and subtasks because creation carried its
+provider and model but omitted its service tier. Both creation tools now pass the parent's current
+tier into the shared selection validation. An omitted tier inherits when the chosen model/provider
+route and the delegation schema support it; otherwise the child uses regular service. An explicit
+tier still wins and is rejected if unsupported. Subtasks store the resolved tier before deferred
+startup, so both their first inference and saved mode retain the selection. Model-switch messages
+and module-owned creation retain their existing explicit selection behavior.
+
 ## Subtasks reuse messaging and model selection
 
 Interactive subtasks are a separate creation surface, but use collaboration's same curated model

@@ -295,6 +295,43 @@ const CREATOR = { provider: "codex", model: undefined } as const;
 const NO_CROSS_WORKSPACE_TOML = "[features]\ncross_workspace = false\n";
 
 describe("collaboration", () => {
+    it("inherits a tier only on the selected provider's supported route", async () => {
+        const collection = new (class extends Collection {
+            override readonly models = MODELS.map((model) =>
+                model.providerId === "claude" ? { ...model, serviceTiers: ["priority"] } : model,
+            );
+        })();
+        const { module } = await started(collection);
+        const creator = { ...CREATOR, serviceTier: "priority" };
+        expect(module.selectModel(TASK, creator)).toMatchObject({ serviceTier: "priority" });
+        expect(
+            module.selectModel({ ...TASK, model: "opus-5", provider: "claude" }, creator),
+        ).toMatchObject({ provider: "claude", serviceTier: "priority" });
+        const regularRoute = {
+            ...TASK,
+            model: "opus-5",
+            provider: "bedrock",
+            effort: "medium" as const,
+        };
+        expect(module.selectModel(regularRoute, creator)).toEqual({
+            model: "opus-5",
+            provider: "bedrock",
+            effort: "medium",
+        });
+        expect(() =>
+            module.selectModel({ ...regularRoute, serviceTier: "priority" }, creator),
+        ).toThrow('Service tier "priority" is not available');
+    });
+
+    it("keeps unsupported creator tiers out of delegation and honors an explicit tier", async () => {
+        const { module } = await started(new Collection());
+        const creator = { ...CREATOR, serviceTier: "unsupported" };
+        expect(module.selectModel(TASK, creator)).not.toHaveProperty("serviceTier");
+        expect(module.selectModel({ ...TASK, serviceTier: "priority" }, creator)).toMatchObject({
+            serviceTier: "priority",
+        });
+    });
+
     it("resolves a subtask's provider once using the same curated collaborator models", async () => {
         const { module } = await started(new Collection());
         expect(module.selectModel(TASK)).toEqual({
