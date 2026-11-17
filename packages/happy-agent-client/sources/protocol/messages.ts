@@ -24,6 +24,7 @@ import { attachmentKindSchema, type KnownAttachmentKind } from "./attachments.js
 import type { FileBlock } from "./attachments.js";
 import { mediaLayoutStyleSchema } from "./mediaLayoutStyle.js";
 import { mediaIdSchema } from "./media.js";
+import { genUiPresentationSchema } from "./genUi.js";
 import { mediaPreviewSchema } from "./mediaMetadata.js";
 import type { UsageBreakdown } from "./usage.js";
 import { userIdSchema } from "./users.js";
@@ -433,6 +434,7 @@ export const toolPresentationSchema = Type.Union([
     searchPresentationSchema,
     agentSpawnPresentationSchema,
     mediaPresentationSchema,
+    genUiPresentationSchema,
     artifactPresentationSchema,
     pagePresentationSchema,
     userInputPresentationSchema,

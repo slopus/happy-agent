@@ -8673,6 +8673,64 @@ model receives, and its completed presentation is `media` with one image item an
 fails, such as an image the chat cannot show, still succeeds for the model and keeps its
 `exploration` presentation. Reads of other files are unchanged.
 
+**`gen_ui`** — generated UI shown directly in the conversation by the common `gen_ui` tool,
+not an artifact, Surface, page, or shared catalog entry. The tool arguments are the authoring
+root node itself, for example `{ "type": "text", "text": "Revenue was $1.24M." }`.
+There is no `document`, `genui`, or `root` wrapper and no serialized JSON string input.
+The parameter schema requires a nonempty string `type` and allows component-specific fields;
+the existing catalog validates those fields. Internally the producer constructs
+`{ "genui": 1, "root": <arguments> }` and validates and compiles with the same compiler as
+Gen UI artifacts, using the authoring format in `docs/genui/SPEC.md`. Document-level `fallback`
+is not a tool argument. It returns this presentation on its completed tool call:
+
+```json
+{
+    "type": "gen_ui",
+    "document": {
+        "genuiRender": 1,
+        "compiler": "1.0.0",
+        "root": "text",
+        "elements": {
+            "text": {
+                "type": "text",
+                "props": { "role": "body", "spans": [{ "text": "Revenue was $1.24M." }] }
+            }
+        }
+    }
+}
+```
+
+`document` is the existing compiled render object from `docs/genui/RENDER.md`, not a JSON
+string or the authoring document. It is self-contained and immutable in this call's history;
+clients draw it inline without looking up an artifact. Its identity is the enclosing agent and
+tool-call ID. Live events, history reads (including `omitToolData=true`), and restart retain the
+same presentation. It appears only on success, never on a running or failed call. The model
+receives a short confirmation, not the compiled document. No artifact, file,
+catalog mutation, independent action endpoint, or new run is created by showing it. It is also
+available in Read only mode because it only presents the agent's response.
+
+The existing authoring limits apply to the internally constructed document: 256 KiB of compact
+UTF-8 JSON, 200 nodes, depth 6. The compiled document
+holds at most 4,000 elements and 4 MiB of compact UTF-8 JSON. Producers reject invalid input
+with node-specific errors. This first direct-message version supports no images or other
+external resources: any image reference is an explicit error; use ordinary presented media
+instead. No image path is resolved against an artifact, workspace, remote URL, or the host.
+
+Only `message`, `open`, and `copy` actions are supported. Producers reject every other action
+type, including `secret`, `cluster_secret`, `tool`, and `plugin`; no tap grants execution authority.
+`message` submits the shown action text through the ordinary send operation to the enclosing
+conversation's agent, and is disabled if that conversation cannot accept messages. `open` only
+opens an absolute HTTPS URL without embedded credentials; `copy` uses the local clipboard.
+Inline Markdown links obey the same HTTPS rule. Clients validate action payloads before use,
+disable unsupported actions, and never redirect an action to an artifact's origin agent.
+
+Clients bound document size, element traversal, and nesting before rendering untrusted data,
+use the existing lenient primitive renderer, and show `fallback` when the render format is
+unsupported. They never load images from a direct presentation. Older clients that do not
+recognize `gen_ui` retain ordinary tool-call fallback; raw arguments and results are kept even
+with `omitToolData=true`. This is an additive presentation, not a revival of retired `ui`,
+`show_ui`, `suggest_replies`, or `/v0/agents/:agentId/actions`.
+
 **`artifact`** — an artifact the call created, changed, or took up for editing, for a client to
 show in the chat. This presentation is outcome-derived: it appears only when the call completes
 successfully.

@@ -83,6 +83,7 @@ export * from "./protocol/live.js";
 export * from "./protocol/liveDesktop.js";
 export * from "./protocol/mediaLayoutStyle.js";
 export * from "./protocol/messages.js";
+export * from "./protocol/genUi.js";
 export * from "./protocol/mobileConnector.js";
 export * from "./protocol/processes.js";
 export * from "./protocol/profile.js";

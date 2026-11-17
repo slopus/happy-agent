@@ -646,7 +646,17 @@ new version from the latest one's files, adding, replacing, or removing paths, a
 `listArtifactVersions()` reads the history. Follow `artifact.created`, `artifact.updated`, and
 `artifact.deleted`.
 
-A `gen_ui` button whose action is `secret` opens a secret form prefilled from the action. Save it
+Direct chat Gen UI uses a completed tool call's `presentation: { type: "gen_ui", document }`.
+`document` is the existing compiled `genuiRender: 1` object, available as `GenUiRenderDocument`,
+not authoring JSON or an artifact reference. Draw it with the existing native renderer without
+artifact lookup. The exported TypeBox schemas check the envelope, not the primitive catalog:
+bound compact JSON to 4 MiB and traversal to 4,000 elements, validate primitive props and actions
+at the renderer boundary, and fall back safely when malformed or unsupported. Direct views never
+load images. Only message (to the enclosing conversation), HTTPS open without credentials, and
+copy actions are enabled; other actions remain disabled. A bad presentation must not discard the
+rest of the transcript. Raw tool arguments/results remain the fallback for older clients.
+
+A Gen UI artifact button whose action is `secret` opens a secret form prefilled from the action. Save it
 with `saveArtifactSecretAction(artifactId, version, { id, element, secret })`: `element` is the
 render element tapped, `secret` the form as the person left it, and `id` a CUID2 you choose once per
 save so a retry answers the first one. To change an existing secret, send an environment patch and
