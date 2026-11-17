@@ -86,3 +86,21 @@ option, because that is what clients send. When the turn stops, the question is 
 harness is told `cancelled`, so a stopped agent never leaves a question the person can still
 answer. A question nobody answers (away, timed out) is a denial, not a cancellation: ACP agents
 read `cancelled` as their own turn being cancelled. A Happy sub-agent asks on its own conversation through the same path.
+
+## Writing instead of answering ends the question
+
+A person's message to a busy agent waits for the current tool batch to finish, and a pending
+`request_user_input` call does not finish until the question settles, so a message sent instead of
+an answer was never read and the agent looked dead. Only the desktop client ever released the
+question, by answering it with "Replied in chat" after its send was accepted; the phone and every
+other client never did, and when the desktop's answer silently failed, the agent stayed stuck too.
+
+The daemon now settles it. The API send route and the phone connection call `cancelForMessage` in
+the transaction that accepts the message, so a durably accepted human message is what ends the
+question, and the committed cancel wakes the parked wait. The outcome is `cancelled`, not
+`answered`: an answer is recorded as the person's own words in Auto's trusted evidence, and the
+person never wrote one. The reason tells the model what the desktop's answer did: they replied in
+chat, read their message and attachments. The desktop's later answer gets `409`, which it already
+ignores. Permission requests stay pending, because they ask for something outside the agent and
+only an answer settles them. Messages from other agents do not use these paths and leave the
+question open.

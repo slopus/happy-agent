@@ -5928,6 +5928,9 @@ export class ApiModule implements AgentModule {
                     } else {
                         await agents.send(txCtx, agentId, { role: "user", content }, options);
                     }
+                    // A pending question holds the turn the message waits behind, so writing
+                    // instead of answering cancels it, atomically with accepting the message.
+                    await this.#userInput.cancelForMessage(txCtx, agentId);
                     afterCommit(txCtx, (postCommitCtx) =>
                         this.#scheduling?.interruptWaits(postCommitCtx, agentId),
                     );

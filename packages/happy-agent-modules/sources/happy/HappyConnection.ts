@@ -1608,6 +1608,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                             : { userId: this.#connectionOwner.id }),
                     },
                 });
+                // The steered message waits behind a pending question's call, so it cancels one.
+                await this.#userInput.cancelForMessage(txCtx, agentId);
             });
         } catch (cause) {
             if (cause instanceof HappyMessageRefused) throw cause;

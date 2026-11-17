@@ -117,6 +117,53 @@ describe("UserInput waits, presence, and concurrency", () => {
         }
     });
 
+    it("cancels the agent's own questions when the person sends a message, keeping permission requests", async () => {
+        const presence = new ScriptedPresenceModule(onlinePresence());
+        const module = createUserInputModule(presence);
+        const database = createUserInputDatabase(module, "user-input-message-cancel");
+        await database.ready;
+        try {
+            const permission = () =>
+                module.askForPermission(
+                    database.context,
+                    agentId,
+                    { context: "Context", questions: [{ id: "approval", question: "Start?" }] },
+                    { source: "mcp_elicitation", server: "printer", serverTitle: "Printer" },
+                );
+            // Permission requests on either side of a page boundary must stay where they are.
+            const first = await permission();
+            const questionIds: string[] = [];
+            for (let index = 0; index <= 50; index += 1) {
+                const request = await module.ask(
+                    database.context,
+                    agentId,
+                    singularAsk(),
+                    `message-${String(index)}`,
+                );
+                questionIds.push(request.id);
+            }
+            const last = await permission();
+            await module.ask(database.context, "other-agent", singularAsk(), "other-pending");
+
+            const waiting = module.wait(database.context, agentId, questionIds[0]!);
+            await vi.waitFor(() => expect(presence.subscriberCount).toBe(1));
+            await module.cancelForMessage(database.context, agentId);
+
+            await expect(waiting).resolves.toMatchObject({
+                id: questionIds[0],
+                status: "cancelled",
+                reason: "The person replied in chat instead of answering. Read their message and attachments.",
+            });
+            const pending = await module.list(database.context, agentId, { status: "pending" });
+            expect(pending.map((request) => request.id)).toEqual([first.id, last.id]);
+            await expect(
+                module.get(database.context, "other-agent", "other-pending"),
+            ).resolves.toMatchObject({ status: "pending" });
+        } finally {
+            database.close();
+        }
+    });
+
     it("wakes a parked wait with the outcome a direct answer committed", async () => {
         const module = createUserInputModule();
         const database = createUserInputDatabase(module, "user-input-wait-context");

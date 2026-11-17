@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import { createAgentGym, type AgentGym, type GymTurn } from "@slopus/happy-agent-gym";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -24,25 +27,15 @@ describe("public API steering at a tool boundary", () => {
                     return {
                         content: [
                             {
+                                // A pending question would end on the steer, so the batch waits
+                                // on a command the scenario releases instead.
                                 arguments: {
-                                    context: "The active tool batch is waiting for one answer.",
-                                    questions: [
-                                        {
-                                            header: "Continue",
-                                            id: "continue",
-                                            multiSelect: false,
-                                            options: [
-                                                {
-                                                    description: "Finish the tool batch.",
-                                                    label: "Continue",
-                                                },
-                                            ],
-                                            question: "Continue to the next inference?",
-                                        },
-                                    ],
+                                    cmd: ": > held; while [ ! -e released ]; do sleep 0.05; done",
+                                    max_output_tokens: 1_000,
+                                    yield_time_ms: 30_000,
                                 },
-                                callId: "steeringquestion",
-                                name: "request_user_input",
+                                callId: "steeringcommand",
+                                name: "exec_command",
                                 type: "tool_call",
                             },
                         ],
@@ -56,10 +49,9 @@ describe("public API steering at a tool boundary", () => {
         activeGyms.add(gym);
 
         const first = await gym.send("start the tool batch", { wait: false });
-        const question = await gym.waitUntil(
-            async () =>
-                (await gym.client.getPendingQuestion(gym.defaultSessionId)).question ?? undefined,
-            "the steering boundary question",
+        await gym.waitUntil(
+            async () => (existsSync(join(gym.workspacePath, "held")) ? true : undefined),
+            "the tool batch to be running",
         );
         const steering = gym.steer("steering after tools", {
             id: "steeringaftertools",
@@ -73,10 +65,7 @@ describe("public API steering at a tool boundary", () => {
         }, "steering to become pending");
         expect(agentCalls).toBe(1);
 
-        await gym.client.answerQuestion(gym.defaultSessionId, question.id, {
-            answers: { continue: ["Continue"] },
-            mutationId: "answer-steering-boundary-question",
-        });
+        await gym.writeFile("released", "");
         const accepted = await steering;
         const boundary = await gym.waitForEvent(
             (event) =>
@@ -94,7 +83,7 @@ describe("public API steering at a tool boundary", () => {
         );
         expect(requests).toHaveLength(2);
         expect(requests[1]?.messages.at(-2)).toMatchObject({
-            callId: "steeringquestion",
+            callId: "steeringcommand",
             role: "tool",
         });
         expect(requests[1]?.messages.at(-1)).toEqual({

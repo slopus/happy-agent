@@ -57,13 +57,21 @@ outside a transaction. `read_user_input` reads bounded detail pages by request I
 long answers remain available to the model. `cancel_ask` accepts `requestId` (and the legacy
 `ask_id` spelling) plus an optional reason.
 
+A person who writes to the agent instead of answering ends its question. Their message waits
+behind the agent's current tool call, which a pending question is, so `cancelForMessage` cancels
+every pending request the agent itself asked, telling the model the person replied in chat and to
+read their message; the call returns, and the message is read next. The API send route and the
+phone connection call it in the transaction that accepts the message. Permission requests stay
+pending: they ask for something outside the agent, and only an answer settles them. Agent-to-agent
+messages do not come through those paths and leave the question open.
+
 `askForPermission` asks on behalf of something outside the agent, such as an MCP server, and
 stores a `permissionRequest` naming it. The API question object and the phone form carry it so
 clients can show a permission request apart from the agent's own questions. No agent tool can set
 it.
 
-Host callers can use `ask`, `askForPermission`, `wait`, `listPage`/`list`, `get`/`getPage`, `answer`, `cancel`, and
-`complete`. `formatForModel`, `formatPageForModel`, `formatDetailPageForModel`, and
+Host callers can use `ask`, `askForPermission`, `wait`, `listPage`/`list`, `get`/`getPage`, `answer`, `cancel`,
+`cancelForMessage`, and `complete`. `formatForModel`, `formatPageForModel`, `formatDetailPageForModel`, and
 `formatUserInputForModel` provide the same bounded model-facing rendering for host reuse.
 List pages carry the absolute source `cursor` of their first returned row; `nextCursor` is always
 computed from that position and the rows actually shown.

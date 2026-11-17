@@ -160,6 +160,8 @@ async function fixture() {
     const projectAgents = new Map<string, string>();
     const workspaceAgents = new Map<string, string>();
     const pendingMessages: Record<string, unknown>[] = [];
+    /** Agents whose own questions a phone message cancelled. */
+    const questionsCancelled: string[] = [];
     const steered: {
         agentId: string;
         config: AgentConfig | undefined;
@@ -348,6 +350,9 @@ async function fixture() {
         { list: () => [], onChanged: () => () => undefined } as never,
         { interruptWaits: () => undefined } as never,
         {
+            cancelForMessage: async (_ctx: unknown, agentId: string) => {
+                questionsCancelled.push(agentId);
+            },
             latestQuestionAt: async () => activity.questionAt,
         } as never,
         workspaceModule as never,
@@ -473,6 +478,7 @@ async function fixture() {
         parents,
         projectAgents,
         projects,
+        questionsCancelled,
         releaseHeldWrite: () => releaseWrite?.(),
         steered,
         wornAvatars,
@@ -658,6 +664,8 @@ describe("Happy mobile messages", () => {
                 }),
             }),
         ]);
+        // Writing instead of answering ends the agent's own pending question with the message.
+        expect(test.questionsCancelled).toEqual(["agent-active"]);
     });
 });
 
@@ -1376,6 +1384,7 @@ describe("archiving a Happy session", () => {
             { list: () => [], onChanged: () => () => undefined } as never,
             { interruptWaits: () => undefined } as never,
             {
+                cancelForMessage: async () => undefined,
                 latestQuestionAt: async () => undefined,
                 list: async () => [],
                 onEvent: () => () => undefined,
@@ -1616,6 +1625,7 @@ describe("archiving a Happy session", () => {
             { list: () => [], onChanged: () => () => undefined } as never,
             { interruptWaits: () => undefined } as never,
             {
+                cancelForMessage: async () => undefined,
                 latestQuestionAt: async () => undefined,
                 list: async () => [],
                 onEvent: () => () => undefined,

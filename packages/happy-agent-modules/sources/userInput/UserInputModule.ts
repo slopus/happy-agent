@@ -92,6 +92,8 @@ export const MAX_USER_INPUT_OUTPUT_CHARACTERS = 8_000;
 const MAX_USER_INPUT_ANCESTRY_DEPTH = 64;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const ABORTED_TURN_CANCEL_REASON = "The agent run was aborted.";
+const MESSAGE_CANCEL_REASON =
+    "The person replied in chat instead of answering. Read their message and attachments.";
 const HARNESS_QUESTION_ID = "permission";
 const ALLOW_ONCE = "Allow once";
 const ALLOW_FOR_SESSION = "Allow for this session";
@@ -151,7 +153,7 @@ export class UserInputModule implements AgentModule {
 
         afterTurnTransact: async (ctx: Context, scope: AgentModuleScope, turn): Promise<void> => {
             if (!turn.aborted) return;
-            await this.#cancelPendingForAbortedTurn(ctx, scope.agent.id);
+            await this.#cancelPending(ctx, scope.agent.id, ABORTED_TURN_CANCEL_REASON, "all");
         },
     };
 
@@ -413,6 +415,18 @@ export class UserInputModule implements AgentModule {
         return structuredClone(request);
     }
 
+    /**
+     * The person wrote to the agent instead of answering. Their message waits behind the agent's
+     * current tool call, and a pending question is that call, so every question the agent itself
+     * asked is cancelled; the model reads the cancellation, then the message. A permission request
+     * stays pending: it asks for something outside the agent, and only an answer settles it.
+     */
+    async cancelForMessage(ctx: Context, agentId: string): Promise<void> {
+        await ctx.inTx((txCtx) =>
+            this.#cancelPending(txCtx, agentId, MESSAGE_CANCEL_REASON, "questions"),
+        );
+    }
+
     async complete(
         ctx: Context,
         agentId: string,
@@ -631,15 +645,23 @@ export class UserInputModule implements AgentModule {
     }
 
     /**
-     * An aborted turn cannot still be waiting for a person. Always read the first pending page:
-     * changing a row removes it from this query, so advancing a numeric offset would skip rows.
+     * Cancels the agent's own pending requests: all of them when its turn aborted, which cannot
+     * still be waiting for a person, or only its questions, leaving permission requests pending.
+     * A cancelled row leaves this query, so each page starts after the rows kept rather than at a
+     * numeric offset that would skip rows.
      */
-    async #cancelPendingForAbortedTurn(ctx: Context, agentId: string): Promise<void> {
+    async #cancelPending(
+        ctx: Context,
+        agentId: string,
+        reason: string,
+        which: "all" | "questions",
+    ): Promise<void> {
         this.#assertAgentId(agentId);
+        let kept = 0;
         while (true) {
             const page = await this.#store.listRequests(ctx, agentId, {
                 askingAgentId: agentId,
-                cursor: "0",
+                cursor: String(kept),
                 limit: MAX_USER_INPUT_PAGE_SIZE,
                 status: "pending",
             });
@@ -649,12 +671,16 @@ export class UserInputModule implements AgentModule {
                 this.#assertRequest(request);
                 if (request.askingAgentId !== agentId || request.status !== "pending") {
                     throw new Error(
-                        "User input store returned a pending request outside the aborted agent.",
+                        "User input store returned a pending request outside the asking agent.",
                     );
+                }
+                if (which === "questions" && request.permissionRequest !== undefined) {
+                    kept += 1;
+                    continue;
                 }
                 const cancelled = this.#terminalRequest(
                     request,
-                    { outcome: "cancelled", reason: ABORTED_TURN_CANCEL_REASON },
+                    { outcome: "cancelled", reason },
                     now(),
                 );
                 await this.#persistTransition(ctx, agentId, "user_input_cancelled", cancelled);
