@@ -106,3 +106,18 @@ included.
 
 Chat UI was removed. Its historical presentations remain opaque on ordinary saved tool calls;
 only standard `media` presentations are resolved through `storedItem` and `storedItems`.
+
+## Generated UI is message content, not an artifact
+
+Steve asked for the existing Gen UI format to appear directly in a message like a photo, and
+named the tool `gen_ui`. Chat Media supplies this pure presentation tool alongside its media
+presentation feature. It compiles the existing authoring format and returns a `gen_ui`
+presentation that ordinary History retains with the call; it never creates an artifact or
+catalog entry. This is separate from retired `show_ui` and its opaque historical payloads.
+Steve simplified the tool input to the root node itself, such as
+`{ "type": "text", "text": "Hello" }`: no serialized string or document envelope. The compiler's
+document envelope is internal, not something callers must supply. Component props stay on the
+root object and the existing catalog validates them; there is no special fallback argument.
+The initial direct presentation is self-contained: images are explicitly refused, and only
+message, HTTPS open, and copy actions are accepted. No artifact-only action route or permission
+grant is inferred from a tap. The compiled view is not repeated in the model-facing result.

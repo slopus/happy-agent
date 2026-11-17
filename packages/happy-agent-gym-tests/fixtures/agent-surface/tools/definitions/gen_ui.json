@@ -1,0 +1,136 @@
+{
+  "capabilities": [
+    "Show generated native UI directly in a chat message."
+  ],
+  "defer": true,
+  "description": "Show Gen UI directly in this chat, like a picture, without creating an artifact. Pass the root node directly as the tool arguments: {\"type\":\"stat\",\"label\":\"Revenue\",\"value\":\"$1.24M\"}. Do not wrap it in document, genui, or root, or serialize it as a string. Use it when structure helps: stats, charts, tables, lists, steps, choices, or buttons. Read genui/USAGE.md beside the Happy Agent documentation README and genui/components/<type>.md for component props. The internally constructed authoring document may hold at most 200 nodes, depth 6, and 256 KiB of compact UTF-8 JSON. Images are not supported here; use present_files for pictures. Actions may only be message (sends text to this conversation), open (absolute HTTPS URL without credentials), or copy. Markdown links must also be HTTPS without credentials. Secret forms, plugins, and tool execution are not supported. The result is shown only in this chat, not any parent or child chat. Do not repeat the view in prose; give its main takeaway in your final reply.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": true,
+    "properties": {
+      "type": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "type"
+    ],
+    "type": "object"
+  },
+  "name": "gen_ui",
+  "returnType": {
+    "properties": {
+      "presentation": {
+        "properties": {
+          "document": {
+            "properties": {
+              "compiler": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "elements": {
+                "maxProperties": 4000,
+                "minProperties": 1,
+                "patternProperties": {
+                  "^(.*)$": {
+                    "properties": {
+                      "children": {
+                        "items": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "maxItems": 4000,
+                        "type": "array"
+                      },
+                      "props": {
+                        "patternProperties": {
+                          "^(.*)$": {}
+                        },
+                        "type": "object"
+                      },
+                      "slots": {
+                        "maxProperties": 16,
+                        "patternProperties": {
+                          "^(.*)$": {
+                            "items": {
+                              "maxLength": 256,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "maxItems": 4000,
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": {
+                        "maxLength": 128,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "props"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "fallback": {
+                "maxLength": 262144,
+                "type": "string"
+              },
+              "genuiRender": {
+                "const": 1,
+                "type": "number"
+              },
+              "root": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "genuiRender",
+              "compiler",
+              "root",
+              "elements"
+            ],
+            "type": "object"
+          },
+          "type": {
+            "const": "gen_ui",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "document"
+        ],
+        "type": "object"
+      },
+      "shown": {
+        "const": true,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "shown",
+      "presentation"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "generated UI",
+    "inline chart",
+    "stats",
+    "choices",
+    "buttons",
+    "native card"
+  ]
+}

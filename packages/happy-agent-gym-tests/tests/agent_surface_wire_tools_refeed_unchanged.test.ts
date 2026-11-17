@@ -257,6 +257,14 @@ it.runIf(process.platform === "linux")(
                     const text = await readFile(join(WIRE, family, `${key}.json`), "utf8");
                     const tool = toolOf(family, JSON.parse(text) as Record<string, unknown>);
                     if (tool === undefined) continue;
+                    if (tool.name === "gen_ui") {
+                        expect(tool.parameters, `${family} Gen UI root schema`).toMatchObject({
+                            type: "object",
+                            properties: { type: { type: "string", minLength: 1 } },
+                            required: ["type"],
+                            additionalProperties: true,
+                        });
+                    }
                     captured.set(tool.name, text);
                     if (family !== "claude" || !CLAUDE_CODE_OWN_TOOLS.has(tool.name))
                         tools.push(tool);

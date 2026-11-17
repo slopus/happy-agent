@@ -5,6 +5,7 @@ import {
     clientMetadataSchema,
     clientMetadataValueSchema,
     configurationBlockSchema,
+    genUiPresentationSchema,
     mediaItemSourceSchema,
     mediaLayoutSchema,
     messageErrorSchema,
@@ -440,6 +441,7 @@ const retiredPresentationSchema = Type.Object(
 
 /** A bounded result-derived presentation retained with durable tool history. */
 export const historyToolPresentationSchema = Type.Union([
+    genUiPresentationSchema,
     historyFileDiffPresentationSchema,
     historyMediaPresentationSchema,
     historyPagePresentationSchema,

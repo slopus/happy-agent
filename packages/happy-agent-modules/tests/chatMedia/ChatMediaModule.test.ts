@@ -176,7 +176,7 @@ describe("ChatMediaModule", () => {
         expect(without.tools.map((each) => each.name)).not.toContain("present_files");
     });
 
-    it("offers present_files to every agent and says where the user sees the files", async () => {
+    it("offers direct Gen UI alongside presented files and says where the user sees them", async () => {
         const compute = new FakeCompute();
         place(compute, "/workspace/note.txt", Buffer.from("note"));
         const module = chatMedia();
@@ -189,7 +189,10 @@ describe("ChatMediaModule", () => {
         expect(instructions).toContain("Link text, code, and Markdown files instead");
         expect(instructions).toContain("the parent should link text files and present only media");
         expect(instructions).not.toContain("show_page");
-        expect(hooks.tools).toBeUndefined();
+        expect(
+            (await hooks.tools?.(ctx, {} as AgentModuleScope))?.map((tool) => tool.name),
+        ).toEqual(["gen_ui"]);
+        expect(instructions).toContain("Use gen_ui");
         const tool = await presentFilesOn(compute, module);
         expect(tool.description).toContain(
             "images you read with your file-reading tool, and artifacts are already shown",

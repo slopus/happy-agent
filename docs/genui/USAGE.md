@@ -5,9 +5,29 @@ options to pick from, a list of things with status, a chart, pictures, steps
 in progress. Use plain text for explanations and anything a sentence says
 well. Do not wrap prose in a card.
 
+## Directly in a chat
+
+Call `gen_ui` with the root node directly, for example
+`{ "type": "stat", "label": "Revenue", "value": "$1.24M" }`, to show a native view
+directly in your response. Do not add a `document`, `genui`, or `root` wrapper or serialize
+the arguments as a string. This creates no artifact or catalog item.
+It is visible only in the conversation that called the tool and stays with that message.
+Use `create_artifact` with `type: "gen_ui"` when you want a separate, versioned artifact.
+
+Direct chat views currently support no pictures: use `present_files` for those. Their actions
+are only `message`, `open`, and `copy`; links and `open` targets must be absolute HTTPS URLs
+without credentials, whitespace, control characters, or backslashes. `message` goes to the
+current conversation. Secret forms and plugin actions belong to artifacts, not direct views.
+The tool reports invalid documents instead of creating a partial view. Keep the authoring
+document (the tool adds `{ "genui": 1, "root": ... }` internally) within 256 KiB of compact
+UTF-8 JSON, 200 nodes, and six levels; large tables can also exceed the compiled
+limit of 4,000 elements or 4 MiB. Include the main takeaway in your final reply without
+repeating the whole view.
+
 ## The shape
 
-A document is one tree of nodes.
+A document is one tree of nodes. Artifacts use the whole document below; `gen_ui` takes only
+the node under `root`.
 
 ```json
 {
@@ -39,8 +59,9 @@ Rules that make a document valid:
 4. Use only the props listed for the component. There are no style props.
 5. `id` is optional. Add one (`"id": "steps"`) only to a node you expect to update or refer to later.
 
-Always write `fallback`: one or two sentences that carry the same
-information, for clients that cannot draw the UI.
+For artifacts, always write `fallback`: one or two sentences that carry the same
+information, for clients that cannot draw the UI. Direct `gen_ui` calls have no document-level
+`fallback` argument; give the main takeaway in your normal reply.
 
 ## Picking a component
 

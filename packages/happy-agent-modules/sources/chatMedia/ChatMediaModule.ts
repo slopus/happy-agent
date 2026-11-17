@@ -30,6 +30,7 @@ import {
 import { measureChatImage } from "./impl/measureChatImage.js";
 import { parseMediaLayout, type ParsedMediaLayout } from "./impl/parseMediaLayout.js";
 import { writeChatMediaContent } from "./impl/writeChatMediaContent.js";
+import { genUiTool } from "./tools/gen_ui.js";
 
 /** What every agent is told about media it shows in a chat. */
 export const CHAT_MEDIA_INSTRUCTIONS =
@@ -64,7 +65,9 @@ export class ChatMediaModule implements AgentModule {
     }
 
     readonly #hooks: AgentModuleHooks = {
-        instructions: () => CHAT_MEDIA_INSTRUCTIONS,
+        instructions: () =>
+            `${CHAT_MEDIA_INSTRUCTIONS} Use gen_ui to show native stats, charts, tables, choices, or buttons directly in a message without creating an artifact. It uses the existing Gen UI document format; direct views support no images and only message, HTTPS open, and copy actions.`,
+        tools: () => [genUiTool()],
     };
 
     readonly beforeStart = (): AgentModuleHooks => this.#hooks;
