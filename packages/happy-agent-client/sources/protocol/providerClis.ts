@@ -47,8 +47,8 @@ export const providerCliSchema = Type.Object({
         /** `browser`, `device`, or newer, in the order the daemon prefers them. */
         methods: Type.Array(Type.String()),
         /**
-         * Whether a pasted setup token or API key can sign this assistant in, which is when
-         * `provider_sign_in` offers its `submit_token` control. Absent means `false`.
+         * Whether the daemon accepts a pasted Claude setup token through
+         * `POST /v0/provider-clis/claude/setup-token`. Absent means `false`.
          */
         acceptsToken: Type.Optional(Type.Boolean()),
     }),
@@ -100,6 +100,14 @@ export type ProviderClisResponse = Static<typeof providerClisResponseSchema>;
 /** `GET /v0/provider-clis/:cliId` */
 export const providerCliResponseSchema = Type.Object({ providerCli: providerCliSchema });
 export type ProviderCliResponse = Static<typeof providerCliResponseSchema>;
+
+/** `POST /v0/provider-clis/claude/setup-token` request. */
+export const claudeSetupTokenRequestSchema = Type.Object({
+    /** The daemon removes all whitespace before validating the token's shape and saving it. */
+    token: Type.String(),
+    mutationId: Type.Optional(Type.String({ minLength: 1, maxLength: 512 })),
+});
+export type ClaudeSetupTokenRequest = Static<typeof claudeSetupTokenRequestSchema>;
 
 /** `provider_cli.updated`: one assistant's complete provider CLI object. */
 export interface ProviderCliUpdatedPayload {

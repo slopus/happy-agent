@@ -3405,9 +3405,11 @@ download comes from, so a client can disclose it and offer the manual path inste
 
 Installing and signing in are long-running operations. A request starts one and answers at once.
 Progress, the sign-in URL to open, and the final result arrive as `provider_cli.updated` events
-on the ordinary event stream. The daemon never stores, returns, or logs a credential, an
-authorization code, or a token. It reports only whether the program is signed in, and the
-account's email and plan when the vendor's program reveals them.
+on the ordinary event stream. These operations never store, return, or log a credential, an
+authorization code, or a token. The separate Claude setup-token route below stores a token only
+in daemon-owned runtime configuration; it never returns or logs it. The provider CLI object
+reports only whether the program is signed in, and the account's email and plan when the
+vendor's program reveals them.
 
 The CLIs belong to the daemon's machine and its operating-system user, so these routes are
 unavailable in team mode: every route returns `501` with code `unsupported` before parsing a
@@ -3490,6 +3492,10 @@ instructions they showed before.
     - `methods` — the sign-in methods the program supports, in the order the daemon prefers them:
       `"browser"` (a web page on this computer completes the sign-in by itself) and `"device"` (a
       web page on any device, confirmed with a short code). Empty when the program is missing.
+    - `acceptsToken` — optional boolean; absent means `false`. `true` for Claude when the daemon
+      supports `POST /v0/provider-clis/claude/setup-token`, including when Claude Code is not
+      installed. It describes the daemon's ability to save a setup token, not the program's
+      sign-in status. Clients must not infer support from `capabilities.providerClis` alone.
 - `operation` — the current or most recent install or sign-in, or `null` when there has been
   none. It is described below.
 - `version` — a UUIDv7 minted whenever any field changes. Events carry the complete object, so
@@ -3646,6 +3652,38 @@ Hands the code the vendor's page showed to the waiting sign-in, for an `authoriz
 stores, returns, or logs it. Response — `200`: `{ "providerCli": { ... } }`. The outcome arrives
 as for any sign-in. `409` with code `conflict` and the current `providerCli` when no sign-in is
 waiting or it does not accept a code.
+
+### `POST /v0/provider-clis/claude/setup-token`
+
+Saves a token obtained with the vendor's `claude setup-token` command for Happy Agent's Claude
+provider. This is separate from signing the installed Claude Code program in. Request:
+
+```json
+{ "token": "sk-ant-oat01-...", "mutationId": "optional-client-value" }
+```
+
+`token` is a string. Before validating or saving it, remove every whitespace character anywhere
+in it, including spaces, tabs, CR/LF, Unicode White_Space characters, and the byte-order mark.
+This allows tokens copied from wrapped terminal output. The normalized token is at most 8,192
+characters and must start with `sk-ant-oat01-`, followed by one or more ASCII letters, digits,
+underscores, or hyphens. `mutationId` is optional and follows the ordinary mutation echo rules.
+Malformed input returns `400 invalid_request` without changing configuration or exposing the
+submitted value in the error.
+
+The daemon writes the normalized token as `[providers.claude] oauth_token` in daemon-owned
+`runtime.toml`, preserves unrelated settings, and applies it without a restart. It then runs the
+provider scan under the ordinary scan rules, including respecting an explicit disabled override.
+The token is never returned in configuration snapshots, provider CLI objects, events, or logs.
+No vendor credential file is changed, no CLI installation is required, and no interactive
+sign-in process is started. Saving validates the token's shape, not whether Anthropic accepts it;
+clients use provider verification to check that. `signIn.status` continues to describe the
+installed program's own sign-in, not merely the presence of this configured token.
+
+Response — `200`: `{ "providerCli": { ... } }`, the refreshed Claude provider CLI object. Success
+emits `config.updated` and `provider_cli.updated`, echoing `mutationId` when supplied. As with all
+provider CLI routes, team mode returns `501 unsupported` before parsing the body. Older daemons
+without the route return `404`; updating to a daemon that advertises `signIn.acceptsToken` enables
+this path. The route exists only for `claude`; other assistant IDs return `404`.
 
 ### `POST /v0/provider-clis/:cliId/cancel`
 

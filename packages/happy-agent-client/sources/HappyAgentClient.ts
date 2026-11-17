@@ -221,7 +221,11 @@ import type {
     ProviderRouteUseResponse,
     ProviderRoutesResponse,
 } from "./protocol/providerRoutes.js";
-import type { ProviderCliResponse, ProviderClisResponse } from "./protocol/providerClis.js";
+import type {
+    ClaudeSetupTokenRequest,
+    ProviderCliResponse,
+    ProviderClisResponse,
+} from "./protocol/providerClis.js";
 import type {
     EventPageQuery,
     EventPageResponse,
@@ -649,6 +653,19 @@ export class HappyAgentClient {
         return await this.#json({
             method: "GET",
             path: `v0/provider-clis/${encodeURIComponent(cliId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/provider-clis/claude/setup-token` — saves and applies a Claude setup token. */
+    async saveClaudeSetupToken(
+        request: ClaudeSetupTokenRequest,
+        options: RequestOptions = {},
+    ): Promise<ProviderCliResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/provider-clis/claude/setup-token",
+            json: request,
             signal: options.signal,
         });
     }
