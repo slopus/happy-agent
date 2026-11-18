@@ -34,9 +34,9 @@ describe("createPermissionReviewInstructions", () => {
         );
     });
 
-    it("keeps Codex's follow-up reminder", () => {
+    it("keeps Codex's follow-up policy while naming the schema field", () => {
         expect(PERMISSION_REVIEW_FOLLOWUP_REMINDER).toBe(
-            "Use prior reviews as context, not binding precedent. Follow the Workspace Policy. If the user explicitly approves a previously rejected action after being informed of the concrete risks, set <outcome> to allow unless the policy explicitly disallows user overwrites in such cases.",
+            "Use prior reviews as context, not binding precedent. Follow the Workspace Policy. If the user explicitly approves a previously rejected action after being informed of the concrete risks, set outcome to allow unless the policy explicitly disallows user overwrites in such cases.",
         );
     });
 
@@ -75,18 +75,28 @@ describe("createPermissionReviewInstructions", () => {
         );
     });
 
-    it("asks for the verdict as tagged fields the rationale cannot break", () => {
-        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain("<outcome>allow | deny</outcome>");
-        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain("<rationale>One concise sentence.");
-        expect(PERMISSION_REVIEW_INSTRUCTIONS).not.toContain("strict JSON");
+    it("requires a complete native structured decision and preserves low-risk policy denials", () => {
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(
+            "matching the supplied permission_review schema",
+        );
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(
+            "Always fill in every field, including for low-risk actions:",
+        );
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(
+            "outcome: allow or deny, derived from the security policy and trusted user evidence.",
+        );
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(
+            "A risk-only answer does not decide whether the action is allowed.",
+        );
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain("preserve that denial.");
     });
 
     it("pins the generated no-policy prompt to known bytes", () => {
         // Codex's bundled Guardian prompts at openai/codex f2b94ef with the differences listed in
         // `createPermissionReviewInstructions.ts`. Any drift should be a deliberate edit.
-        expect(PERMISSION_REVIEW_INSTRUCTIONS).toHaveLength(19_917);
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toHaveLength(20_121);
         expect(createHash("sha256").update(PERMISSION_REVIEW_INSTRUCTIONS).digest("hex")).toBe(
-            "6a622aeb5dc2572f4b1141a14daaeaf4536fe27299b0a29404378ca05fb7648d",
+            "fd1d0dcaff52e3903ea1163a1aab38444d9cacd176dfdc0f15520611fb6e592b",
         );
     });
 

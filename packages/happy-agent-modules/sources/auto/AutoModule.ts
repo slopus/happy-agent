@@ -57,6 +57,7 @@ import { AutoReviewEvidenceStore } from "./impl/AutoReviewEvidenceStore.js";
 import { AutoReviewRuntimeModule } from "./impl/AutoReviewRuntimeModule.js";
 import { AutoReviewComputeModule } from "./impl/AutoReviewComputeModule.js";
 import { AutoReviewHistoryModule } from "./impl/AutoReviewHistoryModule.js";
+import { AutoReviewProvider } from "./impl/AutoReviewProvider.js";
 import {
     assistantTextEvidence,
     assistantToolCallEvidence,
@@ -214,7 +215,7 @@ export class AutoModule implements AgentModule {
                     if (resolved === null) {
                         throw new Error(`The reviewer provider "${id}" could not be resolved.`);
                     }
-                    return resolved;
+                    return new AutoReviewProvider(resolved);
                 },
                 type,
             );
