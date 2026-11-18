@@ -425,6 +425,19 @@ Only the global or generated runtime layer may override it, and zero is invalid:
 never change the endpoint another node has stored. It binds no local port for it, so a collision
 with another program cannot happen.
 
+## Claude Code's entrypoint label is an experimental machine setting
+
+Anthropic's five-hour subscription meter charges requests whose Claude Code entrypoint is
+`sdk-ts` or `sdk-cli` roughly twice as much as the same tokens under any other label, and the
+Agent SDK fills in `sdk-ts` whenever `CLAUDE_CODE_ENTRYPOINT` is unset.
+`[feature.claude_entrypoint_label] enabled = true` makes every Claude Code child configuration
+builds — Happy's own Claude loop, including probes and text generation through it, and the Claude
+Code harness — start with `CLAUDE_CODE_ENTRYPOINT=happy-agent`. It replaces an inherited value unconditionally, because a
+daemon started inside the SDK or another Claude session inherits `sdk-ts` or `claude-desktop`.
+The label never starts with `sdk-` and is never `cli`, which Claude Code rewrites to `sdk-cli`
+when headless. It is off by default, leaves the environment untouched when off, never reaches
+terminals the person opens, and a repository cannot turn it on.
+
 ## Team mode is machine-scoped and owns a separate network identity boundary
 
 `[feature.team] enabled = true` is a global or runtime deployment choice, never a project choice.

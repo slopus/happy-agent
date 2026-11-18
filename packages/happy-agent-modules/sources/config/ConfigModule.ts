@@ -713,6 +713,12 @@ const partialValuesSchema = Type.Object(
         feature: Type.Optional(
             Type.Object(
                 {
+                    claude_entrypoint_label: Type.Optional(
+                        Type.Object(
+                            { enabled: Type.Optional(Type.Boolean()) },
+                            { additionalProperties: false },
+                        ),
+                    ),
                     codemode: Type.Optional(
                         Type.Object(
                             {
@@ -1165,6 +1171,10 @@ const resolvedValuesSchema = Type.Object(
         ),
         feature: Type.Object(
             {
+                claudeEntrypointLabel: Type.Object(
+                    { enabled: Type.Boolean() },
+                    { additionalProperties: false },
+                ),
                 codemode: Type.Object(
                     { enabled: Type.Boolean(), engine: codeModeEngineSchema },
                     { additionalProperties: false },
@@ -1617,6 +1627,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         workspaces: true,
     },
     feature: {
+        claudeEntrypointLabel: { enabled: false },
         codemode: { enabled: false, engine: "monty" },
         mobileConnector: {
             enabled: true,
@@ -5267,6 +5278,12 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         }
         if (partial.features !== undefined)
             Object.assign(merged.features, normalizeFeatures(partial.features));
+        if (partial.feature?.claude_entrypoint_label !== undefined) {
+            Object.assign(
+                merged.feature.claudeEntrypointLabel,
+                partial.feature.claude_entrypoint_label,
+            );
+        }
         if (partial.feature?.codemode !== undefined) {
             Object.assign(merged.feature.codemode, partial.feature.codemode);
         }
@@ -5436,6 +5453,9 @@ function normalizeFeatures(value: NonNullable<PartialValues["features"]>): Recor
 
 function normalizeFeature(value: NonNullable<PartialValues["feature"]>): Record<string, unknown> {
     return {
+        ...(value.claude_entrypoint_label === undefined
+            ? {}
+            : { claude_entrypoint_label: { ...value.claude_entrypoint_label } }),
         ...(value.codemode === undefined ? {} : { codemode: { ...value.codemode } }),
         ...(value.mobile_connector === undefined
             ? {}
@@ -6088,6 +6108,8 @@ function withoutProjectMachineSettings(values: PartialValues): PartialValues {
     } = values;
     const { permission_mode: _permissionMode, ...projectDefaults } = defaults ?? {};
     const {
+        // A repository must not change how this machine's Claude account identifies its requests.
+        claude_entrypoint_label: _claudeEntrypointLabel,
         // A repository must not open, move, or close this machine's phone connection socket.
         mobile_connector: _mobileConnector,
         tailcat: _tailcat,
@@ -6183,6 +6205,12 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
             result[normalizedSection] = name;
             if (section === "feature") {
                 const feature = source.feature;
+                if (feature?.claude_entrypoint_label !== undefined) {
+                    result["feature.claudeEntrypointLabel"] = name;
+                    if (feature.claude_entrypoint_label.enabled !== undefined) {
+                        result["feature.claudeEntrypointLabel.enabled"] = name;
+                    }
+                }
                 if (feature?.codemode !== undefined) {
                     result["feature.codemode"] = name;
                     if (feature.codemode.enabled !== undefined) {
@@ -6332,6 +6360,21 @@ function readFeature(
     assertTableSize(value, "feature");
     const result: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
+        if (key === "claude_entrypoint_label") {
+            if (!isTable(item))
+                throw new Error("feature.claude_entrypoint_label must be a TOML table.");
+            assertTableSize(item, "feature.claude_entrypoint_label");
+            const label: Record<string, unknown> = {};
+            for (const [labelKey, labelValue] of Object.entries(item)) {
+                if (labelKey !== "enabled") {
+                    unknown(`feature.claude_entrypoint_label.${labelKey}`);
+                    continue;
+                }
+                label[labelKey] = labelValue;
+            }
+            result.claude_entrypoint_label = label;
+            continue;
+        }
         if (key === "mobile_connector") {
             if (!isTable(item)) throw new Error("feature.mobile_connector must be a TOML table.");
             assertTableSize(item, "feature.mobile_connector");

@@ -80,6 +80,14 @@ that server receives every bot token. The exports themselves live in the databas
 names one export's private folder for files it receives,
 `.happy/agent/exported-bots/<kind>/<account>`, and validates both segments.
 
+`[feature.claude_entrypoint_label] enabled` is an experimental, machine-only opt-in, defaulting to
+`false`. Anthropic counts requests whose Claude Code entrypoint is the Agent SDK's `sdk-ts` or
+`sdk-cli` against a subscription's five-hour limit at roughly twice the rate of the same tokens
+from other clients. When on, every Claude Code child Happy starts through the Agent SDK, for its
+own Claude loop and for the Claude Code harness, runs with `CLAUDE_CODE_ENTRYPOINT=happy-agent`,
+replacing any inherited value. Off, the environment is passed through unchanged. Terminals the
+person opens are never affected.
+
 `[feature.tailcat] enabled = true` is a machine-only opt-in. The Tailcat module opens the daemon's
 active Unix-socket or team HTTP transport through bundled Tailcat v0.7.0, while the Happy API
 continues to require its ordinary local bearer token or WorkOS token. `port` defaults to the fixed,

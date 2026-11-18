@@ -22,6 +22,7 @@ import {
     OWN_LOGIN_HARNESS_TYPES,
     type Harness,
 } from "./harnesses.js";
+import { withClaudeEntrypointLabel } from "./withClaudeEntrypointLabel.js";
 
 type ConfiguredProvider = HappyAgentConfigValues["providers"][string];
 
@@ -48,6 +49,8 @@ export interface ForeignAgentRoute {
     readonly providerId: string;
     readonly provider: ConfiguredProvider;
     readonly agent: ForeignAgent;
+    /** Whether `[feature.claude_entrypoint_label]` is on. */
+    readonly claudeEntrypointLabel: boolean;
 }
 
 /** Every route an enabled harness serves, whether or not its account is enabled. */
@@ -55,6 +58,7 @@ export function foreignAgentRoutes(
     configuration: HappyAgentConfiguration,
 ): readonly ForeignAgentRoute[] {
     const { harnesses, providers } = configuration.values;
+    const claudeEntrypointLabel = configuration.values.feature.claudeEntrypointLabel.enabled;
     const routes: ForeignAgentRoute[] = [];
     for (const [harnessId, harness] of Object.entries(harnesses)) {
         if (!harness.enabled) continue;
@@ -67,6 +71,7 @@ export function foreignAgentRoutes(
                 providerId: harnessId,
                 provider,
                 agent: foreignAgent(harness.type, harnessId),
+                claudeEntrypointLabel,
             });
             continue;
         }
@@ -79,6 +84,7 @@ export function foreignAgentRoutes(
                 providerId,
                 provider,
                 agent: foreignAgent(harness.type, harnessId),
+                claudeEntrypointLabel,
             });
         }
     }
@@ -193,7 +199,8 @@ export function foreignAgentDirectory(agentHome: string, route: ForeignAgentRout
 
 /**
  * How one route's agent is started: the account's credentials in the form its CLI reads them,
- * and the harness's command, arguments and extra variables.
+ * and the harness's command, arguments and extra variables. Claude Code also gets Happy's
+ * entrypoint label when that feature is on.
  */
 export function foreignAgentStart(route: ForeignAgentRoute): ForeignAgentStart {
     const { harness, provider, agent } = route;
@@ -220,7 +227,10 @@ export function foreignAgentStart(route: ForeignAgentRoute): ForeignAgentStart {
     return {
         ...(harness.command === undefined ? {} : { command: harness.command }),
         ...(harness.args === undefined ? {} : { args: harness.args }),
-        env: { ...agent.credentialEnvironment(credentials), ...harness.env },
+        env: withClaudeEntrypointLabel(
+            { ...agent.credentialEnvironment(credentials), ...harness.env },
+            agent.type === "claude-code" && route.claudeEntrypointLabel,
+        ),
     };
 }
 

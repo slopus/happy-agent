@@ -56,6 +56,12 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # enabled = false
 # engine = "monty"
 
+# Experimental: Claude Code processes Happy starts identify themselves as "happy-agent" instead of
+# the Agent SDK's "sdk-ts", which Anthropic counts more heavily against a subscription's five-hour
+# limit.
+# [feature.claude_entrypoint_label]
+# enabled = false
+
 # Tailcat v0.7.0 opens the active Happy Agent API transport through an account-free,
 # WireGuard-encrypted tunnel. Happy API bearer or WorkOS authentication still applies.
 # [feature.tailcat]

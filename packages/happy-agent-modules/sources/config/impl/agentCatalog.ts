@@ -51,6 +51,7 @@ import { observeProviderExecution } from "./observeProviderExecution.js";
 import { resolveDefaultNodeName } from "./resolveDefaultNodeName.js";
 import { openAICompatibleApiKey, openAICompatibleModels } from "./openAICompatibleModels.js";
 import { readClaudeSettingsEnvironment } from "./readClaudeSettingsEnvironment.js";
+import { withClaudeEntrypointLabel } from "./withClaudeEntrypointLabel.js";
 import { readCodexModelProvider, type CodexModelProvider } from "./readCodexModelProvider.js";
 
 type ConfiguredProvider = HappyAgentConfigValues["providers"][string];
@@ -679,6 +680,7 @@ export function agentProviders(
                                   configuration.paths.claudeWorkingDirectory,
                                   configuration.paths.agentHome,
                                   sources,
+                                  configuration.values.feature.claudeEntrypointLabel.enabled,
                                   onAccountUsage,
                               );
                     credentialFailures?.clear(id);
@@ -824,6 +826,7 @@ async function createProvider(
     claudeWorkingDirectory: string,
     agentHome: string,
     sources: CredentialDiagnosticSources,
+    claudeEntrypointLabel: boolean,
     onAccountUsage?: (usage: ProviderUsage) => void,
 ): Promise<BaseProvider> {
     // Credential isolation means this provider may use only what its own configuration names.
@@ -1085,7 +1088,14 @@ async function createProvider(
                     !process.env.CLAUDE_CONFIG_DIR?.trim(),
             ),
             cwd: claudeWorkingDirectory,
-            ...(configuredEnvironment === undefined ? {} : { env: configuredEnvironment }),
+            ...(configuredEnvironment === undefined && !claudeEntrypointLabel
+                ? {}
+                : {
+                      env: withClaudeEntrypointLabel(
+                          configuredEnvironment ?? process.env,
+                          claudeEntrypointLabel,
+                      ),
+                  }),
             // Bun cannot use the SDK's runtime require.resolve from its compiled filesystem.
             // The standalone build adapts this resolver to materialize its embedded executable.
             pathToClaudeCodeExecutable: provider.executable ?? resolveClaudeCodeExecutablePath(),
