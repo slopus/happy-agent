@@ -29,7 +29,9 @@ program has to answer `--version` to count as installed.
 
 ## Signed-in state
 
-Each assistant has its own check. Claude reads `claude auth status --json`. Codex runs
+Each assistant has its own check. Claude reads `claude auth status --json`, and takes the plan
+name Anthropic gives the account from `oauthAccount.planDisplayName` in Claude Code's
+`.claude.json`. Codex runs
 `codex login status` and reads the email and plan from the token claims in `~/.codex/auth.json`.
 Grok reads `~/.grok/auth.json`. Antigravity checks its token file and falls back to `agy models`.
 Sign-ins use each vendor's normal home folder, so an existing sign-in is reused rather than
