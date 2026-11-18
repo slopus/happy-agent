@@ -31,6 +31,16 @@ after the program exits. Waiting for the end of output then hangs forever. The m
 as they arrive and settles 250 ms after the program exits. The same rule keeps sign-in responsive
 everywhere: the page and code appear as soon as the program prints them.
 
+## Claude's plan is the name Anthropic gives it, not `subscriptionType`
+
+`claude auth status --json` reports `subscriptionType: "max"` (and `planTier: "max_20x"`) for an
+account Anthropic calls **Ultra**, so showing either one was wrong. Claude Code stores the real
+name in `oauthAccount.planDisplayName` of its config file (`$CLAUDE_CONFIG_DIR/.claude.json`, else
+`~/.claude.json`) and shows it as `Claude Ultra`. The module shows that name when the file's
+`emailAddress` is the signed-in account's, since the file outlives a sign-out. Without it (older
+Claude Code, no profile) the capitalised `subscriptionType` remains. The file also holds every
+project's history, so it is read with a 16 MiB limit instead of the auth-file limit.
+
 ## Antigravity has no sign-in command
 
 `agy` has no `login` subcommand. Running a prompt while signed out prints a Google sign-in page,
