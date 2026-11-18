@@ -126,6 +126,8 @@ Hardcode each provider's supported model catalog in Rig. The daemon must not dis
 
 Use canonical provider keys throughout the product: `claude` for Anthropic models, `codex` for OpenAI and GPT models, and `grok` for xAI and Grok models. SDK, transport, and implementation names must not leak into provider keys.
 
+When you add, rename, or remove a model ID anywhere it is mapped (the curated rows and `BEDROCK_MANTLE_REGIONS` in `packages/happy-agent-modules/sources/config/impl/agentCatalog.ts`, `resolveBedrockModelId` and `resolveAnthropicBedrockModelId`, the vendor ID maps, the titles module's `ECONOMICAL_MODEL_IDS`), update `RELATIVE_COST_RANKS` and `FABLE_MODEL` in `packages/happy-agent-modules/sources/providerScan/verificationCandidates.ts` in the same change. Provider verification tries models cheapest first by that rank and never uses Fable, so a stale entry makes it test a missing ID or a more expensive model than intended.
+
 ## Vendor and common tools
 
 Tools are either vendor tools or common tools. Vendor tools are the provider's own surface: Codex, Claude, Pi, and Grok each have their native names, argument schemas, and model guidance. Common tools belong to Rig itself rather than to any vendor — scheduling, working with workspaces, and the rest of the product's own capabilities. A common tool is exactly the same for every vendor.
