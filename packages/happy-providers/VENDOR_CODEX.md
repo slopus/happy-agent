@@ -31,6 +31,11 @@ behavior, reporting response metadata separately without claiming it proves the 
 The account-capability reader was also verified against the same authenticated account: Astra
 advertised `priority` and `ultrafast`, while Sol advertised only `priority`.
 
+OpenAI later offered Ultrafast for GPT-6.2 Sol on the $200 ChatGPT Pro plan
+(`chatgpt_plan_type = "pro"`). Happy's configuration grants that pairing from the stored login's
+ID-token plan claim and merges it with this reader's answer, so it does not depend on the account's
+`/codex/models` response. This reader is unchanged: it still reports only what the catalog lists.
+
 Native source also sends `x-codex-routing-hint: model=gpt-6-astra;tier=ultrafast` to the
 ChatGPT backend, alongside the body field. Happy now matches this contract on SSE and the
 WebSocket handshake; changing speed reconnects the socket and clears sticky routing. Regular

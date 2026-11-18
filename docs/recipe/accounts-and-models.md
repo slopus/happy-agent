@@ -144,6 +144,9 @@ allowed levels are listed per model in `GET /v0/config`.
 
 - A tier applies only when the selected account and model support it. `GET /v0/config` lists each
   model's supported tiers per provider.
+- Ultrafast comes from each Codex account's own catalog, and GPT-6.2 Sol always offers it on a
+  ChatGPT Pro ($200) login. A smart pool offers Ultrafast only when every enabled account in it
+  does.
 - Fast inference uses twice the plan usage.
 
 ## Switching existing sessions

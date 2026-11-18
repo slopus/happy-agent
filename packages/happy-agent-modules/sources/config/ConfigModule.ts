@@ -2353,7 +2353,7 @@ export class ConfigModule implements AgentModule {
                 },
                 (id) => this.isProviderEnabled(id),
                 (id) => this.#isAccountEnabled(id),
-            ).map((model) => this.#serviceTiers.apply(model)),
+            ).map(this.#applyServiceTiers()),
         );
     }
 
@@ -2479,10 +2479,11 @@ export class ConfigModule implements AgentModule {
                 catalog.push(entry);
             }
         }
+        const applyServiceTiers = this.#applyServiceTiers();
         return catalog.map((model) => {
             const effective = scriptedProviderIds.has(model.providerId)
                 ? model
-                : this.#serviceTiers.apply(model);
+                : applyServiceTiers(model);
             return {
                 ...effective,
                 serviceTierOptions: modelServiceTierOptions(effective.serviceTiers),
@@ -3529,7 +3530,46 @@ export class ConfigModule implements AgentModule {
                 "Ultrafast is unavailable for this account and model. Choose Regular or Fast and try again.",
             );
         }
-        await this.#serviceTiers.validate(providerId, model, provider);
+        await this.#serviceTiers.validate(
+            providerId,
+            model,
+            provider,
+            model === undefined
+                ? undefined
+                : this.#serviceTierMembers(this.#serviceTierRoute(providerId), model),
+        );
+    }
+
+    /** Adds account Ultrafast eligibility, reading each smart route once per pass. */
+    #applyServiceTiers(): <T extends AgentModel>(model: T) => T {
+        const routes = new Map<string, ReturnType<typeof smartProviderRoute>>();
+        return (model) => {
+            if (!routes.has(model.providerId))
+                routes.set(model.providerId, this.#serviceTierRoute(model.providerId));
+            return this.#serviceTiers.apply(
+                model,
+                this.#serviceTierMembers(routes.get(model.providerId), model.id),
+            );
+        };
+    }
+
+    #serviceTierRoute(providerId: string): ReturnType<typeof smartProviderRoute> {
+        return this.configuration.values.providers[providerId]?.type === "smart"
+            ? smartProviderRoute(this.configuration, providerId)
+            : undefined;
+    }
+
+    /** The enabled accounts a smart route may send this model to; undefined for a concrete account. */
+    #serviceTierMembers(
+        route: ReturnType<typeof smartProviderRoute>,
+        model: string,
+    ): readonly string[] | undefined {
+        if (route === undefined) return undefined;
+        return (
+            route.models
+                .find((candidate) => candidate.model.id === model)
+                ?.candidates.filter((id) => this.#isAccountEnabled(id)) ?? []
+        );
     }
 
     /** Refresh only tier metadata for fixed curated routes; no model discovery or inference. */

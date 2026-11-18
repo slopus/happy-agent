@@ -11,6 +11,8 @@ const configs: ConfigModule[] = [];
 const ctx = createRootContext().named("service-tier-test");
 const ASTRA = "openai/gpt-6-astra";
 const SOL = "openai/gpt-6-sol";
+const SOL_6_2 = "openai/gpt-6.2-sol";
+const ASTRA_6_2 = "openai/gpt-6.2-astra";
 
 afterEach(async () => {
     for (const config of configs.splice(0)) config.closeProviders();
@@ -183,6 +185,65 @@ describe("account-scoped Codex service tiers", () => {
         expect(providers.first.modelServiceTiers).toHaveBeenCalledOnce();
     });
 
+    it("offers Ultrafast on GPT-6.2 Sol to a Pro login the remote catalog omits", async () => {
+        const { config, providers } = await fixture({ first: "pro", second: "pro" });
+        providers.first.modelServiceTiers.mockResolvedValue({});
+        expect(tiers(config, "first", SOL_6_2)).toEqual(["priority"]);
+        await config.refreshProviderServiceTiers(ctx);
+        expect(tiers(config, "first", SOL_6_2)).toEqual(["priority", "ultrafast"]);
+        expect(tiers(config, "second", SOL_6_2)).toEqual(["priority", "ultrafast"]);
+        expect(tiers(config, "first", ASTRA)).toEqual(["priority"]);
+        expect(tiers(config, "first", ASTRA_6_2)).toEqual(["priority"]);
+        await expect(
+            config.validateProviderServiceTier("first", SOL_6_2, "ultrafast"),
+        ).resolves.toBeUndefined();
+        await expect(
+            config.validateProviderServiceTier("first", ASTRA_6_2, "ultrafast"),
+        ).rejects.toThrow("Ultrafast");
+    });
+
+    it("keeps lower and unreadable plans on the remote catalog's answer", async () => {
+        const { config } = await fixture({ first: "prolite", second: "plus" });
+        await config.refreshProviderServiceTiers(ctx);
+        expect(tiers(config, "first", SOL_6_2)).toEqual(["priority"]);
+        expect(tiers(config, "first", ASTRA)).toEqual(["priority", "ultrafast"]);
+        expect(tiers(config, "second", SOL_6_2)).toEqual(["priority"]);
+        await expect(
+            config.validateProviderServiceTier("second", SOL_6_2, "ultrafast"),
+        ).rejects.toThrow("Ultrafast");
+
+        const unreadable = await fixture();
+        await unreadable.config.refreshProviderServiceTiers(ctx);
+        expect(tiers(unreadable.config, "first", SOL_6_2)).toEqual(["priority"]);
+    });
+
+    it("offers Ultrafast through a smart route only when every enabled member does", async () => {
+        const { config } = await fixture({ first: "pro", second: "plus" });
+        await config.refreshProviderServiceTiers(ctx);
+        expect(tiers(config, "smart", SOL_6_2)).toEqual(["priority"]);
+        await expect(
+            config.validateProviderServiceTier("smart", SOL_6_2, "ultrafast"),
+        ).rejects.toThrow("Ultrafast");
+        config.setProviderEnabled("second", false);
+        expect(tiers(config, "smart", SOL_6_2)).toEqual(["priority", "ultrafast"]);
+        expect(
+            config.models.find((model) => model.providerId === "smart" && model.id === SOL_6_2)
+                ?.serviceTiers,
+        ).toEqual(["priority", "ultrafast"]);
+        await expect(
+            config.validateProviderServiceTier("smart", SOL_6_2, "ultrafast"),
+        ).resolves.toBeUndefined();
+        expect(tiers(config, "smart", ASTRA_6_2)).toEqual(["priority"]);
+        config.setProviderEnabled("first", false);
+        await expect(
+            config.validateProviderServiceTier("smart", SOL_6_2, "ultrafast"),
+        ).rejects.toThrow("Ultrafast");
+
+        const both = await fixture({ first: "pro", second: "pro" });
+        await both.config.refreshProviderServiceTiers(ctx);
+        expect(tiers(both.config, "smart", SOL_6_2)).toEqual(["priority", "ultrafast"]);
+    });
+
     it("does not overlap refresh passes and clears disabled accounts", async () => {
         const { config, providers } = await fixture();
         let finish!: (value: Readonly<Record<string, readonly string[]>>) => void;
@@ -207,15 +268,26 @@ function tiers(config: ConfigModule, providerId: string, modelId: string) {
         ?.serviceTiers;
 }
 
-async function fixture() {
+/** A stored Codex login whose ID token names `plan`; the signature is never checked locally. */
+function login(plan: string): string {
+    const claims = Buffer.from(
+        JSON.stringify({ "https://api.openai.com/auth": { chatgpt_plan_type: plan } }),
+    ).toString("base64url");
+    return JSON.stringify({ tokens: { id_token: `e30.${claims}.signature` } });
+}
+
+async function fixture(plans: { first?: string; second?: string } = {}) {
     const root = await mkdtemp(join(tmpdir(), "happy-service-tiers-"));
     roots.push(root);
     const directory = join(root, process.platform === "darwin" ? "Happy/Config" : "happy/config");
     await mkdir(directory, { recursive: true });
     const firstFile = join(root, "first.json");
     const secondFile = join(root, "second.json");
-    await writeFile(firstFile, "first credential");
-    await writeFile(secondFile, "second credential");
+    await writeFile(firstFile, plans.first === undefined ? "first credential" : login(plans.first));
+    await writeFile(
+        secondFile,
+        plans.second === undefined ? "second credential" : login(plans.second),
+    );
     await writeFile(
         join(directory, "happy.toml"),
         [

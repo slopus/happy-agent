@@ -261,11 +261,25 @@ Ultrafast is an authenticated account/model capability, not a static property of
 model. Configuration keeps the model list curated and asks the native provider only for tier
 metadata for those known IDs. Each concrete account has a five-minute eligibility cache, refreshed
 off the inference path and invalidated by credential-file changes, account changes, failures,
-disablement, or shutdown. Unknown accounts and smart aliases do not advertise Ultrafast. Regular
-and Fast keep their existing behavior. Connected clients receive the existing configuration-change
-event when eligibility changes; unchanged proactive refreshes do not reset their selection.
+disablement, or shutdown. Unknown accounts do not advertise Ultrafast. Regular and Fast keep their
+existing behavior. Connected clients receive the existing configuration-change event when
+eligibility changes; unchanged proactive refreshes do not reset their selection.
 Every Ultrafast inference rechecks the local account identity, including restored saved choices,
 and rejects unsupported choices visibly rather than silently executing a differently priced tier.
+
+The remote catalog alone left GPT-6.2 Sol at Regular and Fast on $200 Pro accounts after OpenAI
+began offering Ultrafast there, and an expired stored login made the catalog answer nothing at
+all. The user ruled that this plan is known product policy, not something to wait for the catalog
+to confirm. A static plan table in the tier cache now grants Ultrafast for GPT-6.2 Sol when the
+stored login's ID token names `chatgpt_plan_type = "pro"`, merged with whatever the catalog lists.
+Other models and lower plans, including `prolite`, still depend on the catalog. A login whose plan
+cannot be read gets no static grant: unknown eligibility stays unavailable, as before. The plan is
+re-read with each refresh, and a rewritten login invalidates the cache like any other change.
+
+A smart alias offers Ultrafast for a model only when every enabled account it may route that model
+to is eligible, and validation rechecks each of those accounts' identities. The router chooses the
+account after validation, so requiring all of them keeps a pool from sending Ultrafast to an
+account that cannot use it. Disabled members are ignored; a pool with none enabled offers nothing.
 
 ## Idle credential maintenance excludes Claude
 

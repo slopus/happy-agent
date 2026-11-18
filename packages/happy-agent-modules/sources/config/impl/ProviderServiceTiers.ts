@@ -1,8 +1,17 @@
 import { statSync } from "node:fs";
 import type { AgentModel } from "@slopus/happy-agent-base";
 import { CodexProvider, CodexSessionCredential, type BaseProvider } from "@slopus/happy-providers";
+import { readCodexPlanType } from "./readCodexPlanType.js";
 
 const CACHE_LIFETIME_MS = 5 * 60_000;
+
+/**
+ * Ultrafast models OpenAI offers on a ChatGPT plan even when that account's remote catalog does
+ * not list them. Merged with the remote answer; a login whose plan cannot be read gets none.
+ */
+const PLAN_ULTRAFAST_MODELS: Readonly<Record<string, readonly string[]>> = {
+    pro: ["openai/gpt-6.2-sol"],
+};
 
 interface AccountTiers {
     readonly provider: CodexProvider;
@@ -33,8 +42,17 @@ export class ProviderServiceTiers {
         if (changed) this.#changed();
     }
 
-    apply<T extends AgentModel>(model: T): T {
-        return this.#current(model.providerId)?.ultrafastModels.has(model.id)
+    /**
+     * `members` names the enabled accounts a smart route may send this model to; the route offers
+     * Ultrafast only when every one of them does.
+     */
+    apply<T extends AgentModel>(model: T, members?: readonly string[]): T {
+        const eligible =
+            members === undefined
+                ? this.#current(model.providerId)?.ultrafastModels.has(model.id) === true
+                : members.length > 0 &&
+                  members.every((member) => this.#current(member)?.ultrafastModels.has(model.id));
+        return eligible
             ? { ...model, serviceTiers: [...new Set([...(model.serviceTiers ?? []), "ultrafast"])] }
             : model;
     }
@@ -63,7 +81,10 @@ export class ProviderServiceTiers {
                 this.clear(providerId);
                 return;
             }
-            const tiers = await provider.modelServiceTiers(models, { signal });
+            const [tiers, plan] = await Promise.all([
+                provider.modelServiceTiers(models, { signal }),
+                readCodexPlanType(authFile),
+            ]);
             if (
                 signal.aborted ||
                 key !== (await provider.serviceTierAccountKey()) ||
@@ -72,8 +93,11 @@ export class ProviderServiceTiers {
                 this.clear(providerId);
                 return;
             }
+            const planModels = plan === undefined ? [] : (PLAN_ULTRAFAST_MODELS[plan] ?? []);
             const ultrafastModels = new Set(
-                models.filter((model) => tiers[model]?.includes("ultrafast")),
+                models.filter(
+                    (model) => tiers[model]?.includes("ultrafast") || planModels.includes(model),
+                ),
             );
             this.#accounts.set(providerId, {
                 provider,
@@ -98,31 +122,54 @@ export class ProviderServiceTiers {
         }
     }
 
+    /**
+     * `members` names the enabled accounts a smart route may send this model to. The router picks
+     * one later, so each must still hold its own eligible login.
+     */
     async validate(
         providerId: string,
         model: string | undefined,
         provider?: BaseProvider,
+        members?: readonly string[],
     ): Promise<void> {
-        const current = this.#current(providerId);
-        if (current !== undefined && model !== undefined && current.ultrafastModels.has(model)) {
-            try {
-                // Concrete providers are reconstructed by the registry. A previously opened
-                // session may still belong to an old account even after the cache refreshed.
-                const actual = provider ?? current.provider;
-                if (
-                    actual instanceof CodexProvider &&
-                    (await actual.serviceTierAccountKey()) === current.accountKey &&
-                    this.#current(providerId) === current
-                )
-                    return;
-            } catch {
-                // A missing or unreadable credential is not evidence of eligibility.
-            }
-            this.clear(providerId);
-        }
+        const eligible =
+            members === undefined
+                ? await this.#eligible(providerId, model, provider)
+                : members.length > 0 &&
+                  (
+                      await Promise.all(
+                          members.map(async (member) => await this.#eligible(member, model)),
+                      )
+                  ).every(Boolean);
+        if (eligible) return;
         throw new Error(
             "Ultrafast is unavailable for this account and model. Choose Regular or Fast and try again.",
         );
+    }
+
+    async #eligible(
+        providerId: string,
+        model: string | undefined,
+        provider?: BaseProvider,
+    ): Promise<boolean> {
+        const current = this.#current(providerId);
+        if (current === undefined || model === undefined || !current.ultrafastModels.has(model))
+            return false;
+        try {
+            // Concrete providers are reconstructed by the registry. A previously opened
+            // session may still belong to an old account even after the cache refreshed.
+            const actual = provider ?? current.provider;
+            if (
+                actual instanceof CodexProvider &&
+                (await actual.serviceTierAccountKey()) === current.accountKey &&
+                this.#current(providerId) === current
+            )
+                return true;
+        } catch {
+            // A missing or unreadable credential is not evidence of eligibility.
+        }
+        this.clear(providerId);
+        return false;
     }
 
     #current(providerId: string): AccountTiers | undefined {
