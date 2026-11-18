@@ -199,25 +199,62 @@ describe("describeVerificationFailure", () => {
         );
     });
 
-    it("lists every model a failed inference check tried", () => {
+    it("lists the models tried before a failure every model would share", () => {
         const failure = describeVerificationFailure(
             {
                 ...BEDROCK,
                 modelId: "anthropic/opus-5",
-                triedModelIds: ["anthropic/sonnet-5", "anthropic/opus-5-5", "anthropic/opus-5"],
+                triedModelIds: ["anthropic/sonnet-5", "anthropic/opus-5"],
             },
             {
                 type: "session_error",
                 kind: "unknown",
-                message: "The provided model identifier is invalid.",
-                providerError: { type: "unclassified", diagnostics: { status: 400 } },
+                message: "Too many requests.",
+                providerError: { type: "rate_limit", diagnostics: { status: 429 } },
             },
         );
-        expect(failure.kind).toBe("model_unavailable");
+        expect(failure.kind).toBe("quota");
         expect(failure.message).toMatch(
-            /^Tried anthropic\/sonnet-5, anthropic\/opus-5-5, anthropic\/opus-5\. Model anthropic\/opus-5 is not available/u,
+            /^Tried anthropic\/sonnet-5, anthropic\/opus-5\. Amazon Bedrock refused the test request/u,
         );
-        expect(failure.message.length).toBeLessThanOrEqual(500);
+    });
+
+    it("says the credentials work when every tried model failed on its own", () => {
+        const failure = describeVerificationFailure(
+            {
+                ...BEDROCK,
+                modelId: "anthropic/opus-5",
+                triedModelIds: ["anthropic/sonnet-5", "anthropic/opus-5"],
+            },
+            {
+                type: "models_failed",
+                attempts: [
+                    {
+                        modelName: "Sonnet 5",
+                        problem: {
+                            type: "session_error",
+                            kind: "unknown",
+                            message: "The provided model identifier is invalid.",
+                            providerError: { type: "unclassified", diagnostics: { status: 400 } },
+                        },
+                    },
+                    {
+                        modelName: "Opus 5 1M",
+                        problem: {
+                            type: "session_error",
+                            kind: "unknown",
+                            message: '"thinking.type.disabled" is not supported for this model',
+                            providerError: { type: "unclassified", diagnostics: { status: 400 } },
+                        },
+                    },
+                ],
+            },
+        );
+        expect(failure).toEqual({
+            kind: "model_unavailable",
+            message:
+                "Your credentials for Amazon Bedrock work, but none of the models Happy tried answered: Sonnet 5 (not available in us-east-1), Opus 5 1M (request rejected for this model). Enable a model your account can use under Model access in the Amazon Bedrock console.",
+        });
     });
 
     it.each<[string, VerificationProblem]>([

@@ -34,7 +34,9 @@ cheapest first by a static relative cost rank by family (not prices), and picks 
 effort other than "off". Verification stops at the first model that answers and moves on only after
 a model-specific failure (`isModelSpecificFailure`: an unavailable model or an invalid request for
 it), trying at most three models within the same 30-second bound. A provider whose only enabled
-models are Fable fails with `no_model`, and a failure after several models names each one. A
+models are Fable fails with `no_model`. When every tried model failed for a reason of its own, the
+`model_unavailable` message says the credentials work and lists each model with its short reason;
+a failure every model would share keeps its own explanation, prefixed with the models tried. A
 successful verification is remembered, while a failure changes no earlier discovery. A failure
 returns `failure: { kind, message }`: `describeVerificationFailure` classifies the problem
 (missing credentials, authentication, network, TLS, timeout, unavailable model, quota, provider

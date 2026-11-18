@@ -40,7 +40,15 @@ export type VerificationProblem =
           readonly message: string;
           readonly providerError?: SessionProviderError;
       }
-    | { readonly type: "incomplete"; readonly state: string | null };
+    | { readonly type: "incomplete"; readonly state: string | null }
+    | {
+          /** Every model tried failed for a reason of its own, so the credentials do work. */
+          readonly type: "models_failed";
+          readonly attempts: readonly {
+              readonly modelName: string;
+              readonly problem: VerificationProblem;
+          }[];
+      };
 
 /** Classify a verification problem and explain it without credentials or raw vendor output. */
 export function describeVerificationFailure(
@@ -50,7 +58,9 @@ export function describeVerificationFailure(
     const failure = explain(target, problem);
     const tried = target.triedModelIds ?? [];
     const message =
-        tried.length > 1 ? `Tried ${tried.join(", ")}. ${failure.message}` : failure.message;
+        tried.length > 1 && problem.type !== "models_failed"
+            ? `Tried ${tried.join(", ")}. ${failure.message}`
+            : failure.message;
     return { kind: failure.kind, message: truncate(message, MESSAGE_LIMIT) };
 }
 
@@ -96,6 +106,13 @@ export function verificationProblemReason(problem: VerificationProblem): string 
             return problem.state === null
                 ? "The model stream ended without a final result."
                 : `The model request ended in the "${problem.state}" state.`;
+        case "models_failed":
+            return `No tried model answered. ${problem.attempts
+                .map(
+                    ({ modelName, problem }) =>
+                        `${modelName}: ${verificationProblemReason(problem)}`,
+                )
+                .join(" ")}`;
     }
 }
 
@@ -154,7 +171,26 @@ function explain(target: VerificationTarget, problem: VerificationProblem): Expl
             return classify(target, errorEvidence(problem.error));
         case "session_error":
             return classify(target, sessionEvidence(problem));
+        case "models_failed":
+            return modelsFailed(target, problem.attempts);
     }
+}
+
+function modelsFailed(
+    target: VerificationTarget,
+    attempts: Extract<VerificationProblem, { type: "models_failed" }>["attempts"],
+): Explained {
+    const tried = attempts.map(({ modelName, problem }) => {
+        const unavailable = explain(target, problem).kind === "model_unavailable";
+        const reason = unavailable
+            ? `not available${target.region === undefined ? "" : ` in ${target.region}`}`
+            : "request rejected for this model";
+        return `${truncate(modelName.replace(/\s+/gu, " ").trim(), 64)} (${reason})`;
+    });
+    return {
+        kind: "model_unavailable",
+        message: `Your credentials for ${target.label} work, but none of the models Happy tried answered: ${tried.join(", ")}. Enable a model your account can use${target.type === "bedrock" ? " under Model access in the Amazon Bedrock console" : ""}.`,
+    };
 }
 
 function classify(target: VerificationTarget, evidence: Evidence): Explained {

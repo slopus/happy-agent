@@ -389,7 +389,7 @@ export class ProviderScanModule implements AgentModule {
             };
         }
         const tried: string[] = [];
-        let problem: VerificationProblem = { type: "incomplete", state: null };
+        const failed: { readonly modelName: string; readonly problem: VerificationProblem }[] = [];
         for (const model of candidates.slice(0, MAX_INFERENCE_ATTEMPTS)) {
             if (tried.length > 0 && deadline - Date.now() < MIN_ATTEMPT_BUDGET_MS) break;
             tried.push(model.id);
@@ -397,20 +397,21 @@ export class ProviderScanModule implements AgentModule {
             if (attempt === undefined) {
                 return { modelId: model.id, passed: true, triedModelIds: tried };
             }
-            problem = attempt;
             if (
                 signal.aborted ||
-                !isModelSpecificFailure(this.#verificationTarget(providerId, model.id), problem)
+                !isModelSpecificFailure(this.#verificationTarget(providerId, model.id), attempt)
             ) {
-                break;
+                // A failure every model would share explains itself.
+                return { modelId: model.id, passed: false, problem: attempt, triedModelIds: tried };
             }
-            ctx.log.info("Provider verification model failed.", {
-                providerId,
-                modelId: model.id,
-                reason: verificationProblemReason(problem),
-            });
+            failed.push({ modelName: model.name, problem: attempt });
         }
-        return { modelId: tried.at(-1) ?? null, passed: false, problem, triedModelIds: tried };
+        return {
+            modelId: tried.at(-1) ?? null,
+            passed: false,
+            problem: { type: "models_failed", attempts: failed },
+            triedModelIds: tried,
+        };
     }
 
     /** One minimal no-tool request; `undefined` means the model answered. */

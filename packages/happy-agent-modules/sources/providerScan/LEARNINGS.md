@@ -20,7 +20,10 @@ or unpermitted model, or an invalid request such as a rejected thinking setting)
 three models and only while five seconds of the 30-second budget remain. Missing credentials,
 sign-in, TLS, network, quota, and provider-side failures stop at once because every model would
 share them. A provider whose only enabled models are Fable reports `no_model` and asks the person
-to enable another model. When the catalog gains, renames, or drops a model, update the rank and the
+to enable another model. A model-specific error proves the request already passed the network, TLS,
+proxy, and credential checks, so when every attempt fails that way the `model_unavailable`
+message says the credentials work and lists each model with why it failed, instead of reading
+like a sign-in problem. When the catalog gains, renames, or drops a model, update the rank and the
 Fable pattern in `verificationCandidates.ts` with it.
 
 ## A failed verification explains itself

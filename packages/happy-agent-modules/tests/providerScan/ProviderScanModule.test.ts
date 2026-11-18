@@ -365,10 +365,39 @@ describe("ProviderScanModule", () => {
             modelId: "anthropic/opus-5",
             status: "failed",
         });
-        expect(result.failure?.message).toMatch(
-            /^Tried anthropic\/sonnet-5, anthropic\/sonnet-5-5, anthropic\/opus-5\. Model anthropic\/opus-5 is not available/u,
+        expect(result.failure?.message).toBe(
+            "Your credentials for Amazon Bedrock work, but none of the models Happy tried answered: anthropic/sonnet-5 (not available), anthropic/sonnet-5-5 (not available), anthropic/opus-5 (not available). Enable a model your account can use under Model access in the Amazon Bedrock console.",
         );
         expect(result.failure?.message.length).toBeLessThanOrEqual(500);
+    });
+
+    it("keeps a shared failure's explanation after a model-specific one", async () => {
+        const { provider, result } = await verifyScripted(
+            ["anthropic/opus-5", "anthropic/sonnet-5"],
+            {
+                "anthropic/sonnet-5": thinkingRejected(),
+                "anthropic/opus-5": {
+                    type: "done",
+                    state: "error",
+                    kind: "unknown",
+                    message: "Too many requests.",
+                    providerError: { type: "rate_limit", diagnostics: { status: 429 } },
+                },
+            },
+        );
+
+        expect(provider.requests.map(({ model }) => model)).toEqual([
+            "anthropic/sonnet-5",
+            "anthropic/opus-5",
+        ]);
+        expect(result).toMatchObject({
+            failure: { kind: "quota" },
+            modelId: "anthropic/opus-5",
+            status: "failed",
+        });
+        expect(result.failure?.message).toMatch(
+            /^Tried anthropic\/sonnet-5, anthropic\/opus-5\. Amazon Bedrock refused the test request because of a rate limit/u,
+        );
     });
 
     it("refuses to verify with Fable when it is the only enabled model", async () => {
