@@ -7,19 +7,29 @@ import type {
     ProviderVerificationResponse,
 } from "@slopus/happy-agent-client";
 import type { AgentModel, AgentModule } from "@slopus/happy-agent-base";
-import type { BaseSession, SessionReasoningEffort } from "@slopus/happy-providers";
+import type { BaseSession } from "@slopus/happy-providers";
 import { asyncLock, detach, withLifetime, type AsyncLock, type Context } from "@steve.kite/stdlib";
 
 import { ConfigModule } from "../config/index.js";
 import {
     describeVerificationFailure,
+    isModelSpecificFailure,
     verificationProblemReason,
     type VerificationProblem,
     type VerificationTarget,
 } from "./describeVerificationFailure.js";
+import { verificationCandidates, verificationEffort } from "./verificationCandidates.js";
 
 const PROVIDER_PROBE_TIMEOUT_MS = 10_000;
+/** One budget for the whole check, every model attempt included, well inside the desktop's 60s. */
 const VERIFICATION_TIMEOUT_MS = 30_000;
+/** Models tried before giving up; only a model-specific failure moves on to the next one. */
+const MAX_INFERENCE_ATTEMPTS = 3;
+/**
+ * A further model is tried only with at least this much of the budget left, because a probe cut
+ * short would replace a clear model-specific failure with a vague timeout.
+ */
+const MIN_ATTEMPT_BUDGET_MS = 5_000;
 
 /** Owns provider discovery, durable user overrides, and bounded account verification. */
 export class ProviderScanModule implements AgentModule {
@@ -86,6 +96,7 @@ export class ProviderScanModule implements AgentModule {
     ): Promise<ProviderVerificationResponse> {
         await this.#load(ctx);
         this.#assertProvider(providerId);
+        const deadline = Date.now() + VERIFICATION_TIMEOUT_MS;
         const controller = new AbortController();
         const active = this.#verifications.get(providerId) ?? new Set<AbortController>();
         active.add(controller);
@@ -99,6 +110,7 @@ export class ProviderScanModule implements AgentModule {
 
         let performedLevel = requestedLevel;
         let modelId: string | null = null;
+        let triedModelIds: readonly string[] = [];
         let passed = false;
         let problem: VerificationProblem | undefined;
         try {
@@ -120,8 +132,10 @@ export class ProviderScanModule implements AgentModule {
                             ctx,
                             providerId,
                             controller.signal,
+                            deadline,
                         );
                         modelId = inference.modelId;
+                        triedModelIds = inference.triedModelIds;
                         passed = inference.passed;
                         problem = inference.problem;
                     } else {
@@ -132,8 +146,14 @@ export class ProviderScanModule implements AgentModule {
                     problem = { type: "account_check", error };
                 }
             } else if (credentials === "available" && requestedLevel === "inference") {
-                const inference = await this.#verifyInference(ctx, providerId, controller.signal);
+                const inference = await this.#verifyInference(
+                    ctx,
+                    providerId,
+                    controller.signal,
+                    deadline,
+                );
                 modelId = inference.modelId;
+                triedModelIds = inference.triedModelIds;
                 passed = inference.passed;
                 problem = inference.problem;
             }
@@ -169,6 +189,7 @@ export class ProviderScanModule implements AgentModule {
             requestedLevel,
             performedLevel,
             modelId,
+            ...(triedModelIds.length > 1 ? { triedModelIds } : {}),
             reason:
                 problem === undefined
                     ? "The check did not pass."
@@ -177,7 +198,7 @@ export class ProviderScanModule implements AgentModule {
         return {
             checkedAt: Date.now(),
             failure: describeVerificationFailure(
-                this.#verificationTarget(providerId, modelId),
+                { ...this.#verificationTarget(providerId, modelId), triedModelIds },
                 problem ?? { type: "incomplete", state: null },
             ),
             modelId,
@@ -339,32 +360,73 @@ export class ProviderScanModule implements AgentModule {
         });
     }
 
+    /**
+     * Tries the provider's models cheapest first and stops at the first that answers. Only a
+     * model-specific failure moves on to the next model; anything that would fail for every model
+     * stops at once, so a broken sign-in or network costs one request.
+     */
     async #verifyInference(
         ctx: Context,
         providerId: string,
         signal: AbortSignal,
+        deadline: number,
     ): Promise<{
         readonly modelId: string | null;
         readonly passed: boolean;
         readonly problem?: VerificationProblem;
+        readonly triedModelIds: readonly string[];
     }> {
-        const model = verificationModel(
+        const { candidates, onlyFable } = verificationCandidates(
             this.#config.offeredModels,
             providerId,
-            this.#config.providers.typeOf(providerId),
         );
-        if (model === undefined) {
-            return { modelId: null, passed: false, problem: { type: "no_model" } };
+        if (candidates.length === 0) {
+            return {
+                modelId: null,
+                passed: false,
+                problem: { type: "no_model", ...(onlyFable ? { onlyFable } : {}) },
+                triedModelIds: [],
+            };
         }
+        const tried: string[] = [];
+        let problem: VerificationProblem = { type: "incomplete", state: null };
+        for (const model of candidates.slice(0, MAX_INFERENCE_ATTEMPTS)) {
+            if (tried.length > 0 && deadline - Date.now() < MIN_ATTEMPT_BUDGET_MS) break;
+            tried.push(model.id);
+            const attempt = await this.#attemptInference(ctx, providerId, model, signal);
+            if (attempt === undefined) {
+                return { modelId: model.id, passed: true, triedModelIds: tried };
+            }
+            problem = attempt;
+            if (
+                signal.aborted ||
+                !isModelSpecificFailure(this.#verificationTarget(providerId, model.id), problem)
+            ) {
+                break;
+            }
+            ctx.log.info("Provider verification model failed.", {
+                providerId,
+                modelId: model.id,
+                reason: verificationProblemReason(problem),
+            });
+        }
+        return { modelId: tried.at(-1) ?? null, passed: false, problem, triedModelIds: tried };
+    }
+
+    /** One minimal no-tool request; `undefined` means the model answered. */
+    async #attemptInference(
+        ctx: Context,
+        providerId: string,
+        model: AgentModel,
+        signal: AbortSignal,
+    ): Promise<VerificationProblem | undefined> {
         let session: BaseSession | undefined;
         try {
             const provider = await Promise.race([
                 this.#config.resolveProviderUnchecked(providerId, model.id),
                 rejectWhenAborted(signal),
             ]);
-            if (provider === null) {
-                return { modelId: model.id, passed: false, problem: { type: "unprepared" } };
-            }
+            if (provider === null) return { type: "unprepared" };
             session = await Promise.race([
                 provider.session(`provider-verification:${createId()}`, {
                     inferenceMaxRetries: 0,
@@ -400,12 +462,9 @@ export class ProviderScanModule implements AgentModule {
                 }
                 return { type: "incomplete", state: null };
             };
-            const problem = await Promise.race([consume(), rejectWhenAborted(signal)]);
-            return problem === undefined
-                ? { modelId: model.id, passed: true }
-                : { modelId: model.id, passed: false, problem };
+            return await Promise.race([consume(), rejectWhenAborted(signal)]);
         } catch (error) {
-            return { modelId: model.id, passed: false, problem: { type: "thrown", error } };
+            return { type: "thrown", error };
         } finally {
             if (session !== undefined) {
                 await Promise.resolve(session.destroy()).catch(() => undefined);
@@ -425,25 +484,6 @@ export class ProviderNotFoundError extends Error {
         super(`Provider "${providerId}" is not configured.`);
         this.name = "ProviderNotFoundError";
     }
-}
-
-function verificationModel(
-    models: readonly AgentModel[],
-    providerId: string,
-    providerType: string | null,
-): AgentModel | undefined {
-    const preferred: Readonly<Record<string, string>> = {
-        bedrock: "anthropic/fable-5",
-        claude: "anthropic/sonnet-5",
-        codex: "openai/gpt-6-luna",
-        grok: "xai/grok-composer-2.5-fast",
-    };
-    const routes = models.filter((model) => model.providerId === providerId);
-    return routes.find((model) => model.id === preferred[providerType ?? providerId]) ?? routes[0];
-}
-
-function verificationEffort(model: AgentModel): SessionReasoningEffort {
-    return model.effortLevels[0] ?? "low";
 }
 
 function verificationContext(ctx: Context, signal: AbortSignal): Context {

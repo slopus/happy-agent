@@ -1,13 +1,27 @@
 # Provider scan learnings
 
-## Claude verification uses a subscription model
+## Verification tries the cheapest models and never Fable
 
-Claude verification previously selected Fable 5.1, which can require extra usage credits even
-when a Claude subscription is signed in and can run Sonnet. It now probes Sonnet 5 with the
-lowest offered effort, preserving the real inference requirement without requiring premium
-model access. The preferred probe is selected by the registry's provider type so named Claude
-accounts use the same model instead of falling back to the first, potentially more expensive,
-catalog entry. Verification still respects the account's model filters and performs one request.
+Verification used to pick one hard-coded model per provider type (Fable 5 on Bedrock, Sonnet 5 on
+Claude) at the first effort level. That failed real setups: Fable can need extra usage credits
+on a Claude subscription, Bedrock rejects Fable 5's "off" level (`thinking.type.disabled` is not
+supported), and Fable 5's default Mantle transport answers "model does not exist" where Mantle does
+not serve it. Steve's rule: test from cheapest to most expensive, and never test with Fable.
+
+`verificationCandidates.ts` now drops every `anthropic/fable*` model and orders the provider's
+enabled models by a static relative cost rank by family (Haiku, Luna, and Composer first; then
+Sonnet, Terra, and the other Grok models; then Opus and Sol; then Astra). The rank is relative,
+not prices, because Happy has no price data; unranked models go last in configuration order.
+The effort is the cheapest one the model accepts other than "off" (low, minimal, medium, then the
+default), and "off" only when it is the model's only level.
+
+Verification stops at the first model that answers. Only a model-specific failure (an unavailable
+or unpermitted model, or an invalid request such as a rejected thinking setting) moves on, at most
+three models and only while five seconds of the 30-second budget remain. Missing credentials,
+sign-in, TLS, network, quota, and provider-side failures stop at once because every model would
+share them. A provider whose only enabled models are Fable reports `no_model` and asks the person
+to enable another model. When the catalog gains, renames, or drops a model, update the rank and the
+Fable pattern in `verificationCandidates.ts` with it.
 
 ## A failed verification explains itself
 

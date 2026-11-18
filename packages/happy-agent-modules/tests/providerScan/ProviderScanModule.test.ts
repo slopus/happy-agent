@@ -8,16 +8,23 @@ import {
     BaseSession,
     type SessionCompaction,
     type SessionCompactionOptions,
+    type SessionEvent,
     type SessionOptions,
     type SessionRunRequest,
     type SessionStream,
 } from "@slopus/happy-providers";
+import type {
+    ProviderVerificationLevel,
+    ProviderVerificationResponse,
+} from "@slopus/happy-agent-client";
 import { createRootContext, withLogger, type Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ConfigModule, type ConfigInferenceOverride } from "../../sources/config/index.js";
 import { ProviderScanModule } from "../../sources/providerScan/index.js";
 import { testConfigRootedAt } from "../support/configModule.js";
+
+type SessionDoneEvent = Extract<SessionEvent, { type: "done" }>;
 
 const MODEL: AgentModel = {
     defaultEffort: "off",
@@ -281,6 +288,107 @@ describe("ProviderScanModule", () => {
         },
     );
 
+    it.each(["inference", "authentication"] as const)(
+        "tries models cheapest first past model-specific failures and never Fable (%s)",
+        async (level) => {
+            const { provider, result } = await verifyScripted(
+                [
+                    "anthropic/fable-5",
+                    "anthropic/opus-5",
+                    "anthropic/sonnet-5-5",
+                    "anthropic/sonnet-5",
+                ],
+                {
+                    "anthropic/sonnet-5-5": modelMissing("anthropic.claude-sonnet-5-5"),
+                    "anthropic/sonnet-5": thinkingRejected(),
+                },
+                level,
+            );
+
+            expect(provider.requests.map(({ effort, model }) => ({ effort, model }))).toEqual([
+                { effort: "low", model: "anthropic/sonnet-5-5" },
+                { effort: "low", model: "anthropic/sonnet-5" },
+                { effort: "low", model: "anthropic/opus-5" },
+            ]);
+            expect(result).toMatchObject({
+                modelId: "anthropic/opus-5",
+                performedLevel: "inference",
+                requestedLevel: level,
+                status: "passed",
+            });
+            expect(result).not.toHaveProperty("failure");
+        },
+    );
+
+    it("stops at a failure every model would share", async () => {
+        const { provider, result } = await verifyScripted(
+            ["anthropic/opus-5", "anthropic/sonnet-5"],
+            {
+                "anthropic/sonnet-5": {
+                    type: "done",
+                    state: "error",
+                    kind: "unknown",
+                    message: "The security token included in the request is invalid.",
+                    providerError: { type: "authentication", diagnostics: { status: 403 } },
+                },
+            },
+        );
+
+        expect(provider.requests.map(({ model }) => model)).toEqual(["anthropic/sonnet-5"]);
+        expect(result).toMatchObject({
+            failure: { kind: "authentication" },
+            modelId: "anthropic/sonnet-5",
+            status: "failed",
+        });
+        expect(result.failure?.message).toMatch(/^Amazon Bedrock rejected the credentials\./u);
+    });
+
+    it("gives up after three models and lists the models it tried", async () => {
+        const ids = [
+            "anthropic/opus-5",
+            "anthropic/sonnet-5",
+            "anthropic/opus-5-5",
+            "anthropic/sonnet-5-5",
+        ];
+        const { provider, result } = await verifyScripted(
+            ids,
+            Object.fromEntries(ids.map((id) => [id, modelMissing(id)])),
+        );
+
+        expect(provider.requests.map(({ model }) => model)).toEqual([
+            "anthropic/sonnet-5",
+            "anthropic/sonnet-5-5",
+            "anthropic/opus-5",
+        ]);
+        expect(result).toMatchObject({
+            failure: { kind: "model_unavailable" },
+            modelId: "anthropic/opus-5",
+            status: "failed",
+        });
+        expect(result.failure?.message).toMatch(
+            /^Tried anthropic\/sonnet-5, anthropic\/sonnet-5-5, anthropic\/opus-5\. Model anthropic\/opus-5 is not available/u,
+        );
+        expect(result.failure?.message.length).toBeLessThanOrEqual(500);
+    });
+
+    it("refuses to verify with Fable when it is the only enabled model", async () => {
+        const { provider, result } = await verifyScripted(
+            ["anthropic/fable-5", "anthropic/fable-5-2"],
+            {},
+        );
+
+        expect(provider.requests).toEqual([]);
+        expect(result).toMatchObject({
+            failure: {
+                kind: "no_model",
+                message:
+                    "Happy doesn't test with Fable models. Enable another model for Amazon Bedrock (for example Sonnet) so Happy can check it.",
+            },
+            modelId: null,
+            status: "failed",
+        });
+    });
+
     it("logs why an inference verification failed and returns a sanitized failure", async () => {
         const installationRoot = await root();
         const providers = new AgentProviders();
@@ -367,6 +475,65 @@ describe("ProviderScanModule", () => {
     });
 });
 
+async function verifyScripted(
+    modelIds: readonly string[],
+    outcomes: Readonly<Record<string, SessionDoneEvent>>,
+    level: ProviderVerificationLevel = "inference",
+): Promise<{
+    readonly provider: ScriptedModelProvider;
+    readonly result: ProviderVerificationResponse;
+}> {
+    const provider = new ScriptedModelProvider(outcomes);
+    const providers = new AgentProviders();
+    providers.add("bedrock", provider, "bedrock");
+    const models = modelIds.map((id) => ({
+        defaultEffort: "medium" as const,
+        effortLevels: [
+            "off",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ] as AgentModel["effortLevels"],
+        id,
+        name: id,
+        providerId: "bedrock",
+    }));
+    const config = await ConfigModule.load(join(await root(), "happy"), {
+        inference: { models, providers },
+    });
+    const result = await new ProviderScanModule(config).verify(
+        createRootContext(),
+        "bedrock",
+        level,
+    );
+    return { provider, result };
+}
+
+function modelMissing(id: string): SessionDoneEvent {
+    return {
+        type: "done",
+        state: "error",
+        kind: "unknown",
+        message: `model '${id}' does not exist`,
+        providerError: { type: "unclassified", diagnostics: { status: 400 } },
+    };
+}
+
+function thinkingRejected(): SessionDoneEvent {
+    return {
+        type: "done",
+        state: "error",
+        kind: "unknown",
+        message: '"thinking.type.disabled" is not supported for this model',
+        providerError: {
+            type: "unclassified",
+            diagnostics: { errorType: "ValidationException", status: 400 },
+        },
+    };
+}
+
 async function scriptedConfig(): Promise<{ readonly config: ConfigModule; readonly root: string }> {
     const installationRoot = await root();
     return {
@@ -443,6 +610,29 @@ class EmptyResponseProvider extends BaseProvider {
                             "Gateway returned a response with zero output tokens for key sk-proj-0123456789abcdef.",
                         providerError: { type: "empty_response" },
                     } as const;
+                })();
+            }
+        })(id);
+    }
+}
+
+/** Answers every model except the scripted ones, which end with their scripted event. */
+class ScriptedModelProvider extends BaseProvider {
+    readonly requests: SessionRunRequest[] = [];
+
+    constructor(readonly outcomes: Readonly<Record<string, SessionDoneEvent>>) {
+        super();
+    }
+
+    async session(id: string, _options: SessionOptions): Promise<BaseSession> {
+        const { outcomes, requests } = this;
+        return new (class extends PassingSession {
+            override run(ctx: Context, request: SessionRunRequest): SessionStream {
+                requests.push(request);
+                const outcome = request.model === undefined ? undefined : outcomes[request.model];
+                if (outcome === undefined) return super.run(ctx, request);
+                return (async function* () {
+                    yield outcome;
                 })();
             }
         })(id);

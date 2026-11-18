@@ -21,12 +21,14 @@ export interface VerificationTarget {
     /** The name, never the value, of the environment variable expected to hold the credential. */
     readonly credentialEnvVar?: string;
     readonly modelId: string | null;
+    /** Every model a failed inference check tried, cheapest first; the last is `modelId`. */
+    readonly triedModelIds?: readonly string[];
 }
 
 /** What went wrong during one verification, before it is explained to the person. */
 export type VerificationProblem =
     | { readonly type: "credentials"; readonly status: "missing" | "error" }
-    | { readonly type: "no_model" }
+    | { readonly type: "no_model"; readonly onlyFable?: boolean }
     | { readonly type: "unprepared" }
     | { readonly type: "timeout"; readonly seconds: number }
     | { readonly type: "aborted" }
@@ -46,7 +48,27 @@ export function describeVerificationFailure(
     problem: VerificationProblem,
 ): ProviderVerificationFailure {
     const failure = explain(target, problem);
-    return { kind: failure.kind, message: truncate(failure.message, MESSAGE_LIMIT) };
+    const tried = target.triedModelIds ?? [];
+    const message =
+        tried.length > 1 ? `Tried ${tried.join(", ")}. ${failure.message}` : failure.message;
+    return { kind: failure.kind, message: truncate(message, MESSAGE_LIMIT) };
+}
+
+/**
+ * Whether another model might pass where this one failed: the model is unavailable or not
+ * allowed, or the request was invalid for this model (such as a thinking setting it rejects).
+ * Missing credentials, sign-in, TLS, network, quota, and provider-side failures would fail for
+ * every model, so they are not model-specific.
+ */
+export function isModelSpecificFailure(
+    target: VerificationTarget,
+    problem: VerificationProblem,
+): boolean {
+    if (problem.type !== "session_error" && problem.type !== "thrown") return false;
+    const evidence =
+        problem.type === "session_error" ? sessionEvidence(problem) : errorEvidence(problem.error);
+    const { kind } = classify(target, evidence);
+    return kind === "model_unavailable" || (kind === "unknown" && invalidRequest(evidence));
 }
 
 /** The daemon-log reason for a problem, kept in the wording support already searches for. */
@@ -55,7 +77,9 @@ export function verificationProblemReason(problem: VerificationProblem): string 
         case "credentials":
             return `Local credential discovery reported "${problem.status}".`;
         case "no_model":
-            return "The provider offers no model to check inference with.";
+            return problem.onlyFable === true
+                ? "The provider offers only Fable models, which are never used for verification."
+                : "The provider offers no model to check inference with.";
         case "unprepared":
             return "The provider could not be prepared for inference.";
         case "timeout":
@@ -99,6 +123,12 @@ function explain(target: VerificationTarget, problem: VerificationProblem): Expl
         case "unprepared":
             return missingCredentials(target);
         case "no_model":
+            if (problem.onlyFable === true) {
+                return {
+                    kind: "no_model",
+                    message: `Happy doesn't test with Fable models. Enable another model for ${target.label} (for example Sonnet) so Happy can check it.`,
+                };
+            }
             return {
                 kind: "no_model",
                 message: `${target.label} offers no model to verify with. Check the provider's model list and its include or exclude filters.`,
@@ -239,6 +269,19 @@ function classify(target: VerificationTarget, evidence: Evidence): Explained {
         kind: "unknown",
         message: `${target.label} failed the test request${model(target)}${evidence.status === undefined ? "" : ` (HTTP ${evidence.status})`}.${suffix(details)}`,
     };
+}
+
+function invalidRequest(evidence: Evidence): boolean {
+    return (
+        evidence.status === 400 ||
+        evidence.status === 422 ||
+        evidence.names.some((name) =>
+            ["ValidationException", "BadRequestError", "invalid_request_error"].includes(name),
+        ) ||
+        /not supported|unsupported|invalid[_ ]request|validation ?exception/u.test(
+            evidence.text.toLowerCase(),
+        )
+    );
 }
 
 function missingCredentials(target: VerificationTarget, details?: string): Explained {

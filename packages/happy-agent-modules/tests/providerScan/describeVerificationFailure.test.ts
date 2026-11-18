@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
     describeVerificationFailure,
+    isModelSpecificFailure,
+    type VerificationProblem,
     type VerificationTarget,
 } from "../../sources/providerScan/describeVerificationFailure.js";
 
@@ -185,5 +187,152 @@ describe("describeVerificationFailure", () => {
         expect(failure.kind).toBe("authentication");
         expect(failure.message).not.toMatch(/sk-proj|tok_123456|s3cret/u);
         expect(failure.message.length).toBeLessThanOrEqual(500);
+    });
+
+    it("explains a provider that offers only Fable models", () => {
+        expect(describeVerificationFailure(BEDROCK, { type: "no_model", onlyFable: true })).toEqual(
+            {
+                kind: "no_model",
+                message:
+                    "Happy doesn't test with Fable models. Enable another model for Amazon Bedrock (for example Sonnet) so Happy can check it.",
+            },
+        );
+    });
+
+    it("lists every model a failed inference check tried", () => {
+        const failure = describeVerificationFailure(
+            {
+                ...BEDROCK,
+                modelId: "anthropic/opus-5",
+                triedModelIds: ["anthropic/sonnet-5", "anthropic/opus-5-5", "anthropic/opus-5"],
+            },
+            {
+                type: "session_error",
+                kind: "unknown",
+                message: "The provided model identifier is invalid.",
+                providerError: { type: "unclassified", diagnostics: { status: 400 } },
+            },
+        );
+        expect(failure.kind).toBe("model_unavailable");
+        expect(failure.message).toMatch(
+            /^Tried anthropic\/sonnet-5, anthropic\/opus-5-5, anthropic\/opus-5\. Model anthropic\/opus-5 is not available/u,
+        );
+        expect(failure.message.length).toBeLessThanOrEqual(500);
+    });
+
+    it.each<[string, VerificationProblem]>([
+        [
+            "an unknown model",
+            {
+                type: "session_error",
+                kind: "unknown",
+                message: "model 'anthropic.claude-fable-5' does not exist",
+                providerError: { type: "unclassified", diagnostics: { status: 400 } },
+            },
+        ],
+        [
+            "no access to the model",
+            {
+                type: "session_error",
+                kind: "unknown",
+                message: "You don't have access to the model with the specified model ID.",
+                providerError: {
+                    type: "authentication",
+                    diagnostics: { errorType: "AccessDeniedException", status: 403 },
+                },
+            },
+        ],
+        [
+            "a thinking setting the model rejects",
+            {
+                type: "session_error",
+                kind: "unknown",
+                message: '"thinking.type.disabled" is not supported for this model',
+                providerError: {
+                    type: "unclassified",
+                    diagnostics: { errorType: "ValidationException", status: 400 },
+                },
+            },
+        ],
+        [
+            "an invalid request thrown by the SDK",
+            {
+                type: "thrown",
+                error: Object.assign(new Error("Unsupported parameter: reasoning.effort"), {
+                    status: 400,
+                }),
+            },
+        ],
+    ])("moves on to another model after %s", (_name, problem) => {
+        expect(isModelSpecificFailure(BEDROCK, problem)).toBe(true);
+    });
+
+    it.each<[string, VerificationProblem]>([
+        ["missing credentials", { type: "credentials", status: "missing" }],
+        ["an unprepared provider", { type: "unprepared" }],
+        ["a timeout", { type: "timeout", seconds: 30 }],
+        [
+            "rejected credentials",
+            {
+                type: "session_error",
+                kind: "unknown",
+                message: "Invalid API key.",
+                providerError: { type: "authentication", diagnostics: { status: 401 } },
+            },
+        ],
+        [
+            "missing AWS credentials",
+            {
+                type: "thrown",
+                error: Object.assign(new Error("Could not load credentials from any providers"), {
+                    name: "CredentialsProviderError",
+                }),
+            },
+        ],
+        [
+            "an untrusted certificate",
+            {
+                type: "thrown",
+                error: new TypeError("fetch failed", {
+                    cause: Object.assign(
+                        new Error("self-signed certificate in certificate chain"),
+                        {
+                            code: "SELF_SIGNED_CERT_IN_CHAIN",
+                        },
+                    ),
+                }),
+            },
+        ],
+        [
+            "an unreachable host",
+            {
+                type: "thrown",
+                error: new TypeError("fetch failed", {
+                    cause: Object.assign(new Error("connect ECONNREFUSED"), {
+                        code: "ECONNREFUSED",
+                    }),
+                }),
+            },
+        ],
+        [
+            "a quota",
+            {
+                type: "session_error",
+                kind: "unknown",
+                message: "Too many requests.",
+                providerError: { type: "rate_limit", diagnostics: { status: 429 } },
+            },
+        ],
+        [
+            "a provider outage",
+            {
+                type: "session_error",
+                kind: "unknown",
+                message: "Internal server error.",
+                providerError: { type: "internal_server_error", diagnostics: { status: 500 } },
+            },
+        ],
+    ])("stops after %s", (_name, problem) => {
+        expect(isModelSpecificFailure(BEDROCK, problem)).toBe(false);
     });
 });

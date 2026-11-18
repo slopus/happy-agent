@@ -27,8 +27,14 @@ field or mutation; changing it requires a daemon restart. See the
 `scan(ctx)` joins a scan already in progress. `setOverrides(ctx, providers)` validates the whole
 batch before applying it; a disable closes the provider gate and aborts live inference, compaction,
 and verification. `verify(ctx, providerId, level)` supports local credentials, the vendor's
-authenticated usage endpoint when one exists, and a minimal no-tool inference on a curated cheap
-model. Authentication falls back to inference when the provider has no auth-only request. A
+authenticated usage endpoint when one exists, and a minimal no-tool inference. Authentication
+falls back to inference when the provider has no auth-only request. `verificationCandidates`
+chooses the inference models: it never uses a Fable model, orders the provider's enabled models
+cheapest first by a static relative cost rank by family (not prices), and picks the cheapest
+effort other than "off". Verification stops at the first model that answers and moves on only after
+a model-specific failure (`isModelSpecificFailure`: an unavailable model or an invalid request for
+it), trying at most three models within the same 30-second bound. A provider whose only enabled
+models are Fable fails with `no_model`, and a failure after several models names each one. A
 successful verification is remembered, while a failure changes no earlier discovery. A failure
 returns `failure: { kind, message }`: `describeVerificationFailure` classifies the problem
 (missing credentials, authentication, network, TLS, timeout, unavailable model, quota, provider
