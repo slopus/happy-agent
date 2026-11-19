@@ -12,6 +12,17 @@
 /** The most agents one review may ask: parent, grandparent, and two more toward the root. */
 export const MAX_ASK_PARENT_HOPS = 4;
 
+/**
+ * The most questions one reviewer may send in one review, and one forked reviewer in its one
+ * answer. Each fork further up has its own allowance, so the chain as a whole is bounded by hops
+ * and time rather than by this.
+ */
+export const MAX_ASK_PARENT_QUESTIONS = 2;
+
+/** What a question past that allowance is answered. */
+export const ASK_PARENT_LIMIT_REACHED =
+    "unknown: The parent's reviewer could not answer: no more questions may be asked in this review.";
+
 /** The longest the first question of a review may wait for its answer. */
 export const ASK_PARENT_TIMEOUT_MS = 60_000;
 

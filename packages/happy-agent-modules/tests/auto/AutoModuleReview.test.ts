@@ -1026,6 +1026,71 @@ describe("AutoModule ask_parent", () => {
         );
     });
 
+    it("answers a reviewer's third question without asking it", async () => {
+        const { world, review } = await reviewWorld(
+            [
+                ask("ask-1", "Was this requested?"),
+                verdictTurn("unknown"),
+                ask("ask-2", "Was /etc/hosts named?"),
+                verdictTurn("unknown"),
+                ask("ask-3", "Anything else?"),
+                allow,
+            ],
+            { parents: { [MAIN_AGENT_ID]: "parentagent" } },
+        );
+        worlds.push(world);
+        recordInferences(world);
+
+        await expect(review()).resolves.toMatchObject({ outcome: "allowed" });
+
+        const all = inferences(world);
+        // Two forks answered; the third question reached no one.
+        expect(all).toHaveLength(6);
+        expect(new Set(all.map(({ session }) => session)).size).toBe(3);
+        expect(toolText(all.at(-1)!.request.context.messages.at(-1))).toBe(
+            "unknown: The parent's reviewer could not answer: no more questions may be asked in this review.",
+        );
+        // The tool stays offered after the allowance is used.
+        expect(toolNames(all.at(-1)!.session)).toContain("ask_parent");
+    });
+
+    it("gives each forked reviewer its own allowance", async () => {
+        const { world, review } = await reviewWorld(
+            [
+                ask("ask-1", "Was this requested?"),
+                ask("ask-2", "Did the person ask?"),
+                verdictTurn("unknown"),
+                ask("ask-3", "Did the person name /etc/hosts?"),
+                verdictTurn("unknown"),
+                ask("ask-4", "Anything else?"),
+                verdictTurn("Still unknown."),
+                ask("ask-5", "Was /etc/hosts named?"),
+                verdictTurn("unknown"),
+                allow,
+            ],
+            { parents: { [MAIN_AGENT_ID]: "parentagent", parentagent: "rootagent" } },
+        );
+        worlds.push(world);
+        recordInferences(world);
+
+        await expect(review()).resolves.toMatchObject({ outcome: "allowed" });
+
+        const all = inferences(world);
+        // The parent's fork asked the root twice and was refused a third time; the reviewer
+        // still had its second question.
+        const results = all
+            .map(({ request }) => request.context.messages.at(-1))
+            .filter((message) => message?.role === "tool")
+            .map(toolText);
+        expect(results).toEqual([
+            "unknown",
+            "unknown",
+            "unknown: The parent's reviewer could not answer: no more questions may be asked in this review.",
+            "Still unknown.",
+            "unknown",
+        ]);
+    });
+
     it("never asks an agent already asked in the chain", async () => {
         const { world, review } = await reviewWorld(
             [ask("ask-1", "Was this requested?"), verdictTurn("unknown"), allow],

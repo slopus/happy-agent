@@ -167,7 +167,9 @@ history: HistoryModule, storage: AgentStorage)`. The accounts, the catalog and t
   evidence, or its reviewer's conversation and cursor, so the fork leaves no trace.
 - The fork may ask its own parent the same way, toward the root: at most four hops, never an agent
   already in the chain, the first question inside 60 seconds and 90 seconds of the review's start,
-  each further hop 15 seconds less than its asker. Stopping the review aborts the reviewer, whose
+  each further hop 15 seconds less than its asker, and at most two questions sent per reviewer or
+  fork (each fork has its own two; a question counts once sent, one refused for lack of time does
+  not, and a third is answered with the limit string while the tool stays offered). Stopping the review aborts the reviewer, whose
   tool aborts its fork, whose tool aborts the next. Every non-answer is a plain `unknown: <reason>`
   result rather than a tool error, so the reviewer falls back to its ordinary judgement instead of
   reading the failure as a refusal. Resolving the parent here does not contradict the earlier

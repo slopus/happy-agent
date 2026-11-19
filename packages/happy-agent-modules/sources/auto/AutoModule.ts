@@ -61,6 +61,8 @@ import { AutoReviewAskParentModule } from "./impl/AutoReviewAskParentModule.js";
 import { createAskParentPrompt } from "./impl/createAskParentPrompt.js";
 import {
     ASK_PARENT_ANSWER_MARGIN_MS,
+    ASK_PARENT_LIMIT_REACHED,
+    MAX_ASK_PARENT_QUESTIONS,
     ASK_PARENT_REVIEW_WINDOW_MS,
     askParentDeadline,
     boundParentAnswer,
@@ -569,6 +571,7 @@ export class AutoModule implements AgentModule {
         // only while the review runs.
         this.#reviewHistory.beginReview(reviewerId, ctx, mainAgentId);
         if (parentAgentId !== undefined) {
+            const asked = { count: 0 };
             this.#askParent.beginReview(reviewerId, {
                 ask: async (toolCtx, question) =>
                     await this.#ask(
@@ -579,6 +582,7 @@ export class AutoModule implements AgentModule {
                             visited: [mainAgentId],
                             latestAnswerAt: reviewStartedAt + ASK_PARENT_REVIEW_WINDOW_MS,
                             route,
+                            asked,
                         },
                         question,
                         toolCtx.lifetime,
@@ -679,19 +683,23 @@ export class AutoModule implements AgentModule {
 
     /**
      * Put one question to a fork of the parent's reviewer, within the chain's deadline and the
-     * asking tool call's lifetime. Every outcome other than an answer — no time left, a timeout, a
-     * parent that is gone, a failed fork — is an "unknown" answer, so the asker falls back to its
-     * ordinary judgement. Only a stopped asker throws, because its own turn is already over.
+     * asking tool call's lifetime. Every outcome other than an answer — the asker's questions used
+     * up, no time left, a timeout, a parent that is gone, a failed fork — is an "unknown" answer,
+     * so the asker falls back to its ordinary judgement. Only a stopped asker throws, because its
+     * own turn is already over. A question counts toward the asker's allowance once it is sent,
+     * whatever its answer; one refused for lack of time does not.
      */
     async #ask(
         link: AskParentLink,
         question: string,
         owner: AbortSignal | undefined,
     ): Promise<string> {
+        if (link.asked.count >= MAX_ASK_PARENT_QUESTIONS) return ASK_PARENT_LIMIT_REACHED;
         const deadline = askParentDeadline(Date.now(), link.latestAnswerAt);
         if (deadline === undefined) {
             return unknownParentAnswer("There was not enough time left in this review to ask.");
         }
+        link.asked.count += 1;
         const controller = new AbortController();
         const onOwnerAbort = (): void => controller.abort();
         owner?.addEventListener("abort", onOwnerAbort, { once: true });
@@ -772,6 +780,7 @@ export class AutoModule implements AgentModule {
             this.#runtime.beginReview(forkId, instructions);
             this.#reviewHistory.beginReview(forkId, ctx, parentId);
             if (grandparentId !== undefined) {
+                const asked = { count: 0 };
                 this.#askParent.beginReview(forkId, {
                     ask: async (toolCtx, nextQuestion) =>
                         await this.#ask(
@@ -782,6 +791,7 @@ export class AutoModule implements AgentModule {
                                 visited,
                                 latestAnswerAt: deadline - ASK_PARENT_ANSWER_MARGIN_MS,
                                 route,
+                                asked,
                             },
                             nextQuestion,
                             toolCtx.lifetime,
@@ -1132,6 +1142,8 @@ interface AskParentLink {
     readonly latestAnswerAt: number;
     /** The asker's own route, used when the parent's is not known. */
     readonly route: AutoReviewerRoute;
+    /** The questions this asker has sent so far, shared by all of its calls. */
+    readonly asked: { count: number };
 }
 
 /** A construction failure or model-not-found is route unavailability, never a verdict. */

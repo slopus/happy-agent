@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
     ASK_PARENT_ANSWER_MARGIN_MS,
+    ASK_PARENT_LIMIT_REACHED,
+    MAX_ASK_PARENT_QUESTIONS,
     ASK_PARENT_REVIEW_WINDOW_MS,
     ASK_PARENT_TIMEOUT_MS,
     MAX_ASK_PARENT_ANSWER_CHARACTERS,
@@ -37,6 +39,13 @@ describe("askParentChain", () => {
         const fourth = askParentDeadline(now, third - ASK_PARENT_ANSWER_MARGIN_MS)!;
         expect([first, second, third, fourth]).toEqual([60_000, 45_000, 30_000, 15_000]);
         expect(askParentDeadline(now, fourth - ASK_PARENT_ANSWER_MARGIN_MS)).toBeUndefined();
+    });
+
+    it("allows two questions per asker and says so past them", () => {
+        expect(MAX_ASK_PARENT_QUESTIONS).toBe(2);
+        expect(ASK_PARENT_LIMIT_REACHED).toBe(
+            "unknown: The parent's reviewer could not answer: no more questions may be asked in this review.",
+        );
     });
 
     it("bounds answers and spells out the unknown ones", () => {

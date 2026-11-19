@@ -135,7 +135,7 @@ reviewer, built the way a fresh review of the parent would be: the parent's
 reviewer model and instructions and the parent's whole transcript up to its
 latest message, with the question in place of a proposed action. That copy
 answers in plain text, may ask its own parent the same way, up to four agents
-toward the root, and is then deleted; nothing is written to the parent, its
+toward the root and at most two questions from each asker, and is then deleted; nothing is written to the parent, its
 transcript, or its own reviewer. An answer counts only where it reports the
 person's own request for the exact action, and it never sets aside a deny rule.
 A question that times out, fails, or reaches a parent that is gone is answered
