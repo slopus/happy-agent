@@ -24,6 +24,8 @@
     "auto_review.allow.result",
     "auto_review.deny.result",
     "auto_review.garbled.result",
+    "auto_review.subagent",
+    "auto_review.ask_parent",
     "conversation.multi_turn",
     "workflow_agent",
     "main.with_collaborators",
@@ -42,6 +44,8 @@
     "team.auto_review.allow.result",
     "team.auto_review.deny.result",
     "team.auto_review.garbled.result",
+    "team.auto_review.subagent",
+    "team.auto_review.ask_parent",
     "team.member.main"
   ],
   "BashInput": [
@@ -68,6 +72,8 @@
     "auto_review.allow.result",
     "auto_review.deny.result",
     "auto_review.garbled.result",
+    "auto_review.subagent",
+    "auto_review.ask_parent",
     "conversation.multi_turn",
     "workflow_agent",
     "main.with_collaborators",
@@ -86,6 +92,8 @@
     "team.auto_review.allow.result",
     "team.auto_review.deny.result",
     "team.auto_review.garbled.result",
+    "team.auto_review.subagent",
+    "team.auto_review.ask_parent",
     "team.member.main"
   ],
   "BashOutput": [
@@ -240,6 +248,8 @@
     "auto_review.allow.result",
     "auto_review.deny.result",
     "auto_review.garbled.result",
+    "auto_review.subagent",
+    "auto_review.ask_parent",
     "conversation.multi_turn",
     "workflow_agent",
     "main.with_collaborators",
@@ -258,6 +268,8 @@
     "team.auto_review.allow.result",
     "team.auto_review.deny.result",
     "team.auto_review.garbled.result",
+    "team.auto_review.subagent",
+    "team.auto_review.ask_parent",
     "team.member.main"
   ],
   "Grep": [
@@ -285,6 +297,8 @@
     "auto_review.allow.result",
     "auto_review.deny.result",
     "auto_review.garbled.result",
+    "auto_review.subagent",
+    "auto_review.ask_parent",
     "conversation.multi_turn",
     "workflow_agent",
     "main.with_collaborators",
@@ -303,6 +317,8 @@
     "team.auto_review.allow.result",
     "team.auto_review.deny.result",
     "team.auto_review.garbled.result",
+    "team.auto_review.subagent",
+    "team.auto_review.ask_parent",
     "team.member.main"
   ],
   "Read": [
@@ -330,6 +346,8 @@
     "auto_review.allow.result",
     "auto_review.deny.result",
     "auto_review.garbled.result",
+    "auto_review.subagent",
+    "auto_review.ask_parent",
     "conversation.multi_turn",
     "workflow_agent",
     "main.with_collaborators",
@@ -348,6 +366,8 @@
     "team.auto_review.allow.result",
     "team.auto_review.deny.result",
     "team.auto_review.garbled.result",
+    "team.auto_review.subagent",
+    "team.auto_review.ask_parent",
     "team.member.main"
   ],
   "ReadMediaFile": [
@@ -710,6 +730,10 @@
     "team.auto_review.deny.result",
     "team.auto_review.garbled.result",
     "team.member.main"
+  ],
+  "ask_parent": [
+    "auto_review.subagent",
+    "team.auto_review.subagent"
   ],
   "attach_secret": [
     "main.claude-opus-5-5",
@@ -4479,6 +4503,8 @@
     "auto_review.allow.result",
     "auto_review.deny.result",
     "auto_review.garbled.result",
+    "auto_review.subagent",
+    "auto_review.ask_parent",
     "conversation.multi_turn",
     "workflow_agent",
     "main.with_collaborators",
@@ -4500,6 +4526,8 @@
     "team.auto_review.allow.result",
     "team.auto_review.deny.result",
     "team.auto_review.garbled.result",
+    "team.auto_review.subagent",
+    "team.auto_review.ask_parent",
     "team.member.main"
   ],
   "read_artifact": [

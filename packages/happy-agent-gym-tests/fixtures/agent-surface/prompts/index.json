@@ -653,6 +653,41 @@
     "toolCount": 134
   },
   {
+    "builtBy": "auto/impl/createPermissionReviewInstructions.ts:ASK_PARENT_GUIDELINE",
+    "id": "auto_review.subagent",
+    "model": "anthropic/sonnet-5",
+    "placeholders": [
+      "globalAgentsMd",
+      "globalSecurityMd",
+      "homeSecurityMd",
+      "projectAgentsMd",
+      "projectSecurityMd",
+      "reviewedCollaboratorAgentId",
+      "workspacePath"
+    ],
+    "providerKind": "claude",
+    "toolCount": 7
+  },
+  {
+    "builtBy": "auto/impl/createAskParentPrompt.ts:createAskParentPrompt",
+    "id": "auto_review.ask_parent",
+    "model": "anthropic/sonnet-5",
+    "placeholders": [
+      "collaborator_agentId",
+      "globalAgentsMd",
+      "globalSecurityMd",
+      "happyPublicHome",
+      "homeSecurityMd",
+      "mainAgentId",
+      "projectAgentsMd",
+      "projectSecurityMd",
+      "reviewedCollaboratorAgentId",
+      "workspacePath"
+    ],
+    "providerKind": "claude",
+    "toolCount": 6
+  },
+  {
     "builtBy": "titles/impl/runNamingInference.ts:runNamingInference",
     "id": "naming",
     "model": "anthropic/sonnet-5",
@@ -726,6 +761,7 @@
       "projectAgentsMd",
       "projectSecurityMd",
       "providerId",
+      "reviewedCollaboratorAgentId",
       "shell",
       "skillDescription",
       "workflowRunId",
@@ -1146,6 +1182,41 @@
     ],
     "providerKind": "claude",
     "toolCount": 131
+  },
+  {
+    "builtBy": "auto/impl/createPermissionReviewInstructions.ts:ASK_PARENT_GUIDELINE",
+    "id": "team.auto_review.subagent",
+    "model": "anthropic/sonnet-5",
+    "placeholders": [
+      "globalAgentsMd",
+      "globalSecurityMd",
+      "homeSecurityMd",
+      "projectAgentsMd",
+      "projectSecurityMd",
+      "reviewedCollaboratorAgentId",
+      "workspacePath"
+    ],
+    "providerKind": "claude",
+    "toolCount": 7
+  },
+  {
+    "builtBy": "auto/impl/createAskParentPrompt.ts:createAskParentPrompt",
+    "id": "team.auto_review.ask_parent",
+    "model": "anthropic/sonnet-5",
+    "placeholders": [
+      "globalAgentsMd",
+      "globalSecurityMd",
+      "happyPublicHome",
+      "homeSecurityMd",
+      "mainAgentId",
+      "projectAgentsMd",
+      "projectSecurityMd",
+      "reviewedCollaboratorAgentId",
+      "team_collaborator_agentId",
+      "workspacePath"
+    ],
+    "providerKind": "claude",
+    "toolCount": 6
   },
   {
     "builtBy": "titles/impl/runNamingInference.ts:runNamingInference",

@@ -136,6 +136,11 @@ export class AutoReviewRuntimeModule implements AgentModule {
         return capture;
     }
 
+    /** Drop everything kept for a private agent that is being discarded, such as a forked reviewer. */
+    forget(reviewerAgentId: string): void {
+        this.#state.delete(reviewerAgentId);
+    }
+
     /** Bound this reviewer's capture into the transcript a decision carries. */
     boundTranscript(
         reviewerAgentId: string,

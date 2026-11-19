@@ -9,7 +9,7 @@ import {
     type AgentSystemRef,
     type AgentModel,
 } from "@slopus/happy-agent-base";
-import type { SessionEvent } from "@slopus/happy-providers";
+import type { SessionEvent, SessionRunRequest } from "@slopus/happy-providers";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,7 +23,11 @@ import { autoWorld } from "../support/autoWorld.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 import { toolCallTurn } from "../support/fixtures.js";
-import type { ScriptedProvider, ScriptedTurn } from "../support/ScriptedProvider.js";
+import type {
+    ScriptedProvider,
+    ScriptedSession,
+    ScriptedTurn,
+} from "../support/ScriptedProvider.js";
 
 /**
  * End-to-end proof that a reviewable Auto action reaches the real `AutoModule` reviewer and that a
@@ -125,6 +129,12 @@ async function reviewWorld(
         readonly failSession?: boolean;
         /** Recorded into the main database's agent history before any review runs. */
         readonly history?: (history: HistoryModule, ctx: Context) => Promise<void>;
+        /** Who created each agent, as the main collection would answer `parentOf`. */
+        readonly parents?: Readonly<Record<string, string>>;
+        /** Agents the main collection no longer has. */
+        readonly goneAgents?: readonly string[];
+        /** A person's message accepted by each agent, recorded as review evidence. */
+        readonly userMessages?: Readonly<Record<string, string>>;
     } = {},
 ): Promise<{
     world: ReviewWorld;
@@ -191,7 +201,27 @@ async function reviewWorld(
         modules: { compute: { cwd: installation.publicHome } },
     });
 
-    const hooks = await resolveModuleHooks(lifetime, auto, {} as unknown as AgentSystemRef);
+    const parents = options.parents ?? {};
+    const known = new Set([MAIN_AGENT_ID, ...Object.keys(parents), ...Object.values(parents)]);
+    const agents = {
+        parentOf: async (_ctx: Context, agentId: string) => parents[agentId] ?? null,
+        config: async (_ctx: Context, agentId: string) =>
+            known.has(agentId) && options.goneAgents?.includes(agentId) !== true ? {} : undefined,
+    } as unknown as AgentSystemRef;
+    const hooks = await resolveModuleHooks(lifetime, auto, agents);
+    for (const [agentId, text] of Object.entries(options.userMessages ?? {})) {
+        await hooks.messageAcceptedTransact!(
+            reviewContext,
+            { agent: { id: agentId } } as unknown as AgentModuleScope,
+            {
+                id: `message-${agentId}`,
+                kind: "send",
+                message: { role: "user", content: [{ type: "text", text }] },
+                profile: null,
+                metadata: { messageOrigin: "user" },
+            } as never,
+        );
+    }
 
     // A review is only ever requested mid-turn, so the reviewed agent's live model route has already
     // been observed by the base inference hook. Reproduce that one observation here.
@@ -865,5 +895,239 @@ describe("AutoModule reviewer", () => {
         expect(world.provider.sessions.every((session) => session.requests.length === 0)).toBe(
             true,
         );
+    });
+});
+
+describe("AutoModule ask_parent", () => {
+    const allow = verdictTurn(
+        taggedVerdict({ outcome: "allow", risk_level: "high", user_authorization: "high" }),
+    );
+    const ask = (callId: string, question: string) =>
+        toolCallTurn(callId, "ask_parent", JSON.stringify({ question }));
+
+    type Inference = { readonly session: ScriptedSession; readonly request: SessionRunRequest };
+    const logs = new WeakMap<ReviewWorld, Inference[]>();
+
+    /** Record every inference the scripted provider runs, in the order it runs them. */
+    function recordInferences(world: ReviewWorld): void {
+        const log: Inference[] = [];
+        logs.set(world, log);
+        const provider = world.provider;
+        const open = provider.session.bind(provider);
+        provider.session = async (id, options) => {
+            const session = (await open(id, options)) as ScriptedSession;
+            const run = session.run.bind(session);
+            session.run = (ctx, request) => {
+                log.push({ session, request });
+                return run(ctx, request);
+            };
+            return session;
+        };
+    }
+
+    function inferences(world: ReviewWorld): readonly Inference[] {
+        return logs.get(world) ?? [];
+    }
+
+    function toolNames(session: {
+        readonly options: { readonly tools?: readonly { name: string }[] };
+    }) {
+        return (session.options.tools ?? []).map((tool) => tool.name);
+    }
+
+    it("offers a root agent's reviewer neither the tool nor the guideline", async () => {
+        const { world, review } = await reviewWorld([allow]);
+        worlds.push(world);
+        recordInferences(world);
+
+        await review();
+
+        const [first] = inferences(world);
+        expect(toolNames(first!.session)).not.toContain("ask_parent");
+        expect(first!.request.context.instructions).not.toContain("ask_parent");
+        expect(first!.request.context.instructions).not.toContain("{{ ask_parent }}");
+    });
+
+    it("forks the parent's reviewer to answer and hands its answer back", async () => {
+        const { world, review } = await reviewWorld(
+            [
+                ask("ask-1", "Did the person ask for /etc/hosts to be published?"),
+                verdictTurn("Yes. The user wrote: Publish to /etc/hosts."),
+                allow,
+            ],
+            {
+                parents: { [MAIN_AGENT_ID]: "parentagent" },
+                userMessages: { parentagent: "Publish to /etc/hosts." },
+            },
+        );
+        worlds.push(world);
+        recordInferences(world);
+
+        await expect(review()).resolves.toMatchObject({ outcome: "allowed" });
+
+        const [asking, fork, verdict] = inferences(world);
+        expect(toolNames(asking!.session)).toContain("ask_parent");
+        expect(asking!.request.context.instructions).toContain("you have the `ask_parent` tool");
+        // The fork is a separate private reviewer of the parent, built from the parent's whole
+        // evidence and asked the question in place of a proposed action.
+        expect(fork!.session).not.toBe(asking!.session);
+        const forkPrompt = JSON.stringify(fork!.request.context.messages);
+        expect(forkPrompt).toContain("Publish to /etc/hosts.");
+        expect(forkPrompt).toContain("<reviewed_agent_id>parentagent</reviewed_agent_id>");
+        expect(forkPrompt).toContain(`<subagent_id>${MAIN_AGENT_ID}</subagent_id>`);
+        expect(forkPrompt).toContain("Did the person ask for /etc/hosts to be published?");
+        expect(forkPrompt).not.toContain("<proposed_action>");
+        // The parent is a root, so its fork can ask no one.
+        expect(toolNames(fork!.session)).not.toContain("ask_parent");
+        expect(toolNames(fork!.session)).toContain("read_agent_history");
+        expect(fork!.request.context.instructions).not.toContain("you have the `ask_parent` tool");
+        expect(forkPrompt).not.toContain("ask it with `ask_parent`");
+        expect(toolText(verdict!.request.context.messages.at(-1))).toBe(
+            "Yes. The user wrote: Publish to /etc/hosts.",
+        );
+    });
+
+    it("lets a forked reviewer ask its own parent, up to the root", async () => {
+        const { world, review } = await reviewWorld(
+            [
+                ask("ask-1", "Was this publish requested?"),
+                ask("ask-2", "Did the person ask for /etc/hosts to be published?"),
+                verdictTurn("Yes, the user asked for it."),
+                verdictTurn("My parent says the user asked for it."),
+                allow,
+            ],
+            {
+                parents: { [MAIN_AGENT_ID]: "parentagent", parentagent: "rootagent" },
+                userMessages: { rootagent: "Publish to /etc/hosts." },
+            },
+        );
+        worlds.push(world);
+        recordInferences(world);
+
+        await expect(review()).resolves.toMatchObject({ outcome: "allowed" });
+
+        const [, parentFork, rootFork, parentAnswer, verdict] = inferences(world);
+        expect(toolNames(parentFork!.session)).toContain("ask_parent");
+        expect(JSON.stringify(parentFork!.request.context.messages)).toContain(
+            "ask it with `ask_parent`",
+        );
+        expect(JSON.stringify(rootFork!.request.context.messages)).toContain(
+            "<reviewed_agent_id>rootagent</reviewed_agent_id>",
+        );
+        expect(JSON.stringify(rootFork!.request.context.messages)).toContain(
+            "<subagent_id>parentagent</subagent_id>",
+        );
+        expect(toolNames(rootFork!.session)).not.toContain("ask_parent");
+        expect(toolText(parentAnswer!.request.context.messages.at(-1))).toBe(
+            "Yes, the user asked for it.",
+        );
+        expect(toolText(verdict!.request.context.messages.at(-1))).toBe(
+            "My parent says the user asked for it.",
+        );
+    });
+
+    it("never asks an agent already asked in the chain", async () => {
+        const { world, review } = await reviewWorld(
+            [ask("ask-1", "Was this requested?"), verdictTurn("unknown"), allow],
+            { parents: { [MAIN_AGENT_ID]: "parentagent", parentagent: MAIN_AGENT_ID } },
+        );
+        worlds.push(world);
+        recordInferences(world);
+
+        await review();
+
+        const [, fork] = inferences(world);
+        expect(toolNames(fork!.session)).not.toContain("ask_parent");
+    });
+
+    it("answers unknown when the parent no longer exists, without forking", async () => {
+        const deny = verdictTurn(
+            taggedVerdict({ outcome: "deny", risk_level: "high", user_authorization: "unknown" }),
+        );
+        const { world, review } = await reviewWorld([ask("ask-1", "Was this requested?"), deny], {
+            parents: { [MAIN_AGENT_ID]: "parentagent" },
+            goneAgents: ["parentagent"],
+        });
+        worlds.push(world);
+        recordInferences(world);
+
+        await expect(review()).resolves.toMatchObject({ outcome: "denied" });
+
+        const all = inferences(world);
+        expect(all).toHaveLength(2);
+        expect(toolText(all[1]!.request.context.messages.at(-1))).toBe(
+            "unknown: The parent's reviewer could not answer: the parent agent no longer exists.",
+        );
+    });
+
+    it("answers unknown when the forked reviewer fails", async () => {
+        const { world, review } = await reviewWorld(
+            [ask("ask-1", "Was this requested?"), errorTurn(), allow],
+            { parents: { [MAIN_AGENT_ID]: "parentagent" } },
+        );
+        worlds.push(world);
+        recordInferences(world);
+
+        await expect(review()).resolves.toMatchObject({ outcome: "allowed" });
+
+        const verdict = inferences(world).at(-1);
+        expect(toolText(verdict!.request.context.messages.at(-1))).toBe(
+            "unknown: The parent's reviewer could not answer: review inference failed.",
+        );
+    });
+
+    it("stops the whole chain when the review is stopped", async () => {
+        let markStarted!: () => void;
+        let markAborted!: () => void;
+        const started = new Promise<void>((resolve) => {
+            markStarted = resolve;
+        });
+        const aborted = new Promise<void>((resolve) => {
+            markAborted = resolve;
+        });
+        const blockingTurn: ScriptedTurn = () => {
+            let finish!: () => void;
+            const pending = new Promise<IteratorResult<SessionEvent>>((resolve) => {
+                finish = () => resolve({ done: true, value: undefined });
+            });
+            const stream: AsyncIterableIterator<SessionEvent> = {
+                [Symbol.asyncIterator]: () => stream,
+                next: () => {
+                    markStarted();
+                    return pending;
+                },
+                return: () => {
+                    markAborted();
+                    finish();
+                    return Promise.resolve({ done: true, value: undefined });
+                },
+            };
+            return stream;
+        };
+        const controller = new AbortController();
+        const { world, review } = await reviewWorld(
+            [
+                ask("ask-1", "Was this requested?"),
+                ask("ask-2", "Was this requested?"),
+                blockingTurn,
+                allow,
+            ],
+            {
+                parents: { [MAIN_AGENT_ID]: "parentagent", parentagent: "rootagent" },
+                signals: [controller.signal, new AbortController().signal],
+            },
+        );
+        worlds.push(world);
+        recordInferences(world);
+
+        const first = review();
+        // The root's fork, two questions up, is the one inferring when the review stops.
+        await started;
+        controller.abort();
+
+        await expect(first).rejects.toThrow("Permission review was stopped.");
+        await expect(aborted).resolves.toBeUndefined();
+        // The next review runs normally on a rebuilt reviewer.
+        await expect(review()).resolves.toMatchObject({ outcome: "allowed" });
     });
 });

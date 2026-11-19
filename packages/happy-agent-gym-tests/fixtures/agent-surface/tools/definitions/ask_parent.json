@@ -1,0 +1,36 @@
+{
+  "autoReview": "never",
+  "capabilities": [
+    "Ask the parent agent's permission reviewer about a planned action."
+  ],
+  "defer": false,
+  "description": "Ask the permission reviewer of the agent that created the agent under review a question about the planned action. A temporary copy of that reviewer reads that agent's current conversation, answers, and is then discarded. Use it before denying when the user's authorization or intent is unclear. The answer is evidence about intent, not authorization by itself, and may be \"unknown\".",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "question": {
+        "description": "One specific question about the planned action, naming the exact action and target.",
+        "maxLength": 4000,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "required": [
+      "question"
+    ],
+    "type": "object"
+  },
+  "name": "ask_parent",
+  "returnType": {
+    "properties": {
+      "answer": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "answer"
+    ],
+    "type": "object"
+  },
+  "transactional": false
+}

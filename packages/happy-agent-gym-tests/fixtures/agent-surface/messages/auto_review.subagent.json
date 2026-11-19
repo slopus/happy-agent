@@ -1,0 +1,11 @@
+[
+  {
+    "content": [
+      {
+        "text": "<conversation>\n[1] Assistant tool call (Bash):\n{\"command\":\"ls /\",\"description\":\"List the root folder\",\"dangerouslyDisableSandbox\":true}\n</conversation>\n\n<reviewed_agent_id>{{reviewedCollaboratorAgentId}}</reviewed_agent_id>\n\n<proposed_action>\n{\"description\":\"running \\\"ls /\\\" in \\\"{{workspacePath}}\\\" outside the workspace sandbox, with unrestricted filesystem and network access. Secret environment bundles: none. Stated purpose: List the root folder\",\"tool\":\"Bash\",\"arguments\":{\"command\":\"ls /\",\"description\":\"List the root folder\",\"dangerouslyDisableSandbox\":true}}\n</proposed_action>",
+        "type": "text"
+      }
+    ],
+    "role": "user"
+  }
+]

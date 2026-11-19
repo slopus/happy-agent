@@ -57,6 +57,16 @@ import { AutoReviewEvidenceStore } from "./impl/AutoReviewEvidenceStore.js";
 import { AutoReviewRuntimeModule } from "./impl/AutoReviewRuntimeModule.js";
 import { AutoReviewComputeModule } from "./impl/AutoReviewComputeModule.js";
 import { AutoReviewHistoryModule } from "./impl/AutoReviewHistoryModule.js";
+import { AutoReviewAskParentModule } from "./impl/AutoReviewAskParentModule.js";
+import { createAskParentPrompt } from "./impl/createAskParentPrompt.js";
+import {
+    ASK_PARENT_ANSWER_MARGIN_MS,
+    ASK_PARENT_REVIEW_WINDOW_MS,
+    askParentDeadline,
+    boundParentAnswer,
+    canAskParent,
+    unknownParentAnswer,
+} from "./impl/askParentChain.js";
 import {
     assistantTextEvidence,
     assistantToolCallEvidence,
@@ -89,6 +99,14 @@ import { type AutoReviewerCursor, autoReviewerCursorSchema } from "./AutoReviewT
  * duplicating the host's SQLite and lock mechanics here would buy nothing. The isolation the
  * specification requires — separate file, separate lock, separate schema, no shared state — is
  * preserved either way.
+ *
+ * A reviewer whose reviewed agent was created by another agent may ask that parent before it
+ * denies. `ask_parent` forks the parent's reviewer the way a fresh review of the parent would build
+ * it — the parent's reviewer route and instructions, and the parent's whole evidence transcript up
+ * to its latest message — puts the question to it in place of a proposed action, hands back its
+ * plain-text answer, and deletes the fork. Nothing reaches the parent agent, its evidence, or its
+ * own reviewer's conversation and cursor. The fork may ask its own parent in turn, up to the root,
+ * within the bounds in `askParentChain.ts`, and stopping the review stops the whole chain.
  *
  * The 120-second review budget is owned by `PermissionsModule`, which creates the abort controller
  * and the timer and derives timed-out/unavailable from a review that does not return. `AutoModule`
@@ -125,6 +143,9 @@ export class AutoModule implements AgentModule {
     readonly #evidence = new AutoReviewEvidenceStore();
     readonly #runtime = new AutoReviewRuntimeModule();
     readonly #reviewHistory: AutoReviewHistoryModule;
+    readonly #askParent = new AutoReviewAskParentModule();
+    /** The main collection, which answers who created an agent and whether it still exists. */
+    #agents: AgentSystemRef | undefined;
 
     /**
      * The lifetime the private review system, its lock, and the reviewer's machine belong to.
@@ -193,8 +214,9 @@ export class AutoModule implements AgentModule {
 
     readonly beforeStart = async (
         ctx: Context,
-        _agents: AgentSystemRef,
+        agents: AgentSystemRef,
     ): Promise<AgentModuleHooks> => {
+        this.#agents = agents;
         // The private system is not this turn's, this request's, or this collection's context: it
         // is its own, so nothing it starts can be carried by a lifetime that ends before it does,
         // and nothing it does reaches the reviewed agents' database.
@@ -239,6 +261,7 @@ export class AutoModule implements AgentModule {
                 this.#runtime,
                 new AutoReviewComputeModule(this.#compute, lifetime),
                 this.#reviewHistory,
+                this.#askParent,
             ],
             provider,
             providers: privateProviders,
@@ -461,6 +484,7 @@ export class AutoModule implements AgentModule {
         const system = this.#requireSystem();
         const mainAgentId = request.agentId;
         const mainDatabase = this.#databaseOf(ctx);
+        const reviewStartedAt = Date.now();
 
         const state = await this.#evidence.readState(mainDatabase, mainAgentId);
         if (!state.archiveHealthy) {
@@ -507,7 +531,12 @@ export class AutoModule implements AgentModule {
             ? whole
             : createAutoPermissionTranscript(entries.slice(activeCursor.reviewedPosition));
 
-        const instructions = await this.#buildInstructions(ctx, mainAgentId);
+        const parentAgentId = await this.#askableParent(ctx, mainAgentId, [mainAgentId]);
+        const instructions = await this.#buildInstructions(
+            ctx,
+            mainAgentId,
+            parentAgentId !== undefined,
+        );
         this.#runtime.beginReview(reviewerId, instructions);
 
         const prompt = createPermissionReviewPrompt({
@@ -539,6 +568,23 @@ export class AutoModule implements AgentModule {
         // History is read through this review's context, which carries the main database, and
         // only while the review runs.
         this.#reviewHistory.beginReview(reviewerId, ctx, mainAgentId);
+        if (parentAgentId !== undefined) {
+            this.#askParent.beginReview(reviewerId, {
+                ask: async (toolCtx, question) =>
+                    await this.#ask(
+                        {
+                            reviewCtx: ctx,
+                            subagentId: mainAgentId,
+                            parentAgentId,
+                            visited: [mainAgentId],
+                            latestAnswerAt: reviewStartedAt + ASK_PARENT_REVIEW_WINDOW_MS,
+                            route,
+                        },
+                        question,
+                        toolCtx.lifetime,
+                    ),
+            });
+        }
         try {
             // Adding an event listener to an already-aborted signal does not call it. The review
             // may have been stopped while evidence or instructions were being prepared, so check
@@ -566,6 +612,7 @@ export class AutoModule implements AgentModule {
         } finally {
             request.signal.removeEventListener("abort", onAbort);
             this.#reviewHistory.endReview(reviewerId);
+            this.#askParent.endReview(reviewerId);
         }
 
         const capture = this.#runtime.takeCapture(reviewerId);
@@ -607,6 +654,200 @@ export class AutoModule implements AgentModule {
             ...(transcript === undefined ? {} : { transcript }),
             userEvidenceOmitted: whole.userEvidenceOmitted,
         });
+    }
+
+    // ---- Asking the parent ---------------------------------------------------------------------
+
+    /**
+     * The parent `agentId`'s reviewer may ask, or `undefined` for a root, a parent already asked in
+     * this chain, a chain out of hops, or a parent that cannot be looked up. Not being able to ask
+     * is never a failure: the review goes on without the tool.
+     */
+    async #askableParent(
+        ctx: Context,
+        agentId: string,
+        visited: readonly string[],
+    ): Promise<string | undefined> {
+        try {
+            const parent = await this.#agents?.parentOf(ctx, agentId);
+            if (parent === undefined || parent === null) return undefined;
+            return canAskParent(visited, parent) ? parent : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+
+    /**
+     * Put one question to a fork of the parent's reviewer, within the chain's deadline and the
+     * asking tool call's lifetime. Every outcome other than an answer — no time left, a timeout, a
+     * parent that is gone, a failed fork — is an "unknown" answer, so the asker falls back to its
+     * ordinary judgement. Only a stopped asker throws, because its own turn is already over.
+     */
+    async #ask(
+        link: AskParentLink,
+        question: string,
+        owner: AbortSignal | undefined,
+    ): Promise<string> {
+        const deadline = askParentDeadline(Date.now(), link.latestAnswerAt);
+        if (deadline === undefined) {
+            return unknownParentAnswer("There was not enough time left in this review to ask.");
+        }
+        const controller = new AbortController();
+        const onOwnerAbort = (): void => controller.abort();
+        owner?.addEventListener("abort", onOwnerAbort, { once: true });
+        if (owner?.aborted === true) controller.abort();
+        let timedOut = false;
+        const timer = setTimeout(() => {
+            timedOut = true;
+            controller.abort();
+        }, deadline - Date.now());
+        timer.unref?.();
+        try {
+            return await this.#askFork(link, question, deadline, controller.signal);
+        } catch (error: unknown) {
+            if (owner?.aborted === true) throw new Error("The question to the parent was stopped.");
+            if (timedOut) {
+                return unknownParentAnswer("The parent's reviewer did not answer in time.");
+            }
+            const message = error instanceof Error ? error.message : String(error);
+            return unknownParentAnswer(
+                `The parent's reviewer could not answer: ${message.slice(0, 240)}`,
+            );
+        } finally {
+            clearTimeout(timer);
+            owner?.removeEventListener("abort", onOwnerAbort);
+        }
+    }
+
+    /**
+     * Build the parent's reviewer as a fresh review of the parent would — its route, its
+     * instructions, its whole evidence transcript up to the latest message — as a new private agent,
+     * ask it, and delete it. The fork reads the parent's evidence and history and writes nothing
+     * outside its own private identity, which is erased before this returns.
+     */
+    async #askFork(
+        link: AskParentLink,
+        question: string,
+        deadline: number,
+        signal: AbortSignal,
+    ): Promise<string> {
+        const system = this.#requireSystem();
+        const ctx = link.reviewCtx;
+        const parentId = link.parentAgentId;
+        if ((await this.#agents?.config(ctx, parentId)) === undefined) {
+            throw new Error("the parent agent no longer exists.");
+        }
+        const mainDatabase = this.#databaseOf(ctx);
+        const state = await this.#evidence.readState(mainDatabase, parentId);
+        if (!state.archiveHealthy) {
+            throw new Error("the parent's review evidence archive is unhealthy.");
+        }
+        const entries = await this.#evidence.readEntries(mainDatabase, parentId, state.generation);
+        const whole = createAutoPermissionTranscript(entries);
+        const visited = [...link.visited, parentId];
+        const grandparentId = await this.#askableParent(ctx, parentId, visited);
+        const route = this.#forkRoute(parentId, link.route);
+        const instructions = await this.#buildInstructions(
+            ctx,
+            parentId,
+            grandparentId !== undefined,
+        );
+        if (signal.aborted) throw new Error("The question to the parent was stopped.");
+
+        const fork = await system.create(
+            this.#privateDbContext(),
+            this.#reviewerConfig("Automatic permission reviewer question"),
+        );
+        const forkId = fork.id;
+        let aborting: Promise<void> | undefined;
+        const abortFork = (): Promise<void> => {
+            aborting ??= system.abort(this.#privateDbContext(), forkId).catch(() => undefined);
+            return aborting;
+        };
+        const onAbort = (): void => {
+            void abortFork();
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        try {
+            this.#runtime.beginReview(forkId, instructions);
+            this.#reviewHistory.beginReview(forkId, ctx, parentId);
+            if (grandparentId !== undefined) {
+                this.#askParent.beginReview(forkId, {
+                    ask: async (toolCtx, nextQuestion) =>
+                        await this.#ask(
+                            {
+                                reviewCtx: ctx,
+                                subagentId: parentId,
+                                parentAgentId: grandparentId,
+                                visited,
+                                latestAnswerAt: deadline - ASK_PARENT_ANSWER_MARGIN_MS,
+                                route,
+                            },
+                            nextQuestion,
+                            toolCtx.lifetime,
+                        ),
+                });
+            }
+            const prompt = createAskParentPrompt({
+                conversation: whole.text,
+                agentId: parentId,
+                subagentId: link.subagentId,
+                question,
+                canAskParent: grandparentId !== undefined,
+            });
+            if (signal.aborted) throw new Error("The question to the parent was stopped.");
+            await system.send(
+                this.#privateDbContext(),
+                forkId,
+                { role: "user", content: [{ type: "text", text: prompt }] },
+                {
+                    permissionMode: "read_only",
+                    provider: route.providerId,
+                    model: route.modelId,
+                    effort: route.effort,
+                },
+            );
+            await fork.waitForIdle();
+            if (signal.aborted) throw new Error("The question to the parent was stopped.");
+            const capture = this.#runtime.takeCapture(forkId);
+            if (capture.doneState !== "normal") {
+                throw new Error(
+                    `${capture.errorMessage ?? unfinishedReviewReason(capture.doneState)}.`,
+                );
+            }
+            const answer = finalReviewerText(capture.entries).trim();
+            if (answer.length === 0) {
+                return unknownParentAnswer("The parent's reviewer gave no answer.");
+            }
+            return boundParentAnswer(
+                whole.userEvidenceOmitted
+                    ? `${answer}\n\nSome of the parent's user messages did not fit in the evidence this answer was based on.`
+                    : answer,
+            );
+        } finally {
+            signal.removeEventListener("abort", onAbort);
+            if (signal.aborted) await abortFork();
+            this.#runtime.forget(forkId);
+            this.#reviewHistory.endReview(forkId);
+            this.#askParent.endReview(forkId);
+            await system
+                .delete(this.#privateDbContext(), forkId, { erase: true })
+                .catch(() => undefined);
+        }
+    }
+
+    /**
+     * The route the parent's own reviewer would run on now, or the asker's route when the parent
+     * has not inferred since this process started and so has no known route.
+     */
+    #forkRoute(parentId: string, fallback: AutoReviewerRoute): AutoReviewerRoute {
+        const active = this.#activeRoutes.get(parentId);
+        if (active === undefined) return fallback;
+        try {
+            return reviewerModelsForAgent({ models: this.#catalog, active })[0] ?? fallback;
+        } catch {
+            return fallback;
+        }
     }
 
     // ---- Reviewer lifecycle -------------------------------------------------------------------
@@ -667,7 +908,7 @@ export class AutoModule implements AgentModule {
         }
     }
 
-    #reviewerConfig(): AgentConfig {
+    #reviewerConfig(title = "Automatic permission reviewer"): AgentConfig {
         return {
             environment: {
                 ...currentAgentEnvironment(),
@@ -675,8 +916,13 @@ export class AutoModule implements AgentModule {
                 // installation runs in rather than one named at the seam.
                 workingDirectory: this.#config.configuration.paths.publicHome,
             },
-            modules: { autoReviewCompute: {}, autoReviewHistory: {}, autoReviewRuntime: {} },
-            metadata: { title: "Automatic permission reviewer" },
+            modules: {
+                autoReviewAskParent: {},
+                autoReviewCompute: {},
+                autoReviewHistory: {},
+                autoReviewRuntime: {},
+            },
+            metadata: { title },
         };
     }
 
@@ -691,14 +937,18 @@ export class AutoModule implements AgentModule {
      * appended so the reviewer sees the project instructions in force where the action was
      * proposed.
      */
-    async #buildInstructions(ctx: Context, mainAgentId: string): Promise<string> {
+    async #buildInstructions(
+        ctx: Context,
+        mainAgentId: string,
+        askParent: boolean,
+    ): Promise<string> {
         const securityPolicy = await readAutoSecurityPolicy({
             readGlobalSecurity: async () =>
                 await this.#config.readGlobalSecurity(ctx, AUTO_SECURITY_MD_MAX_BYTES),
             readProjectSecurity: async () =>
                 await this.#config.readProjectSecurity(ctx, AUTO_SECURITY_MD_MAX_BYTES),
         });
-        const guardian = createPermissionReviewInstructions(securityPolicy);
+        const guardian = createPermissionReviewInstructions(securityPolicy, { askParent });
         const projectContext = await this.#systemPrompt.readAgentsMdInstructions(ctx, mainAgentId);
         return projectContext === undefined || projectContext.trim().length === 0
             ? guardian
@@ -866,6 +1116,22 @@ function unfinishedReviewReason(state: string | undefined): string {
         default:
             return "the provider stream ended without a completion event";
     }
+}
+
+/** One question in an `ask_parent` chain: who asks, whom, and within what. */
+interface AskParentLink {
+    /** The original review's context, which carries the main database. */
+    readonly reviewCtx: Context;
+    /** The agent whose reviewer asks. */
+    readonly subagentId: string;
+    /** The agent whose reviewer is forked to answer. */
+    readonly parentAgentId: string;
+    /** Every agent already in this chain, starting with the reviewed agent. */
+    readonly visited: readonly string[];
+    /** The latest time the asker can wait for the answer. */
+    readonly latestAnswerAt: number;
+    /** The asker's own route, used when the parent's is not known. */
+    readonly route: AutoReviewerRoute;
 }
 
 /** A construction failure or model-not-found is route unavailability, never a verdict. */

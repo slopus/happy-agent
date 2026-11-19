@@ -128,6 +128,20 @@ only for the positive user origin, count as authorization, and the person's
 request must cover the exact action. A delegator's instruction or a paraphrase
 that widens the request never does.
 
+When the reviewed agent was created by another agent, the reviewer also gets
+`ask_parent`, and its prompt tells it to ask before it denies for unclear
+authorization or intent. The question goes to a temporary copy of the parent's
+reviewer, built the way a fresh review of the parent would be: the parent's
+reviewer model and instructions and the parent's whole transcript up to its
+latest message, with the question in place of a proposed action. That copy
+answers in plain text, may ask its own parent the same way, up to four agents
+toward the root, and is then deleted; nothing is written to the parent, its
+transcript, or its own reviewer. An answer counts only where it reports the
+person's own request for the exact action, and it never sets aside a deny rule.
+A question that times out, fails, or reaches a parent that is gone is answered
+`unknown: <reason>`, and the reviewer decides as it would have without it.
+Stopping the reviewed turn stops every question in the chain.
+
 ### How the reviewer decides
 
 The reviewer's prompt is Codex's Guardian policy, kept close to Codex's

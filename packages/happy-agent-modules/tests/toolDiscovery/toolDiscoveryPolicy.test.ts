@@ -18,10 +18,12 @@ const eagerDirectories = [
     "compute/tools/glm",
     "userInput",
 ];
-// Voice receives its whole tool arrays without tool search, and every model is offered
-// read_attachment so it can open the files people attach.
+// Voice receives its whole tool arrays without tool search, every model is offered
+// read_attachment so it can open the files people attach, and the private permission reviewer
+// has no tool search at all.
 const eagerFiles = [
     "attachments/tools/read_attachment.ts",
+    "auto/impl/askParentTool.ts",
     "live/impl/voiceSidebarTools.ts",
     "live/impl/liveDesktopTools.ts",
 ];

@@ -106,14 +106,32 @@ const ECHO_SERVER = fileURLToPath(new URL("./fixtures/echoMcpServer.mjs", import
 const REVIEW_PROMPT = "You are judging one planned coding-agent action.";
 
 /**
- * The scripted model. A user message naming a scripted turn gets it once; a permission review
- * answers with the verdict the scenario set; everything else just finishes.
+ * The scripted model. A user message naming a scripted turn gets it once, and so does another
+ * agent's message ending with one; a permission review answers with the verdict the scenario set,
+ * after asking its parent's reviewer when it can; a forked parent reviewer answers "unknown";
+ * everything else just finishes.
  */
 function scriptedModel() {
     const turns = new Map<string, GymTurn>();
     let verdict: "allow" | "deny" | "garbled" = "allow";
     const handler = (request: GymInferenceRequest): GymTurn => {
         if (request.instructions.startsWith(REVIEW_PROMPT)) {
+            if (JSON.stringify(request.messages[0]).includes("<subagent_id>"))
+                return { content: [{ type: "text", text: "unknown" }] };
+            if (
+                request.tools.some((tool) => tool.name === "ask_parent") &&
+                request.messages.at(-1)?.role !== "tool"
+            )
+                return {
+                    content: [
+                        {
+                            type: "tool_call",
+                            name: "ask_parent",
+                            callId: "surface_ask_parent",
+                            arguments: { question: "Did the person ask for this command?" },
+                        },
+                    ],
+                };
             const text =
                 verdict === "garbled"
                     ? "I could not decide."
@@ -124,12 +142,15 @@ function scriptedModel() {
             return { content: [{ type: "text", text: "<title>Surface export</title>" }] };
         const last = request.messages.at(-1);
         const text =
-            last?.role === "user"
+            last?.role === "user" || last?.role === "agent"
                 ? last.content.map((block) => (block.type === "text" ? block.text : "")).join("")
                 : "";
-        const turn = turns.get(text.trim());
-        if (turn !== undefined) {
-            turns.delete(text.trim());
+        const key = turns.has(text.trim())
+            ? text.trim()
+            : [...turns.keys()].find((message) => text.trim().endsWith(`\n${message}`));
+        const turn = key === undefined ? undefined : turns.get(key);
+        if (key !== undefined && turn !== undefined) {
+            turns.delete(key);
             return turn;
         }
         return { content: [{ type: "text", text: "Done." }] };
@@ -297,6 +318,57 @@ async function driveAgentKinds(
     }
     model.review("allow");
 
+    // A subagent's reviewer may ask its parent's reviewer, and the parent's reviewer is forked to
+    // answer the question in place of a proposed action.
+    model.script("Start a reviewed collaborator.", "create_agent", {
+        title: "Reviewed collaborator",
+        text: "Run outside the sandbox (subagent).",
+        ...spawn,
+    });
+    model.script("Run outside the sandbox (subagent).", "Bash", outside);
+    const beforeSubagent = gym.inference.requests.length;
+    await gym.send("Start a reviewed collaborator.", { permissionMode: "auto" });
+    const subagentRequests = () => gym.inference.requests.slice(beforeSubagent);
+    const asking = await gym.waitUntil(
+        async () =>
+            subagentRequests().find((request) =>
+                request.tools.some((tool) => tool.name === "ask_parent"),
+            ),
+        "the subagent's reviewer",
+    );
+    const fork = await gym.waitUntil(
+        async () =>
+            subagentRequests().find((request) =>
+                JSON.stringify(request.messages[0]).includes("<subagent_id>"),
+            ),
+        "the forked parent reviewer",
+    );
+    const reviewedCollaborator = /<reviewed_agent_id>(\w+)<\/reviewed_agent_id>/.exec(
+        JSON.stringify(asking.messages[0]),
+    )?.[1];
+    expect(reviewedCollaborator).toBeDefined();
+    await gym.waitUntil(
+        async () =>
+            subagentRequests().find(
+                (request) =>
+                    request.sessionId === reviewedCollaborator &&
+                    request.messages.at(-1)?.role === "tool",
+            ),
+        "the reviewed subagent to finish",
+    );
+    captures.push(
+        {
+            context: `${prefix}auto_review.subagent`,
+            builtBy: "auto/impl/createPermissionReviewInstructions.ts:ASK_PARENT_GUIDELINE",
+            request: asking,
+        },
+        {
+            context: `${prefix}auto_review.ask_parent`,
+            builtBy: "auto/impl/createAskParentPrompt.ts:createAskParentPrompt",
+            request: fork,
+        },
+    );
+
     const naming = gym.inference.requests.find((request) =>
         request.sessionId.startsWith("naming:"),
     );
@@ -308,6 +380,7 @@ async function driveAgentKinds(
     });
 
     const ids: Record<string, string> = {
+        [reviewedCollaborator!]: "reviewedCollaboratorAgentId",
         [gym.defaultSessionId]: "mainAgentId",
         [chief.agent.id]: "chiefOfStaffAgentId",
         [chief.id]: "chiefOfStaffBotId",

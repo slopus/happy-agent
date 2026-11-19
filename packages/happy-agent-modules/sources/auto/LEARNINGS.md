@@ -151,3 +151,30 @@ history: HistoryModule, storage: AgentStorage)`. The accounts, the catalog and t
   differences listed in `createPermissionReviewInstructions.ts`. Keep that diff minimal, and
   update the recorded commit and differences whenever the prompts are re-compared. Alignment
   outweighs prompt size: the aligned prompt is about 19,900 characters.
+
+- Reading delegators' history was not enough: a reviewer still denied a child's action when the
+  person's request lived only in the parent's context, or was phrased so that only the parent
+  could say whether it covered the action. By the user's decision a reviewer whose reviewed agent
+  has a parent now gets `ask_parent`, and its prompt tells it to ask before denying for unclear
+  authorization or intent. The user first described forking the parent's session, then corrected
+  it: the question goes to the parent's _reviewer_, never the parent session. `ask_parent` builds
+  a new private agent as a fresh (rebuild) review of the parent would be built — the parent's
+  reviewer route, the parent's reviewer instructions, the parent's whole evidence transcript up
+  to its latest message, the normal reviewer tools — puts the question in place of
+  `<proposed_action>`, takes its trailing text as the answer, and erases it. The parent's own
+  reviewer conversation is not copied: the base does not expose reading a private agent's model
+  context, and prior reviews are context, not precedent. Nothing touches the parent agent, its
+  evidence, or its reviewer's conversation and cursor, so the fork leaves no trace.
+- The fork may ask its own parent the same way, toward the root: at most four hops, never an agent
+  already in the chain, the first question inside 60 seconds and 90 seconds of the review's start,
+  each further hop 15 seconds less than its asker. Stopping the review aborts the reviewer, whose
+  tool aborts its fork, whose tool aborts the next. Every non-answer is a plain `unknown: <reason>`
+  result rather than a tool error, so the reviewer falls back to its ordinary judgement instead of
+  reading the failure as a refusal. Resolving the parent here does not contradict the earlier
+  "parents are never resolved for the reviewer" rule: `read_agent_history` still only follows IDs
+  the reviewer found, and `ask_parent` never hands the reviewer the parent's ID.
+- The guideline is inserted through a `{{ ask_parent }}` line that is removed, with the blank line
+  before it, when the tool is not offered, so a root agent's reviewer prompt is byte-for-byte what
+  it was. The placeholder sits in its own paragraph because the formatter folds a line directly
+  under a bullet into that bullet. happy-cluster mirrors the tool name, schema, guideline, fork
+  prompt, bounds, and failure strings; change them together.
