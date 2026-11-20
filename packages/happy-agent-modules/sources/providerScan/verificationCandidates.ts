@@ -4,23 +4,31 @@ import type { SessionReasoningEffort } from "@slopus/happy-providers";
 /**
  * Relative cost of each model family, cheapest first. These are ranks, not prices: Happy has no
  * price data, and a lower rank only means a family is expected to cost less per request than a
- * higher one. The first matching pattern wins, so a specific family sits above a vendor catch-all.
- * Models no pattern matches are tried after every ranked model, in configuration order.
+ * higher one. Patterns match the model's own name, the last segment of its ID, so a family ranks
+ * the same served by its vendor (`anthropic/haiku-5-5`) and run by a harness
+ * (`claude-code/haiku`, `antigravity/claude-sonnet-5-5`, `opencode/openai/gpt-6-luna`). The first
+ * matching pattern wins, so a specific family sits above a catch-all. Models no pattern matches
+ * are tried after every ranked model, in configuration order.
  */
 const RELATIVE_COST_RANKS: readonly (readonly [RegExp, number])[] = [
-    [/^anthropic\/haiku-/u, 1],
-    [/^openai\/gpt-[\d.]+-luna$/u, 1],
-    [/^xai\/grok-composer-/u, 1],
-    [/^anthropic\/sonnet-/u, 2],
-    [/^openai\/gpt-[\d.]+-terra$/u, 2],
-    [/^xai\/grok-/u, 2],
-    [/^anthropic\/opus-/u, 3],
-    [/^openai\/gpt-[\d.]+-sol$/u, 3],
-    [/^openai\/gpt-[\d.]+-astra$/u, 4],
+    [/^(?:claude-)?haiku(?:-|\[|$)/u, 1],
+    [/^gpt-[\d.]+-luna$/u, 1],
+    [/^grok-composer-/u, 1],
+    [/^gemini-[\d.]+-flash(?:-|$)/u, 1],
+    [/^(?:claude-)?sonnet(?:-|\[|$)/u, 2],
+    [/^gpt-[\d.]+-terra$/u, 2],
+    [/^grok-/u, 2],
+    [/^gemini-/u, 2],
+    [/^(?:claude-)?opus(?:-|\[|$)/u, 3],
+    [/^gpt-[\d.]+-sol$/u, 3],
+    [/^gpt-[\d.]+-astra$/u, 4],
 ];
 
-/** Fable is the most expensive Anthropic family and is never used to verify a provider. */
-const FABLE_MODEL = /^anthropic\/fable(?:-|$)/u;
+/**
+ * Fable is the most expensive Anthropic family and is never used to verify a provider, whether its
+ * vendor serves it or a harness runs it (`claude-code/fable`).
+ */
+const FABLE_MODEL = /^(?:claude-)?fable(?:-|\[|$)/u;
 
 /** The least reasoning a probe needs, in preference order. "off" is avoided on purpose. */
 const VERIFICATION_EFFORTS: readonly SessionReasoningEffort[] = ["low", "minimal", "medium"];
@@ -32,7 +40,7 @@ export function verificationCandidates(
 ): { readonly candidates: readonly AgentModel[]; readonly onlyFable: boolean } {
     const routes = models.filter((model) => model.providerId === providerId);
     const candidates = routes
-        .filter((model) => !FABLE_MODEL.test(model.id))
+        .filter((model) => !FABLE_MODEL.test(modelName(model.id)))
         .map((model, index) => ({ index, model, rank: relativeCostRank(model.id) }))
         .sort((left, right) => left.rank - right.rank || left.index - right.index)
         .map(({ model }) => model);
@@ -52,8 +60,13 @@ export function verificationEffort(model: AgentModel): SessionReasoningEffort {
 }
 
 function relativeCostRank(modelId: string): number {
+    const name = modelName(modelId);
     return (
-        RELATIVE_COST_RANKS.find(([pattern]) => pattern.test(modelId))?.[1] ??
-        Number.POSITIVE_INFINITY
+        RELATIVE_COST_RANKS.find(([pattern]) => pattern.test(name))?.[1] ?? Number.POSITIVE_INFINITY
     );
+}
+
+/** The model's own name, without the vendor or harness segments in front of it. */
+function modelName(modelId: string): string {
+    return modelId.slice(modelId.lastIndexOf("/") + 1);
 }

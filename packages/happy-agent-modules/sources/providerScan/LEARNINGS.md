@@ -14,12 +14,19 @@ on a Claude subscription, Bedrock rejects Fable 5's "off" level (`thinking.type.
 supported), and Fable 5's default Mantle transport answers "model does not exist" where Mantle does
 not serve it. Steve's rule: test from cheapest to most expensive, and never test with Fable.
 
-`verificationCandidates.ts` now drops every `anthropic/fable*` model and orders the provider's
-enabled models by a static relative cost rank by family (Haiku, Luna, and Composer first; then
-Sonnet, Terra, and the other Grok models; then Opus and Sol; then Astra). The rank is relative,
-not prices, because Happy has no price data; unranked models go last in configuration order.
-The effort is the cheapest one the model accepts other than "off" (low, minimal, medium, then the
-default), and "off" only when it is the model's only level.
+`verificationCandidates.ts` now drops every Fable model and orders the provider's enabled models
+by a static relative cost rank by family (Haiku, Luna, Composer, and Gemini Flash first; then
+Sonnet, Terra, the other Grok models, and the other Gemini models; then Opus and Sol; then Astra).
+The rank is relative, not prices, because Happy has no price data; unranked models go last in
+configuration order. The effort is the cheapest one the model accepts other than "off" (low,
+minimal, medium, then the default), and "off" only when it is the model's only level.
+
+The rank and the Fable rule first matched whole vendor IDs (`anthropic/haiku-…`), so a provider
+served only through a harness (`claude-code/opus`, `codex-cli/gpt-6.2-sol`,
+`antigravity/gemini-4-carbon`) was verified flagship first and `claude-code/fable` was not
+excluded. Both now match the model's own name, the last ID segment, with an optional `claude-`
+in front for the harnesses that spell it (`antigravity/claude-sonnet-5-5`), so a family ranks the
+same whoever runs it.
 
 Verification stops at the first model that answers. Only a model-specific failure (an unavailable
 or unpermitted model, or an invalid request such as a rejected thinking setting) moves on, at most

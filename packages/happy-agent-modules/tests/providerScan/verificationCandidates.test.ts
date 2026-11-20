@@ -1,10 +1,15 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import type { AgentModel } from "@slopus/happy-agent-base";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
     verificationCandidates,
     verificationEffort,
 } from "../../sources/providerScan/verificationCandidates.js";
+import { testConfigRootedAt } from "../support/configModule.js";
 
 describe("verificationCandidates", () => {
     it("orders a provider's models cheapest first and never offers Fable", () => {
@@ -68,6 +73,57 @@ describe("verificationCandidates", () => {
         ]);
     });
 
+    it("ranks a family the same through a harness and never offers Fable there", () => {
+        const claudeCode = ["claude-code/fable", "claude-code/opus", "claude-code/sonnet[1m]"]
+            .concat("claude-code/haiku")
+            .map((id) => model("claude", id));
+        expect(verificationCandidates(claudeCode, "claude").candidates.map(({ id }) => id)).toEqual(
+            ["claude-code/haiku", "claude-code/sonnet[1m]", "claude-code/opus"],
+        );
+
+        const codexCli = [
+            "codex-cli/gpt-6.2-sol",
+            "codex-cli/gpt-6.2-astra",
+            "codex-cli/gpt-6.1-terra",
+            "codex-cli/gpt-6-luna",
+        ].map((id) => model("codex", id));
+        expect(verificationCandidates(codexCli, "codex").candidates.map(({ id }) => id)).toEqual([
+            "codex-cli/gpt-6-luna",
+            "codex-cli/gpt-6.1-terra",
+            "codex-cli/gpt-6.2-sol",
+            "codex-cli/gpt-6.2-astra",
+        ]);
+
+        const antigravity = [
+            "antigravity/gemini-4-carbon",
+            "antigravity/claude-opus-5-5",
+            "antigravity/gpt-oss-120b",
+            "antigravity/gemini-3.8-flash",
+            "antigravity/claude-fable-5-2",
+            "antigravity/claude-sonnet-5-5",
+        ].map((id) => model("antigravity", id));
+        expect(
+            verificationCandidates(antigravity, "antigravity").candidates.map(({ id }) => id),
+        ).toEqual([
+            "antigravity/gemini-3.8-flash",
+            "antigravity/gemini-4-carbon",
+            "antigravity/claude-sonnet-5-5",
+            "antigravity/claude-opus-5-5",
+            "antigravity/gpt-oss-120b",
+        ]);
+
+        const opencode = ["opencode/anthropic/fable-5", "opencode/openai/gpt-6-luna"].map((id) =>
+            model("opencode", id),
+        );
+        expect(verificationCandidates(opencode, "opencode").candidates.map(({ id }) => id)).toEqual(
+            ["opencode/openai/gpt-6-luna"],
+        );
+        expect(verificationCandidates([model("claude", "claude-code/fable")], "claude")).toEqual({
+            candidates: [],
+            onlyFable: true,
+        });
+    });
+
     it("reports a provider that offers only Fable models", () => {
         const models = [
             model("bedrock", "anthropic/fable-5"),
@@ -78,6 +134,39 @@ describe("verificationCandidates", () => {
             onlyFable: true,
         });
         expect(verificationCandidates([], "bedrock")).toEqual({ candidates: [], onlyFable: false });
+    });
+});
+
+describe("verificationCandidates over configured harnesses", () => {
+    const roots: string[] = [];
+    afterEach(async () => {
+        await Promise.all(roots.splice(0).map(async (path) => await rm(path, { recursive: true })));
+    });
+
+    async function offeredModels(toml: string): Promise<readonly AgentModel[]> {
+        const root = await mkdtemp(join(tmpdir(), "verification-candidates-"));
+        roots.push(root);
+        return (await testConfigRootedAt(root, toml)).offeredModels;
+    }
+
+    it.each([
+        [
+            "Claude Code",
+            "claude",
+            '[providers.claude]\nenabled = true\noauth_token = "sk-ant-oat01-test"\n[harnesses.happy]\nproviders = []\n[harnesses.claude_code]\n',
+            "claude-code/haiku",
+        ],
+        [
+            "Codex CLI",
+            "codex",
+            '[providers.codex]\nenabled = true\napi_key = "sk-test"\n[harnesses.happy]\nproviders = []\n[harnesses.codex_cli]\n',
+            "codex-cli/gpt-6-luna",
+        ],
+        ["Antigravity", "antigravity", "[harnesses.antigravity]\n", "antigravity/gemini-3.8-flash"],
+    ])("verifies %s with its cheapest model first", async (_name, providerId, toml, cheapest) => {
+        const models = await offeredModels(toml);
+        expect(models.find(({ id }) => id === cheapest)?.providerId).toBe(providerId);
+        expect(verificationCandidates(models, providerId).candidates[0]?.id).toBe(cheapest);
     });
 });
 
