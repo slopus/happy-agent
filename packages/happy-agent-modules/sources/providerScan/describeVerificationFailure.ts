@@ -12,7 +12,7 @@ const MESSAGE_LIMIT = 500;
 export interface VerificationTarget {
     /** The provider registry type, such as `bedrock` or `openai_compatible`. */
     readonly type: string | null;
-    /** The person's name for the provider, or a readable name for its type. */
+    /** A readable name for the provider, such as `Codex (Current CLI)` or the person's name for it. */
     readonly label: string;
     /** The configured endpoint host, never a full URL. */
     readonly host?: string;

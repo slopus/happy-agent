@@ -505,6 +505,36 @@ describe("ProviderScanModule", () => {
         ]);
     });
 
+    it("names a built-in provider by its type as well as its default name", async () => {
+        const messages = await Promise.all(
+            (["claude", "codex", "grok"] as const).map(async (providerId) => {
+                const config = await ConfigModule.load(join(await root(), "happy"), {
+                    inference: {
+                        models: [{ ...MODEL, providerId }],
+                        providers: (() => {
+                            const providers = new AgentProviders();
+                            providers.add(providerId, new EmptyResponseProvider(), providerId);
+                            return providers;
+                        })(),
+                    },
+                });
+                expect(config.configuration.values.providers[providerId]?.name).toBe("Current CLI");
+                const result = await new ProviderScanModule(config).verify(
+                    createRootContext(),
+                    providerId,
+                    "inference",
+                );
+                return result.failure?.message.split(" had a problem")[0];
+            }),
+        );
+
+        expect(messages).toEqual([
+            "Claude (Current CLI)",
+            "Codex (Current CLI)",
+            "Grok (Current CLI)",
+        ]);
+    });
+
     it("explains missing Bedrock credentials with the configured AWS profile", async () => {
         const config = await testConfigRootedAt(
             await root(),

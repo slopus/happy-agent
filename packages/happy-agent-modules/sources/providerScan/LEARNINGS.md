@@ -62,3 +62,9 @@ API keys, bearer tokens, signed URLs, and local credential paths in their errors
 before network because fetch reports an untrusted certificate as a bare "fetch failed" network
 failure, and a Bedrock 403 that names the model is reported as an unavailable model rather than
 bad credentials.
+
+Messages first called the provider by its configured name when it had one, but the built-in
+Claude, Codex, and Grok are all named "Current CLI", so their failures were indistinguishable
+("Current CLI rejected the credentials"). A vendor account (Bedrock, Claude, Codex, Grok) whose
+name differs from the vendor's is now called "Vendor (name)", such as "Codex (Current CLI)"; other
+providers keep their own name, and an unnamed one keeps the readable name for its type.
