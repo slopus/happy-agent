@@ -39,6 +39,13 @@ message says the credentials work and lists each model with why it failed, inste
 like a sign-in problem. When the catalog gains, renames, or drops a model, update the rank and the
 Fable pattern in `verificationCandidates.ts` with it.
 
+That claim needs real evidence. Every HTTP 404 used to count as an unavailable model, but a 404 is
+what any server answers on a path it does not serve, before it reads a key: a gateway `base_url`
+missing its `/v1` made verification try three models and tell the person their wrong key worked. A
+404 is now model-specific only when its text mentions the model or its code is `model_not_found`;
+a bare 404 is an `unknown` failure that points at the endpoint address, stops at once, and says
+nothing about the credentials.
+
 ## A failed verification explains itself
 
 Desktop onboarding gates on one inference verification. The response used to report only

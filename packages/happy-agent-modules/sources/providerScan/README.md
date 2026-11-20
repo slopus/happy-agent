@@ -38,8 +38,10 @@ a model-specific failure (`isModelSpecificFailure`: an unavailable model or an i
 it), trying at most three models within the same 30-second bound. A provider whose only enabled
 models are Fable fails with `no_model`. When every tried model failed for a reason of its own, the
 `model_unavailable` message says the credentials work and lists each model with its short reason;
-a failure every model would share keeps its own explanation, prefixed with the models tried. A
-successful verification is remembered, while a failure changes no earlier discovery. A failure
+a failure every model would share keeps its own explanation, prefixed with the models tried. An
+HTTP 404 is model-specific only when the vendor names the model; a bare 404 means a wrong endpoint
+and is never read as working credentials. A successful verification is remembered, while a failure
+changes no earlier discovery. A failure
 returns `failure: { kind, message }`: `describeVerificationFailure` classifies the problem
 (missing credentials, authentication, network, TLS, timeout, unavailable model, quota, provider
 error, no model, or unknown) and writes an actionable sentence that names only non-secret
