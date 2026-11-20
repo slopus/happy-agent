@@ -235,3 +235,15 @@ history: HistoryModule, storage: AgentStorage)`. The accounts, the catalog and t
   bullets are shared, so rewording them changes a root agent's prompt too. happy-cluster mirrors
   the tool name, schema, guideline, fork prompt, bounds, and failure strings; it has not taken
   the ask-parent-first rewording yet and diverges until it does.
+- A fork holds a copy of the parent's evidence transcript, user messages included, so it must not
+  outlive its question. Stopping the daemon used to abort the review and close the private system
+  at once; the closing system refused the fork's abort and delete and waited for its turn, so
+  shutdown hung until the fork answered (up to the question's deadline) and the fork then stayed in
+  the private store forever under a random ID. `close` now stops every live fork and waits for it
+  to erase itself before closing the private system, and a question asked during shutdown is
+  answered `unknown`. A stop that lands while the fork's question is still being queued finds no
+  turn to cancel, so the fork is aborted again once the question is accepted; otherwise shutdown
+  waited for its whole answer. Each fork ID is also written to the private store's `autoForks`
+  scope before the fork is created and removed only after it is erased, so a fork a crashed
+  process left behind is erased at the next start. Durable Functions was not used: it carries work
+  to completion after a restart, while here the only work left after a restart is the erase itself.
