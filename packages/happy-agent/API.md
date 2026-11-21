@@ -803,6 +803,12 @@ variants, and `animated: true` on pictures are additive. Older compatible daemon
 measurement and may ignore `variant`, serving the original. Clients tolerate absent fields and
 fall back to the original on a variant's non-`2xx` answer.
 
+Side questions are additive and do not increment the protocol version. A daemon that serves them
+reports `capabilities.sideQuestions: true` from health and marks the models that answer them with
+`sideQuestions: true` in the configuration's `models`. Older compatible daemons omit both and
+answer the routes under `/v0/agents/:agentId/side-questions` with `404`; clients then offer no
+side questions.
+
 ### Requests and responses
 
 - Request and response bodies are JSON, `content-type: application/json; charset=utf-8`.
@@ -1648,6 +1654,8 @@ Fields:
   described under WebSocket tunnels, and the WebSocket keepalive pings described under Keepalive.
   `artifactCovers: true` advertises artifact `cover` and `summary`, described under Artifacts.
   `search: true` advertises `POST /v0/search`, described under Search.
+  `sideQuestions: true` advertises the routes under `/v0/agents/:agentId/side-questions` and
+  `sideQuestions` on model definitions, described under Side questions.
   `media: true` advertises the routes under `/v0/media` and `id` on `media` items, described
   under Media.
   `feedSubjectFilter: true` advertises `subjects` on `GET /v0/feed` and
@@ -2011,6 +2019,8 @@ Field groups:
   older daemons omit it, and `null` when a model has no curated threshold. A client that shows
   how much context remains counts down to `autoCompactWindow` when present and to
   `contextWindow` otherwise, so the indicator reaches zero at the moment compaction happens.
+  A definition carries `sideQuestions: true` when the model answers side questions, described
+  under Side questions; every other definition omits it, and so do older daemons.
   Definitions live only here; everything else refers to models by ID.
 - `providers` — one entry per configured provider: its `type` (canonical provider key),
   whether the provider is `enabled`, and its model list as references — `id` into the top-level
@@ -7719,6 +7729,103 @@ command causes. `profiles` and `slashCommands` are the post-refresh catalogs and
 exact descriptor that was invoked. An unknown or just-removed command is `404`; a command that
 cannot run in the agent's current state is `409`. A module failure is reported through the ordinary
 error contract.
+
+### Side questions
+
+A side question asks the harness running an agent's conversation something about that
+conversation without adding to it, as Claude Code's `/btw` does. The harness answers once, from
+the conversation as far as it has been given it, without running tools. Neither the question nor
+the answer becomes a message, a run, an event, or any other part of the agent's history, and the
+daemon keeps neither once the answer is collected. A side question may be asked while a turn runs;
+the turn is neither interrupted nor steered.
+
+Only some models answer side questions: those whose definition in the configuration's `models`
+carries `sideQuestions: true`, today the models of the Claude Code harness. A side question goes to
+the harness that the agent's mode selects, the mode `GET /v0/agents/:agentId/mode` returns. When
+that harness is running the conversation, it answers there. When it is not, as after the daemon
+restarted or the agent's turn was stopped, the daemon starts a separate copy of the harness that
+opens the conversation without continuing or changing it, answers from it, and ends; that answer
+takes longer. After a compaction, until the next turn, that copy answers from the conversation as
+it stood before the compaction. Stopping the turn stops the running harness, so a side question it
+is still answering then fails; asked again, it goes to a separate copy.
+
+Answering can take longer than one request may wait, so a side question is asked with one request
+and collected with as many more as it needs. Each waits at most 20 seconds. The daemon keeps no
+side thread: a client that shows one sends the earlier exchanges with each new question. A side
+question belongs to the team member who asked it: only they can collect or cancel it. For anyone
+else, `GET` answers `404 not_found` and `DELETE` answers `{ "cancelled": false }`.
+
+#### `POST /v0/agents/:agentId/side-questions`
+
+Asks a side question and waits up to 20 seconds for its answer. It needs the same access as
+sending the agent a message, except that an archived agent is asked too and stays archived. A
+client that disconnects before this response arrives never learns the side question's `id`, so the
+daemon stops answering it.
+
+Request:
+
+```json
+{
+    "question": "Which file are you changing now?",
+    "history": [{ "question": "What are you working on?", "response": "Retrying failed uploads." }]
+}
+```
+
+- `question` — required; 1 to 100,000 characters and not only whitespace.
+- `history` — optional earlier exchanges of the same side thread, oldest first, at most 50. Each
+  `question` and `response` is at most 100,000 characters. The harness answers with them as
+  context, as it does for a follow-up in its own side panel.
+
+Response — `200`, while the harness is still answering:
+
+```json
+{ "sideQuestion": { "id": "4f9c2d1e-7a3b-4c5d-9e8f-0a1b2c3d4e5f", "status": "answering" } }
+```
+
+or once it has finished:
+
+```json
+{
+    "sideQuestion": {
+        "id": "4f9c2d1e-7a3b-4c5d-9e8f-0a1b2c3d4e5f",
+        "status": "answered",
+        "response": "The retry loop in `uploader.ts`.",
+        "synthetic": false
+    }
+}
+```
+
+- `id` — opaque; names the side question until its answer is collected.
+- `status` — `"answering"`, `"answered"`, or `"failed"`.
+- `response` — with `"answered"`: the answer as Markdown, or `null` when the harness produced
+  none.
+- `synthetic` — with `"answered"`: `true` when the harness gave a canned reply in place of one the
+  model could not give, such as Claude Code's note that the model's API refused the request.
+- `error` — with `"failed"`: a human-readable English message saying why the harness gave no
+  answer, such as the harness stopping before it answered.
+
+Errors:
+
+- `400 invalid_request` — the body is not the request above.
+- `404 not_found` — no such agent.
+- `409 conflict` — another agent manages this agent and it is not a subtask, as for `send`.
+- `409 harness_not_running` — the harness has no conversation to answer from yet, as before the
+  agent's first turn on it.
+- `501 unsupported` — the model the agent's mode selects answers no side questions.
+
+#### `GET /v0/agents/:agentId/side-questions/:sideQuestionId`
+
+Waits up to 20 seconds more for the side question. It needs the same access as the `POST`, and its
+response is exactly that of the `POST`. Once a response carrying `"answered"` or `"failed"` has
+been sent in full, the side question is gone; when the connection fails before that, the side
+question stays for the next `GET`. A side question that is gone, cancelled, or still uncollected
+10 minutes after it was asked is `404 not_found`; the daemon stops answering one that nobody
+collects within those 10 minutes.
+
+#### `DELETE /v0/agents/:agentId/side-questions/:sideQuestionId`
+
+Stops answering the side question and forgets it. It needs the same access as the `POST`.
+Response — `200`: `{ "cancelled": true }` — `false` when it was already gone.
 
 ### Messages and runs
 
