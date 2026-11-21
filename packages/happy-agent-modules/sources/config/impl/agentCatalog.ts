@@ -40,6 +40,7 @@ import {
     isForeignAgentProvider,
     type ForeignAgentConfiguredProvider,
     type ForeignAgentPermissionAsker,
+    type ForeignAgentSessionTracker,
 } from "./createForeignAgentProvider.js";
 import { foreignAgentModels } from "./foreignAgentModels.js";
 import { CredentialDiagnosticSources } from "./credentialDiagnosticSanitizer.js";
@@ -609,6 +610,7 @@ export function agentProviders(
     accountFailures?: ProviderAccountFailures,
     askHarnessPermission?: ForeignAgentPermissionAsker,
     readConfiguration: () => HappyAgentConfiguration = () => configuration,
+    trackForeignSession?: ForeignAgentSessionTracker,
 ): AgentProviders {
     const providers = new AgentProviders();
     const retryLimit = configuration.values.settings.inferenceMaxRetries;
@@ -667,6 +669,7 @@ export function agentProviders(
                                   configuration.paths.agentHome,
                                   onAccountUsage,
                                   askHarnessPermission,
+                                  trackForeignSession,
                               )
                             : await createProvider(
                                   id,

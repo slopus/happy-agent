@@ -159,6 +159,8 @@ permission mode leaves open, the route hands the ask to whatever module register
 `onHarnessPermission` — the user-input module, which puts it to the person — named after the
 harness. With nothing registered, the ask is refused.
 
+`askSideQuestion` asks the harness running an agent's conversation a side question about it (Claude Code's `/btw`) without adding to the conversation. Config keeps the foreign session each provider opens for an agent, held weakly until it is destroyed, and asks that session when there is one, during a turn as much as between turns. Otherwise the route's foreign agent answers from the agent's stored session record in a separate process that leaves the session unchanged. `answersSideQuestions` says which provider/model routes can answer: those whose foreign agent offers `askStoredSideQuestion`.
+
 `harnessAllowsSubagents` decides which harnesses an agent on one harness may start sub-agents on:
 its own; else the creator's `subagent_harnesses`; else, for `happy`, only `antigravity` (models
 Happy cannot run itself); else, for a foreign harness, every harness but `happy`. Collaboration's

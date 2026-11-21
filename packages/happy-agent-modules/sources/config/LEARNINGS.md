@@ -626,3 +626,7 @@ config cannot depend on. Config therefore exposes `onHarnessPermission`: user in
 asker, and every foreign provider's turn environment calls it with the agent from the context and
 the harness's display name. With no asker registered or no agent in the context, the ask is denied
 rather than allowed, because nobody could have approved it.
+
+## Side questions reach the harness's open session or its stored one
+
+A side question must reach the Claude Code process already running the agent's conversation, which only Agent Base holds. Every foreign agent provider now hands each session it opens to `trackSession`, and Config keeps the agent's open session weakly and drops it when the session is destroyed, so `askSideQuestion` reaches it without changing Agent Base. When none is open — after a daemon restart, a stopped turn, or compaction — the harness answers from the session record in a separate process that resumes the session as a fork that is never written to disk, with no MCP servers and the person's hooks off, so the conversation stays unchanged and their hooks do not run for every question. That answer is slower and costs a full uncached read of the conversation, which the person accepted. Only a foreign agent that offers `askStoredSideQuestion` answers side questions, and the model flag comes from that route, never from the shape of the model ID.
