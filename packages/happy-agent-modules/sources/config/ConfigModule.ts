@@ -26,6 +26,8 @@ import {
     GrokSessionCredential,
     type AcpPermissionAnswer,
     type AcpPermissionQuestion,
+    type AcpSession,
+    type AcpSideQuestion,
     type AnthropicBedrockTransport,
     type BaseProvider,
     type SessionReasoningEffort,
@@ -46,6 +48,7 @@ import { parse, stringify, TomlDate, type TomlTable, type TomlValue } from "smol
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
 import { normalizeClaudeSetupToken } from "./ClaudeSetupToken.js";
 import type { HarnessPermissionAsker } from "./HarnessPermission.js";
+import type { ConfigSideQuestionOutcome } from "./SideQuestion.js";
 import { getManagedWorkspacesDirectory } from "../impl/managedWorkspacesDirectory.js";
 import { machinePaths } from "../impl/machinePaths.js";
 import { isUserOriginMetadata } from "../impl/messageOrigin.js";
@@ -72,6 +75,7 @@ import {
     validateHarnesses,
 } from "./impl/harnesses.js";
 import {
+    createForeignAgentProvider,
     foreignAgentRouteForModel,
     foreignAgentRoutes,
     foreignAgentStart,
@@ -1918,6 +1922,11 @@ export class ConfigModule implements AgentModule {
     #instanceId: string | undefined;
     #peerMessaging: PeerMessagingConfig;
     readonly #accountUsageListeners = new Set<(usage: ProviderUsage) => void>();
+    /**
+     * Each agent's foreign session that is open now, held weakly and dropped once destroyed, so a
+     * side question reaches the harness process already running the conversation.
+     */
+    readonly #foreignSessions = new Map<string, WeakRef<AcpSession>>();
     #harnessAsker: HarnessPermissionAsker | undefined;
     #resolvedScripted: ConfigInferenceOverride | undefined;
     #scriptedModelSnapshot: readonly AgentModel[] | undefined;
@@ -3016,6 +3025,64 @@ export class ConfigModule implements AgentModule {
         );
     }
 
+    /** Whether the harness running `modelId` on `providerId` answers side questions. */
+    answersSideQuestions(providerId: string, modelId: string | undefined): boolean {
+        return (
+            foreignAgentRouteForModel(this.configuration, providerId, modelId)?.agent
+                .askStoredSideQuestion !== undefined
+        );
+    }
+
+    /**
+     * Ask the harness running `agentId`'s conversation a side question about it, as Claude Code's
+     * `/btw` does, without adding to the conversation. `mode` is the agent's current mode. The
+     * foreign session already open for the agent answers when there is one, while a turn runs as
+     * much as between turns. Otherwise a separate harness process opens the session stored for the
+     * agent without continuing or changing it. Answering can outlive the request that asked, so
+     * `ctx` must be a context of its own.
+     */
+    async askSideQuestion(
+        ctx: Context,
+        agentId: string,
+        mode: { readonly providerId: string; readonly modelId: string; readonly effort: string },
+        question: AcpSideQuestion,
+    ): Promise<ConfigSideQuestionOutcome> {
+        const route = foreignAgentRouteForModel(this.configuration, mode.providerId, mode.modelId);
+        if (
+            route?.agent.askStoredSideQuestion === undefined ||
+            !this.isProviderEnabled(route.providerId)
+        ) {
+            return { status: "unsupported" };
+        }
+        const live = await this.#foreignSessions.get(agentId)?.deref()?.askSideQuestion(question);
+        if (live !== undefined) return { status: "answered", answer: live };
+        const effort = this.models
+            .find((model) => model.providerId === mode.providerId && model.id === mode.modelId)
+            ?.effortLevels.find((level) => level === mode.effort);
+        const stored = await createForeignAgentProvider(
+            route,
+            this.configuration.paths.agentHome,
+            (usage) => this.#reportAccountUsage(usage),
+        ).askStoredSideQuestion(agentId, {
+            ...question,
+            model: mode.modelId,
+            ...(effort === undefined ? {} : { effort }),
+        });
+        if (stored !== undefined) return { status: "answered", answer: stored };
+        ctx.log.debug(`No ${route.harnessId} session is stored for agent ${agentId} yet.`);
+        return { status: "harness_not_running" };
+    }
+
+    /** Hold `session` weakly under its agent until it is destroyed, for side questions. */
+    #trackForeignSession(session: AcpSession): () => void {
+        const id = session.id;
+        const reference = new WeakRef(session);
+        this.#foreignSessions.set(id, reference);
+        return () => {
+            if (this.#foreignSessions.get(id) === reference) this.#foreignSessions.delete(id);
+        };
+    }
+
     /** What a harness is called: its table's `name`, the built-in name, or its ID. */
     harnessName(harnessId: string): string {
         return (
@@ -3732,6 +3799,8 @@ export class ConfigModule implements AgentModule {
                     this.#accountFailures,
                     (ctx, harnessId, question, signal) =>
                         this.#askHarnessPermission(ctx, harnessId, question, signal),
+                    undefined,
+                    (session) => this.#trackForeignSession(session),
                 ),
             },
             this.configuration,
@@ -3807,6 +3876,7 @@ export class ConfigModule implements AgentModule {
                 (ctx, harnessId, question, signal) =>
                     this.#askHarnessPermission(ctx, harnessId, question, signal),
                 () => this.configuration,
+                (session) => this.#trackForeignSession(session),
             );
             // A test-owned inference registry is already authenticated. Initialize all its
             // accounts as usable, including canonical IDs whose production defaults are off. This

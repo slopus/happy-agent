@@ -12,6 +12,7 @@ export const apiErrorCodeSchema = Type.Union([
     Type.Literal("forbidden"),
     Type.Literal("hash_mismatch"),
     Type.Literal("happy_unavailable"),
+    Type.Literal("harness_not_running"),
     Type.Literal("live_unavailable"),
     Type.Literal("internal"),
     Type.Literal("invalid_request"),
