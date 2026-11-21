@@ -290,8 +290,14 @@ export {
     type AcpPermissionQuestion,
     type AcpPermissionRefusal,
     type AcpProviderOptions,
+    type AcpStoredSideQuestion,
     type AcpTurnEnvironment,
 } from "@/protocol/acp/AcpProvider.js";
+export type {
+    AcpSideQuestion,
+    AcpSideQuestionAnswer,
+    AcpSideQuestionTurn,
+} from "@/protocol/acp/AcpConnection.js";
 export { AcpSession, type AcpSessionOptions } from "@/protocol/acp/AcpSession.js";
 export { acpDiscoverModels } from "@/protocol/acp/acpDiscoverModels.js";
 export type { AcpSelectValue } from "@/protocol/acp/impl/acpConfigOptions.js";

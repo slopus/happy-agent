@@ -1,6 +1,10 @@
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
-import type { AcpConnect } from "@/protocol/acp/AcpConnection.js";
-import type { AcpAgentLaunch, AcpAgentProfile } from "@/protocol/acp/AcpProvider.js";
+import type { AcpConnect, AcpSideQuestionAnswer } from "@/protocol/acp/AcpConnection.js";
+import type {
+    AcpAgentLaunch,
+    AcpAgentProfile,
+    AcpStoredSideQuestion,
+} from "@/protocol/acp/AcpProvider.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
 import type { SessionReasoningEffort } from "@/core/SessionRunRequest.js";
 import type { AcpSelectValue } from "@/protocol/acp/impl/acpConfigOptions.js";
@@ -69,6 +73,14 @@ export interface ForeignAgent {
      * names a command Happy cannot hold to that.
      */
     connectReadOnly?(start: ForeignAgentStart): AcpConnect;
+    /**
+     * How the agent answers a side question about a stored session that no process here runs,
+     * for an agent whose connection also answers them in a live session
+     * (`AcpAgentConnection.askSideQuestion`). Agents that answer no side questions leave it out.
+     */
+    readonly askStoredSideQuestion?: (
+        start: ForeignAgentStart,
+    ) => (question: AcpStoredSideQuestion) => Promise<AcpSideQuestionAnswer>;
     /** The models assumed until the agent has been asked which it serves. */
     readonly models: readonly ForeignAgentModel[];
     /** Turn the values of the agent's own model selector into Happy models. */

@@ -4,8 +4,13 @@ import { BaseProvider } from "@/core/BaseProvider.js";
 import type { ProviderModality } from "@/core/ProviderModality.js";
 import type { SessionOptions } from "@/core/SessionOptions.js";
 import type { SessionReasoningEffort } from "@/core/SessionRunRequest.js";
-import type { AcpConnect } from "@/protocol/acp/AcpConnection.js";
+import type {
+    AcpConnect,
+    AcpSideQuestion,
+    AcpSideQuestionAnswer,
+} from "@/protocol/acp/AcpConnection.js";
 import { AcpSession } from "@/protocol/acp/AcpSession.js";
+import { acpSessionRecordRead } from "@/protocol/acp/impl/acpSessionStore.js";
 
 /** How to start the foreign agent: an ACP server speaking NDJSON JSON-RPC over stdio. */
 export interface AcpAgentLaunch {
@@ -89,6 +94,16 @@ export interface AcpAgentProfile {
     readonly systemPromptMeta?: (prompt: string) => Record<string, unknown>;
 }
 
+/** A side question about a foreign session that is stored but that no agent process here runs. */
+export interface AcpStoredSideQuestion extends AcpSideQuestion {
+    /** The foreign session the question is about. */
+    readonly sessionId: string;
+    /** The folder that session ran in. */
+    readonly cwd: string;
+    /** The agent's config-option values for the Happy model and effort to answer with. */
+    readonly options: readonly AcpConfigOptionValue[];
+}
+
 export interface AcpProviderOptions {
     /** The ACP server to start, when the agent is not reached through `connect`. */
     readonly launch?: AcpAgentLaunch;
@@ -99,6 +114,19 @@ export interface AcpProviderOptions {
     /** The cwd and permission a turn runs under, read from the agent's context. */
     readonly environment: (ctx: Context) => AcpTurnEnvironment;
     readonly profile?: AcpAgentProfile;
+    /**
+     * Answer a side question about a stored foreign session that no agent process here runs, in a
+     * separate agent process that opens the session without continuing or changing it. Agents
+     * that cannot do this leave it out.
+     */
+    readonly askStoredSideQuestion?: (
+        question: AcpStoredSideQuestion,
+    ) => Promise<AcpSideQuestionAnswer>;
+    /**
+     * Told about each session this provider opens, as soon as it exists, so a caller can reach a
+     * live one outside its runs. What it returns runs once that session is destroyed.
+     */
+    readonly onSession?: (session: AcpSession) => (() => void) | undefined;
 }
 
 /**
@@ -121,10 +149,41 @@ export class AcpProvider extends BaseProvider {
     }
 
     override async session(id: string, options: SessionOptions): Promise<AcpSession> {
-        return new AcpSession(id, {
+        let forget: (() => void) | undefined;
+        const session = new AcpSession(id, {
             ...this.options,
             instructions: options.instructions,
             tools: options.tools ?? [],
+            onDestroy: () => forget?.(),
+        });
+        forget = this.options.onSession?.(session);
+        return session;
+    }
+
+    /**
+     * Ask a side question about the foreign session stored for Happy session `id`, for when no
+     * agent process here runs it: a separate one opens that session without continuing or changing
+     * it, answers, and ends. `model` and `effort` are Happy's, mapped as a turn maps them. Resolves
+     * `undefined` when nothing is stored for `id` yet, or when the agent cannot answer from a
+     * stored session.
+     */
+    async askStoredSideQuestion(
+        id: string,
+        question: AcpSideQuestion & {
+            readonly model?: string;
+            readonly effort?: SessionReasoningEffort;
+        },
+    ): Promise<AcpSideQuestionAnswer | undefined> {
+        const ask = this.options.askStoredSideQuestion;
+        if (ask === undefined) return undefined;
+        const record = await acpSessionRecordRead(this.options.stateDirectory, id);
+        if (record === undefined) return undefined;
+        const { model, effort, ...asked } = question;
+        return await ask({
+            ...asked,
+            sessionId: record.acpSessionId,
+            cwd: record.cwd,
+            options: this.options.profile?.modelOptions?.(model, effort) ?? [],
         });
     }
 }

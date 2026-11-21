@@ -22,7 +22,11 @@ import {
     type AcpAgentConnection,
     type AcpConnect,
     type AcpConnection,
+    type AcpSideQuestion,
+    type AcpSideQuestionAnswer,
+    type AcpSideQuestionTurn,
 } from "@/protocol/acp/AcpConnection.js";
+import type { AcpStoredSideQuestion } from "@/protocol/acp/AcpProvider.js";
 import { ACP_BRIDGE_NAME } from "@/protocol/acp/impl/acpResponseEvents.js";
 import { processTreeGroups, terminateProcessTree } from "@/protocol/acp/impl/processTree.js";
 import { CLAUDE_SDK_PRIVACY_ENVIRONMENT } from "@/vendors/claude/claudeSdkPrivacyEnvironment.js";
@@ -181,6 +185,20 @@ class ClaudeAgentConnection implements AcpAgentConnection {
         if (thread?.turn === undefined) return;
         thread.turn.cancelled = true;
         await thread.query.interrupt().catch(() => undefined);
+    }
+
+    async askSideQuestion(
+        params: AcpSideQuestion & { readonly sessionId: string },
+    ): Promise<AcpSideQuestionAnswer | undefined> {
+        const thread = this.#threads.get(params.sessionId);
+        if (thread === undefined) return undefined;
+        // Answered beside the turn, with no input to the conversation: the turn is not touched.
+        try {
+            return await claudeSideQuestion(thread.query, params);
+        } catch (error) {
+            // The connection's stderr also holds earlier turns' output, so only the error counts.
+            throw params.signal.aborted ? error : sideQuestionFailure(error, "");
+        }
     }
 
     stderr(): string {
@@ -473,6 +491,146 @@ class ClaudeAgentConnection implements AcpAgentConnection {
             },
         ] as acp.SessionConfigOption[];
     }
+}
+
+/**
+ * `Query.askSideQuestion`. The SDK ships it and Claude Code serves it as its `side_question`
+ * control request, even while a turn runs, but the SDK's public types leave it out (checked
+ * through 0.3.321).
+ */
+type SideQuestionQuery = Query & {
+    readonly askSideQuestion?: (
+        question: string,
+        options: { readonly history?: AcpSideQuestionTurn[]; readonly signal?: AbortSignal },
+    ) => Promise<{ readonly response: string | null; readonly synthetic?: boolean } | null>;
+};
+
+/** Why a side question got no answer, already in a sentence a person can act on. */
+class SideQuestionFailure extends Error {}
+
+/** Claude Code's answer to a side question about the conversation `sdk` holds. */
+async function claudeSideQuestion(
+    sdk: Query,
+    question: AcpSideQuestion,
+): Promise<AcpSideQuestionAnswer> {
+    const ask = (sdk as SideQuestionQuery).askSideQuestion;
+    if (typeof ask !== "function") {
+        throw new SideQuestionFailure("This version of Claude Code cannot answer side questions.");
+    }
+    const answer = await ask.call(sdk, question.question, {
+        history: question.history.map((turn) => ({
+            question: turn.question,
+            response: turn.response,
+        })),
+        signal: question.signal,
+    });
+    return { response: answer?.response ?? null, synthetic: answer?.synthetic === true };
+}
+
+/**
+ * Answer a side question about a stored Claude Code session that no process here runs.
+ *
+ * A separate Claude Code resumes the session as a fork that is never written to disk, so the
+ * session itself is neither continued nor changed; it gets the session's model and effort as a
+ * turn would, answers once, and ends. It starts no MCP servers and runs none of the person's
+ * hooks: a side question uses no tools, and those hooks belong to the person's own sessions.
+ */
+export async function claudeAgentStoredSideQuestion(
+    environment: NodeJS.ProcessEnv,
+    question: AcpStoredSideQuestion,
+    onAccountUsage?: (usage: ProviderUsage) => void,
+): Promise<AcpSideQuestionAnswer> {
+    if (question.signal.aborted) throw new Error("The side question was stopped.");
+    const input = new AsyncInputQueue<SDKUserMessage>();
+    const children = new Set<ChildProcess>();
+    let stderr = "";
+    const sdk = query({
+        // Claude Code ends once its input does, so the input stays open until the answer is in.
+        prompt: input,
+        options: {
+            cwd: question.cwd,
+            resume: question.sessionId,
+            forkSession: true,
+            persistSession: false,
+            strictMcpConfig: true,
+            settingSources: ["user", "project", "local"],
+            settings: { disableAllHooks: true },
+            systemPrompt: { type: "preset", preset: "claude_code" },
+            pathToClaudeCodeExecutable: resolveClaudeCodeExecutablePath(),
+            env: {
+                ...process.env,
+                ...environment,
+                ...CLAUDE_CODE_PRIVACY_ENVIRONMENT,
+            },
+            stderr: (data) => {
+                stderr = (stderr + data).slice(-4000);
+            },
+            spawnClaudeCodeProcess: (options) => {
+                const child = spawnClaudeCodeChild(options, {
+                    detached: process.platform !== "win32",
+                    onStderr: (chunk) => {
+                        stderr = (stderr + chunk).slice(-4000);
+                    },
+                });
+                children.add(child);
+                child.once("exit", () => children.delete(child));
+                return child;
+            },
+        },
+    });
+    // Its messages must be read for its answers to arrive; of them only account limits matter.
+    void (async () => {
+        for await (const message of sdk as AsyncIterable<SDKMessage>) {
+            if (message.type !== "rate_limit_event") continue;
+            const usage = claudeUsageFromRateLimitInfo(message.rate_limit_info, {
+                capturedAt: Date.now(),
+                providerId: "claude",
+            });
+            if (usage !== null) onAccountUsage?.(usage);
+        }
+    })().catch(() => undefined);
+    // Stopping the question ends Claude Code at once, also while it is still starting up.
+    const stop = (): void => sdk.close();
+    question.signal.addEventListener("abort", stop, { once: true });
+    try {
+        for (const option of question.options) {
+            if (option.configId === "model") await sdk.setModel(String(option.value));
+            if (option.configId === "effort") {
+                await sdk.applyFlagSettings({ effortLevel: String(option.value) } as never);
+            }
+        }
+        return await claudeSideQuestion(sdk, question);
+    } catch (error) {
+        throw question.signal.aborted ? error : sideQuestionFailure(error, stderr);
+    } finally {
+        question.signal.removeEventListener("abort", stop);
+        input.close();
+        sdk.close();
+        // Claude Code may be renewing the sign-in it shares with every other session.
+        for (const child of children) {
+            afterClaudeCodeRenewal(child, () => terminateProcessTree(child, []));
+        }
+    }
+}
+
+/**
+ * Why Claude Code gave no answer to a side question, in a sentence a person can act on. Its own
+ * words can name paths and variables, so they travel only as the error's `cause`, for logs. An API
+ * error is not one of these: Claude Code answers it with a canned reply that says so (`synthetic`).
+ */
+function sideQuestionFailure(error: unknown, stderr: string): Error {
+    if (error instanceof SideQuestionFailure) return error;
+    const text = `${errorMessage(error)}\n${stderr}`;
+    const reason = /no conversation found/i.test(text)
+        ? "Claude Code no longer has this conversation."
+        : /exited|terminated|ended|closed/i.test(text)
+          ? "Claude Code stopped before it answered."
+          : "Claude Code could not answer this side question.";
+    return new SideQuestionFailure(reason, { cause: error });
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }
 
 function sdkMcpServer(server: acp.McpServer): [string, never] {
