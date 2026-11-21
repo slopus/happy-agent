@@ -22,6 +22,37 @@ export interface AcpAgentConnection {
         readonly sessionId: string;
         readonly prompt: acp.ContentBlock[];
     }): Promise<boolean>;
+    /**
+     * Answer a question about a session's conversation without adding to it, as Claude Code's
+     * `/btw` does: once, from the conversation as far as the agent was given it, without tools,
+     * and also while a turn runs, which goes on undisturbed. Resolves `undefined` when the session
+     * is not open here. Only agents that can do this offer it.
+     */
+    askSideQuestion?(
+        params: AcpSideQuestion & { readonly sessionId: string },
+    ): Promise<AcpSideQuestionAnswer | undefined>;
+}
+
+/** One earlier exchange of a side thread, sent with a follow-up so it has their context. */
+export interface AcpSideQuestionTurn {
+    readonly question: string;
+    readonly response: string;
+}
+
+/** A question about a conversation, asked beside it rather than in it. */
+export interface AcpSideQuestion {
+    readonly question: string;
+    /** Earlier exchanges of the same side thread, oldest first. */
+    readonly history: readonly AcpSideQuestionTurn[];
+    /** Aborts to stop answering. */
+    readonly signal: AbortSignal;
+}
+
+export interface AcpSideQuestionAnswer {
+    /** The answer as Markdown, or `null` when the agent produced none. */
+    readonly response: string | null;
+    /** The agent gave a canned reply in place of one its model could not give. */
+    readonly synthetic: boolean;
 }
 
 /** One running foreign agent and its initialized connection. */
