@@ -6,6 +6,7 @@ import {
     AcpProvider,
     foreignAgent,
     type AcpPermissionQuestion,
+    type AcpSession,
     type AcpTurnEnvironment,
     type ForeignAgent,
     type ForeignAgentStart,
@@ -120,23 +121,31 @@ export function happyHarnessAccepts(
  *
  * The agent runs in the Happy agent's own folder — the one its compute is configured with — under
  * the permission mode the Happy agent is in when each turn starts. Whatever its own permission
- * system asks and that mode leaves open is decided through `askPermission`. Its session
- * records live in a private directory per harness and account, so two accounts never continue
- * each other's foreign sessions.
+ * system asks and that mode leaves open is decided through `askPermission`. Every session the
+ * provider opens goes to `trackSession`, which returns what to run once it is destroyed, so a side
+ * question can reach the agent's live foreign session. Its session records live in a private
+ * directory per harness and account, so two accounts never continue each other's foreign
+ * sessions.
  */
 export function createForeignAgentProvider(
     route: ForeignAgentRoute,
     agentHome: string,
     onAccountUsage?: (usage: ProviderUsage) => void,
     askPermission?: ForeignAgentPermissionAsker,
+    trackSession?: ForeignAgentSessionTracker,
 ): AcpProvider {
     const directory = foreignAgentDirectory(agentHome, route);
+    const start = {
+        ...foreignAgentStart(route),
+        // The agent names a reading after its vendor; it belongs to the account it ran on.
+        onAccountUsage: (usage: ProviderUsage) =>
+            onAccountUsage?.({ ...usage, providerId: route.providerId }),
+    };
+    const askStoredSideQuestion = route.agent.askStoredSideQuestion?.(start);
     return new AcpProvider({
-        connect: route.agent.connect({
-            ...foreignAgentStart(route),
-            // The agent names a reading after its vendor; it belongs to the account it ran on.
-            onAccountUsage: (usage) => onAccountUsage?.({ ...usage, providerId: route.providerId }),
-        }),
+        connect: route.agent.connect(start),
+        ...(askStoredSideQuestion === undefined ? {} : { askStoredSideQuestion }),
+        ...(trackSession === undefined ? {} : { onSession: trackSession }),
         stateDirectory: directory,
         environment: (ctx) => ({
             ...foreignAgentTurnEnvironment(ctx, directory),
@@ -188,6 +197,12 @@ export type ForeignAgentPermissionAsker = (
     question: AcpPermissionQuestion,
     signal: AbortSignal,
 ) => Promise<HarnessPermissionDecision>;
+
+/**
+ * Takes each session a foreign agent provider opens, as soon as it exists, and returns what to run
+ * once it is destroyed.
+ */
+export type ForeignAgentSessionTracker = (session: AcpSession) => (() => void) | undefined;
 
 /** The private directory one route keeps its state in. */
 export function foreignAgentDirectory(agentHome: string, route: ForeignAgentRoute): string {

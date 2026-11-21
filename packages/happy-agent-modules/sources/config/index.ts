@@ -24,6 +24,7 @@ export type {
     HarnessPermissionReview,
     HarnessPermissionReviewer,
 } from "./HarnessPermission.js";
+export type { ConfigSideQuestionOutcome } from "./SideQuestion.js";
 export { DEFAULT_TELEGRAM_API_URL } from "./TelegramConfig.js";
 export { PublicApiConfigError } from "./PublicApiConfig.js";
 export { ClaudeSetupTokenError } from "./ClaudeSetupToken.js";

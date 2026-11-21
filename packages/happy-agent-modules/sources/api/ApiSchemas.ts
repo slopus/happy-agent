@@ -267,6 +267,32 @@ export const abortBodySchema = Type.Object(
     { additionalProperties: false },
 );
 
+export const sideQuestionBodySchema = Type.Object(
+    {
+        question: Type.String({ minLength: 1, maxLength: 100_000, pattern: "\\S" }),
+        history: Type.Optional(
+            Type.Array(
+                Type.Object(
+                    {
+                        question: Type.String({ maxLength: 100_000 }),
+                        response: Type.String({ maxLength: 100_000 }),
+                    },
+                    { additionalProperties: false },
+                ),
+                { maxItems: 50 },
+            ),
+        ),
+    },
+    { additionalProperties: false },
+);
+
+/** The part of an agent's stored mode that picks the harness a side question goes to. */
+export const sideQuestionModeSchema = Type.Object({
+    providerId: Type.String({ minLength: 1 }),
+    modelId: Type.String({ minLength: 1 }),
+    effort: Type.String(),
+});
+
 export const questionAnswerBodySchema = Type.Object(
     {
         answers: Type.Record(
