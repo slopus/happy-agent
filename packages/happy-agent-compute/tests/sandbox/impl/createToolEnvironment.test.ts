@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createToolEnvironment } from "../../../sources/sandbox/impl/createToolEnvironment.js";
+import { readWindowsExecutionPolicy } from "../../../sources/sandbox/impl/readWindowsExecutionPolicy.js";
 
 describe("createToolEnvironment", () => {
     it("keeps developer toolchains while removing model-writable search paths", async () => {
@@ -54,5 +55,26 @@ it.runIf(process.platform === "win32")(
         });
         expect(full.GIT_CONFIG_COUNT).toBe("1");
         expect(full.GIT_CONFIG_KEY_1).toBeUndefined();
+    },
+);
+
+it.runIf(process.platform === "win32")(
+    "gives restricted commands the person's own PowerShell execution policy",
+    async () => {
+        const restricted = await createToolEnvironment("workspace_write", {}, { cwd: "C:\\p" });
+        expect(restricted.PSExecutionPolicyPreference).toBe(await readWindowsExecutionPolicy());
+        expect(restricted.PSExecutionPolicyPreference).toMatch(
+            /^(Restricted|AllSigned|RemoteSigned|Unrestricted|Bypass)$/,
+        );
+        const chosen = await createToolEnvironment(
+            "auto",
+            { PSExecutionPolicyPreference: "AllSigned" },
+            { cwd: "C:\\p" },
+        );
+        expect(chosen.PSExecutionPolicyPreference).toBe("AllSigned");
+        expect(
+            (await createToolEnvironment("full_access", {}, { cwd: "C:\\p" }))
+                .PSExecutionPolicyPreference,
+        ).toBeUndefined();
     },
 );
