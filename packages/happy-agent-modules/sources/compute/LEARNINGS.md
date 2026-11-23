@@ -56,6 +56,12 @@ The fixed tool array and instructions use the same selection. Background handles
 existing opaque `bash_id` field; names do not change execution, permissions, or process ownership.
 Codex keeps its neutral exec_command name and receives the actual shell in environment guidance.
 
+Codex models on native Windows name that shell in `exec_command`'s `shell` argument. Compute runs
+a custom shell only in Full access, so every such command failed in Auto and Workspace write with
+"Custom shells are available only in Full access mode." On a native Windows host, `powershell`,
+`powershell.exe`, or the system path to it now means the default shell and runs sandboxed. Any
+other shell, including `pwsh`, is passed through unchanged and still needs Full access.
+
 ## Background commands use the ordinary shell process catalog
 
 Workspace services have been removed, including their process variant, revocation hooks, and
