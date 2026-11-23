@@ -10,6 +10,8 @@ import { runProviderCliCommand } from "./runProviderCliCommand.js";
 
 const CHECK_TIMEOUT_MS = 10_000;
 const MAX_AUTH_FILE_BYTES = 256 * 1_024;
+// Claude Code's config file also holds every project's history, so it outgrows an auth file.
+const MAX_CLAUDE_CONFIG_BYTES = 16 * 1_024 * 1_024;
 
 type SignInState = Pick<ProviderCliSignIn, "status" | "account">;
 
@@ -20,6 +22,14 @@ const claudeStatusSchema = Type.Object({
     loggedIn: Type.Boolean(),
     email: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     subscriptionType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+});
+const claudeConfigSchema = Type.Object({
+    oauthAccount: Type.Optional(
+        Type.Object({
+            emailAddress: Type.Optional(Type.String()),
+            planDisplayName: Type.Optional(Type.String()),
+        }),
+    ),
 });
 const codexAuthSchema = Type.Object({
     tokens: Type.Optional(
@@ -87,8 +97,28 @@ async function checkClaude(executable: string, machine: ProviderCliMachine): Pro
     }
     return {
         status: "signed_in",
-        account: { email: status.email ?? null, plan: displayPlan(status.subscriptionType) },
+        account: { email: status.email ?? null, plan: await claudePlan(status, machine) },
     };
+}
+
+/**
+ * Anthropic names the plan itself: the account `subscriptionType` calls `max` can be `Ultra`.
+ * Claude Code keeps that name in its config file, and it is the name `claude` shows. Older
+ * versions and sign-ins without a profile have none, so `subscriptionType` is all there is.
+ */
+async function claudePlan(
+    status: { email?: string | null; subscriptionType?: string | null },
+    machine: ProviderCliMachine,
+): Promise<string | null> {
+    const configDirectory = machine.env["CLAUDE_CONFIG_DIR"]?.trim() || homeOf(machine);
+    const config = parseJson(
+        await readSmallFile(join(configDirectory, ".claude.json"), MAX_CLAUDE_CONFIG_BYTES),
+    );
+    const account = Value.Check(claudeConfigSchema, config) ? config.oauthAccount : undefined;
+    const name = account?.planDisplayName?.trim();
+    // The file outlives a sign-out and an account switch, so only this account's name counts.
+    if (name && status.email && account?.emailAddress === status.email) return name;
+    return displayPlan(status.subscriptionType);
 }
 
 async function checkCodex(executable: string, machine: ProviderCliMachine): Promise<SignInState> {
@@ -199,9 +229,12 @@ function parseJson(source: string | undefined): unknown {
     }
 }
 
-async function readSmallFile(path: string): Promise<string | undefined> {
+async function readSmallFile(
+    path: string,
+    maxBytes = MAX_AUTH_FILE_BYTES,
+): Promise<string | undefined> {
     try {
-        if ((await stat(path)).size > MAX_AUTH_FILE_BYTES) return undefined;
+        if ((await stat(path)).size > maxBytes) return undefined;
         return await readFile(path, "utf8");
     } catch {
         return undefined;

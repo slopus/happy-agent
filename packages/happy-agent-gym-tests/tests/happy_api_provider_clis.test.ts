@@ -78,7 +78,9 @@ function jwt(claims: object): string {
     return `${part({ alg: "none" })}.${part(claims)}.signature`;
 }
 
-async function start(): Promise<{ gym: AgentGym; home: string }> {
+async function start(
+    environment: Record<string, string> = {},
+): Promise<{ gym: AgentGym; home: string }> {
     const root = await mkdtemp(join(tmpdir(), "provider-clis-"));
     folders.add(root);
     const home = join(root, "home");
@@ -109,6 +111,7 @@ async function start(): Promise<{ gym: AgentGym; home: string }> {
             HAPPY_AGENT_PROGRAM_DIRECTORIES: "",
             HOME: home,
             PATH: `${stubs}:/usr/bin:/bin`,
+            ...environment,
         },
         timeoutMs: 20_000,
     });
@@ -271,6 +274,74 @@ describe("Provider CLIs API", () => {
                 account: { email: "ada@example.com", plan: "Plus" },
                 methods: ["browser", "device"],
             });
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it.each([
+        [
+            "names the plan the way Anthropic does",
+            { emailAddress: "ada@example.com", planDisplayName: "Ultra" },
+            0,
+            "Ultra",
+        ],
+        [
+            "finds the plan name in a config file larger than an auth file",
+            { emailAddress: "ada@example.com", planDisplayName: "Ultra" },
+            400_000,
+            "Ultra",
+        ],
+        [
+            "ignores the plan name of another account",
+            { emailAddress: "grace@example.com", planDisplayName: "Ultra" },
+            0,
+            "Max",
+        ],
+        [
+            "keeps the subscription type when Claude Code stored no plan name",
+            { emailAddress: "ada@example.com" },
+            0,
+            "Max",
+        ],
+    ])(
+        "Claude Code: %s",
+        async (_name, account, padding, plan) => {
+            const { gym, home } = await start();
+            await executable(join(home, ".local", "bin", "claude"), CLAUDE);
+            await writeFile(join(home, ".stub-claude-signed-in"), "");
+            await writeFile(
+                join(home, ".claude.json"),
+                JSON.stringify({ oauthAccount: account, projects: "x".repeat(padding) }),
+            );
+            const { providerCli } = (await gym.http.ok("GET", "/v0/provider-clis/claude")) as {
+                providerCli: ProviderCli;
+            };
+            expect(providerCli.signIn).toMatchObject({
+                status: "signed_in",
+                account: { email: "ada@example.com", plan },
+            });
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "Claude Code: reads the plan name from CLAUDE_CONFIG_DIR when it is set",
+        async () => {
+            const configDirectory = join(await mkdtemp(join(tmpdir(), "claude-config-")));
+            folders.add(configDirectory);
+            const { gym, home } = await start({ CLAUDE_CONFIG_DIR: configDirectory });
+            await executable(join(home, ".local", "bin", "claude"), CLAUDE);
+            await writeFile(join(home, ".stub-claude-signed-in"), "");
+            await writeFile(
+                join(configDirectory, ".claude.json"),
+                JSON.stringify({
+                    oauthAccount: { emailAddress: "ada@example.com", planDisplayName: "Ultra" },
+                }),
+            );
+            const { providerCli } = (await gym.http.ok("GET", "/v0/provider-clis/claude")) as {
+                providerCli: ProviderCli;
+            };
+            expect(providerCli.signIn.account).toEqual({ email: "ada@example.com", plan: "Ultra" });
         },
         TEST_TIMEOUT_MS,
     );
