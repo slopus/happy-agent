@@ -48,6 +48,23 @@ describe("push registration protocol", () => {
         );
     });
 
+    it("counts a locale in characters, as the server does, not in UTF-16 units", () => {
+        const request = { token, platform: "ios", appId: "com.ex3ndr.happy" };
+        // Each of these characters is two UTF-16 units, so 64 of them are 128 units.
+        const longest = "\u{1F600}".repeat(64);
+        expect(longest).toHaveLength(128);
+        expect(Value.Check(registerPushRequestSchema, { ...request, locale: longest })).toBe(true);
+        expect(
+            Value.Check(registerPushRequestSchema, { ...request, locale: `${longest}\u{1F600}` }),
+        ).toBe(false);
+        expect(Value.Check(registerPushRequestSchema, { ...request, locale: `${longest}x` })).toBe(
+            false,
+        );
+        expect(Value.Check(registerPushRequestSchema, { ...request, locale: "x".repeat(64) })).toBe(
+            true,
+        );
+    });
+
     it.each([
         ["an Expo token", { token: "ExponentPushToken[aB3dE6gH9jK2mN5pQ8sT1v]" }],
         ["a token one character short", { token: "HappyPushToken[aB3dE6gH9jK2mN5pQ8sT1]" }],
@@ -58,6 +75,7 @@ describe("push registration protocol", () => {
         ["an empty locale", { locale: "" }],
         ["a locale with a control character", { locale: "en\u0000US" }],
         ["a locale over 64 characters", { locale: "x".repeat(65) }],
+        ["a locale with half of a surrogate pair", { locale: "en\ud83d" }],
         ["an unknown field", { mutationId: "m" }],
         ["a missing token", { token: undefined }],
     ])("refuses %s", (_name, change) => {

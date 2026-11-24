@@ -4187,6 +4187,14 @@ from health. Older daemons omit it and answer the routes with `404`.
 Registering does not by itself cause a notification. The features that send one say so where they
 are specified, and every one of them sends as described under "What the phone receives".
 
+**Where the daemon is stricter than Happy Cloud.** Both `PUT` routes require
+`content-type: application/json`, and answer `400 invalid_request` without it. Their request body is
+at most 4,096 bytes, and a larger one is `413 too_large`. A client written for Happy Cloud that
+already sends JSON with that header meets both.
+
+**No list.** There is no route that lists registrations. A phone knows its own `id` and `version`
+from the `PUT` that registered it, and nothing else needs to read them.
+
 ### The registration object
 
 ```json
@@ -4224,7 +4232,8 @@ Request:
 - `platform` — required; `"ios"` or `"android"`.
 - `appId` — required; `"com.ex3ndr.happy"`, `"com.slopus.happy.preview"`, or
   `"com.slopus.happy.dev"`.
-- `locale` — optional; 1–64 characters with no control characters.
+- `locale` — optional; 1–64 characters with no control characters, counted as Unicode code points
+  rather than UTF-16 units. `null` means the same as leaving it out.
 
 The body is closed: an unknown field is refused.
 
@@ -4249,7 +4258,9 @@ Response — `204` with no body. The answer is also `204` when nothing was remov
 is already gone, belongs to another person, or has been renewed since under a newer `version`. A
 stale phone therefore never removes a newer registration, and repeating the request is safe.
 
-A malformed `id`, or an `If-Match` that is missing or not a UUID, is `400 invalid_request`.
+A malformed `id`, or an `If-Match` that is missing or not a UUID, is `400 invalid_request`. The
+`If-Match` UUID is read in either letter case, so `0D6C1A5E-...` names the same version as
+`0d6c1a5e-...`.
 
 ### `GET /v0/cloud/push/settings`
 

@@ -41,12 +41,16 @@ export const registerPushRequestSchema = Type.Object(
         token: pushTokenSchema,
         platform: pushPlatformSchema,
         appId: pushAppIdSchema,
-        /** 1–64 characters with no control characters. */
+        /**
+         * 1–64 characters with no control characters. A character outside the Basic Multilingual
+         * Plane is two UTF-16 units and still counts once, as the server counts it, so the pattern
+         * carries the length rather than `maxLength`. Its two alternatives never match the same
+         * text, a surrogate pair or one unit that is no surrogate, so a refusal cannot backtrack.
+         */
         locale: Type.Optional(
             Type.String({
-                minLength: 1,
-                maxLength: 64,
-                pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f]+$",
+                pattern:
+                    "^(?:[\\ud800-\\udbff][\\udc00-\\udfff]|[^\\u0000-\\u001f\\u007f-\\u009f\\ud800-\\udfff]){1,64}$",
             }),
         ),
     },
