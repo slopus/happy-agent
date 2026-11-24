@@ -150,6 +150,15 @@ and relayed unchanged and left out of Markdown, and an agent's Markdown write to
 is refused with an error saying why, because rewriting from Markdown would delete what Markdown
 cannot see.
 
+## A document nobody has edited is empty, not unreadable
+
+A new document Surface holds no blocks until someone writes to it, and the content check read
+that as content outside the model, because the editor's schema wants at least one block. Kirill
+found that agents could not write to an empty document at all: every `update_document` with
+`seq` 0 was refused until a person typed something. A document with no blocks now reads as the
+empty document. Content the model cannot place is still caught, because dropping it is what
+marks a document as outside the model, whether or not anything else is left.
+
 ## Agent writes are differences from the version the agent read
 
 An agent sends full Markdown and the `seq` it read. Replacing the content outright would erase

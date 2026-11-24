@@ -35,11 +35,14 @@ export function readDocument(state: Uint8Array): DocumentReading {
         doc.getXmlFragment(DOCUMENT_FRAGMENT),
         editor.pmSchema,
     );
-    try {
-        root.check();
-    } catch {
-        outsideModel = true;
-    }
+    // A document nobody has written to holds no blocks at all. That is the empty document, not
+    // content outside the model: anything that had to be dropped was already seen above.
+    if (root.childCount > 0)
+        try {
+            root.check();
+        } catch {
+            outsideModel = true;
+        }
     const blocks = root.childCount === 0 ? [] : (docToBlocks(root) as DocumentBlock[]);
     const { text, omitted } = blocksToMarkdown(blocks);
     let comments = doc.getMap(DOCUMENT_THREADS).size > 0;
