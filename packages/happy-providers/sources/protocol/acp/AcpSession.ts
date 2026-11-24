@@ -20,6 +20,7 @@ import {
     ACP_APPROVED_TOOLS_META,
     ACP_BRIDGED_CALL_META,
     ACP_REFUSAL_REASON_META,
+    ACP_SANDBOXED_META,
     type AcpConnection,
 } from "@/protocol/acp/AcpConnection.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
@@ -774,11 +775,12 @@ export class AcpSession extends BaseSession {
 
     /**
      * The agent's own permission system asks before acting. Read only refuses and Full access
-     * allows without asking anyone. A call of a bridged Happy tool goes ahead in Auto, where
-     * Happy's own reviewer decides the call itself when it runs, and in Workspace write when the
-     * tool's own rule says it needs no approval, as Claude Code runs those tools without asking in
-     * every mode. Everything else goes to `askPermission`: in Auto, Happy's own reviewer first,
-     * and otherwise the person.
+     * allows without asking anyone. In Workspace write and Auto, an action the driver says stays
+     * in the agent's own sandbox goes ahead, as Happy's own sandboxed commands do. A call of a
+     * bridged Happy tool goes ahead in Auto, where Happy's own reviewer decides the call itself
+     * when it runs, and in Workspace write when the tool's own rule says it needs no approval, as
+     * Claude Code runs those tools without asking in every mode. Everything else goes to
+     * `askPermission`: in Auto, Happy's own reviewer first, and otherwise the person.
      */
     async #answerPermission(
         params: acp.RequestPermissionRequest,
@@ -793,7 +795,8 @@ export class AcpSession extends BaseSession {
         }
         if (
             (mode === "workspace_write" || mode === "auto") &&
-            (await this.#needsNoApproval(params, mode))
+            (params.toolCall._meta?.[ACP_SANDBOXED_META] === true ||
+                (await this.#needsNoApproval(params, mode)))
         ) {
             return pick(params, "allow_once");
         }

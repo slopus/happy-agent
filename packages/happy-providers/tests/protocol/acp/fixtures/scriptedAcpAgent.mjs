@@ -10,7 +10,8 @@
 // "over quota" fails with a 429 that names a weekly limit; "stubborn" never ends its first prompt;
 // "needs permission" asks the client before a command, and "needs permission for happy" before a
 // bridged happy_secret call (with "only always", offering no one-time allow), then replies with
-// the option it got; anything else is echoed back.
+// the option it got; "needs agy command" asks before a command as Antigravity does, leaving its
+// sandbox with "bypass"; anything else is echoed back.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 
@@ -74,6 +75,22 @@ class ScriptedAgent {
                         },
                     ],
                 },
+                // SCRIPTED_ACP_MODES offers a mode selector with those comma-separated values.
+                ...(process.env.SCRIPTED_ACP_MODES === undefined
+                    ? []
+                    : [
+                          {
+                              id: "mode",
+                              name: "Mode",
+                              category: "mode",
+                              type: "select",
+                              currentValue: "default",
+                              options: process.env.SCRIPTED_ACP_MODES.split(",").map((value) => ({
+                                  value,
+                                  name: value,
+                              })),
+                          },
+                      ]),
             ],
         };
     }
@@ -166,6 +183,32 @@ class ScriptedAgent {
                     title: `Run ${fn}`,
                     name: fn,
                     rawInput,
+                },
+                options: [
+                    { optionId: "allow", name: "Allow", kind: "allow_once" },
+                    { optionId: "deny", name: "Deny", kind: "reject_once" },
+                ],
+            });
+            const chosen =
+                answer.outcome.outcome === "selected" ? answer.outcome.optionId : "cancelled";
+            await this.#say(params.sessionId, `permission=${chosen}`);
+            return { stopReason: "end_turn" };
+        }
+        // Antigravity asks before each command in `accept-edits`, saying whether it leaves the sandbox.
+        if (text.includes("needs agy command")) {
+            const answer = await this.#conn.requestPermission({
+                sessionId: params.sessionId,
+                toolCall: {
+                    toolCallId: `call_${Date.now()}`,
+                    kind: "execute",
+                    status: "pending",
+                    title: "ls -la",
+                    rawInput: {
+                        CommandLine: "ls -la",
+                        ...(text.includes("bypass") ? { BypassSandbox: true } : {}),
+                        WaitMsBeforeAsync: 5000,
+                        toolSummary: "List files",
+                    },
                 },
                 options: [
                     { optionId: "allow", name: "Allow", kind: "allow_once" },

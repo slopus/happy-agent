@@ -23,14 +23,20 @@ lists here are only assumed until the agent reports its own through `modelsFromS
 and the generic `acp` agent assume none. Codex CLI runs the pinned `@openai/codex` this package
 depends on, else a `codex` on PATH, else the pinned release through `npx`.
 
-Antigravity is started as `agy acp`, without `--dangerously-skip-permissions`, after checking
-that `agy --version` is at least 1.5.5. It takes HTTP `mcpServers` over ACP although it does not
-advertise `mcpCapabilities`, so its initialize answer is read as accepting them. Its model
+Antigravity is started as `agy acp --sandbox`, without `--dangerously-skip-permissions`, after
+checking that `agy --version` is at least 1.5.5. It takes HTTP `mcpServers` over ACP although it
+does not advertise `mcpCapabilities`, so its initialize answer is read as accepting them. Its model
 selector lists base names (`gemini-3.8-flash`) with a separate `thought_level` option, and its
-modes are `plan`, `accept-edits`, and `auto`. In the latter two, agy 1.5.10 through 1.5.15 asks
-before every MCP call, naming the function `mcp_happy_<tool>` (see the ACP README's Permission),
-and offers only Allow and Deny; on Deny it ends its turn at once. What each mode asks about is
-tabled in the harnesses recipe (`docs/recipe/harnesses.md`). It also
+modes are `default`, `plan`, `accept-edits`, and `auto`. Happy's Workspace write and Auto both run
+`accept-edits`, and only Full access runs agy's `auto`, whose own review model takes commands out
+of its sandbox without asking. With `--sandbox`, `accept-edits` asks before every command and
+says in `BypassSandbox` whether the command leaves the terminal sandbox; `withSandboxedAsks` marks
+the asks that stay in it with `happy/sandboxed`, which `AcpSession` allows in Workspace write and
+Auto without review. It marks nothing for a configured `command`, or in a session whose modes lack
+`auto`, which agy offers only where its sandbox works. In `accept-edits` and `auto`, agy 1.5.10
+through 1.5.15 asks before every MCP call, naming the function `mcp_happy_<tool>` (see the ACP
+README's Permission), and offers only Allow and Deny; on Deny it ends its turn at once. What each
+mode asks about is tabled in the harnesses recipe (`docs/recipe/harnesses.md`). It also
 declares MCP tools to its model smallest first up to about 60 KB and, over ACP, drops the rest
 with no way to call them (it neither offers its `call_tool` nor honors `antigravity/alwaysLoad`),
 so its profile sets `toolDeclarationBudget` and the bridge offers everything past it through

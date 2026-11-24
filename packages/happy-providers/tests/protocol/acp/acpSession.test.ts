@@ -13,6 +13,7 @@ import type { SessionEvent } from "@/core/SessionEvent.js";
 import type { SessionTool } from "@/core/SessionTool.js";
 import {
     AcpProvider,
+    type AcpAgentLaunch,
     type AcpAgentProfile,
     type AcpPermissionMode,
     type AcpPermissionQuestion,
@@ -20,6 +21,7 @@ import {
 } from "@/protocol/acp/AcpProvider.js";
 import type { AcpSession } from "@/protocol/acp/AcpSession.js";
 import { acpDiscoverModels } from "@/protocol/acp/acpDiscoverModels.js";
+import type { AcpConnect } from "@/protocol/acp/AcpConnection.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
 import {
     acpSessionRecordClear,
@@ -29,7 +31,7 @@ import {
 import type * as acp from "@agentclientprotocol/sdk";
 import { acpConfigOptionId } from "@/protocol/acp/impl/acpConfigOptions.js";
 import { acpGenericAgent } from "@/vendors/foreignAgents/acpGenericAgent.js";
-import { antigravityAgent } from "@/vendors/foreignAgents/antigravityAgent.js";
+import { antigravityAgent, withSandboxedAsks } from "@/vendors/foreignAgents/antigravityAgent.js";
 
 const AGENT = fileURLToPath(new URL("./fixtures/scriptedAcpAgent.mjs", import.meta.url));
 const tools = [
@@ -51,6 +53,8 @@ function harness(
         profile?: AcpAgentProfile;
         tools?: readonly SessionTool[];
         askPermission?: AcpTurnEnvironment["askPermission"];
+        env?: Record<string, string>;
+        connect?: (launch: AcpAgentLaunch) => AcpConnect;
     } = {},
 ) {
     const directory = mkdtempSync(join(tmpdir(), "acp-session-"));
@@ -59,10 +63,11 @@ function harness(
     const launch = {
         command: process.execPath,
         args: [AGENT],
-        env: { SCRIPTED_ACP_LOG: logPath },
+        env: { SCRIPTED_ACP_LOG: logPath, ...options.env },
     };
     const provider = new AcpProvider({
         launch,
+        ...(options.connect === undefined ? {} : { connect: options.connect(launch) }),
         // A first-party driver offers mid-turn input; the fixture stands in for it over ACP.
         ...(options.steerable === true
             ? {
@@ -785,6 +790,52 @@ describe("AcpSession", () => {
         h.user("needs agy permission for call_tool");
         expect(text(await h.run(session))).toBe("permission=deny");
         expect(asked).toHaveLength(1);
+    }, 30_000);
+
+    it("goes ahead with Antigravity's sandboxed commands and reviews the ones that leave its sandbox", async () => {
+        const asked: string[] = [];
+        const agy = (modes: string) =>
+            harness({
+                env: { SCRIPTED_ACP_MODES: modes },
+                profile: { permissionOptions: antigravityAgent.profile.permissionOptions! },
+                connect: (launch) =>
+                    withSandboxedAsks((cwd, client) => acpConnectionSpawn(launch, cwd, client)),
+                askPermission: async (question) => {
+                    asked.push(question.action);
+                    return "deny";
+                },
+            });
+        const h = agy("default,accept-edits,auto,plan");
+        const session = await h.session();
+        for (const mode of ["workspace_write", "auto"] as const) {
+            h.setPermissionMode(mode);
+            h.user("needs agy command");
+            expect(text(await h.run(session)), mode).toBe("permission=allow");
+            h.user("needs agy command bypass");
+            expect(text(await h.run(session)), mode).toBe("permission=deny");
+        }
+        expect(asked).toHaveLength(2);
+        expect(asked[0]).toContain('"BypassSandbox":true');
+        // Read only still refuses a sandboxed command.
+        h.setPermissionMode("read_only");
+        h.user("needs agy command");
+        expect(text(await h.run(session))).toBe("permission=deny");
+
+        // Auto among the modes is how agy says its sandbox works; without it, every command asks.
+        const unsandboxed = agy("default,accept-edits,plan");
+        const other = await unsandboxed.session();
+        unsandboxed.setPermissionMode("auto");
+        unsandboxed.user("needs agy command");
+        expect(text(await unsandboxed.run(other))).toBe("permission=deny");
+        expect(asked).toHaveLength(3);
+        // Happy's Auto runs agy in accept-edits; only Full access uses agy's own Auto.
+        expect(
+            ["read_only", "workspace_write", "auto", "full_access"].map(
+                (mode) =>
+                    antigravityAgent.profile.permissionOptions!(mode as AcpPermissionMode)[0]!
+                        .value,
+            ),
+        ).toEqual(["plan", "accept-edits", "accept-edits", "auto"]);
     }, 30_000);
 
     it("withdraws the person's question and cancels the agent's ask when the turn stops", async () => {

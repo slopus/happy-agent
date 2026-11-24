@@ -43,7 +43,9 @@ Agent Base ── run(context) ──▶ AcpSession ── ACP over stdio ──
   metadata from a first-party driver, or by Antigravity's `mcp_happy_<tool>` function name; an ask
   about `call_tool` is judged as the tool it names, and one that only reads a description passes. New sessions
   carry the never-reviewed Happy tool names in `happy/approvedTools` metadata so a first-party
-  driver can approve them in advance.
+  driver can approve them in advance. An ask whose tool call carries `happy/sandboxed: true`, set
+  by a driver that knows the agent will run the action inside its own sandbox, is allowed in
+  Workspace write and Auto without asking anyone, as Happy runs its own sandboxed commands.
 - **Tool schemas.** The bridge drops string `pattern` keywords from the schemas it advertises:
   Antigravity validates them with Go's regex dialect and rejects its whole toolbox on one it
   cannot compile. Agent Base still validates every call against the full schema.

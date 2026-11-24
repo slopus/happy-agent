@@ -424,23 +424,26 @@ conversation's permission mode:
   Allow for this session when the agent offers it, or Deny. What the agent's own rules and
   settings allow, such as reads outside the project or commands it judges safe, it does without
   asking.
-- Auto: the agent's own Auto reviewer decides, including about Happy's tools. Happy's reviewer
-  does not review a foreign agent's calls, and only what the agent's reviewer hands off reaches
-  the person.
+- Auto: the agent's own Auto mode, except Antigravity, which runs `accept-edits` with its terminal
+  sandbox on. Every ask goes to Happy's Auto reviewer first, under the same rules, timeout, and
+  refusal limit as Happy's own calls: allowed once, or refused for good. Only when the reviewer
+  decides nothing does it reach the person. The agent's calls of Happy's tools are reviewed when
+  they run, like Happy's own.
 - Full access: the agent's own bypass mode. Anything it still asks is allowed.
 
 Stop withdraws an open question and cancels the agent's ask. A foreign agent's reviewer is more
 permissive than Happy's: Claude Code's `auto` classifier allowed a force push, `rm` outside the
-project, and writes to `.git/hooks`; Antigravity's `auto` allowed a force push and `rm -rf`
-outside the project; Codex's Guardian decides alone, and its denials are final. Workspace write
-puts the most in front of the person.
+project, and writes to `.git/hooks`; Antigravity's own `auto` let its review model take writes
+outside the project, `curl`, and a force push out of its sandbox without asking, which is why
+Happy does not use it outside Full access; Codex's Guardian decides alone, and its denials are
+final. In Workspace write and Auto, Antigravity's asks to run a command inside its own sandbox are
+allowed at once, as Happy runs its own sandboxed commands.
 
 Happy's own tools reach the agent over MCP, and the agent's permission system gates them. A tool
 with `autoReview: "never"` is approved in advance on Claude Code and Codex CLI. In Workspace
 write, any other Happy tool the agent asks about is allowed when that tool's
-`shouldReviewInAutoMode` is false for the call, and goes to the person otherwise. On an agent that
-never gates MCP calls, such as Antigravity, Happy's tools run with no question and no review; only
-Happy's own mode limits on them apply. See [Harnesses](recipe/harnesses.md#permissions) for each
+`shouldReviewInAutoMode` is false for the call, and goes to the person otherwise. In Auto, the
+agent's ask about a Happy tool is allowed and Happy reviews the call when it runs. See [Harnesses](recipe/harnesses.md#permissions) for each
 agent's modes and sub-agents.
 
 ## Docker sandbox environments
