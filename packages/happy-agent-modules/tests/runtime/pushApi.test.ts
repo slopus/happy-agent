@@ -268,6 +268,38 @@ it("serves Happy Cloud's push registration contract to each team member's phone"
         expect(refused.json!.code).toBe("invalid_request");
     }
 
+    // Stricter than Happy Cloud, and specified: a JSON content type and a 4,096-byte body.
+    const untyped = await call(
+        aliceToken,
+        "PUT",
+        `/v0/cloud/push/registrations/${id(3)}`,
+        phone(3),
+        {
+            "content-type": "text/plain",
+        },
+    );
+    expect([untyped.status, untyped.json]).toEqual([
+        400,
+        { error: "The request content type must be application/json.", code: "invalid_request" },
+    ]);
+    const oversized = await alice.register(3, { ...phone(3), locale: "x".repeat(4096) });
+    expect([oversized.status, oversized.json]).toEqual([
+        413,
+        { error: "The request body is too large.", code: "too_large" },
+    ]);
+    const untypedSettings = await call(
+        aliceToken,
+        "PUT",
+        "/v0/cloud/push/settings",
+        { enabled: false },
+        {
+            "content-type": "text/plain",
+        },
+    );
+    expect(untypedSettings.status).toBe(400);
+    expect((await alice.settings()).json).toEqual({ enabled: true });
+    everyAnswer.push(untyped.text);
+
     for (let n = 2; n <= 20; n += 1) expect((await alice.register(n)).status).toBe(200);
     const full = await alice.register(21);
     expect(full.status).toBe(409);
