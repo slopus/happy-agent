@@ -167,6 +167,21 @@ Markdown cannot express. The write instead aligns blocks between that version an
 Markdown, keeps unchanged blocks and their invisible attributes, and applies only the computed
 difference to the current document in the write transaction. Unchanged Markdown appends nothing.
 
+## Blank lines are empty paragraphs an agent can add and remove
+
+An empty paragraph shows in Markdown only as two more blank lines. The parser dropped blank
+runs, and the difference kept every block that showed as nothing. Kirill found what that did:
+agents could not remove the empty lines people left, a full rewrite stranded the old ones in the
+middle of the new text, and writing into a cleared document left one above the new content.
+Blank lines now mean what the projection writes. Blocks are one blank line apart, and every two
+blank lines beyond that are one empty paragraph, at the start, between blocks at any depth, and
+at the end. One stray blank line adds nothing, so loosely spaced Markdown does not litter the
+document. An empty paragraph that stays keeps its identity and its nesting, which blank lines
+cannot show; a new one sits right before the block that follows it. Blank text that would be a
+single empty paragraph is no content, because one empty paragraph and no blocks both read as
+empty text. Other blocks that show as nothing, such as a file block with no file, still cannot
+be removed by an agent that cannot see them.
+
 ## Markdown escapes only what would change the meaning
 
 Escaping every punctuation character made `a_snake_name` read back as `a\_snake\_name`, which

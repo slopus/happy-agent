@@ -10806,36 +10806,37 @@ Response — `200`:
 - `lastUsedAt` and `login` are present on every Claude, Codex, and Grok account's entry and
   omitted for every other type, including smart providers, and from older daemons. They are
   additive and do not increment the protocol version.
-  - `lastUsedAt` is the epoch-millisecond instant this account last served a complete inference
-    response, or `null` when it never has. It moves at most about once a minute per account: the
-    first response after a quiet minute is reported at once, and the latest response within a
-    busy minute when that minute ends.
-  - `login` describes the stored sign-in the account uses, read from that credential itself,
-    whichever `credential` source it comes from. It is `null` when the account uses no sign-in,
-    such as an API key, or its sign-in is missing. It never carries token contents, account
-    identifiers, or vendor text:
-    - `refreshedAt` — the last successful token renewal or sign-in: Codex's `last_refresh`,
-      and for Grok and Claude, which record no such time, when their credential file was last
-      written. `null` for a pasted Claude setup token, a Claude sign-in kept in the macOS
-      keychain, and whenever it is unknown.
-    - `expiresAt` — when the current access token expires: the Codex access token's `exp`,
-      Grok's `expires_at`, or Claude's `expiresAt`. `null` when unknown or non-expiring,
-      including for a setup token.
-    - `refreshError` — the latest failed renewal in the current failure streak, or `null`. The
-      daemon renews Codex and Grok sign-ins in the background; Claude Code renews its own, so a
-      Claude account's `refreshError` is always `null`. It holds `status`, the HTTP status of
-      the refusal or `null` when the renewal failed without one; `code`, the vendor's OAuth
-      error code only when it matches `^[a-z0-9_]{1,64}$`, otherwise `null`; `permanent`,
-      `true` when only a new sign-in can restore the login, such as a rejected refresh token;
-      `since`, the first failure of this streak; and `at`, the latest failure. A successful
-      renewal, a new sign-in through this API, or a credential renewed since `at` by anything
-      else, such as inference or the vendor's own program, ends the streak and sets it to
-      `null`; the daemon reads the credential again after each served response, renewal, and
-      change of `signIn`.
+    - `lastUsedAt` is the epoch-millisecond instant this account last served a complete inference
+      response, or `null` when it never has. It moves at most about once a minute per account: the
+      first response after a quiet minute is reported at once, and the latest response within a
+      busy minute when that minute ends.
+    - `login` describes the stored sign-in the account uses, read from that credential itself,
+      whichever `credential` source it comes from. It is `null` when the account uses no sign-in,
+      such as an API key, or its sign-in is missing. It never carries token contents, account
+      identifiers, or vendor text:
+        - `refreshedAt` — the last successful token renewal or sign-in: Codex's `last_refresh`,
+          and for Grok and Claude, which record no such time, when their credential file was last
+          written. `null` for a pasted Claude setup token, a Claude sign-in kept in the macOS
+          keychain, and whenever it is unknown.
+        - `expiresAt` — when the current access token expires: the Codex access token's `exp`,
+          Grok's `expires_at`, or Claude's `expiresAt`. `null` when unknown or non-expiring,
+          including for a setup token.
+        - `refreshError` — the latest failed renewal in the current failure streak, or `null`. The
+          daemon renews Codex and Grok sign-ins in the background; Claude Code renews its own, so a
+          Claude account's `refreshError` is always `null`. It holds `status`, the HTTP status of
+          the refusal or `null` when the renewal failed without one; `code`, the vendor's OAuth
+          error code only when it matches `^[a-z0-9_]{1,64}$`, otherwise `null`; `permanent`,
+          `true` when only a new sign-in can restore the login, such as a rejected refresh token;
+          `since`, the first failure of this streak; and `at`, the latest failure. A successful
+          renewal, a new sign-in through this API, or a credential renewed since `at` by anything
+          else, such as inference or the vendor's own program, ends the streak and sets it to
+          `null`; the daemon reads the credential again after each served response, renewal, and
+          change of `signIn`.
 
-  Unlike the readings, `lastUsedAt` and `refreshError` (with its `since`) survive a daemon
-  restart; `refreshedAt` and `expiresAt` are read from the credential again. Any change of
-  `lastUsedAt` or `login` emits `provider.usage.updated`.
+    Unlike the readings, `lastUsedAt` and `refreshError` (with its `since`) survive a daemon
+    restart; `refreshedAt` and `expiresAt` are read from the credential again. Any change of
+    `lastUsedAt` or `login` emits `provider.usage.updated`.
+
 - `refreshedAt`, `refreshError`, `retryAt`, and `refreshing` are optional for protocol-28
   compatibility. A protocol-29 daemon always sends all four on every entry, with explicit `null`
   or `false`. `refreshedAt` is when the last successful reading arrived, from a poll or from
@@ -11773,8 +11774,11 @@ content Markdown cannot show was left out, and, when the document is one of the 
 important documents, includes its `promptDocument`. `update_document` compares the agent's
 Markdown with the version at that `seq`, block by block, and applies only the difference to the
 current document as one change, inside the write transaction. Edits people made after that
-version are kept, and unchanged text appends nothing. A `seq` outside 1 through the latest is invalid, except
-0 for an empty document. A document containing content outside the content model refuses the
+version are kept, and unchanged text appends nothing. Blank lines carry empty paragraphs:
+blocks are one blank line apart, three blank lines in a row are one empty paragraph, and every
+two more are another; at the start or end of the text every two blank lines are one. An agent
+adds or removes empty paragraphs by writing more or fewer blank lines. A `seq` outside 1
+through the latest is invalid, except 0 for an empty document. A document containing content outside the content model refuses the
 write with an error telling the agent why. `list_document_versions` lists log entries.
 Reading needs no review; updates are durable and own ordinary shared-data Auto review with no
 filesystem elevation. Active admin bots additionally receive `create_document_surface`,

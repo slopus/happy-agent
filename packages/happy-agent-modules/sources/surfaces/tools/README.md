@@ -9,7 +9,9 @@ admin array adds type-specific creation and user administration only for actual 
 Document tools read the Markdown projection at the latest or an earlier `seq`, write full
 replacement Markdown against the `seq` the model read, and list the change log. A write applies
 only the difference from that version, so people's concurrent edits survive, and it is refused
-with an explanation when the document holds content Markdown cannot represent. Reads skip review;
+with an explanation when the document holds content Markdown cannot represent. Blank lines are
+content: blocks are one blank line apart and every two more blank lines are an empty paragraph,
+so an agent removes or adds empty paragraphs by writing fewer or more of them. Reads skip review;
 writes require shared-data Auto review without filesystem elevation. Document creation has the
 same optional managed-image boundary as todo creation.
 

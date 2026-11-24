@@ -18,18 +18,46 @@ export type MarkdownBlock = {
 
 const markdown = new MarkdownIt("commonmark", { html: false }).enable(["table", "strikethrough"]);
 const CHECKBOX = /^\[( |x|X)\][ \t]/;
+const CONTAINERS = new Set(["blockquote_open", "bullet_list_open", "ordered_list_open"]);
 
 /**
  * Parse Markdown into BlockNote blocks without a DOM. Anything Markdown and the content model do
  * not share degrades to the nearest block: HTML stays literal text and inline images become links.
+ *
+ * Blank lines carry empty paragraphs, the way `blocksToMarkdown` writes them: blocks are a blank
+ * line apart and an empty paragraph is an empty block, so every two blank lines beyond the first
+ * between two blocks are one empty paragraph. One stray blank line is nobody's paragraph.
  */
-export function markdownToBlocks(source: string): MarkdownBlock[] {
+export function markdownToBlocks(input: string): MarkdownBlock[] {
+    const source = input.replace(/\r\n?/g, "\n");
     const tokens = markdown.parse(source, {});
+    const lines = source.split("\n");
     let index = 0;
+    /** The first line whose blank lines no block has accounted for yet. */
+    let line = 0;
+    let started = false;
+    /**
+     * The empty paragraphs standing in the blank lines before a block that starts at `start`.
+     * They sit right before that block, at its level, because blank lines cannot say more.
+     */
+    const gap = (start: number): MarkdownBlock[] => {
+        let blank = 0;
+        for (let at = line; at < start; at += 1) if (/^[ \t]*$/.test(lines[at]!)) blank += 1;
+        // Before the first block nothing separates, so every pair of blank lines is a paragraph.
+        const count = started ? Math.floor((blank - 1) / 2) : Math.floor(blank / 2);
+        line = Math.max(line, start);
+        started = true;
+        return Array.from({ length: Math.max(0, count) }, () => ({ type: "paragraph" }));
+    };
     const blocks = (stop?: string): MarkdownBlock[] => {
         const result: MarkdownBlock[] = [];
         while (index < tokens.length && tokens[index]!.type !== stop) {
             const token = tokens[index]!;
+            if (token.map !== null) {
+                result.push(...gap(token.map[0]));
+                // A container's own blocks account for the lines inside it.
+                if (!CONTAINERS.has(token.type)) line = token.map[1];
+            }
             if (token.type === "heading_open") {
                 const level = Math.min(6, Math.max(1, Number(token.tag.slice(1))));
                 result.push({
@@ -85,6 +113,7 @@ export function markdownToBlocks(source: string): MarkdownBlock[] {
         const items: MarkdownBlock[] = [];
         index += 1;
         while (index < tokens.length && tokens[index]!.type !== close) {
+            items.push(...gap(tokens[index]!.map?.[0] ?? line));
             // A list item's first paragraph is its own text; anything after it nests beneath.
             const source = tokens[index + 2]?.type === "inline" ? tokens[index + 2]!.content : "";
             index += 1;
@@ -121,7 +150,11 @@ export function markdownToBlocks(source: string): MarkdownBlock[] {
         index += 1;
         return { type: "table", content: { type: "tableContent", headerRows: 1, rows } };
     };
-    return blocks();
+    const parsed = blocks();
+    // The line after the final line break counts, so text that ends in one adds no paragraph.
+    const trailing = gap(lines.length);
+    // One empty paragraph alone reads as no text at all, so blank text that short is no content.
+    return parsed.length === 0 && trailing.length < 2 ? [] : [...parsed, ...trailing];
 }
 
 /** Parse one block's inline Markdown into styled text and links. */

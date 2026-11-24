@@ -37,7 +37,16 @@ type Unit = {
     markdownDepth: number;
     signature: string;
 };
-type Placed = { attrs: ProseMirrorNode["attrs"]; content: ProseMirrorNode; depth: number };
+type Placed = {
+    attrs: ProseMirrorNode["attrs"];
+    content: ProseMirrorNode;
+    depth: number;
+    /**
+     * An empty paragraph. One the old version had also says how deep it was there, and the least
+     * depth it may keep: its own when it had blocks beneath it, which may stay there.
+     */
+    blank?: { was?: number; least?: number };
+};
 
 /**
  * The change that turns `base`, the version an agent read, into the agent's Markdown, as one Yjs
@@ -65,8 +74,9 @@ export function agentDocumentChange(
     ]) {
         const queue = fresh.slice(previousFresh, freshIndex);
         for (const unit of old.slice(previousOld, oldIndex)) {
-            // Blocks Markdown shows as nothing, such as empty paragraphs, cannot have been removed.
-            if (unit.signature === "")
+            // Only an empty paragraph shows in Markdown as blank lines the agent can take out.
+            // Any other block that shows as nothing cannot have been removed.
+            if (unit.signature === "" && !emptyParagraph(unit))
                 placed.push({
                     attrs: unit.container.attrs,
                     content: unit.content,
@@ -83,19 +93,37 @@ export function agentDocumentChange(
             }
         }
         for (const unit of queue)
-            placed.push({ attrs: unit.container.attrs, content: unit.content, depth: unit.depth });
+            placed.push({
+                attrs: unit.container.attrs,
+                content: unit.content,
+                depth: unit.depth,
+                ...(emptyParagraph(unit) ? { blank: {} } : {}),
+            });
         const kept = old[oldIndex];
         if (kept !== undefined)
             placed.push({
                 attrs: kept.container.attrs,
                 content: kept.content,
                 depth: depth(kept, fresh[freshIndex]!),
+                ...(emptyParagraph(kept)
+                    ? {
+                          blank: {
+                              was: kept.depth,
+                              ...(kept.container.childCount > 1 ? { least: kept.depth } : {}),
+                          },
+                      }
+                    : {}),
             });
         previousOld = oldIndex + 1;
         previousFresh = freshIndex + 1;
     }
+    settleBlanks(placed);
+    // BlockNote always holds at least one block. An empty paragraph the old version already had
+    // is that block, so clearing a document that is already clear changes nothing.
+    const spare = old.find(emptyParagraph);
+    if (placed.length === 0 && spare !== undefined)
+        placed.push({ attrs: spare.container.attrs, content: spare.content, depth: 0 });
     let children = build(placed, schema);
-    // BlockNote always holds at least one block.
     if (children.length === 0)
         children = [
             _blocksToProsemirrorNode(editor, [{ type: "paragraph" }]).firstChild!.firstChild!,
@@ -141,6 +169,11 @@ function units(group: ProseMirrorNode | null, schema: Schema): Unit[] {
     return out;
 }
 
+/** A paragraph Markdown shows as blank lines alone. */
+function emptyParagraph(unit: Unit): boolean {
+    return unit.signature === "" && unit.content.type.name === "paragraph";
+}
+
 /** Matching index pairs: the common start and end, and the longest common run between them. */
 function align(old: readonly Unit[], fresh: readonly Unit[]): [number, number][] {
     let start = 0;
@@ -183,6 +216,25 @@ function align(old: readonly Unit[], fresh: readonly Unit[]): [number, number][]
 /** Keep nesting Markdown could not show unless the agent visibly changed it. */
 function depth(old: Unit, fresh: Unit): number {
     return fresh.markdownDepth === old.markdownDepth ? old.depth : fresh.depth;
+}
+
+/**
+ * Blank lines never show how deep their empty paragraph is. One that stays keeps its nesting
+ * while the blocks around it still allow that. Any other is at least as deep as the block after
+ * it, which would otherwise become its child.
+ */
+function settleBlanks(placed: Placed[]): void {
+    // Backwards, so each one sees where the block after it settled.
+    for (let index = placed.length - 1; index >= 0; index -= 1) {
+        const item = placed[index]!;
+        if (item.blank === undefined) continue;
+        const after = placed[index + 1]?.depth ?? 0;
+        const before = placed[index - 1];
+        const most = (before?.blank?.was ?? before?.depth ?? -1) + 1;
+        const { was, least = after } = item.blank;
+        item.depth =
+            was !== undefined && was >= least && was <= most ? was : Math.max(after, item.depth);
+    }
 }
 
 /** Rebuild the block tree from blocks in document order and their depths. */

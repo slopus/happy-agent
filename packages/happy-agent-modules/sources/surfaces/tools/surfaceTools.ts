@@ -432,7 +432,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                 "restore document revision",
             ],
             description:
-                "Edit a document Surface by giving its entire new Markdown and the seq of the version you read. Happy compares your Markdown with that version block by block and applies only what you changed, so edits people made since then are kept. Unchanged Markdown changes nothing. Empty text clears the content; history keeps every version. To restore an earlier version, read it with read_document and write its text with the latest seq. Use seq 0 only for a document you read as empty.",
+                "Edit a document Surface by giving its entire new Markdown and the seq of the version you read. Happy compares your Markdown with that version block by block and applies only what you changed, so edits people made since then are kept. Unchanged Markdown changes nothing. Blocks are one blank line apart. Three blank lines in a row are an empty paragraph and every two more are another, so write fewer blank lines to remove empty paragraphs and more to add them. Empty text clears the content; history keeps every version. To restore an earlier version, read it with read_document and write its text with the latest seq. Use seq 0 only for a document you read as empty.",
             parameters: Type.Object(
                 {
                     surfaceId: surfaceIdSchema,
