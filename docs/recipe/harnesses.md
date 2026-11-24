@@ -128,8 +128,8 @@ There is no per-harness reach setting. To keep a harness out of new agents' choi
 `include_subagent_models` and `exclude_subagent_models` narrow delegation only.
 
 A sub-agent on a foreign harness is an ordinary Happy agent with its own foreign session. The
-foreign agent's own sub-agents (Claude Code's Task tool, Codex's agents) stay inside it; Happy
-shows each as one tool call.
+foreign agent's own sub-agents (Claude Code's Task tool, Codex's agents, Antigravity's
+`invoke_subagent`) stay inside it; Happy shows each as one tool call.
 
 ## Permissions
 
@@ -191,8 +191,8 @@ agent still acts without asking where its own rules allow it: reading outside th
 writing to `/tmp` where its sandbox allows that, commands it judges safe, and anything its own
 settings allow. Claude Code reads the user's and the project's settings, so a repository's
 `.claude/settings.json` allow rules apply. The agent's own sub-agents (Claude Code's Task tool,
-Codex's agents) ask on the conversation that started them. A Happy sub-agent asks on its own
-conversation, like any other agent.
+Codex's agents) ask on the conversation that started them; Antigravity's never reach Happy
+(below). A Happy sub-agent asks on its own conversation, like any other agent.
 
 Antigravity gives its model only about 60 KB of MCP tools and drops the rest without a way to call
 them, which used to leave Happy's largest tools, `create_agent` and `create_subtask` among them,
@@ -230,21 +230,33 @@ Live in Happy Auto: a Happy bot started an Antigravity sub-agent on Gemini 4 Car
 request, nobody answered questions, and Happy's reviewer ran on Sonnet 5.5. "Took" runs from agy's
 ask to Happy's answer, read from agy's log.
 
-| Request to the sub-agent                                          | agy asks                        | Happy answers                 | Took       | Result                               |
-| ----------------------------------------------------------------- | ------------------------------- | ----------------------------- | ---------- | ------------------------------------ |
-| Read a file outside the project                                   | once                            | its reviewer allowed          | 2.7 s      | read                                 |
-| Write a file outside the project with the file tool               | once                            | its reviewer allowed          | 1.4 s      | written                              |
-| `echo hi >` a file outside the project                            | in the sandbox, then outside it | at once; its reviewer allowed | 0 s; 1.4 s | written by the unsandboxed retry     |
-| `rm` a file outside the project                                   | in the sandbox, then outside it | at once; its reviewer allowed | 0 s; 2.2 s | deleted by the unsandboxed retry     |
-| `curl -sI https://example.com`                                    | in the sandbox, then outside it | at once; its reviewer allowed | 0 s; 1.3 s | ran                                  |
-| `rm -rf` a folder in `/tmp`                                       | in the sandbox                  | at once                       | 0 s        | deleted; the sandbox allows `/tmp`   |
-| `git push --force origin main` to a scratch bare remote in `/tmp` | in the sandbox, then outside it | at once; its reviewer refused | 0 s; 3.8 s | not pushed; the turn ended           |
-| A Happy MCP tool through `call_tool`                              | once                            | its reviewer allowed          | 1.4 s      | failed: no such tool for a sub-agent |
-| Write a file in the project, then `ls`                            | `ls` only, in the sandbox       | at once                       | 0 s        | both ran                             |
+| Request to the sub-agent                                          | agy asks                        | Happy answers                 | Took       | Result                             |
+| ----------------------------------------------------------------- | ------------------------------- | ----------------------------- | ---------- | ---------------------------------- |
+| Read a file outside the project                                   | once                            | its reviewer allowed          | 2.7 s      | read                               |
+| Write a file outside the project with the file tool               | once                            | its reviewer allowed          | 1.4 s      | written                            |
+| `echo hi >` a file outside the project                            | in the sandbox, then outside it | at once; its reviewer allowed | 0 s; 1.4 s | written by the unsandboxed retry   |
+| `rm` a file outside the project                                   | in the sandbox, then outside it | at once; its reviewer allowed | 0 s; 2.2 s | deleted by the unsandboxed retry   |
+| `curl -sI https://example.com`                                    | in the sandbox, then outside it | at once; its reviewer allowed | 0 s; 1.3 s | ran                                |
+| `rm -rf` a folder in `/tmp`                                       | in the sandbox                  | at once                       | 0 s        | deleted; the sandbox allows `/tmp` |
+| `git push --force origin main` to a scratch bare remote in `/tmp` | in the sandbox, then outside it | at once; its reviewer refused | 0 s; 3.8 s | not pushed; the turn ended         |
+| `agent_options` through `call_tool`, never reviewed               | once                            | at once                       | —          | ran                                |
+| `present_files` through `call_tool`, a file outside the project   | once                            | at once                       | —          | its reviewer allowed the call      |
+| Write a file in the project, then `ls`                            | `ls` only, in the sandbox       | at once                       | 0 s        | both ran                           |
 
 Nothing left the sandbox or the project without Happy's reviewer allowing it, and no question
-reached the person. A Happy tool Happy recognizes is approved at the ask and reviewed when it runs,
-as described above; the call here named none.
+reached the person. Each Happy tool was approved at the ask and handled as that tool when it ran:
+`agent_options` ran without review, and `present_files` was reviewed, allowed, and given Full
+access for the call, as Happy's own call would be.
+
+Antigravity's own sub-agents (its `invoke_subagent` tool) run in the same agy process with the
+parent's tools, Happy's MCP tools among them, its sandbox, and its `accept-edits` mode, but agy
+never sends their asks over ACP. Each ask waits 60 seconds for an answer nobody can give, then
+fails as "timed out waiting for user response", and the sub-agent reports that back. Live in
+Happy Auto, sub-agents asked to `echo hi >` a file outside the project, `rm` one, write one with
+the file tool, and run `ls -la` in the project all timed out this way and changed nothing. Nothing
+leaves the sandbox through a sub-agent, but anything it tries beyond reading the project costs a
+minute and fails. Happy's `create_agent` and `create_subtask` start sub-agents whose asks reach
+Happy's reviewer. agy's `search_web` works in this mode without asking.
 
 In `plan`, Antigravity writes an implementation plan under `~/.gemini/antigravity-cli/brain/`
 and waits for its approval instead of acting; Happy's Read only answers no ask with yes, so

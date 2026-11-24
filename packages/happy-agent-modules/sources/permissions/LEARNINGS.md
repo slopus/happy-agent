@@ -64,6 +64,16 @@ off where it cannot run and offers `auto` only where it can, so nothing is marke
 without `auto` or for a configured command. Describe a harness's own review only from evidence:
 its model decisions vary on the same action, and an ask carries the command without its reason.
 
+## Antigravity's own sub-agents fail closed, so `invoke_subagent` stays
+
+Kirill asked whether agy's `invoke_subagent` lets a sub-agent escape Happy's review, and to block
+it in Auto if it did. Live, its sub-agents run in the same agy process with the parent's tools,
+sandbox, and `accept-edits`, but agy never forwards their asks over ACP: each waits 60 seconds and
+fails as timed out, so an outside write, an `rm`, and even a sandboxed `ls` changed nothing. That
+is slow but not an escape, so Happy does not block the tool; `create_agent` is the sub-agent whose
+asks Happy reviews. Recheck this when agy is upgraded: a release that answers sub-agent asks
+itself would be an escape.
+
 ## A foreign harness's Happy tool calls are reviewed like Happy's own
 
 Happy used to skip Auto review for Happy tool calls from a foreign harness, leaving them to the
