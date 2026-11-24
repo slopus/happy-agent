@@ -175,6 +175,7 @@ its public methods, and its storage and event contracts.
 | [Presence](sources/presence/README.md)           | Configured versus effective availability, custom and temporary states, schedules, and status events.    |
 | [Profile](sources/profile/README.md)             | The one person this installation belongs to, and the machine that may speak for them.                   |
 | [User settings](sources/userSettings/README.md)  | Each person's opaque key-value preferences, last-write-wins per key and synced across their devices.    |
+| [Push](sources/push/README.md)                   | The phones a person can be notified on, and one-attempt delivery to them through Happy's push relay.    |
 | [Happy teams](sources/happyTeams/README.md)      | Reviewed standalone tools for Cloud identity, team management, and publishing server endpoints.         |
 | [Exported bots](sources/exportedBots/README.md)  | Bots people reach from Telegram or a bridge, as guests with a subtask each, let in by the Chief.        |
 
@@ -191,7 +192,7 @@ its public methods, and its storage and event contracts.
 ### Storage ownership
 
 Modules owning tables through their own migrations: artifacts, auto, collaboration,
-compactions, events, exported bots, goal, history, mcp, presence, profile, projects, scheduling, secrets, tasks,
+compactions, events, exported bots, goal, history, mcp, presence, profile, projects, push, scheduling, secrets, tasks,
 usage, user input, user settings, workflows, and workspaces. The rest own none: abort, compute, config, files, gemini, git, image
 generation, model switch, observation, permissions, search, skills, system prompt, titles, and code mode.
 Compute uses per-agent and shared Agent KV, while system prompt and titles use Agent KV only;

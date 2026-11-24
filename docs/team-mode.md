@@ -418,6 +418,28 @@ every connection that member uses, the paired phone included. `POST /v0/tasks/:t
 `[name](happy://users/<userId>)` with the Happy user ID; clients resolve the name with
 `GET /v0/users?ids=`.
 
+## Phone notifications
+
+A member's Happy mobile app can register its phone with the team server, so the server can notify
+that member. The server serves the registration routes Happy Cloud serves, under
+`/v0/cloud/push`, and reports `capabilities.pushRegistrations: true` from health; see "Push
+notifications" in the [API specification](../packages/happy-agent/API.md). A standalone
+installation serves the same routes for its one person.
+
+- A registration and the `enabled` setting belong to the signed-in member. One member never sees,
+  replaces, or removes another's phone, and a member holds at most 20 phones, each for 30 days
+  unless the app renews it.
+- The app registers a capability issued by Happy's push relay, never the phone's native token. The
+  server keeps it in its owner-only database and never returns or logs it.
+- Delivery is an outbound `POST https://push.cluster-fluster.com/v1/push/send`, with no credentials
+  of the server's own. A deployment that restricts egress must allow that host on port 443, or
+  every delivery is logged as `push:delivery outcome=unknown` and nothing arrives.
+- Each phone gets one request per notification and nothing is retried. A phone the relay no longer
+  knows is removed from the server.
+
+Registering sends nothing by itself. A notification goes out only when a feature of the server
+decides to send one.
+
 ## Shared profile updates
 
 When any team member changes their profile or photo, `profile.updated` is published through the

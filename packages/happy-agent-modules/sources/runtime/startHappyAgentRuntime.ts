@@ -103,6 +103,7 @@ import { TitlesModule } from "../titles/index.js";
 import { ToolDiscoveryModule } from "../toolDiscovery/index.js";
 import { UsageModule } from "../usage/index.js";
 import { UserInputModule } from "../userInput/index.js";
+import { PushModule } from "../push/index.js";
 import { UserEnvironmentModule } from "../userEnvironment/index.js";
 import { UserSettingsModule } from "../userSettings/index.js";
 import { TaskAutoJoinModule } from "../taskAutoJoin/index.js";
@@ -228,6 +229,7 @@ export interface HappyAgentRuntimeModules {
     readonly titles: TitlesModule;
     readonly toolDiscovery: ToolDiscoveryModule;
     readonly usage: UsageModule;
+    readonly push: PushModule;
     readonly userInput: UserInputModule;
     readonly userEnvironment: UserEnvironmentModule;
     readonly userSettings: UserSettingsModule;
@@ -595,6 +597,7 @@ export async function startHappyAgentRuntime(
         registerShutdown("team", async () => team.close());
         const userSettings = new UserSettingsModule(team);
         const userEnvironment = new UserEnvironmentModule(team, tasks);
+        const push = new PushModule(team, config, durableFunctions);
         const taskAutoJoin = new TaskAutoJoinModule(tasks, team, userSettings, durableFunctions);
         const surfaces = new SurfacesModule(
             durableFunctions,
@@ -847,6 +850,7 @@ export async function startHappyAgentRuntime(
             userEnvironment,
             secretRequests,
             attachments,
+            push,
         );
         api = apiModule;
 
@@ -916,6 +920,7 @@ export async function startHappyAgentRuntime(
             titles,
             toolDiscovery,
             usage,
+            push,
             userInput,
             userEnvironment,
             userSettings,
@@ -956,6 +961,7 @@ export async function startHappyAgentRuntime(
             ...(team.enabled ? [] : [profile]),
             userSettings,
             userEnvironment,
+            push,
             git,
             durableFunctions,
             taskAutoJoin,
