@@ -6,6 +6,7 @@ import {
     liveAppStateSchema,
     liveContextRevisionSchema,
     liveDesktopCapabilitiesSchema,
+    liveFailureReasonSchema,
     liveDesktopContextSchema,
     liveDesktopIdSchema,
     liveResourceIdSchema,
@@ -45,6 +46,7 @@ export const liveSessionSchema = Type.Object({
     status: liveSessionStatusSchema,
     usage: liveSessionUsageSchema,
     error: Nullable(Type.String()),
+    failureReason: Type.Optional(Nullable(liveFailureReasonSchema)),
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
     endedAt: Nullable(timestampSchema),
@@ -102,6 +104,7 @@ export const liveSessionUpdatedChangesSchema = Type.Object({
     status: Type.Optional(liveSessionStatusSchema),
     usage: Type.Optional(liveSessionUsageSchema),
     error: Type.Optional(Nullable(Type.String())),
+    failureReason: Type.Optional(Nullable(liveFailureReasonSchema)),
     endedAt: Type.Optional(Nullable(timestampSchema)),
     updatedAt: timestampSchema,
 });

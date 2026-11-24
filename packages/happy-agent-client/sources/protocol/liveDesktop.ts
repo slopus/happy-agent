@@ -85,12 +85,31 @@ export const liveActionSessionSchema = Type.Union([liveSessionRefSchema, liveAge
 export type LiveActionSession = Static<typeof liveActionSessionSchema>;
 
 /** Additive desktop capabilities, negotiated when a call is created. Unknown names are ignored. */
+/**
+ * Why a call failed, for a desktop to say how it ended. Optional and additive: a daemon that does
+ * not know the cause omits it, and `error` remains the human-readable explanation.
+ */
+export const liveFailureReasonSchema = Type.Union([
+    Type.Literal("signIn"),
+    Type.Literal("apiKey"),
+    Type.Literal("forbidden"),
+    Type.Literal("unsupported"),
+    Type.Literal("usageExhausted"),
+    Type.Literal("setupTimeout"),
+    Type.Literal("readinessTimeout"),
+    Type.Literal("connectionLost"),
+    Type.Literal("controlLost"),
+    Type.Literal("restart"),
+]);
+export type LiveFailureReason = Static<typeof liveFailureReasonSchema>;
+
 export const LIVE_DESKTOP_CAPABILITIES = [
     "appState",
     "voiceFocus",
     "taskCreate",
     "sessionModelChange",
     "agentTargets",
+    "failureReasons",
 ] as const;
 export type LiveDesktopCapability = (typeof LIVE_DESKTOP_CAPABILITIES)[number];
 export const liveDesktopCapabilitiesSchema = Type.Array(
@@ -495,6 +514,8 @@ export const liveControlServerMessageSchema = Type.Union([
                 Type.Literal("failed"),
             ]),
             error: Type.Union([Type.String({ maxLength: 1024 }), Type.Null()]),
+            /** Sent only to a desktop that negotiated `failureReasons`. */
+            reason: Type.Optional(liveFailureReasonSchema),
         },
         closed,
     ),

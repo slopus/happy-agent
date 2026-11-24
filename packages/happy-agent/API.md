@@ -2100,7 +2100,23 @@ New clients use `api` for daemon reachability, independently of mobile pairing.
     `serviceTier` is `"priority"` only when fast mode is on and that route offers the priority
     tier. `notice` is a human-readable explanation, or `null`, for a setting that is currently
     ignored or unusable, such as fast mode on a model without the priority tier or a selected
-    model that is no longer enabled. `defaultSystemPrompt` is the built-in voice model prompt, which
+    model that is no longer enabled.
+
+    Three optional additive fields describe speed and accounts; older daemons omit them.
+    `controller.speed` is the stored controller speed, `regular`, `fast`, or `ultrafast`, named
+    as the model picker names them, or `null` for the fastest speed the selected route offers; a
+    stored `speed` wins over `fastMode`. `effectiveController.speeds` lists the speeds that route
+    offers, always including `regular`, `fast` when its catalog offers the priority tier, and
+    `ultrafast` when the account's plan offers Ultrafast for that model, and
+    `effectiveController.speed` is the fastest offered speed no faster than the stored one, with
+    `serviceTier` `"priority"` for `fast` and `"ultrafast"` for `ultrafast`. `accounts` lists
+    exactly the configured accounts a call can use as its voice credential (`POST
+/v0/live/sessions` `credential`): enabled, a single account rather than a pool, on an official
+    OpenAI endpoint, each as `{ providerId, credential, name? }` with the credential kind it holds,
+    `codex_subscription` for a Codex sign-in on chatgpt.com and `openai_api_key` for an API key on
+    api.openai.com, and its display `name`; an empty list means none is usable.
+
+    `defaultSystemPrompt` is the built-in voice model prompt, which
     is never persisted; `systemPromptOverride` is the stored replacement or `null`; and
     `effectiveSystemPrompt` is the prompt a new call uses. The controller is the person's Voice
     agent (see Live voice sessions); these settings choose the route of its requests in each new
@@ -2236,7 +2252,10 @@ configuration file when it sets one, and otherwise to the default. A `systemProm
 supplied `systemPrompt` is 1–32,768 characters and not blank. The daemon validates the resulting
 selection before storing anything: the provider must be configured, it must offer the model, and
 the effort must be one the model accepts; otherwise the request is `400 invalid_request` with an
-explanation. Fast mode is always accepted and reported through `effectiveController`. Disabling a
+explanation. Fast mode is always accepted and reported through `effectiveController`, and so is
+the optional `controller.speed` (`regular`, `fast`, `ultrafast`, or `null`); send `speed` only to a
+daemon whose `config.voice.controller` includes `speed`, because older daemons reject unknown
+fields. Disabling a
 provider later does not delete the setting; new calls then fail with an explanation. Changes
 apply to calls that start afterwards, never to an active call. In team mode only the team owner
 may change voice settings; anyone else receives `403 forbidden`, and the entire patch is
@@ -15182,6 +15201,8 @@ Use current GPT-Live only: the public `gpt-live-1` transport or Codex's native
   the ordinary agent usage surface; no token usage is invented from voice duration.
 - `error` — a human-readable, sanitized explanation on failure, otherwise `null`; never a raw
   provider diagnostic, credential, or private transcript.
+- `failureReason` — optional: on failure, the same typed reason a `failed` status frame carries
+  with the `failureReasons` capability, otherwise `null`; older daemons omit it.
 - `createdAt`, `updatedAt`, `endedAt` — timestamps; `endedAt` is `null` until local termination.
 - `version` — the ordinary resource version for reads and event chaining.
 
@@ -15228,7 +15249,8 @@ Two optional fields negotiate additive desktop capabilities:
   characters, at most 16. Send it only to a daemon whose `GET /v0/health` lists
   `capabilities.desktopLiveCapabilities`. The daemon accepts the intersection of this list and its
   own; unknown names are ignored, never rejected. Current names are `appState`, `voiceFocus`,
-  `taskCreate`, `sessionModelChange`, and `agentTargets`. `taskCreate`, `sessionModelChange`, and
+  `taskCreate`, `sessionModelChange`, `agentTargets`, and `failureReasons`. `taskCreate`,
+  `sessionModelChange`, and
   `agentTargets` are accepted only together with `appState`. Omitted, the call uses only the
   original contract.
 - `appState` — the initial Desktop AppState object described below. It is valid only when
@@ -15469,8 +15491,13 @@ Server-to-client frames after hello are:
 - `{ type: "actionRequested", actionId, contextRevision, inputTranscriptIds, action }` — one
   fixed desktop action. `actionId` is an opaque lifetime-stable ID; `inputTranscriptIds` contains
   at most 32 distinct source fragment IDs for attribution, not authorization or a claimed completed turn.
-- `{ type: "status", status, error }` — `status` is `starting`, `active`, `closing`, `closed`,
-  or `failed`; `error` is a sanitized human-readable explanation or `null`.
+- `{ type: "status", status, error, reason? }` — `status` is `starting`, `active`, `closing`,
+  `closed`, or `failed`; `error` is a sanitized human-readable explanation or `null`. With the
+  `failureReasons` capability, a `failed` status may carry `reason`, why the call ended, so the
+  desktop can say how it ended: `signIn` (the Codex sign-in expired or was rejected), `apiKey`,
+  `forbidden`, `unsupported`, `usageExhausted`, `setupTimeout`, `readinessTimeout`,
+  `connectionLost`, `controlLost` (the desktop's control connection dropped), or `restart` (the
+  daemon restarted). It is omitted when the cause is unknown.
 - `{ type: "transcript", transcriptId, role, text, startMs?, endMs? }` — a normalized provider
   fragment, role `user` or `assistant`. Include the time fields only as a pair when the provider
   supplied its real nonnegative session-relative millisecond interval, with `startMs <= endMs`;

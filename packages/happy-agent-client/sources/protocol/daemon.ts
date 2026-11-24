@@ -325,6 +325,14 @@ export const mobileConnectorConfigPatchSchema = Type.Object(
 );
 export type MobileConnectorConfigPatch = Static<typeof mobileConnectorConfigPatchSchema>;
 
+/** The voice controller's speed, named as the model picker names it. */
+export const voiceSpeedSchema = Type.Union([
+    Type.Literal("regular"),
+    Type.Literal("fast"),
+    Type.Literal("ultrafast"),
+]);
+export type VoiceSpeed = Static<typeof voiceSpeedSchema>;
+
 /** Machine-level voice settings; `null` controller fields mean the default. */
 export const voiceConfigSchema = Type.Object({
     controller: Type.Object({
@@ -332,6 +340,8 @@ export const voiceConfigSchema = Type.Object({
         modelId: Nullable(Type.String()),
         effort: Nullable(Type.String()),
         fastMode: Type.Boolean(),
+        /** The stored speed; `null` takes the fastest the account's plan offers. */
+        speed: Type.Optional(Nullable(voiceSpeedSchema)),
     }),
     /** What a call starting now would use. */
     effectiveController: Type.Object({
@@ -339,9 +349,29 @@ export const voiceConfigSchema = Type.Object({
         modelId: Type.String(),
         effort: Type.String(),
         serviceTier: Nullable(Type.String()),
+        /** The speed a call starting now uses, and every speed its route offers. */
+        speed: Type.Optional(voiceSpeedSchema),
+        speeds: Type.Optional(Type.Array(voiceSpeedSchema, { maxItems: 3, uniqueItems: true })),
         /** Why a setting is currently ignored or unusable, in plain English. */
         notice: Nullable(Type.String()),
     }),
+    /**
+     * The accounts a call can use as its voice credential, each with the credential kind it
+     * holds; an empty list means none is usable. Older daemons omit it.
+     */
+    accounts: Type.Optional(
+        Type.Array(
+            Type.Object({
+                providerId: Type.String(),
+                credential: Type.Union([
+                    Type.Literal("codex_subscription"),
+                    Type.Literal("openai_api_key"),
+                ]),
+                name: Type.Optional(Type.String()),
+            }),
+            { maxItems: 256 },
+        ),
+    ),
     /** The built-in voice model prompt; never persisted. */
     defaultSystemPrompt: Type.String(),
     systemPromptOverride: Nullable(Type.String()),
@@ -365,6 +395,7 @@ export const voiceConfigPatchSchema = Type.Object(
                         Nullable(Type.String({ minLength: 1, maxLength: 32, pattern: "\\S" })),
                     ),
                     fastMode: Type.Optional(Nullable(Type.Boolean())),
+                    speed: Type.Optional(Nullable(voiceSpeedSchema)),
                 },
                 { additionalProperties: false },
             ),

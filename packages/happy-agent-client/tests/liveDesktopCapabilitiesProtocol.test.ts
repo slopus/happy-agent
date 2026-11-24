@@ -104,14 +104,26 @@ const appState: LiveAppState = {
 };
 
 describe("GPT-Live desktop capability protocol", () => {
-    it("names the five additive capabilities", () => {
+    it("names the six additive capabilities", () => {
         expect(LIVE_DESKTOP_CAPABILITIES).toEqual([
             "appState",
             "voiceFocus",
             "taskCreate",
             "sessionModelChange",
             "agentTargets",
+            "failureReasons",
         ]);
+    });
+
+    it("carries a typed failure reason only as an optional field", () => {
+        const status = { type: "status", status: "failed", error: "The sign-in expired." };
+        expect(Value.Check(liveControlServerMessageSchema, status)).toBe(true);
+        expect(Value.Check(liveControlServerMessageSchema, { ...status, reason: "signIn" })).toBe(
+            true,
+        );
+        expect(Value.Check(liveControlServerMessageSchema, { ...status, reason: "other" })).toBe(
+            false,
+        );
     });
 
     it("lets actions and results name a local agent but keeps context and focus on desktop targets", () => {
