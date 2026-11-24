@@ -409,6 +409,40 @@ describe("collaborative documents merge live edits", () => {
         },
     );
 
+    it("lets an agent write into a document nobody has edited", async () => {
+        const calls: { name: string; arguments: unknown }[] = [];
+        const gym = await createAgentGym({
+            permissionMode: "full_access",
+            inference(request) {
+                if (request.sessionId.startsWith("naming:"))
+                    return { content: [{ type: "text", text: "<title>Document</title>" }] };
+                const call = calls.shift();
+                if (call === undefined) return { content: [{ type: "text", text: "Finished." }] };
+                return { content: [{ type: "tool_call", ...call }] };
+            },
+        });
+        running.push(gym);
+        const client = gym.client;
+        const surface = (await client.createSurface({ type: "document", name: "Blank" })).surface;
+        expect((await client.getSurfaceDocument(surface.id)).document).toMatchObject({
+            text: "",
+            seq: 0,
+        });
+
+        calls.push({
+            name: "update_document",
+            arguments: { surfaceId: surface.id, seq: 0, text: "Draft from notes.\n" },
+        });
+        await gym.send("Draft the document.", { permissionMode: "full_access" });
+        expect(gym.inference.toolResults().at(-1)!.text).toContain('"changed":true');
+        expect((await client.getSurfaceDocument(surface.id)).document).toMatchObject({
+            text: "Draft from notes.\n",
+            seq: 1,
+        });
+        expect(gym.errors).toEqual([]);
+        expect(gym.inference.unscripted).toEqual([]);
+    });
+
     it("refuses an agent's Markdown write when the document holds content Happy cannot represent", async () => {
         const calls: { name: string; arguments: unknown }[] = [];
         const gym = await createAgentGym({
