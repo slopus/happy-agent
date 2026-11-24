@@ -26,7 +26,11 @@ import {
     acpPromptFromMessages,
     acpReplayPrompt,
 } from "@/protocol/acp/impl/acpPromptFromMessages.js";
-import { ACP_BRIDGE_NAME, AcpResponseEvents } from "@/protocol/acp/impl/acpResponseEvents.js";
+import {
+    ACP_BRIDGE_NAME,
+    AcpResponseEvents,
+    acpBridgedCallOfAsk,
+} from "@/protocol/acp/impl/acpResponseEvents.js";
 import {
     acpSessionRecordClear,
     acpSessionRecordRead,
@@ -622,17 +626,21 @@ export class AcpSession extends BaseSession {
 
     async #ensureBridge(): Promise<AcpToolBridgeServer | undefined> {
         if (this.#bridgedTools.length === 0) return undefined;
-        this.#bridge ??= await AcpToolBridgeServer.start(this.#bridgedTools, (call) => {
-            const turn = this.#turn;
-            if (turn === undefined) {
-                call.resolve({
-                    content: [{ type: "text", text: "No Happy turn is active." }],
-                    isError: true,
-                });
-                return;
-            }
-            turn.items.push({ kind: "bridge_call", call });
-        });
+        this.#bridge ??= await AcpToolBridgeServer.start(
+            this.#bridgedTools,
+            (call) => {
+                const turn = this.#turn;
+                if (turn === undefined) {
+                    call.resolve({
+                        content: [{ type: "text", text: "No Happy turn is active." }],
+                        isError: true,
+                    });
+                    return;
+                }
+                turn.items.push({ kind: "bridge_call", call });
+            },
+            this.#options.profile?.toolDeclarationBudget,
+        );
         return this.#bridge;
     }
 
@@ -765,7 +773,8 @@ export class AcpSession extends BaseSession {
     /**
      * The agent's own permission system asks before acting. Read only refuses and Full access
      * allows without asking anyone. Otherwise a call of a bridged Happy tool that its own rule says
-     * needs no approval goes ahead in Workspace write, and everything else is put to the person.
+     * needs no approval goes ahead in Workspace write and Auto, as Claude Code runs those tools
+     * without asking in every mode, and everything else is put to the person.
      */
     async #answerPermission(
         params: acp.RequestPermissionRequest,
@@ -778,7 +787,10 @@ export class AcpSession extends BaseSession {
             const once = params.options.some((option) => option.kind === "allow_once");
             return pick(params, once ? "allow_once" : "allow_for_session");
         }
-        if (mode === "workspace_write" && (await this.#needsNoApproval(params))) {
+        if (
+            (mode === "workspace_write" || mode === "auto") &&
+            (await this.#needsNoApproval(params))
+        ) {
             return pick(params, "allow_once");
         }
         const ask = environment?.askPermission;
@@ -807,18 +819,18 @@ export class AcpSession extends BaseSession {
 
     /** Whether the ask is about a bridged Happy tool call that its own rule lets through. */
     async #needsNoApproval(params: acp.RequestPermissionRequest): Promise<boolean> {
-        const call = params.toolCall._meta?.[ACP_BRIDGED_CALL_META] as
-            | { readonly name?: unknown; readonly arguments?: unknown }
-            | undefined;
+        const call = acpBridgedCallOfAsk(
+            params.toolCall,
+            params.toolCall._meta?.[ACP_BRIDGED_CALL_META],
+        );
+        if (call === "description") return true;
         const tool = this.#bridgedTools.find(
             (candidate) => AcpToolBridgeServer.toolName(candidate) === call?.name,
         );
-        if (tool === undefined || this.#runCtx === undefined) return false;
+        if (call === undefined || tool === undefined || this.#runCtx === undefined) return false;
         if (tool.autoReview === "never") return true;
         try {
-            return (
-                (await tool.shouldReviewInAutoMode?.(call?.arguments ?? {}, this.#runCtx)) === false
-            );
+            return (await tool.shouldReviewInAutoMode?.(call.arguments, this.#runCtx)) === false;
         } catch {
             // A rule that cannot answer has not said the call is safe.
             return false;

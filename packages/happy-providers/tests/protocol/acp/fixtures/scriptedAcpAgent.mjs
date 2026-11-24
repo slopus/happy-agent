@@ -3,6 +3,8 @@
 // JSON-lines file named by SCRIPTED_ACP_LOG so a test can assert what was sent.
 //
 // Prompt directives: "use happy" calls the bridged happy_secret tool and replies with its answer;
+// "use call_tool" describes and then runs happy_big through the bridge's call_tool, as
+// Antigravity does with a tool its declaration budget left out;
 // "wait" holds the prompt open until cancelled or steered; "throttled" is refused as too many
 // requests the first time it is sent, and "throttled late" only after reporting a tool call;
 // "over quota" fails with a 429 that names a weekly limit; "stubborn" never ends its first prompt;
@@ -142,6 +144,39 @@ class ScriptedAgent {
             writeFileSync(stubbornFile, "");
             await new Promise(() => undefined);
         }
+        // Antigravity 1.5.10 asks before each MCP call, naming the function and sending its input.
+        if (text.includes("needs agy permission")) {
+            const direct = text.includes("for happy");
+            const fn = direct ? "mcp_happy_happy_secret" : "mcp_happy_call_tool";
+            const rawInput = direct
+                ? { why: "test", toolSummary: "Read the secret" }
+                : text.includes("description")
+                  ? { name: "happy_secret", toolSummary: "Read happy_secret's schema" }
+                  : {
+                        name: "happy_secret",
+                        arguments: { why: "test" },
+                        toolSummary: "Read the secret",
+                    };
+            const answer = await this.#conn.requestPermission({
+                sessionId: params.sessionId,
+                toolCall: {
+                    toolCallId: `call_${Date.now()}`,
+                    kind: "other",
+                    status: "pending",
+                    title: `Run ${fn}`,
+                    name: fn,
+                    rawInput,
+                },
+                options: [
+                    { optionId: "allow", name: "Allow", kind: "allow_once" },
+                    { optionId: "deny", name: "Deny", kind: "reject_once" },
+                ],
+            });
+            const chosen =
+                answer.outcome.outcome === "selected" ? answer.outcome.optionId : "cancelled";
+            await this.#say(params.sessionId, `permission=${chosen}`);
+            return { stopReason: "end_turn" };
+        }
         if (text.includes("needs permission")) {
             const happy = text.includes("for happy");
             const answer = await this.#conn.requestPermission({
@@ -184,6 +219,35 @@ class ScriptedAgent {
             await this.#say(params.sessionId, `steered:${steered}`);
             return { stopReason: "end_turn" };
         }
+        if (text.includes("use call_tool")) {
+            const client = await this.#mcp(params.sessionId);
+            const tools = await client.listTools();
+            log({ method: "mcp.listTools", names: tools.tools.map((tool) => tool.name) });
+            const described = await client.callTool({
+                name: "call_tool",
+                arguments: { name: "happy_big" },
+            });
+            log({ method: "mcp.describe", text: described.content[0].text });
+            // Antigravity reports its own record of every MCP call it makes.
+            await this.#conn.sessionUpdate({
+                sessionId: params.sessionId,
+                update: {
+                    sessionUpdate: "tool_call",
+                    toolCallId: `agy-${Date.now()}`,
+                    title: "Run mcp_happy_call_tool",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { name: "happy_big", arguments: { why: "test" } },
+                },
+            });
+            const result = await client.callTool({
+                name: "call_tool",
+                arguments: { name: "happy_big", arguments: { why: "test" } },
+            });
+            await client.close();
+            await this.#say(params.sessionId, `big=${result.content[0].text}`);
+            return { stopReason: "end_turn" };
+        }
         if (text.includes("use happy")) {
             const server = this.#servers.get(params.sessionId)?.[0];
             const client = new Client({ name: "scripted", version: "1" });
@@ -218,6 +282,19 @@ class ScriptedAgent {
     async cancel(params) {
         log({ method: "cancel", sessionId: params.sessionId });
         this.#cancelled.get(params.sessionId)?.();
+    }
+
+    async #mcp(sessionId) {
+        const server = this.#servers.get(sessionId)?.[0];
+        const client = new Client({ name: "scripted", version: "1" });
+        await client.connect(
+            new StreamableHTTPClientTransport(new URL(server.url), {
+                requestInit: {
+                    headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])),
+                },
+            }),
+        );
+        return client;
     }
 
     async #say(sessionId, text) {

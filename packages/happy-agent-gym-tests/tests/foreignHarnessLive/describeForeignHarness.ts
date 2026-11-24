@@ -37,12 +37,6 @@ interface HarnessSetup {
     readonly effort: string;
     /** Under `<agentHome>/foreign-agents`. */
     readonly stateDirectory: readonly string[];
-    /**
-     * False when its model cannot reach Happy's `create_agent`. Antigravity registers only small
-     * MCP tools as functions; larger ones, `create_agent` among them, are left for the model to
-     * load from a schema file, which it does not do.
-     */
-    readonly createsHappySubAgents?: false;
 }
 
 const claudeToken = process.env.HAPPY_ACP_CLAUDE_OAUTH_TOKEN;
@@ -84,7 +78,6 @@ const SETUPS: Readonly<Record<HarnessKind, HarnessSetup>> = {
         model: process.env.HAPPY_ACP_ANTIGRAVITY_MODEL ?? "antigravity/gemini-3.8-flash",
         effort: "low",
         stateDirectory: ["antigravity"],
-        createsHappySubAgents: false,
     },
     opencode: {
         config: [
@@ -501,7 +494,7 @@ export function describeForeignHarness(kind: HarnessKind): void {
             TURN_MS * 2,
         );
 
-        it.skipIf(setup.createsHappySubAgents === false)(
+        it(
             "creates a Happy sub-agent on its own harness and receives its report",
             async () => {
                 const gym = await gymFor();
@@ -769,7 +762,7 @@ export function describeForeignHarness(kind: HarnessKind): void {
                 TURN_MS * 3,
             );
 
-            it.skipIf(setup.createsHappySubAgents === false)(
+            it(
                 "asks the person on a Happy sub-agent running on the same harness",
                 async () => {
                     const gym = await gymFor();

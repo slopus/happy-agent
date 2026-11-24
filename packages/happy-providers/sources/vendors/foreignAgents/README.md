@@ -27,9 +27,12 @@ Antigravity is started as `agy acp`, without `--dangerously-skip-permissions`, a
 that `agy --version` is at least 1.5.5. It takes HTTP `mcpServers` over ACP although it does not
 advertise `mcpCapabilities`, so its initialize answer is read as accepting them. Its model
 selector lists base names (`gemini-3.8-flash`) with a separate `thought_level` option, and its
-modes are `plan`, `accept-edits`, and `auto`. It never asks before an MCP call, and it registers
-only small MCP tools as functions: larger ones, `create_agent` among them, are left for its model
-to load from a schema file, which it does not reliably do.
+modes are `plan`, `accept-edits`, and `auto`. In the latter two, agy 1.5.10 asks before every
+MCP call, naming the function `mcp_happy_<tool>` (see the ACP README's Permission). It also
+declares MCP tools to its model smallest first up to about 60 KB and, over ACP, drops the rest
+with no way to call them (it neither offers its `call_tool` nor honors `antigravity/alwaysLoad`),
+so its profile sets `toolDeclarationBudget` and the bridge offers everything past it through
+`call_tool`. It titles its own record of an MCP call `Run mcp_happy_<tool>`.
 
 ## Files
 

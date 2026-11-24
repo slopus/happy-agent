@@ -30,6 +30,25 @@ const CLOSED_RESULT: CallToolResult = {
     isError: true,
 };
 
+/** The one tool through which an agent reaches the tools its declaration budget left out. */
+export const ACP_BRIDGE_CALL_TOOL = "call_tool";
+
+/** One tool as the bridge lists it over MCP. */
+export interface BridgeDeclaration {
+    readonly name: string;
+    readonly description?: string;
+    readonly inputSchema: { type: "object"; [key: string]: unknown };
+}
+
+/** What the agent is offered: tools it may call by name, and those reached through `call_tool`. */
+export interface BridgeListing {
+    /** What `tools/list` answers, `call_tool` among them when anything is left out. */
+    readonly declared: readonly BridgeDeclaration[];
+    /** Every bridged tool by name, whether declared or reached through `call_tool`. */
+    readonly all: ReadonlyMap<string, BridgeDeclaration>;
+    readonly behindCallTool: readonly string[];
+}
+
 /**
  * A loopback MCP server exposing the caller's tools to a foreign ACP agent.
  *
@@ -58,11 +77,24 @@ export class AcpToolBridgeServer {
         return tool.namespace === undefined ? tool.name : `${tool.namespace}__${tool.name}`;
     }
 
+    /**
+     * Start the bridge. `declarationBudget` is the most bytes of tool declarations the agent hands
+     * its model; tools past it are listed only through `call_tool` (see `bridgeListing`).
+     */
     static async start(
         tools: readonly SessionTool[],
         onCall: (call: AcpBridgeCall) => void,
+        declarationBudget?: number,
     ): Promise<AcpToolBridgeServer> {
         const byName = new Map(tools.map((tool) => [AcpToolBridgeServer.toolName(tool), tool]));
+        const listing = bridgeListing(
+            [...byName].map(([name, tool]) => ({
+                name,
+                ...(tool.description === undefined ? {} : { description: tool.description }),
+                inputSchema: toInputSchema(tool),
+            })),
+            declarationBudget,
+        );
         const path = `/${randomUUID()}/mcp`;
         const token = randomBytes(24).toString("base64url");
         let bridge: AcpToolBridgeServer | undefined;
@@ -76,17 +108,20 @@ export class AcpToolBridgeServer {
                 { capabilities: { tools: {} } },
             );
             server.setRequestHandler(ListToolsRequestSchema, () => ({
-                tools: [...byName].map(([name, tool]) => ({
-                    name,
-                    ...(tool.description === undefined ? {} : { description: tool.description }),
-                    inputSchema: toInputSchema(tool),
-                })),
+                tools: [...listing.declared],
             }));
             server.setRequestHandler(CallToolRequestSchema, async (call) => {
-                const tool = byName.get(call.params.name);
+                let name = call.params.name;
+                let args: unknown = call.params.arguments ?? {};
+                if (name === ACP_BRIDGE_CALL_TOOL && listing.behindCallTool.length > 0) {
+                    const target = callToolTarget(args, listing.all);
+                    if ("result" in target) return target.result;
+                    ({ name, args } = target);
+                }
+                const tool = byName.get(name);
                 if (tool === undefined || bridge === undefined || bridge.#closed) {
                     return {
-                        content: [{ type: "text", text: `Unknown tool "${call.params.name}".` }],
+                        content: [{ type: "text", text: `Unknown tool "${name}".` }],
                         isError: true,
                     };
                 }
@@ -96,7 +131,7 @@ export class AcpToolBridgeServer {
                     const pending: AcpBridgeCall = {
                         callId: `acp_bridge_${randomUUID()}`,
                         tool,
-                        arguments: JSON.stringify(call.params.arguments ?? {}),
+                        arguments: JSON.stringify(args),
                         resolve: (result) => {
                             if (settled) return;
                             settled = true;
@@ -157,6 +192,107 @@ export function acpBridgeResult(message: SessionToolResultMessage): CallToolResu
         ),
         ...(message.isError === undefined ? {} : { isError: message.isError }),
     };
+}
+
+/**
+ * The tools offered to an agent that declares only `budget` bytes of tools to its model.
+ *
+ * Antigravity declares a session's MCP tools smallest first until about 60 KB and silently drops
+ * the rest; over ACP it offers its model no way to call a dropped tool, so Happy's largest tools,
+ * `create_agent` and `create_subtask` among them, were unreachable. Within the budget, the bridge
+ * declares tools smallest first as the agent would, and lists every other tool by name in one
+ * small `call_tool`, which describes a tool or runs it. A call through `call_tool` reaches Agent
+ * Base as a call of the named tool, so permission and validation are unchanged.
+ */
+export function bridgeListing(
+    declarations: readonly BridgeDeclaration[],
+    budget: number | undefined,
+): BridgeListing {
+    const all = new Map(declarations.map((declaration) => [declaration.name, declaration]));
+    const size = (declaration: BridgeDeclaration): number => JSON.stringify(declaration).length;
+    const total = declarations.reduce((sum, declaration) => sum + size(declaration), 0);
+    if (budget === undefined || total <= budget || all.has(ACP_BRIDGE_CALL_TOOL)) {
+        return { declared: declarations, all, behindCallTool: [] };
+    }
+    // Reserve room for `call_tool` as if it named every tool, then fill smallest first.
+    let remaining = budget - size(callToolDeclaration([...all.keys()]));
+    const fits = new Set<string>();
+    for (const declaration of [...declarations].sort((a, b) => size(a) - size(b))) {
+        const bytes = size(declaration);
+        if (bytes > remaining) break;
+        remaining -= bytes;
+        fits.add(declaration.name);
+    }
+    const behindCallTool = declarations
+        .filter((declaration) => !fits.has(declaration.name))
+        .map((declaration) => declaration.name);
+    return {
+        declared: [
+            ...declarations.filter((declaration) => fits.has(declaration.name)),
+            callToolDeclaration(behindCallTool),
+        ],
+        all,
+        behindCallTool,
+    };
+}
+
+function callToolDeclaration(names: readonly string[]): BridgeDeclaration {
+    return {
+        name: ACP_BRIDGE_CALL_TOOL,
+        description: `Use one of Happy's tools that are not among your functions: ${names.join(", ")}. Pass only name to read that tool's description and parameters, then call again with name and its arguments to run it.`,
+        inputSchema: {
+            type: "object",
+            properties: {
+                name: { type: "string", description: "The Happy tool to describe or run." },
+                arguments: {
+                    type: "object",
+                    description: "The tool's arguments, as its parameters describe them.",
+                },
+            },
+            required: ["name"],
+        },
+    };
+}
+
+/** The tool and arguments one `call_tool` call names, or its answer when it runs nothing. */
+function callToolTarget(
+    input: unknown,
+    all: ReadonlyMap<string, BridgeDeclaration>,
+): { readonly name: string; readonly args: unknown } | { readonly result: CallToolResult } {
+    const { name, arguments: args } = (input ?? {}) as { name?: unknown; arguments?: unknown };
+    const declaration = typeof name === "string" ? all.get(name) : undefined;
+    if (declaration === undefined) {
+        return {
+            result: {
+                content: [
+                    {
+                        type: "text",
+                        text: `Unknown Happy tool ${JSON.stringify(name)}. Available: ${[...all.keys()].join(", ")}.`,
+                    },
+                ],
+                isError: true,
+            },
+        };
+    }
+    if (args === undefined) {
+        return {
+            result: {
+                content: [
+                    {
+                        type: "text",
+                        text: `${declaration.name}: ${declaration.description ?? ""}\n\nParameters (JSON Schema):\n${JSON.stringify(declaration.inputSchema)}\n\nRun it with call_tool, passing name "${declaration.name}" and arguments.`,
+                    },
+                ],
+            },
+        };
+    }
+    // Models sometimes pass the arguments object as JSON text.
+    if (typeof args !== "string") return { name: declaration.name, args };
+    try {
+        return { name: declaration.name, args: JSON.parse(args) as unknown };
+    } catch {
+        return { name: declaration.name, args };
+    }
 }
 
 /**

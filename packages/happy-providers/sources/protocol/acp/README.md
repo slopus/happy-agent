@@ -34,14 +34,20 @@ Agent Base ── run(context) ──▶ AcpSession ── ACP over stdio ──
   `session/request_permission` asks are answered from the Happy mode: Read only refuses, Full
   access allows, and otherwise the turn environment's `askPermission` puts the action to the
   person, offering Allow for this session only when the agent offers `allow_always`. Stopping the
-  turn withdraws the question and answers the agent `cancelled`. In Workspace write, an ask about a
-  Happy tool (marked with `happy/bridgedCall` metadata) is allowed without asking when that tool
-  has `autoReview: "never"` or its `shouldReviewInAutoMode` is false for the call. New sessions
+  turn withdraws the question and answers the agent `cancelled`. In Workspace write and Auto, an ask
+  about a Happy tool is allowed without asking when that tool has `autoReview: "never"` or its
+  `shouldReviewInAutoMode` is false for the call. The ask is recognized by `happy/bridgedCall`
+  metadata from a first-party driver, or by Antigravity's `mcp_happy_<tool>` function name; an ask
+  about `call_tool` is judged as the tool it names, and one that only reads a description passes. New sessions
   carry the never-reviewed Happy tool names in `happy/approvedTools` metadata so a first-party
   driver can approve them in advance.
 - **Tool schemas.** The bridge drops string `pattern` keywords from the schemas it advertises:
   Antigravity validates them with Go's regex dialect and rejects its whole toolbox on one it
   cannot compile. Agent Base still validates every call against the full schema.
+- **Tool budget.** An agent that hands its model only part of a large toolbox sets
+  `toolDeclarationBudget` in its profile. The bridge then declares the smallest tools that fit and
+  one `call_tool` naming the rest; `call_tool` with only a name answers that tool's description and
+  schema, and with arguments it reaches Agent Base as a call of the named tool.
 - **Compaction.** ACP has none. `compact` asks the agent for a handoff summary and the next run
   starts a new ACP session from it.
 

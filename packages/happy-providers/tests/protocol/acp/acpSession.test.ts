@@ -234,6 +234,51 @@ describe("AcpSession", () => {
         expect(listed.schemas[0]!.properties.why).not.toHaveProperty("pattern");
     }, 30_000);
 
+    it("reaches a tool past the agent's declaration budget through call_tool, as a call of that tool", async () => {
+        const big = {
+            name: "happy_big",
+            description: `Starts a collaborator. ${"Models you can start agents on. ".repeat(40)}`,
+            parameters: Type.Object({ why: Type.String() }),
+        };
+        const h = harness({
+            tools: [...tools, big],
+            profile: { toolDeclarationBudget: 1_000 },
+        });
+        const session = await h.session();
+        h.user("please use call_tool");
+        const first = await h.run(session);
+        expect(done(first)).toMatchObject({ state: "tool_call" });
+        // The agent's own record of the MCP call is not reported again as a foreign call.
+        const starts = first.filter(
+            (event): event is Extract<SessionEvent, { type: "toolcall_start" }> =>
+                event.type === "toolcall_start",
+        );
+        expect(starts.map((event) => [event.name, event.server === true])).toEqual([
+            ["read", true],
+            ["happy_big", false],
+        ]);
+        const call = starts[1]!;
+        expect(
+            first.find((event) => event.type === "toolcall_end" && event.callId === call.callId),
+        ).toMatchObject({ arguments: JSON.stringify({ why: "test" }) });
+        expect(h.log().find((entry) => entry.method === "mcp.listTools")).toMatchObject({
+            names: ["happy_secret", "call_tool"],
+        });
+        const described = h.log().find((entry) => entry.method === "mcp.describe") as {
+            text: string;
+        };
+        expect(described.text).toContain("happy_big: Starts a collaborator.");
+        expect(described.text).toContain('"why":{"type":"string"}');
+
+        h.messages.push({
+            role: "tool",
+            callId: call.callId,
+            content: [{ type: "text", text: "started" }],
+        });
+        const second = await h.run(session);
+        expect(text(second)).toBe("big=started");
+    }, 30_000);
+
     it("sends a fresh session Happy's instructions, then only new input on later turns", async () => {
         const h = harness();
         const session = await h.session();
@@ -646,7 +691,7 @@ describe("AcpSession", () => {
         ]);
     }, 30_000);
 
-    it("lets a Happy tool call through in Workspace write when the tool's own rule needs no approval", async () => {
+    it("lets a Happy tool call through in Workspace write and Auto when the tool's own rule needs no approval", async () => {
         const asked: string[] = [];
         let review = false;
         const h = harness({
@@ -670,20 +715,59 @@ describe("AcpSession", () => {
         expect(text(await h.run(session))).toBe("permission=yes");
         expect(asked).toEqual([]);
 
-        // A call its rule says needs approval goes to the person, as does any call in Auto.
+        // A call its rule says needs approval goes to the person in either mode.
         review = true;
         h.user("needs permission for happy");
         expect(text(await h.run(session))).toBe("permission=no");
-        review = false;
         h.setPermissionMode("auto");
         h.user("needs permission for happy");
         expect(text(await h.run(session))).toBe("permission=no");
+        expect(asked).toHaveLength(2);
+        // Auto lets the rest through as Workspace write does.
+        review = false;
+        h.user("needs permission for happy");
+        expect(text(await h.run(session))).toBe("permission=yes");
         expect(asked).toHaveLength(2);
 
         // The agent is told which bridged tools it may call without asking at all.
         expect(h.log().find((entry) => entry.method === "newSession")).toMatchObject({
             approvedTools: ["happy_listed", "ns__listed"],
         });
+    }, 30_000);
+
+    it("recognizes Antigravity's ask about a Happy tool, by its function name and through call_tool", async () => {
+        const asked: string[] = [];
+        let review = false;
+        const h = harness({
+            tools: [
+                {
+                    ...tools[0]!,
+                    shouldReviewInAutoMode: (args: { why?: string }) =>
+                        review || args.why !== "test",
+                },
+            ],
+            askPermission: async (question) => {
+                asked.push(question.action);
+                return "deny";
+            },
+        });
+        const session = await h.session();
+        h.setPermissionMode("auto");
+        for (const prompt of [
+            "needs agy permission for happy",
+            "needs agy permission for call_tool",
+            "needs agy permission for call_tool description",
+        ]) {
+            h.user(prompt);
+            expect(text(await h.run(session)), prompt).toBe("permission=allow");
+        }
+        expect(asked).toEqual([]);
+
+        // A call the tool's own rule wants reviewed still goes to the person.
+        review = true;
+        h.user("needs agy permission for call_tool");
+        expect(text(await h.run(session))).toBe("permission=deny");
+        expect(asked).toHaveLength(1);
     }, 30_000);
 
     it("withdraws the person's question and cancels the agent's ask when the turn stops", async () => {

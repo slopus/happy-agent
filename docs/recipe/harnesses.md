@@ -156,10 +156,12 @@ the agent offers it, and Deny. Stop withdraws an open question and cancels the a
 
 Happy's own tools reach the agent as MCP tools, and the agent's permission system decides those
 too. Tools Happy never reviews (reading history, listing projects, and the like) are approved in
-advance on Claude Code and Codex CLI; the user's other MCP servers are not. In Workspace write,
-any other Happy tool the agent asks about is allowed when Happy itself would not review that
-call, and goes to the person otherwise. An agent that never asks before MCP calls, such as
-Antigravity, runs every Happy tool with no question and no review by anyone, including tools that
+advance on Claude Code and Codex CLI; the user's other MCP servers are not. In Workspace write and
+Auto, any other Happy tool the agent asks about is allowed when Happy itself would not review that
+call, and goes to the person otherwise. Antigravity asks before every MCP call in `accept-edits`
+and `auto`, and Happy answers those asks the same way, so its never-reviewed Happy tools, such as
+`create_agent` and `send_agent_message`, run without a question. An agent that never asks before
+MCP calls runs every Happy tool with no question and no review by anyone, including tools that
 reach the user's own MCP servers through Happy. Only Happy's own mode limits still apply, such as
 MCP tools needing Auto or Full access.
 
@@ -181,9 +183,11 @@ settings allow. Claude Code reads the user's and the project's settings, so a re
 started them. Antigravity's sub-agents never send an ask; they stall until stopped. A Happy
 sub-agent asks on its own conversation, like any other agent.
 
-Antigravity registers only small MCP tools as functions and leaves larger ones, `create_agent`
-among them, for its model to load from a schema file, which it does not reliably do; so an
-Antigravity agent usually cannot start Happy sub-agents.
+Antigravity gives its model only about 60 KB of MCP tools and drops the rest without a way to call
+them, which used to leave Happy's largest tools, `create_agent` and `create_subtask` among them,
+out of reach. Happy now offers Antigravity its smallest tools directly and every other one through
+a single `call_tool`, which describes a Happy tool by name and runs it. That call is handled as the
+named Happy tool, under the same rules as any other.
 
 ## Antigravity from Happy
 

@@ -65,6 +65,11 @@ export interface AcpAgentProfile {
     ) => readonly AcpConfigOptionValue[];
     /** The agent's config-option values that best match a Happy permission mode. */
     readonly permissionOptions?: (mode: AcpPermissionMode) => readonly AcpConfigOptionValue[];
+    /**
+     * The most bytes of MCP tool declarations the agent hands its model, for an agent that drops
+     * the rest of a larger toolbox. Happy's tools past it are reached through one `call_tool`.
+     */
+    readonly toolDeclarationBudget?: number;
 }
 
 export interface AcpProviderOptions {

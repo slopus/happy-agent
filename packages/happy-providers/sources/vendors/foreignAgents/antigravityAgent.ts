@@ -39,8 +39,9 @@ const models: readonly ForeignAgentModel[] = [
  * Google Antigravity through its own ACP server, `agy acp`, with the signed-in `agy` CLI.
  *
  * agy keeps its own permission system: it asks before what its mode does not allow, and those
- * asks reach Happy. It never asks before an MCP tool call, so Happy's own tools run without one.
- * It takes Happy's bridge as an ACP `mcpServers` entry without advertising that it does.
+ * asks reach Happy. In `accept-edits` and `auto` it asks before every MCP call too, naming the
+ * function `mcp_happy_<tool>`; Happy answers those for its own tools by each tool's rule. It takes
+ * Happy's bridge as an ACP `mcpServers` entry without advertising that it does.
  */
 export const antigravityAgent: ForeignAgent = {
     type: "antigravity",
@@ -93,6 +94,9 @@ export const antigravityAgent: ForeignAgent = {
                 { configId: "thought_level", value: level },
             ];
         },
+        // agy 1.5.10 declares about 60 KB of MCP tools to its model and drops the rest without a
+        // way to call them; the margin leaves room for its own schema additions.
+        toolDeclarationBudget: 48_000,
         // Full access is agy's Auto with every ask allowed; Happy answers its asks by mode.
         permissionOptions: (mode) => [
             {
