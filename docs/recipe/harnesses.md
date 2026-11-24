@@ -112,8 +112,9 @@ Happy's loop and a foreign agent starts a fresh context with a handoff.
 
 ## Sub-agents
 
-Any Happy agent creates sub-agents with `create_agent` and subtasks with `create_subtask`, on any
-harness its own harness reaches. Both take `harness`, `provider`, `model`, and `effort`; an
+Every Happy agent, whichever harness runs it, creates sub-agents with `create_agent` and subtasks
+with `create_subtask`, on any enabled harness: Happy's loop, Claude Code, Codex CLI, Antigravity,
+OpenCode, or an ACP agent. Both take `harness`, `provider`, `model`, and `effort`; an
 omitted `harness` or `provider` is the creator's own when that serves the model, or the only one
 that does. Their descriptions list the models the agent can start agents on, one line per model
 with its harness, accounts, and efforts, as they were when the conversation began; they never
@@ -122,18 +123,9 @@ with the lines removed and added. `agent_options` lists the current models, and
 `agent_options({ usage: true })` adds each account's quota: the daemon's latest reading for
 Claude, Codex, and Grok accounts, and what Antigravity reports for its own.
 
-By default Happy's own loop reaches only foreign harnesses whose models it cannot run itself,
-which today is `antigravity`; Claude Code, Codex CLI, and OpenCode run models Happy already runs.
-A foreign harness reaches every other foreign harness but not Happy's loop. Each harness always
-reaches itself. `subagent_harnesses` replaces the default for one harness:
-
-```toml
-[harnesses.happy]
-subagent_harnesses = ["antigravity", "claude_code"]   # Happy may also start Claude Code agents
-
-[harnesses.antigravity]
-subagent_harnesses = []                               # Antigravity agents start only Antigravity
-```
+There is no per-harness reach setting. To keep a harness out of new agents' choices, disable it
+(`enabled = false`) or narrow its models with `include_models` and `exclude_models`; a provider's
+`include_subagent_models` and `exclude_subagent_models` narrow delegation only.
 
 A sub-agent on a foreign harness is an ordinary Happy agent with its own foreign session. The
 foreign agent's own sub-agents (Claude Code's Task tool, Codex's agents) stay inside it; Happy

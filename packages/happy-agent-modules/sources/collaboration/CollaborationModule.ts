@@ -192,16 +192,12 @@ export class CollaborationModule implements AgentModule {
     }
 
     #agentOptions(creator: CollaborationCreator): AgentOptions {
-        const harness = this.#config.harnessOf(creator.provider, creator.model);
-        const models = this.#availableModels().filter((model) =>
-            this.#config.harnessAllowsSubagents(
-                harness,
-                this.#config.harnessOf(model.providerId, model.id),
-            ),
-        );
         return buildAgentOptions(
-            models,
-            { harness, provider: creator.provider },
+            this.#availableModels(),
+            {
+                harness: this.#config.harnessOf(creator.provider, creator.model),
+                provider: creator.provider,
+            },
             {
                 harnessOf: (providerId, modelId) => this.#config.harnessOf(providerId, modelId),
                 harnessName: (id) => this.#config.harnessName(id),
@@ -1082,8 +1078,8 @@ export class CollaborationModule implements AgentModule {
 
     /**
      * The models a request may resolve to once its harness is settled: the harness it names, or
-     * the creator's own when that serves the model, or the only one that does. A creator reaches
-     * only the harnesses its own allows.
+     * the creator's own when that serves the model, or the only one that does. Every agent reaches
+     * every enabled harness.
      */
     #onHarness(
         models: readonly AgentModel[],
@@ -1115,14 +1111,6 @@ export class CollaborationModule implements AgentModule {
         } else if (!harnesses.includes(harness)) {
             throw new Error(
                 `Model "${input.model}" does not run on harness "${harness}"; it runs on ${harnesses.join(", ")}. ${OPTIONS_HINT}`,
-            );
-        }
-        if (own !== undefined && !this.#config.harnessAllowsSubagents(own, harness)) {
-            const allowed = this.#agentOptions(creator!).harnesses.map((h) => h.id);
-            throw new Error(
-                `An agent on harness "${own}" cannot create sub-agents on harness "${harness}". It can use: ${
-                    allowed.join(", ") || "none"
-                }. ${OPTIONS_HINT}`,
             );
         }
         const chosen = harness;

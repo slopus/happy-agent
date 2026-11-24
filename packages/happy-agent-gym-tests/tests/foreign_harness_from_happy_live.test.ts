@@ -1,4 +1,4 @@
-import { appendFile, readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createAgentGym, type AgentGym, type GymAgentHistory } from "@slopus/happy-agent-gym";
@@ -65,6 +65,7 @@ describe.skipIf(!live.includes("from-happy") || token === undefined)(
                         "enabled = true",
                         `oauth_token = "${token}"`,
                         "[harnesses.claude_code]",
+                        "enabled = false",
                         'providers = ["live_claude"]',
                         "[harnesses.antigravity]",
                         "",
@@ -86,12 +87,12 @@ describe.skipIf(!live.includes("from-happy") || token === undefined)(
                 expect(calls.map((call) => call.name)).toEqual(
                     expect.arrayContaining(["agent_options", "create_agent"]),
                 );
-                // Happy reaches Antigravity by default, but not Claude Code, whose models it runs.
+                // Happy reaches every enabled harness, and only those.
                 expect(lastText(first)).toContain("antigravity");
                 expect(lastText(first)).not.toContain("claude_code");
                 // Antigravity's own quota report, on request.
                 expect(JSON.stringify(calls.find((call) => call.name === "agent_options"))).toMatch(
-                    /antigravity: .*% left/u,
+                    /antigravity: .*\d+%/u,
                 );
                 const childId = calls.find((call) => call.name === "create_agent")?.presentation
                     ?.agentId;
@@ -125,10 +126,14 @@ describe.skipIf(!live.includes("from-happy") || token === undefined)(
                 );
                 expect(record.consumed).toBeGreaterThanOrEqual(1);
 
-                // Let Happy reach Claude Code too; the agent hears it as a notice, not a tool change.
-                await appendFile(
-                    join(gym.publicHomePath, "Config", "happy.toml"),
-                    '\n[harnesses.happy]\nsubagent_harnesses = ["antigravity", "claude_code"]\n',
+                // Turn Claude Code on; the agent hears it as a notice, not a tool change.
+                const configPath = join(gym.publicHomePath, "Config", "happy.toml");
+                await writeFile(
+                    configPath,
+                    (await readFile(configPath, "utf8")).replace(
+                        "[harnesses.claude_code]\nenabled = false\n",
+                        "[harnesses.claude_code]\n",
+                    ),
                 );
                 await gym.restart();
                 await gym.send(

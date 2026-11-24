@@ -216,3 +216,14 @@ The parity export once showed the list naming the same children in a different o
 runs: the collection appends children in creation order while running but rebuilds its index in
 storage key order after a restart. The list is sorted by agent ID so the same collaborators never
 read as a change.
+
+## Every agent starts agents on every harness
+
+Happy's loop used to reach only Antigravity by default, foreign harnesses reached each other but
+not Happy's loop, and `[harnesses.<id>] subagent_harnesses` replaced either default. Kirill found
+this needlessly limiting and asked for no default restrictions on who can call what, in both
+directions. `create_agent`, `create_subtask`, `switch_subtask_model`, the model fields of
+`send_agent_message`, workflow agents, and `agent_options` now offer every enabled harness to every
+agent; only the structural limits (subtask eligibility and depth, collaborator count and depth,
+ownership for switching and archival) remain. To keep a harness out of choices, disable it or
+narrow its models. An account several harnesses run on reports its usage once in `agent_options`.

@@ -629,3 +629,9 @@ context and the harness's display name, to the reviewer first: in Auto it allows
 the refusal's reason passed on to the agent. Whatever it leaves undecided, including a reviewer
 that throws, goes to the person. With no agent in the context or no asker registered, an
 undecided ask is denied rather than allowed, because nobody could have approved it.
+
+## Unknown harness settings are reported, not fatal
+
+Removing `subagent_harnesses` would have made every configuration that still named it fail to
+load, because `[harnesses]` refused any setting it did not know. Harness tables now report an
+unknown setting through `unknownSettings` and leave it out, like the other tables.

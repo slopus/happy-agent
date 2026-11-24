@@ -9,6 +9,7 @@ import {
     foreignAgentRoutes,
     foreignAgentStart,
 } from "../../sources/config/impl/createForeignAgentProvider.js";
+import { parseHappyAgentConfigToml } from "../../sources/config/ConfigModule.js";
 import { parseAntigravityUsage } from "../../sources/config/impl/harnessUsage.js";
 import { testConfigRootedAt } from "../support/configModule.js";
 
@@ -238,7 +239,10 @@ describe("harnesses", () => {
         [["[harnesses.cc]", 'type = "claude-code"'], "[harnesses.claude_code]"],
         [["[harnesses.claude_code]", 'providers = ["codex"]', "[providers.codex]"], "runs on"],
         [["[harnesses.claude_code]", 'providers = ["nobody"]'], "unknown provider"],
-        [["[harnesses.happy]", 'subagent_harnesses = ["goose"]'], "unknown sub-agent harness"],
+        [
+            ["[harnesses.claude_code]", 'providers = "claude"'],
+            "harnesses.claude_code has an invalid",
+        ],
         [["[providers.goose]", 'type = "acp"', 'command = "goose"'], "[harnesses.goose]"],
         [
             [
@@ -253,35 +257,24 @@ describe("harnesses", () => {
         await expect(testConfigRootedAt(await root(), lines.join("\n"))).rejects.toThrow(message);
     });
 
-    it("lets Happy reach foreign harnesses it has no counterpart for, and foreign ones all but Happy", async () => {
-        const config = await testConfigRootedAt(
-            await root(),
+    it("reports a harness setting it does not know instead of refusing the file", () => {
+        const parsed = parseHappyAgentConfigToml(
             [
-                ...ACCOUNTS,
-                "[harnesses.claude_code]",
-                "[harnesses.codex_cli]",
+                "[harnesses.happy]",
+                'subagent_harnesses = ["antigravity"]',
                 "[harnesses.antigravity]",
-                "[harnesses.opencode]",
-                "[harnesses.goose]",
-                'type = "acp"',
-                'command = "goose"',
-                "subagent_harnesses = []",
+                "enabled = true",
             ].join("\n"),
         );
-        const reach = (creator: string) =>
-            ["happy", "claude_code", "codex_cli", "antigravity", "opencode", "goose"].filter(
-                (target) => config.harnessAllowsSubagents(creator, target),
-            );
-        expect(reach("happy")).toEqual(["happy", "antigravity"]);
-        expect(reach("antigravity")).toEqual([
-            "claude_code",
-            "codex_cli",
-            "antigravity",
-            "opencode",
-            "goose",
-        ]);
-        // An explicit list replaces the default; its own harness stays reachable.
-        expect(reach("goose")).toEqual(["goose"]);
+        expect(parsed.unknownSettings).toEqual(["harnesses.happy.subagent_harnesses"]);
+        expect(parsed.values.harnesses).toEqual({ happy: {}, antigravity: { enabled: true } });
+    });
+
+    it("names each model's harness", async () => {
+        const config = await testConfigRootedAt(
+            await root(),
+            [...ACCOUNTS, "[harnesses.claude_code]", "[harnesses.codex_cli]"].join("\n"),
+        );
         expect(config.harnessOf("claude", "claude-code/opus")).toBe("claude_code");
         expect(config.harnessOf("claude", "anthropic/opus-5-5")).toBe("happy");
         expect(config.harnessName("codex_cli")).toBe("Codex CLI");

@@ -2148,73 +2148,32 @@ function harnessesOf(options: { readonly harnesses: readonly { readonly id: stri
 }
 
 describe("sub-agent harnesses", () => {
-    it("lets Happy reach only the foreign harnesses whose models it cannot run itself", async () => {
+    it.each([
+        ["Happy", ON_HAPPY],
+        ["Antigravity", ON_ANTIGRAVITY],
+    ])("lets an agent on %s start agents on every enabled harness", async (_name, creator) => {
         const collection = new ForeignCollection();
         const { module, ctx } = await started(collection, await harnessConfig());
 
-        expect(harnessesOf(module.agentOptions(ON_HAPPY))).toEqual(["happy", "antigravity"]);
-        await expect(
-            module.createToolAgent(
-                ctx,
-                "parent",
-                { ...TASK, model: "antigravity/gemini-3.8-flash" },
-                "geminichild",
-                ON_HAPPY,
-            ),
-        ).resolves.toEqual({ agentId: "geminichild" });
-        expect(collection.delivered[0]!.options).toMatchObject({
-            model: "antigravity/gemini-3.8-flash",
-            provider: "antigravity",
-        });
-        await expect(
-            module.createToolAgent(
-                ctx,
-                "parent",
-                { ...TASK, model: "claude-code/sonnet" },
-                "sonnetchild",
-                ON_HAPPY,
-            ),
-        ).rejects.toThrow(
-            'An agent on harness "happy" cannot create sub-agents on harness "claude_code". It can use: happy, antigravity. Call agent_options',
-        );
-    });
-
-    it("lets a foreign harness reach every other foreign harness but not Happy", async () => {
-        const collection = new ForeignCollection();
-        const { module, ctx } = await started(collection, await harnessConfig());
-
-        expect(harnessesOf(module.agentOptions(ON_ANTIGRAVITY))).toEqual([
+        expect(harnessesOf(module.agentOptions(creator))).toEqual([
+            "happy",
             "claude_code",
             "antigravity",
         ]);
-        await expect(
-            module.createToolAgent(
-                ctx,
-                "parent",
-                { ...TASK, model: "claude-code/sonnet" },
-                "sonnetchild",
-                ON_ANTIGRAVITY,
-            ),
-        ).resolves.toEqual({ agentId: "sonnetchild" });
-        await expect(
-            module.createToolAgent(
-                ctx,
-                "parent",
-                { ...TASK, model: "opus-5", effort: "medium" },
-                "opuschild",
-                ON_ANTIGRAVITY,
-            ),
-        ).rejects.toThrow('cannot create sub-agents on harness "happy"');
-    });
-
-    it("lets a harness's foreign sub-agents replace the default reach", async () => {
-        const collection = new ForeignCollection();
-        const config = await harnessConfig(
-            '[harnesses.happy]\nsubagent_harnesses = ["claude_code"]',
-        );
-        const { module } = await started(collection, config);
-
-        expect(harnessesOf(module.agentOptions(ON_HAPPY))).toEqual(["happy", "claude_code"]);
+        for (const [model, agentId] of [
+            ["opus-5", "opuschild"],
+            ["claude-code/sonnet", "sonnetchild"],
+            ["antigravity/gemini-3.8-flash", "geminichild"],
+        ] as const) {
+            await expect(
+                module.createToolAgent(ctx, "parent", { ...TASK, model }, agentId, creator),
+            ).resolves.toEqual({ agentId });
+        }
+        expect(collection.delivered.map(({ options }) => options.provider)).toEqual([
+            "claude",
+            "claude",
+            "antigravity",
+        ]);
     });
 
     it("refuses a harness that does not run the model", async () => {
@@ -2249,6 +2208,11 @@ describe("sub-agent harnesses", () => {
                     providers: [{ id: "claude", models: [{ id: "opus-5" }] }],
                 },
                 {
+                    id: "claude_code",
+                    name: "Claude Code",
+                    providers: [{ id: "claude", models: [{ id: "claude-code/sonnet" }] }],
+                },
+                {
                     id: "antigravity",
                     name: "Antigravity",
                     providers: [
@@ -2263,6 +2227,7 @@ describe("sub-agent harnesses", () => {
         expect(module.agentOptionsText(ON_HAPPY).split("\n")).toEqual([
             "Models you can start agents on (* = default effort):",
             "opus-5 (Opus 5) on happy via claude: medium*, high",
+            "claude-code/sonnet (Sonnet) on claude_code via claude: high*",
             "antigravity/gemini-3.8-flash (Gemini 3.8 Flash) on antigravity via antigravity: high*",
         ]);
         expect(await module.agentOptionsUsage(ON_HAPPY)).toBe(
@@ -2364,6 +2329,7 @@ describe("sub-agent harnesses", () => {
         expect(notice.message.content[0].text).toBe(
             [
                 "Your sub-agent options changed:",
+                "- claude-code/sonnet (Sonnet) on claude_code via claude: high*",
                 "- antigravity/gemini-3.8-flash (Gemini 3.8 Flash) on antigravity via antigravity: high*",
             ].join("\n"),
         );
@@ -2781,22 +2747,20 @@ describe("switching a direct child's model with a message", () => {
         });
     });
 
-    it("never lets a foreign harness switch a child onto a harness it cannot reach", async () => {
+    it("lets a foreign harness switch a child onto any enabled harness, Happy's included", async () => {
         const collection = new ForeignCollection();
         collection.seed("parent", null);
         collection.seed("child", "parent");
         const { module, ctx } = await started(collection, await harnessConfig());
 
-        await expect(
-            module.sendMessage(
-                ctx,
-                "parent",
-                { toAgentId: "child", text: "Switch." },
-                "m1",
-                { model: "opus-5", effort: "medium" },
-                ON_ANTIGRAVITY,
-            ),
-        ).rejects.toThrow('cannot create sub-agents on harness "happy"');
+        await module.sendMessage(
+            ctx,
+            "parent",
+            { toAgentId: "child", text: "Switch." },
+            "m1",
+            { model: "opus-5", effort: "medium" },
+            ON_ANTIGRAVITY,
+        );
         await module.sendMessage(
             ctx,
             "parent",
@@ -2806,6 +2770,7 @@ describe("switching a direct child's model with a message", () => {
             ON_ANTIGRAVITY,
         );
         expect(collection.steered.map(({ options }) => options.model)).toEqual([
+            "opus-5",
             "claude-code/sonnet",
         ]);
     });

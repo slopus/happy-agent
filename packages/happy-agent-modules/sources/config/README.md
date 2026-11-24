@@ -161,11 +161,8 @@ Happy's reviewer and allows or refuses it — and then, if that left it undecide
 registered with `onHarnessPermission` — the user-input module, which puts it to the person. With
 nothing to decide it, the ask is refused.
 
-`harnessAllowsSubagents` decides which harnesses an agent on one harness may start sub-agents on:
-its own; else the creator's `subagent_harnesses`; else, for `happy`, only `antigravity` (models
-Happy cannot run itself); else, for a foreign harness, every harness but `happy`. Collaboration's
-`agent_options` tool and the `harness` input of `create_agent` and `create_subtask` read it.
-`harnessUsage` reads Antigravity's quota from `agy -p /usage` (`impl/harnessUsage.ts`), at most
+An agent on any harness may start sub-agents and subtasks on every enabled harness; there is no
+per-harness reach setting. `harnessUsage` reads Antigravity's quota from `agy -p /usage` (`impl/harnessUsage.ts`), at most
 every five minutes per account, for `agent_options({ usage: true })` to show.
 
 After startup, configuration renews enabled Codex and Grok session logins in the background,

@@ -143,8 +143,8 @@ Codex uses `followup_task` and Grok uses `followup_subagent` for the same thing.
 new agent's loop, Happy's own or a foreign agent such as Antigravity. Omitted, it is the creator's
 own harness when that serves the model. Their descriptions list the models the agent can use as
 of the conversation's start; a hidden notice carries what changes later, and `agent_options` lists
-the current models (with `usage: true`, each account's quota). Which harnesses an agent
-reaches is set per harness; see [Harnesses](recipe/harnesses.md#sub-agents).
+the current models (with `usage: true`, each account's quota). Every agent, on any harness,
+reaches every enabled harness; see [Harnesses](recipe/harnesses.md#sub-agents).
 
 ## Switching a child's model
 

@@ -66,7 +66,6 @@ import {
 } from "./impl/agentCatalog.js";
 import {
     DEFAULT_HARNESSES,
-    harnessAllowsSubagents,
     harnessInputSchema,
     harnessSchema,
     isOwnLoginHarness,
@@ -3055,11 +3054,6 @@ export class ConfigModule implements AgentModule {
         return await reading;
     }
 
-    /** Whether an agent on harness `creatorId` may create sub-agents on harness `targetId`. */
-    harnessAllowsSubagents(creatorId: string, targetId: string): boolean {
-        return harnessAllowsSubagents(this.configuration.values.harnesses, creatorId, targetId);
-    }
-
     /** The enabled models a picker offers, which leaves out hidden providers and models. */
     get visibleModels(): readonly AgentModel[] {
         const hidden = this.#hiddenModelRoutes();
@@ -4556,7 +4550,7 @@ export function parseHappyAgentConfigToml(source: string): {
     }
     const defaults = readDefaults(table.defaults, recordUnknown);
     const providers = readProviders(table.providers, recordUnknown);
-    const harnesses = readHarnesses(table.harnesses);
+    const harnesses = readHarnesses(table.harnesses, recordUnknown);
     const settings = readSettings(table.settings, recordUnknown);
     const skills = readSkills(table.skills, recordUnknown);
     const features = readFeatures(table.features, recordUnknown);

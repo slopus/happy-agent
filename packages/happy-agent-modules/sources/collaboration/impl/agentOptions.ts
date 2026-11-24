@@ -123,8 +123,13 @@ export function formatAgentOptions(options: AgentOptions): string {
  * that reset after it was last read says its share is unknown rather than repeating the old one.
  */
 export function formatAgentOptionsUsage(options: AgentOptions): string {
+    // An account several harnesses run on, such as a Claude account under Happy and Claude Code,
+    // reports once.
+    const reported = new Set<string>();
     const lines = options.harnesses.flatMap((harness) =>
         harness.providers.flatMap((provider) => {
+            if (reported.has(provider.id)) return [];
+            reported.add(provider.id);
             const scopes = new Map<string, AgentOptionsUsageWindow[]>();
             for (const window of provider.usage ?? []) {
                 const windows = scopes.get(window.scope) ?? [];
