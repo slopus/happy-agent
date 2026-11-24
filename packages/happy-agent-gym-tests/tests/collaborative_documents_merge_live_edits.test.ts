@@ -443,6 +443,59 @@ describe("collaborative documents merge live edits", () => {
         expect(gym.inference.unscripted).toEqual([]);
     });
 
+    it("lets an agent take out the empty paragraphs a person left", async () => {
+        const calls: { name: string; arguments: unknown }[] = [];
+        const gym = await createAgentGym({
+            permissionMode: "full_access",
+            inference(request) {
+                if (request.sessionId.startsWith("naming:"))
+                    return { content: [{ type: "text", text: "<title>Document</title>" }] };
+                const call = calls.shift();
+                if (call === undefined) return { content: [{ type: "text", text: "Finished." }] };
+                return { content: [{ type: "tool_call", ...call }] };
+            },
+        });
+        running.push(gym);
+        const client = gym.client;
+        const surface = (
+            await client.createSurface({ type: "document", name: "Team", text: "# lol\n\nTeam\n" })
+        ).surface;
+        // A person presses Enter twice after the heading.
+        const replica = await openReplica(client, surface.id);
+        const before = Y.encodeStateVector(replica);
+        const group = replica.getXmlFragment("document").get(0) as Y.XmlElement;
+        group.insert(
+            1,
+            ["first-empty", "second-empty"].map((id) => {
+                const container = new Y.XmlElement("blockContainer");
+                container.setAttribute("id", id);
+                container.insert(0, [new Y.XmlElement("paragraph")]);
+                return container;
+            }),
+        );
+        await client.sendSurfaceDocumentUpdate(surface.id, {
+            update: Buffer.from(Y.encodeStateAsUpdate(replica, before)).toString("base64"),
+            mutationId: "enter",
+        });
+        expect((await client.getSurfaceDocument(surface.id)).document).toMatchObject({
+            text: "# lol\n\n\n\n\n\nTeam\n",
+            seq: 2,
+        });
+
+        calls.push({
+            name: "update_document",
+            arguments: { surfaceId: surface.id, seq: 2, text: "# lol\n\nTeam\n" },
+        });
+        await gym.send("Remove the blank lines.", { permissionMode: "full_access" });
+        expect(gym.inference.toolResults().at(-1)!.text).toContain('"changed":true');
+        expect((await client.getSurfaceDocument(surface.id)).document).toMatchObject({
+            text: "# lol\n\nTeam\n",
+            seq: 3,
+        });
+        expect(gym.errors).toEqual([]);
+        expect(gym.inference.unscripted).toEqual([]);
+    });
+
     it("refuses an agent's Markdown write when the document holds content Happy cannot represent", async () => {
         const calls: { name: string; arguments: unknown }[] = [];
         const gym = await createAgentGym({

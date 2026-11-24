@@ -156,6 +156,15 @@ const WRITTEN: [name: string, written: string, reads: string][] = [
     ["one stray blank line adds nothing", "a\n\n\nb\n", "a\n\nb\n"],
     ["one leading newline adds nothing", "\na\n", "a\n"],
     ["one extra final newline adds nothing", "a\n\n", "a\n"],
+    ["three blank lines are one empty paragraph", "a\n\n\n\nb\n", "a\n\n\n\nb\n"],
+    ["four blank lines are still one", "a\n\n\n\n\nb\n", "a\n\n\n\nb\n"],
+    ["five blank lines are two", "a\n\n\n\n\n\nb\n", "a\n\n\n\n\n\nb\n"],
+    ["an empty paragraph at the start", "\n\na\n", "\n\na\n"],
+    ["an empty paragraph at the end", "a\n\n\n", "a\n\n\n"],
+    ["two empty paragraphs at the end", "a\n\n\n\n\n", "a\n\n\n\n\n"],
+    ["only empty paragraphs", "\n\n\n", "\n\n\n"],
+    ["whitespace-only lines count as blank", "a\n \n\t\n  \nb\n", "a\n\n\n\nb\n"],
+    ["CRLF blank runs", "a\r\n\r\n\r\n\r\nb\r\n", "a\n\n\n\nb\n"],
     ["CRLF line ends", "a\r\n\r\nb\r\n", "a\n\nb\n"],
     ["trailing spaces on a line", "a   \n\nb \n", "a\n\nb\n"],
     ["a two-space hard break", "a  \nb\n", "a\\\nb\n"],
@@ -167,6 +176,7 @@ const WRITTEN: [name: string, written: string, reads: string][] = [
     ["an indented code block", "a\n\n    x\n\n\n    y\n", "a\n\n```\nx\n\n\ny\n```\n"],
     ["a tight bullet list", "- a\n- b\n", "- a\n- b\n"],
     ["a loose bullet list reads tight", "- a\n\n- b\n", "- a\n- b\n"],
+    ["an empty paragraph between list items", "- a\n\n\n\n- b\n", "- a\n\n\n\n- b\n"],
     ["a nested list", "- a\n  - b\n    - c\n- d\n", "- a\n  - b\n    - c\n- d\n"],
     [
         "a list item with a paragraph beneath it",
@@ -194,6 +204,11 @@ const WRITTEN: [name: string, written: string, reads: string][] = [
         "a table as the last block",
         "before\n\n| A |\n| --- |\n| 1 |\n",
         "before\n\n| A |\n| --- |\n| 1 |\n",
+    ],
+    [
+        "a table between empty paragraphs",
+        "a\n\n\n\n| A |\n| --- |\n| 1 |\n\n\n\nb\n",
+        "a\n\n\n\n| A |\n| --- |\n| 1 |\n\n\n\nb\n",
     ],
     [
         "headings at every level",
@@ -273,6 +288,116 @@ describe("document tools round-trip Markdown", () => {
             changed: true,
             document: { seq: 1, text: "Draft from notes.\n" },
         });
+    });
+
+    it("takes out the empty paragraphs an agent removes and keeps every other block", async () => {
+        const t = await desk();
+        const surfaceId = await t.create();
+        await t.type(surfaceId, [
+            block("heading", "lol", { level: 1 }),
+            p(),
+            p(),
+            p("Team"),
+            p(),
+            block("heading", "Bots", { level: 2 }),
+            bullet("one"),
+            p(),
+        ]);
+        const before = await t.blocks(surfaceId);
+        const read = await t.read(surfaceId);
+        expect(read.text).toBe("# lol\n\n\n\n\n\nTeam\n\n\n\n## Bots\n\n- one\n\n\n");
+        const written = await t.update(surfaceId, read.seq, "# lol\n\nTeam\n\n## Bots\n\n- one\n");
+        expect(written).toMatchObject({
+            changed: true,
+            document: { text: "# lol\n\nTeam\n\n## Bots\n\n- one\n" },
+        });
+        expect((await t.blocks(surfaceId)).map((entry) => entry.id)).toEqual(
+            [0, 3, 5, 6].map((index) => before[index]!.id),
+        );
+    });
+
+    it("leaves no empty paragraph behind when an agent rewrites the whole document", async () => {
+        const t = await desk();
+        const surfaceId = await t.create();
+        await t.type(surfaceId, [p("yo"), p()]);
+        const read = await t.read(surfaceId);
+        expect(read.text).toBe("yo\n\n\n");
+        const rewritten = "Notes, not decisions.\n\n## Goals\n\n- Ship it\n";
+        expect((await t.update(surfaceId, read.seq, rewritten)).document.text).toBe(rewritten);
+    });
+
+    it("writes into a document again after clearing it", async () => {
+        const t = await desk();
+        const surfaceId = await t.create("Draft from notes.\n");
+        expect(await t.update(surfaceId, 1, "")).toMatchObject({
+            changed: true,
+            document: { seq: 2, text: "" },
+        });
+        expect(await t.update(surfaceId, 2, "")).toMatchObject({
+            changed: false,
+            document: { seq: 2, text: "" },
+        });
+        expect(await t.update(surfaceId, 2, "# Second draft\n")).toMatchObject({
+            changed: true,
+            document: { seq: 3, text: "# Second draft\n" },
+        });
+    });
+
+    it("adds an empty paragraph and keeps a kept one where and what it was", async () => {
+        const t = await desk();
+        const surfaceId = await t.create();
+        await t.type(surfaceId, [p("a"), p(), p("b"), p("c")]);
+        const before = await t.blocks(surfaceId);
+        const written = await t.update(surfaceId, 1, "a, edited\n\n\n\nb\n\n\n\nc\n");
+        expect(written.document.text).toBe("a, edited\n\n\n\nb\n\n\n\nc\n");
+        const after = await t.blocks(surfaceId);
+        expect(after.map((entry) => entry.content)).toMatchObject([
+            [{ text: "a, edited" }],
+            [],
+            [{ text: "b" }],
+            [],
+            [{ text: "c" }],
+        ]);
+        expect([0, 1, 2, 4].map((index) => after[index]!.id)).toEqual(
+            before.map((entry) => entry.id),
+        );
+    });
+
+    it("does not let an empty paragraph that stays adopt the block after it", async () => {
+        const t = await desk();
+        const surfaceId = await t.create();
+        await t.type(surfaceId, [p("x"), p()]);
+        const written = await t.update(surfaceId, 1, "- a\n\n\n\n  beneath a\n");
+        expect(written.document.text).toBe("- a\n\n  \n\n  beneath a\n");
+        expect(await t.blocks(surfaceId)).toMatchObject([
+            { type: "bulletListItem", children: [{ content: [] }, { type: "paragraph" }] },
+        ]);
+    });
+
+    it("keeps an empty paragraph a person added after the agent read", async () => {
+        const t = await desk();
+        const surfaceId = await t.create("a\n\nb\n");
+        // Enter at the end of the first paragraph.
+        await t.change(surfaceId, (fragment) => {
+            const container = new Y.XmlElement("blockContainer");
+            container.setAttribute("id", "typed");
+            container.insert(0, [new Y.XmlElement("paragraph")]);
+            (fragment.get(0) as Y.XmlElement).insert(1, [container]);
+        });
+        expect((await t.update(surfaceId, 1, "a\n\nb, edited\n")).document).toMatchObject({
+            seq: 3,
+            text: "a\n\n\n\nb, edited\n",
+        });
+    });
+
+    it("keeps a block that shows as nothing but is not an empty paragraph", async () => {
+        const t = await desk();
+        const surfaceId = await t.create();
+        await t.type(surfaceId, [p("a"), { type: "file" }, p("b")]);
+        const before = await t.blocks(surfaceId);
+        expect((await t.read(surfaceId)).text).toBe("a\n\n\n\nb\n");
+        expect((await t.update(surfaceId, 1, "a\n\nb\n")).changed).toBe(false);
+        expect(await t.blocks(surfaceId)).toEqual(before);
     });
 
     it("still refuses a document whose only content is outside the content model", async () => {
