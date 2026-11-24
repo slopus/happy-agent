@@ -88,6 +88,10 @@ it("offers the tool the push program specifies, loaded by default and never revi
             },
             required: ["title"],
         });
+        // Byte for byte what a plain string schema sends, although the limits count characters.
+        expect(JSON.stringify(tool.parameters?.properties)).toBe(
+            '{"title":{"minLength":1,"maxLength":80,"type":"string"},"subtitle":{"maxLength":160,"type":"string"}}',
+        );
         expect(tool.defer).toBe(false);
         expect(tool.capabilities).toEqual(["Send a push notification to the person you work for."]);
         // Every permission mode, no review, and no elevation.
@@ -113,6 +117,39 @@ it.each([
     try {
         const tool = await toolOf(standalone, agent(AGENT));
         expect(tool === undefined ? undefined : Value.Check(tool.parameters, input)).toBe(false);
+    } finally {
+        standalone.close();
+    }
+});
+
+it("counts a title and a subtitle in characters, as Happy Cloud does", async () => {
+    const standalone = await world("tool-characters");
+    try {
+        await standalone.push.register(standalone.ctx, id(1), phone(1));
+        const relay = stubRelay();
+        const scope = agent(AGENT);
+        const tool = await toolOf(standalone, scope);
+        if (tool === undefined) throw new Error("The agent does not hold the tool.");
+        // One character outside the Basic Multilingual Plane is two UTF-16 units and one character.
+        const title = "\u{1F680}".repeat(80);
+        const subtitle = "\u{1F4A5}".repeat(160);
+
+        expect(Value.Check(tool.parameters, { title: `${title}\u{1F680}` })).toBe(false);
+        expect(Value.Check(tool.parameters, { title, subtitle: `${subtitle}\u{1F4A5}` })).toBe(
+            false,
+        );
+        // Half of a pair is no character at all.
+        expect(Value.Check(tool.parameters, { title: "\ud83d" })).toBe(false);
+        expect(Value.Check(tool.parameters, { title, subtitle: "\udca5" })).toBe(false);
+        expect(Value.Check(tool.parameters, { title: 80 })).toBe(false);
+
+        expect(await call(standalone, scope, FIRST_CALL, { title, subtitle })).toEqual([
+            { type: "text", text: '{"ok":true}' },
+        ]);
+        await settle(standalone, scope);
+        expect(relay.map((request) => [request.body.title, request.body.body])).toEqual([
+            [title, subtitle],
+        ]);
     } finally {
         standalone.close();
     }

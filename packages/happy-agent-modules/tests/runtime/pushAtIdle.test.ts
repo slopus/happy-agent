@@ -275,6 +275,42 @@ it("sends the last notification of a turn once the agent is idle, and one for ea
     expect(world.relay).toHaveLength(2);
 }, 60_000);
 
+it("accepts 80 and 160 characters outside the Basic Multilingual Plane and refuses one more", async () => {
+    const provider = new DirectedProvider();
+    const world = await start(provider);
+    const agent = await world.runtime.system.create(world.runtime.ctx, world.config);
+    const title = "\u{1F680}".repeat(80);
+    const subtitle = "\u{1F4A5}".repeat(160);
+    provider.script(
+        agent.id,
+        notify(
+            { title, subtitle },
+            { title: `${title}\u{1F680}` },
+            { title: "x", subtitle: `${subtitle}\u{1F4A5}` },
+        ),
+        say("Told you."),
+    );
+
+    await agent.send(world.runtime.ctx, message("Ship it."));
+    await agent.waitForIdle();
+    await world.delivered();
+
+    const results = provider.toolResults(agent.id);
+    expect(results).toHaveLength(3);
+    expect(results[0]).toBe('{"ok":true}');
+    // What the model is told names the rule, so it can shorten the text and call again.
+    expect(results.slice(1)).toEqual([
+        'The arguments for "send_push_notification" did not match its schema:\n' +
+            "- title: Expected kind 'string within minLength and maxLength, counted in characters'; received string (length 162).",
+        'The arguments for "send_push_notification" did not match its schema:\n' +
+            "- subtitle: Expected kind 'string within minLength and maxLength, counted in characters'; received string (length 322).",
+    ]);
+    // The refused calls replaced nothing: the one valid call is what was sent, whole.
+    expect(world.relay.map((request) => [request.title, request.body])).toEqual([
+        [title, subtitle],
+    ]);
+});
+
 it("never offers the tool to a hidden helper, and a forced call from one sends nothing", async () => {
     const provider = new DirectedProvider();
     const world = await start(provider);

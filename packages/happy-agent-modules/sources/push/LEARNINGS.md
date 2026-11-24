@@ -98,3 +98,11 @@ The tool answers `{ "ok": true }` whatever happens next, and the first version o
 silently when the person had turned notifications off or had no phone. Nobody could then tell why
 a notification did not arrive. Every such ending now writes one log line with the notification and
 agent IDs. The title and subtitle never reach a log.
+
+## The tool takes the same text on both servers
+
+The tool's schema first used plain string limits, which the validator counts in UTF-16 units, so
+a title of 41 emoji was refused here while Happy Cloud, counting characters, takes 80. That was
+sent back: one tool contract must behave the same on both servers. The title and subtitle are now
+checked in characters by a schema type of the module's own, and the schema the model receives is
+still the contract's plain `minLength` and `maxLength`.

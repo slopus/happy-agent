@@ -103,9 +103,10 @@ a good title is, and that a routine run stays quiet.
   `push:delivery outcome=disabled|no_phones`, with the notification and agent IDs and never the
   words or a token.
 
-A tool's limits are checked on UTF-16 units, as every tool schema is, where `send` and Happy Cloud
-count characters. A title of more than 40 characters outside the Basic Multilingual Plane, such as
-emoji, is therefore refused here and accepted there.
+The tool's limits count characters, as `send` and Happy Cloud count them, so both servers take
+exactly the same text: 80 emoji are a valid title and 81 are refused. The model is shown an
+ordinary string with `minLength` and `maxLength`; `impl/characterCountedString.ts` checks it,
+because the validator would otherwise count UTF-16 units and refuse 41.
 
 `collapseId` is not sent. Happy's relay refuses a request that carries it until its own change is
 deployed; once it is, the one line goes where the settling hook builds the notification for

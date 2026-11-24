@@ -2,6 +2,8 @@ import { Type, type Static } from "@sinclair/typebox";
 import { defineAgentTool } from "@slopus/happy-agent-base";
 import type { Context } from "@steve.kite/stdlib";
 
+import { characterCountedString } from "../impl/characterCountedString.js";
+
 /**
  * The push program's guidance, byte for byte the text Happy Cloud gives its agents. A test pins
  * its digest to the cloud's, so change it only together with that contract.
@@ -28,8 +30,9 @@ Whether and where it is shown is decided for you. A later call replaces an earli
 
 const parametersSchema = Type.Object(
     {
-        title: Type.String({ minLength: 1, maxLength: 80 }),
-        subtitle: Type.Optional(Type.String({ maxLength: 160 })),
+        // Counted in characters, as Happy Cloud counts them, so both servers take the same text.
+        title: characterCountedString(1, 80),
+        subtitle: Type.Optional(characterCountedString(0, 160)),
     },
     { additionalProperties: false },
 );
