@@ -212,24 +212,68 @@ permission request, which Happy answers as above; Antigravity offers only Allow 
 Allow for this session. On Deny or a cancelled ask the action fails and Antigravity ends its turn
 at once, without a word to the model's reply.
 
-| Action                                                            | `auto` (Happy Auto, Full access)                   | `accept-edits` (Workspace write) | `plan` (Read only)      |
-| ----------------------------------------------------------------- | -------------------------------------------------- | -------------------------------- | ----------------------- |
-| Read in the project                                               | silent                                             | not probed                       | not probed              |
-| Read outside it, including a missing path under `~`               | silent                                             | asks                             | asks                    |
-| Write, edit, or delete in the project                             | silent                                             | silent                           | asks to run `ls` first  |
-| Write outside it with the file tool, `/tmp` and symlinks included | asks                                               | asks                             | writes a plan and stops |
-| Command in the project (`ls`, `echo $HOME`)                       | silent                                             | asks                             | writes a plan and stops |
-| Command writing or `rm -rf` in `/tmp`                             | silent; the sandbox leaves `/tmp` writable         | asks                             | writes a plan and stops |
-| Command writing outside the project and `/tmp`                    | silent: retried outside the sandbox without asking | not probed                       | not probed              |
-| `rm` of a file outside the project and `/tmp`                     | asks, to run outside the sandbox                   | not probed                       | not probed              |
-| Network command (`curl`)                                          | silent                                             | not probed                       | not probed              |
-| `git push --force` to a local remote                              | refused by its own policy, no ask                  | not probed                       | not probed              |
-| Any MCP tool call, Happy's included                               | asks                                               | asks                             | writes a plan and stops |
-| Its own sub-agent (`invoke_subagent`)                             | silent; its sub-agents never send an ask           | not probed                       | not probed              |
+| Action                                                            | `auto` (Happy Auto, Full access)                                        | `accept-edits` (Workspace write) | `plan` (Read only)      |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------- | ----------------------- |
+| Read in the project                                               | silent                                                                  | not probed                       | not probed              |
+| Read outside it, including a missing path under `~`               | silent                                                                  | asks                             | asks                    |
+| Write, edit, or delete in the project                             | silent                                                                  | silent                           | asks to run `ls` first  |
+| Write outside it with the file tool, `/tmp` and symlinks included | asks                                                                    | asks                             | writes a plan and stops |
+| Command in the project (`ls`, `echo $HOME`)                       | silent                                                                  | asks                             | writes a plan and stops |
+| Command writing or `rm -rf` in `/tmp`                             | silent; the sandbox leaves `/tmp` writable                              | asks                             | writes a plan and stops |
+| Command writing outside the project and `/tmp`                    | silent: its review model cleared the unsandboxed retry                  | not probed                       | not probed              |
+| `rm` of a file outside the project and `/tmp`                     | asks: its review model judged it irreversible                           | not probed                       | not probed              |
+| Network command (`curl`)                                          | silent: its review model cleared the unsandboxed retry                  | not probed                       | not probed              |
+| `git push --force origin main` to a scratch bare remote in `/tmp` | never asks: blocked once by a monitor, cleared once by the review model | not probed                       | not probed              |
+| Any MCP tool call, Happy's included                               | asks                                                                    | asks                             | writes a plan and stops |
+| Its own sub-agent (`invoke_subagent`)                             | silent; its sub-agents never send an ask                                | not probed                       | not probed              |
 
 In `plan`, Antigravity writes an implementation plan under `~/.gemini/antigravity-cli/brain/`
 and waits for its approval instead of acting; Happy's Read only answers no ask with yes, so
 nothing in the plan runs.
+
+What decides each `auto` row, read from Antigravity's own logs
+(`~/.gemini/antigravity-cli/log/acp-server-*.log`), the decision it records on each step of its
+conversation database (`~/.gemini/antigravity-cli/conversations/<id>.db`), and the review prompts
+and monitor configuration built into the binary:
+
+- **Fixed rules, no model call.** File-tool reads anywhere and writes in the project are approved.
+  A file tool writing outside the project (`/tmp` included, symlinks resolved to their target) and every
+  MCP call always ask. The ask follows within milliseconds of the monitors below and records no
+  review. The user's `permissions` rules in `~/.gemini/antigravity-cli/settings.json` apply on top.
+- **The terminal sandbox, no model call.** A command runs sandboxed unless the model sets
+  `BypassSandbox: true` on `run_command`. The sandbox may write to the project and `/tmp` but
+  nothing else, and has no network. A sandboxed command never asks; that is why `rm -rf` in `/tmp`
+  runs silently. Its system prompt tells the model to retry a command the sandbox stopped with
+  `BypassSandbox: true`.
+- **A review model for every `BypassSandbox: true` command.** Antigravity's PolicyGuardian sends
+  the command to a separate model call, with the first and latest user turns, the files the agent
+  created this session, and tools to read files, list directories, search the conversation, and run
+  sandboxed checks such as looking up a Git remote. The model labels whether the action can be
+  undone and whether the agent created its target; code turns the labels into a decision.
+  Reversible means it runs outside the sandbox silently and records `auto_approve` with the
+  model's reason: "creates a new file `shell.txt` that does not currently exist", or "a local bare
+  repository in `/tmp`... with no existing refs". Irreversible on content the agent did not
+  create means an ask: "Deleting the pre-existing, untracked file decoy2.txt... permanently
+  destroys it". The user had asked for that deletion in plain words, and it still asked. No
+  verdict, such as a timeout, also means an ask. The review took one to three extra model calls
+  (2 to 9 seconds) before the action ran or the ask arrived. The log does not name its model; the
+  changelog says it runs on Gemini 4 Hydrogen or a Flash model.
+- **Three monitors, in a chain, before every tool call.** `agy_tool_safety` is a local allowlist
+  of read-only tools and commands (`ls`, `cat`, `git status`, ...), and the chain stops there for
+  those. Anything else, MCP calls and `invoke_subagent` included, goes to `sir_flash_lite`, a
+  Flash-Lite call that sees only the pending step. When that flags the step,
+  `severe_internal_risks_agy` runs: a call to `gemini-4-hydrogen-sonar` that sees the user's
+  request plus the beginning and end of the transcript. Only that last monitor can act: at
+  severity 5 of 10 or more it blocks the call and ends the turn with no ask ("This tool call was
+  blocked due to potential violation of a security policy"). It blocked the force push once
+  (severity 5, "the user did not authorize bypassing the sandbox") and let the same push through
+  on the rerun (severity 3). The first two monitors only log, and the last one's rubric scores
+  local data loss 0.
+
+So in `auto` a command leaves the sandbox silently exactly when Antigravity's review model judges
+it reversible and the blocking monitor scores it below 5. Both are model calls Antigravity makes to
+Google, and Happy sees neither. Happy sees only the asks, and an ask carries the command but not
+Antigravity's reason.
 
 ## Antigravity from Happy
 

@@ -48,6 +48,17 @@ unavailable, a timeout — goes to the person and does not move the circuit, sin
 it. These reviews emit no per-call permission event: the public history records a review against
 a Happy tool call, and a harness's own action has none.
 
+## Say what a harness's own review is only from its evidence
+
+The first write-up of Antigravity's `auto` described its asks from black-box results alone and
+called a refused force push "its own policy"; Kirill asked exactly which check decides what.
+Antigravity's logs and the decision it stores on each conversation step showed that the push was
+refused by a monitor model, and that every command leaving its sandbox goes to a review model. On
+a rerun the same push was cleared silently. `docs/recipe/harnesses.md` now names, for each action,
+whether a fixed rule, the sandbox, or a model decides, with the recorded reasons. A harness's model
+reviews can decide differently on the same action, so Happy must not count on them: Happy's
+reviewer sees only the asks, and an ask carries the command without the harness's reason.
+
 ## A foreign harness's Happy tool calls are reviewed like Happy's own
 
 Happy used to skip Auto review for Happy tool calls from a foreign harness, leaving them to the
