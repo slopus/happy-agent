@@ -206,6 +206,11 @@ export const healthResponseSchema = Type.Object({
              * Stripe Checkout; offer payments only then. Happy Agent never reports it.
              */
             payments: Type.Optional(Type.Boolean()),
+            /**
+             * True when the server serves `/v0/cloud/push`, under Push notifications; a mobile
+             * client registers its push capability only then.
+             */
+            pushRegistrations: Type.Optional(Type.Boolean()),
         }),
     ),
     /** Always `true`; a daemon that cannot answer does not answer. */

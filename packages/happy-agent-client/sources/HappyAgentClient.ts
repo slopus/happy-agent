@@ -259,6 +259,13 @@ import type {
 } from "./protocol/messages.js";
 import type { BackgroundProcessResponse } from "./protocol/processes.js";
 import type { ProfileResponse, ProfileUpdateRequest } from "./protocol/profile.js";
+import {
+    pushRegistrationIdSchema,
+    type PushRegistrationId,
+    type PushSettings,
+    type RegisterPushRequest,
+    type RegisterPushResponse,
+} from "./protocol/push.js";
 import { userIdsSchema, type UsersResponse } from "./protocol/users.js";
 import {
     userSettingKeySchema,
@@ -1418,6 +1425,61 @@ export class HappyAgentClient {
             method: "PUT",
             path: "v0/environment",
             json: request,
+            signal: options.signal,
+        });
+    }
+
+    // Push notifications
+
+    /**
+     * `PUT /v0/cloud/push/registrations/:id` — registers this phone's push capability, or renews
+     * its registration for another 30 days under a new `version`. Servers without
+     * `capabilities.pushRegistrations` answer `404`.
+     */
+    async registerPush(
+        id: PushRegistrationId,
+        request: RegisterPushRequest,
+        options: RequestOptions = {},
+    ): Promise<RegisterPushResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: pushRegistrationPath(id),
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `DELETE /v0/cloud/push/registrations/:id` — removes the registration `ifMatch` names. It
+     * also succeeds when the registration is already gone or was renewed under a newer version.
+     */
+    async unregisterPush(id: PushRegistrationId, options: VersionedRequestOptions): Promise<void> {
+        await this.#send({
+            method: "DELETE",
+            path: pushRegistrationPath(id),
+            ifMatch: options.ifMatch,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/cloud/push/settings` — whether the server may notify the caller's phones. */
+    async getPushSettings(options: RequestOptions = {}): Promise<PushSettings> {
+        return await this.#json({
+            method: "GET",
+            path: "v0/cloud/push/settings",
+            signal: options.signal,
+        });
+    }
+
+    /** `PUT /v0/cloud/push/settings` — replaces the caller's push settings. */
+    async savePushSettings(
+        settings: PushSettings,
+        options: RequestOptions = {},
+    ): Promise<PushSettings> {
+        return await this.#json({
+            method: "PUT",
+            path: "v0/cloud/push/settings",
+            json: settings,
             signal: options.signal,
         });
     }
@@ -4643,6 +4705,14 @@ export class HappyAgentClient {
  */
 function bodyOf(options: { mutationId?: string }): { mutationId?: string } {
     return options.mutationId === undefined ? {} : { mutationId: options.mutationId };
+}
+
+/** A registration's route; an ID that is not a lowercase UUID is refused before sending. */
+function pushRegistrationPath(id: PushRegistrationId): string {
+    if (!Value.Check(pushRegistrationIdSchema, id)) {
+        throw new Error("The push registration ID is invalid.");
+    }
+    return `v0/cloud/push/registrations/${id}`;
 }
 
 /** A setting's route; keys need no percent-encoding, so an invalid one is refused before sending. */

@@ -1662,7 +1662,8 @@ Fields:
   `plugin` actions, only with it. `payments: true` advertises that the server takes payments, such
   as credit top-ups through Stripe Checkout; clients offer payments only with it. Only Happy Cloud
   takes payments, and only when Stripe is configured; its own API describes them. Happy Agent never
-  reports it.
+  reports it. `pushRegistrations: true` advertises the routes under `/v0/cloud/push`, described
+  under Push notifications; a mobile client registers its push capability only with it.
 - `instanceId` — optional; this installation's identity, used by instance links under Happy links.
   It is a CUID2 of exactly 24 characters matching `^[a-z][a-z0-9]{23}$`, generated once and
   persisted with the installation's data, so it survives restarts and upgrades. It is reported
@@ -4179,6 +4180,152 @@ organization operation. Deleting an organization the connected user does not adm
 `cloud_unauthorized`; transient WorkOS failures, rejected or malformed Happy Cloud responses, and
 Happy Cloud availability failures return `503` with code `cloud_unavailable`. Cloud errors include
 the authoritative current `cloud` and never include credentials or upstream response bodies.
+
+## Push notifications
+
+A person's phone registers with this server so the server can notify that person through Happy's
+push relay. The paths, bodies, and status codes are the ones Happy Cloud serves, so a mobile client
+uses one implementation for both. Despite the shared `/v0/cloud` prefix, these routes are unrelated
+to the Cloud account described above and behave the same whether or not one is connected.
+
+A phone first exchanges its native APNs or FCM token with the relay for a stable capability,
+`HappyPushToken[...]`, and registers only that capability here. The daemon never receives a native
+token. Whoever holds the capability can send to that phone, so the daemon keeps it in its
+owner-only database and never returns it from any route or puts it in an event, an error body, or
+a log.
+
+**Owner.** In team mode a registration and the push settings belong to the authenticated member,
+keyed by their installation-local Happy user ID. In standalone mode they belong to the
+installation's one person. The routes and shapes are the same in both modes, and a caller never
+names an owner. One person never reads, replaces, or removes another person's registration. A team
+member who has not saved a profile is answered `401`, as on every other route outside onboarding.
+
+**Availability.** A daemon that serves these routes reports `capabilities.pushRegistrations: true`
+from health. Older daemons omit it and answer the routes with `404`.
+
+Registering does not by itself cause a notification. The features that send one say so where they
+are specified, and every one of them sends as described under "What the phone receives".
+
+**Where the daemon is stricter than Happy Cloud.** Both `PUT` routes require
+`content-type: application/json`, and answer `400 invalid_request` without it. Their request body is
+at most 4,096 bytes, and a larger one is `413 too_large`. A client written for Happy Cloud that
+already sends JSON with that header meets both.
+
+**No list.** There is no route that lists registrations. A phone knows its own `id` and `version`
+from the `PUT` that registered it, and nothing else needs to read them.
+
+### The registration object
+
+```json
+{
+    "id": "7b0c2d2e-5a51-4c0e-9d5f-3a1f6c0b9e42",
+    "version": "0d6c1a5e-8f0b-4b7a-9a43-6f2f1f6f2c11",
+    "expiresAt": 1757992000000
+}
+```
+
+- `id` — the lowercase UUID the phone chose for this server and keeps, so registering again renews
+  rather than adds.
+- `version` — a UUID minted by every successful `PUT`. It is the `If-Match` value that removes
+  exactly this registration.
+- `expiresAt` — milliseconds since the Unix epoch, 30 days after the `PUT` that returned it. A
+  registration past this time receives nothing and is removed the next time its owner registers.
+
+### `PUT /v0/cloud/push/registrations/:id`
+
+Registers the phone, or renews its registration.
+
+Request:
+
+```json
+{
+    "token": "HappyPushToken[aB3dE6gH9jK2mN5pQ8sT1v]",
+    "platform": "ios",
+    "appId": "com.ex3ndr.happy",
+    "locale": "en-US"
+}
+```
+
+- `:id` — a lowercase UUID in its hyphenated form.
+- `token` — required; `HappyPushToken[` followed by exactly 22 ASCII letters and digits and `]`.
+- `platform` — required; `"ios"` or `"android"`.
+- `appId` — required; `"com.ex3ndr.happy"`, `"com.slopus.happy.preview"`, or
+  `"com.slopus.happy.dev"`.
+- `locale` — optional; 1–64 characters with no control characters, counted as Unicode code points
+  rather than UTF-16 units. `null` means the same as leaving it out.
+
+The body is closed: an unknown field is refused.
+
+Response — `200`: `{ "registration": { ... } }`.
+
+A repeat `PUT` with the same `id` renews the registration for another 30 days under a new
+`version`, and replaces its token, platform, app, and locale with the ones sent. Registering a
+token the caller already holds under another `id`, as a reinstalled app does, removes that older
+registration. One person holds at most 20 registrations; expired ones are removed first and do not
+count. Two people may register the same phone.
+
+A malformed `id` or body is `400 invalid_request`, and the message never repeats the token. An
+`id` that belongs to another person is `404 not_found`. A new `id` when the caller already holds
+20 registrations is `409 conflict`; renewing one of the 20 is still accepted.
+
+### `DELETE /v0/cloud/push/registrations/:id`
+
+Removes the caller's registration, as a phone does before it signs out. `If-Match` is required
+and carries the registration's `version`.
+
+Response — `204` with no body. The answer is also `204` when nothing was removed: the registration
+is already gone, belongs to another person, or has been renewed since under a newer `version`. A
+stale phone therefore never removes a newer registration, and repeating the request is safe.
+
+A malformed `id`, or an `If-Match` that is missing or not a UUID, is `400 invalid_request`. The
+`If-Match` UUID is read in either letter case, so `0D6C1A5E-...` names the same version as
+`0d6c1a5e-...`.
+
+### `GET /v0/cloud/push/settings`
+
+Response — `200`:
+
+```json
+{ "enabled": true }
+```
+
+- `enabled` — whether this server may send notifications to the caller's phones. It is `true` until
+  the person turns it off. While `false`, nothing is sent and registrations are kept. It does not
+  grant or reflect the operating system's notification permission.
+
+### `PUT /v0/cloud/push/settings`
+
+Replaces the caller's push settings. The request is the settings object, `{ "enabled": false }`,
+and is closed. Response — `200` with the settings as stored. A malformed body is
+`400 invalid_request`.
+
+### What the phone receives
+
+The daemon sends through `POST https://push.cluster-fluster.com/v1/push/send`, once for each
+unexpired registration of the recipient, and only while that person's `enabled` is `true`. The
+relay delivers it natively. A notification's `data` carries exactly these five string fields, and
+nothing else:
+
+```json
+{
+    "kind": "happy.cloud.push.v1",
+    "instanceId": "k3x9q2m7p0a4b8c1d5e6f7g2",
+    "userId": "tz4a98xxat96iws9zmbrgj3a",
+    "agentId": "pfh0haxfpzowht3oi213cqos",
+    "notificationId": "0197f0c2-7d1e-7c3a-b0a5-2a4b6c8d0e1f"
+}
+```
+
+- `instanceId` — this installation's `instanceId`, as health reports it.
+- `userId` — the recipient's installation-local Happy user ID. In standalone mode, where the one
+  person has no user ID, it is the literal `standalone`.
+- `agentId` — the agent the notification is about.
+- `notificationId` — one ID per notification, the same on every phone it reaches, for
+  deduplication.
+
+The phone decides whether to show it; these fields let it find the installation, the person, and
+the agent. The daemon sends to each registration once and never retries. When the relay reports
+that a phone's capability is no longer registered, the daemon removes that registration.
 
 ## Happy integration
 
