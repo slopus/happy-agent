@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { Agent, createServer, request as httpRequest, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -13,6 +13,13 @@ import {
     type PreparedHappyAgentRuntime,
 } from "../../sources/runtime/startHappyAgentRuntime.js";
 import { ScriptedProvider } from "../support/ScriptedProvider.js";
+
+/**
+ * The phone's connection to the fixture server. An agent of its own takes no proxy from the
+ * environment, where the default one and `fetch` do under `NODE_USE_ENV_PROXY`, so the loopback
+ * requests reach the daemon whatever proxy the machine running the test is configured with.
+ */
+const direct = new Agent();
 
 let runtime: HappyAgentRuntime | undefined;
 let server: Server | undefined;
@@ -28,6 +35,7 @@ async function stop() {
 
 afterEach(async () => {
     await stop();
+    direct.destroy();
     vi.unstubAllGlobals();
     if (root) await rm(root, { recursive: true, force: true });
     root = undefined;
@@ -133,18 +141,40 @@ it("serves Happy Cloud's push registration contract to each team member's phone"
         body?: unknown,
         headers: Record<string, string> = {},
     ) => {
-        const response = await nativeFetch(`${endpoint}${path}`, {
-            method,
-            headers: {
-                authorization: `Bearer ${bearerToken}`,
-                ...(body === undefined ? {} : { "content-type": "application/json" }),
-                ...headers,
+        const payload = body === undefined ? undefined : JSON.stringify(body);
+        const { status, text } = await new Promise<{ status: number; text: string }>(
+            (resolve, reject) => {
+                const outgoing = httpRequest(
+                    `${endpoint}${path}`,
+                    {
+                        agent: direct,
+                        method,
+                        headers: {
+                            authorization: `Bearer ${bearerToken}`,
+                            ...(payload === undefined
+                                ? {}
+                                : { "content-type": "application/json" }),
+                            ...headers,
+                        },
+                    },
+                    (incoming) => {
+                        const chunks: Buffer[] = [];
+                        incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
+                        incoming.on("error", reject);
+                        incoming.on("end", () =>
+                            resolve({
+                                status: incoming.statusCode ?? 0,
+                                text: Buffer.concat(chunks).toString("utf8"),
+                            }),
+                        );
+                    },
+                );
+                outgoing.on("error", reject);
+                outgoing.end(payload);
             },
-            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        });
-        const text = await response.text();
+        );
         return {
-            status: response.status,
+            status,
             text,
             json: text === "" ? undefined : (JSON.parse(text) as Record<string, unknown>),
         };
