@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+
+import { agentPermissionMode } from "@slopus/happy-agent-base";
 import type {
     AgentBasePermissionModeChange,
     AgentBaseToolCall,
@@ -14,6 +17,11 @@ import type { Context } from "@steve.kite/stdlib";
 
 import type { AutoModule } from "../auto/index.js";
 import type { ComputeModule } from "../compute/index.js";
+import type {
+    ConfigModule,
+    HarnessPermissionAsk,
+    HarnessPermissionReview,
+} from "../config/index.js";
 import { describePermissionAction } from "./impl/describePermissionAction.js";
 import {
     autoPermissionPolicyDenialReason,
@@ -157,6 +165,9 @@ export class PermissionsModule implements AgentModule {
     readonly #compute: ComputeModule;
     /** Who decides in Auto, when this agent has an automatic reviewer at all. */
     readonly #auto: AutoModule | undefined;
+    /** Where foreign agents' permission asks arrive, for review before the person sees them. */
+    readonly #config: ConfigModule | undefined;
+    #reviewsHarnessAsks = false;
     /** Whoever is told about modes and decisions, as subscriptions taken after construction. */
     readonly #transactionalListeners = new Set<PermissionEventListener>();
     readonly #listeners = new Set<PermissionEventListener>();
@@ -178,10 +189,14 @@ export class PermissionsModule implements AgentModule {
      * @param auto The automatic reviewer. It is optional because an agent may be composed without
      *   one: with no reviewer, every action that asks to be reviewed is refused as unproven, which
      *   is honest — nothing judged it — rather than refused as unsafe.
+     * @param config The configuration that builds foreign agents. In Auto, what their own
+     *   permission systems ask is reviewed here before the person is asked; see
+     *   {@link reviewHarnessAsk}. Without it, those asks go straight to the person.
      */
-    constructor(compute: ComputeModule, auto?: AutoModule) {
+    constructor(compute: ComputeModule, auto?: AutoModule, config?: ConfigModule) {
         this.#compute = compute;
         this.#auto = auto;
+        this.#config = config;
     }
 
     /**
@@ -236,8 +251,103 @@ export class PermissionsModule implements AgentModule {
      */
     readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
         this.#agents = agents;
+        if (!this.#reviewsHarnessAsks && this.#config !== undefined) {
+            // For the module's whole life; one runtime starts it once.
+            this.#config.onHarnessPermissionReview((ctx, ask, signal) =>
+                this.reviewHarnessAsk(ctx, ask, signal),
+            );
+            this.#reviewsHarnessAsks = true;
+        }
         return this.#hooks;
     };
+
+    /**
+     * Put what a foreign agent's own permission system asks to the automatic reviewer, in Auto.
+     *
+     * The harness runs the action itself, outside Happy's sandbox, so nothing is elevated: an
+     * allowed ask is approved once, and a refused one is denied with the same words a refused Happy
+     * tool call gets, and moves the same refusal circuit. A review that decided nothing — no
+     * reviewer, every reviewer route unavailable, or the time running out — sends the ask on to the
+     * person, which is what happens in every other mode too.
+     */
+    async reviewHarnessAsk(
+        ctx: Context,
+        ask: HarnessPermissionAsk,
+        signal: AbortSignal,
+    ): Promise<HarnessPermissionReview> {
+        if (agentPermissionMode(ctx) !== "auto" || signal.aborted) return { outcome: "escalate" };
+        return await this.#serialized(ask.agentId, () => this.#decideHarnessAsk(ctx, ask, signal));
+    }
+
+    async #decideHarnessAsk(
+        ctx: Context,
+        ask: HarnessPermissionAsk,
+        signal: AbortSignal,
+    ): Promise<HarnessPermissionReview> {
+        const agentId = ask.agentId;
+        const stopped = this.#terminalRefusal(agentId);
+        if (stopped !== undefined) return { outcome: "denied", reason: refusalText(stopped) };
+        const action = harnessAction(ask);
+        const reviewAbortController = new AbortController();
+        const onAbort = (): void => reviewAbortController.abort();
+        signal.addEventListener("abort", onAbort, { once: true });
+        let decision: ReviewOutcome;
+        try {
+            decision = await this.#review(
+                ctx,
+                {
+                    agentId,
+                    callId: `harness-${randomUUID()}`,
+                    tool: harnessTool(ask),
+                    arguments: {},
+                    action,
+                    mode: "auto",
+                    elevates: false,
+                    signal: reviewAbortController.signal,
+                },
+                reviewAbortController,
+            );
+        } catch (error: unknown) {
+            if (error instanceof PermissionReviewCancelledError) return { outcome: "escalate" };
+            throw error;
+        } finally {
+            signal.removeEventListener("abort", onAbort);
+        }
+        if (signal.aborted) return { outcome: "escalate" };
+        if (decision.outcome === "unproven") {
+            ctx.log.info(`The automatic reviewer could not decide ${ask.harnessName}'s ask.`, {
+                agentId,
+                kind: decision.kind,
+                reason: decision.reason,
+            });
+            return { outcome: "escalate" };
+        }
+        if (decision.outcome === "allowed" && shouldAllowAutoPermissionReview(decision)) {
+            ctx.log.info(`The automatic reviewer allowed ${ask.harnessName}'s ask.`, {
+                agentId,
+                risk: decision.risk,
+                userAuthorization: decision.userAuthorization,
+            });
+            const refused = this.#allowReview(agentId);
+            return refused === undefined
+                ? { outcome: "allowed" }
+                : { outcome: "denied", reason: refusalText(refused) };
+        }
+        const reason =
+            decision.outcome === "denied"
+                ? decision.reason
+                : autoPermissionPolicyDenialReason(decision);
+        ctx.log.info(`The automatic reviewer refused ${ask.harnessName}'s ask.`, {
+            agentId,
+            reason,
+        });
+        const refused = await this.#refuseReview(
+            ctx,
+            agentId,
+            deniedRefusal(action, reason, this.#auto?.globalSecurityPath),
+        );
+        return { outcome: "denied", reason: refusalText(refused) };
+    }
 
     readonly #hooks: AgentModuleHooks = {
         instructions: async (ctx: Context, scope: AgentModuleScope): Promise<string> =>
@@ -317,8 +427,11 @@ export class PermissionsModule implements AgentModule {
         ctx: Context,
         scope: AgentModuleScope,
         call: AgentBaseToolCall,
-    ): Promise<AgentBaseToolCallDecision | undefined> => {
-        const agentId = scope.agent.id;
+    ): Promise<AgentBaseToolCallDecision | undefined> =>
+        await this.#serialized(scope.agent.id, () => this.#decideBeforeToolCall(ctx, scope, call));
+
+    /** Run one decision for an agent after the ones queued before it. */
+    async #serialized<T>(agentId: string, decide: () => Promise<T>): Promise<T> {
         const previous = this.#decisionTails.get(agentId) ?? Promise.resolve();
         let release!: () => void;
         const current = new Promise<void>((resolve) => {
@@ -327,7 +440,7 @@ export class PermissionsModule implements AgentModule {
         this.#decisionTails.set(agentId, current);
         await previous;
         try {
-            return await this.#decideBeforeToolCall(ctx, scope, call);
+            return await decide();
         } finally {
             release();
             if (this.#decisionTails.get(agentId) === current) {
@@ -337,7 +450,7 @@ export class PermissionsModule implements AgentModule {
                 }
             }
         }
-    };
+    }
 
     readonly #decideBeforeToolCall = async (
         ctx: Context,
@@ -367,10 +480,8 @@ export class PermissionsModule implements AgentModule {
             return this.#toolError(outOfModeRefusal(name, mode));
         }
         if (mode !== "auto") return undefined;
-        // A foreign harness reaches Happy's tools only through its own permission system, whose
-        // reviewer has already decided this call in Auto. Reviewing it again here would put two
-        // gates on one action; it runs in the current sandbox, never elevated.
-        if (this.#compute.toolVendor(scope) === "foreign") return undefined;
+        // A call from a foreign harness is reviewed here like any other: in Auto the harness's own
+        // ask about a Happy tool is approved without review, so this is the one review it gets.
         // A throwing predicate has not said the action is safe. v1 turns it into a tool error and
         // never runs the action; treating it as "no review needed" or "not elevated" would let a
         // broken predicate quietly widen what an agent may do. This fails closed and, being a
@@ -755,6 +866,36 @@ export class PermissionsModule implements AgentModule {
 /** A refused call, as the error result the model is told the call produced. */
 function refusal(message: string): AgentBaseToolCallDecision {
     return { type: "answer", content: [{ type: "text", text: message }], isError: true };
+}
+
+/** The words of a refusal, for a harness that is told them instead of a tool result. */
+function refusalText(decision: AgentBaseToolCallDecision): string {
+    if (decision.type !== "answer") return "Automatic permission review refused this action.";
+    return decision.content
+        .flatMap((block) => (block.type === "text" ? [block.text] : []))
+        .join("\n");
+}
+
+/**
+ * A harness's ask as an action for the reviewer. The harness's own words come last, so a long ask
+ * is cut short there and the reviewer still learns who asks and that the harness acts outside
+ * Happy's sandbox.
+ */
+function harnessAction(ask: HarnessPermissionAsk): string {
+    const preface =
+        `${ask.harnessName}, the coding agent this conversation runs on, asks permission for the ` +
+        "following action because its own permission system would not allow it alone, typically " +
+        "because it reaches outside the project folder or the harness's sandbox. It runs the " +
+        "action itself, outside Happy's sandbox. Judge it as the same action by this agent:\n\n";
+    return `${preface}${ask.action}`.slice(0, MAX_PERMISSION_ACTION);
+}
+
+/**
+ * The tool a harness's ask is reviewed as. Only its name is read: the harness, not Happy, owns
+ * what the action does.
+ */
+function harnessTool(ask: HarnessPermissionAsk): AnyAgentTool {
+    return { namespace: "harness", name: ask.harnessId } as unknown as AnyAgentTool;
 }
 
 /**

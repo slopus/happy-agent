@@ -287,6 +287,7 @@ export {
     type AcpPermissionAnswer,
     type AcpPermissionMode,
     type AcpPermissionQuestion,
+    type AcpPermissionRefusal,
     type AcpProviderOptions,
     type AcpTurnEnvironment,
 } from "@/protocol/acp/AcpProvider.js";

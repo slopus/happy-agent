@@ -1,5 +1,5 @@
 import type { AgentModel } from "@slopus/happy-agent-base";
-import type { SessionReasoningEffort } from "@slopus/happy-providers";
+import { providerModelFamily, type SessionReasoningEffort } from "@slopus/happy-providers";
 import { Type, type Static } from "@sinclair/typebox";
 
 /** The reviewer model IDs, matching the v1 catalog entries these routes are keyed by. */
@@ -47,12 +47,18 @@ export function reviewerModelForAgent(options: {
     return reviewerModelsForAgent(options)[0]!;
 }
 
-/** Each eligible route once, in reviewer precedence; never crosses the active provider. */
+/**
+ * Each eligible route once, in reviewer precedence; never crosses the active provider, except for
+ * an agent on a foreign harness (see {@link foreignReviewerRoutes}).
+ */
 export function reviewerModelsForAgent(options: {
     models: readonly AgentModel[];
     active: AutoReviewerRoute;
+    /** Happy's usable models, default first, for an agent whose own model Happy cannot run. */
+    fallbacks?: readonly AgentModel[];
 }): AutoReviewerRoute[] {
     const { models, active } = options;
+    if (providerModelFamily(active.modelId) === "foreign") return foreignReviewerRoutes(options);
     const routes: AutoReviewerRoute[] = [];
 
     if (
@@ -79,6 +85,52 @@ export function reviewerModelsForAgent(options: {
     throw new Error(
         `No reviewer model route could be resolved for ${active.modelId} on provider ` +
             `${active.providerId}.`,
+    );
+}
+
+/**
+ * The routes that review an agent on a foreign harness, such as Antigravity or Claude Code. Its
+ * own model runs inside that harness, so reviewing on it would start another foreign agent: the
+ * account's hidden reviewer routes come first (Sonnet on a Claude account, Codex Auto Review or
+ * GPT-5.4 on a Codex account), then the reviewer routes of Happy's default model.
+ */
+function foreignReviewerRoutes(options: {
+    models: readonly AgentModel[];
+    active: AutoReviewerRoute;
+    fallbacks?: readonly AgentModel[];
+}): AutoReviewerRoute[] {
+    const { models, active } = options;
+    const routes: AutoReviewerRoute[] = [];
+    const add = (route: AutoReviewerRoute): void => {
+        if (
+            !routes.some(
+                (known) => known.providerId === route.providerId && known.modelId === route.modelId,
+            )
+        )
+            routes.push(route);
+    };
+    for (const candidateId of [
+        REVIEWER_MODEL_SONNET,
+        REVIEWER_MODEL_CODEX_AUTO_REVIEW,
+        REVIEWER_MODEL_GPT_5_4,
+    ]) {
+        const hidden = findRoute(models, active.providerId, candidateId);
+        if (hidden !== undefined) add(routeFor(hidden));
+    }
+    const fallback = options.fallbacks?.find(
+        (model) =>
+            providerModelFamily(model.id) !== "foreign" &&
+            findRoute(models, model.providerId, model.id) !== undefined,
+    );
+    if (fallback !== undefined) {
+        for (const route of reviewerModelsForAgent({ models, active: routeFor(fallback) })) {
+            add(route);
+        }
+    }
+    if (routes.length > 0) return routes;
+    throw new Error(
+        `No reviewer model route could be resolved for ${active.modelId}: it runs on a foreign ` +
+            "harness, and no Happy model is configured to review it.",
     );
 }
 

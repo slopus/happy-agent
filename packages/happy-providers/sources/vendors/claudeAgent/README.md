@@ -8,7 +8,9 @@ as an `AcpAgentConnection`, so the `claude` ACP agent needs no adapter process.
   `cancel` calls `interrupt()`.
 - Config options (model with efforts, effort, permission mode) come from `supportedModels()` and
   map onto `setModel`, `applyFlagSettings` and `setPermissionMode`.
-- Tool permission asks go to the client's `requestPermission`.
+- Tool permission asks go to the client's `requestPermission`. A refusal's
+  `happy/refusalReason` metadata, such as Happy's Auto reviewer's reason, becomes the message
+  Claude is told.
 
 ## Files
 

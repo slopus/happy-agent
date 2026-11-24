@@ -657,7 +657,8 @@ describe("AcpSession", () => {
 
     it("answers the agent's own permission asks by mode and puts the rest to the person", async () => {
         const questions: AcpPermissionQuestion[] = [];
-        let answer: "allow_for_session" | "deny" = "allow_for_session";
+        let answer: "allow_for_session" | "deny" | { answer: "deny"; reason: string } =
+            "allow_for_session";
         const h = harness({
             askPermission: async (question) => {
                 questions.push(question);
@@ -685,13 +686,27 @@ describe("AcpSession", () => {
         h.setPermissionMode("auto");
         h.user("needs permission");
         expect(text(await h.run(session))).toBe("permission=no");
-        expect(questions).toEqual([
-            { action: 'rm -rf build\n{"command":"rm -rf build"}', allowForSession: true },
-            { action: 'rm -rf build\n{"command":"rm -rf build"}', allowForSession: true },
-        ]);
+        // A refusal that says why passes the reason on to the agent.
+        answer = { answer: "deny", reason: "Automatic permission review refused it." };
+        h.user("needs permission");
+        expect(text(await h.run(session))).toBe("permission=no");
+        expect(
+            h
+                .log()
+                .filter((entry) => entry.method === "permission")
+                .at(-1),
+        ).toMatchObject({
+            chosen: "no",
+            reason: "Automatic permission review refused it.",
+        });
+        expect(questions).toHaveLength(3);
+        expect(questions[0]).toEqual({
+            action: 'rm -rf build\n{"command":"rm -rf build"}',
+            allowForSession: true,
+        });
     }, 30_000);
 
-    it("lets a Happy tool call through in Workspace write and Auto when the tool's own rule needs no approval", async () => {
+    it("lets a Happy tool call through in Auto, and in Workspace write when the tool's own rule needs no approval", async () => {
         const asked: string[] = [];
         let review = false;
         const h = harness({
@@ -715,19 +730,16 @@ describe("AcpSession", () => {
         expect(text(await h.run(session))).toBe("permission=yes");
         expect(asked).toEqual([]);
 
-        // A call its rule says needs approval goes to the person in either mode.
+        // In Workspace write, a call its rule says needs approval goes to the person.
         review = true;
         h.user("needs permission for happy");
         expect(text(await h.run(session))).toBe("permission=no");
+        expect(asked).toHaveLength(1);
+        // In Auto every Happy tool call goes ahead: Happy's own reviewer decides it when it runs.
         h.setPermissionMode("auto");
         h.user("needs permission for happy");
-        expect(text(await h.run(session))).toBe("permission=no");
-        expect(asked).toHaveLength(2);
-        // Auto lets the rest through as Workspace write does.
-        review = false;
-        h.user("needs permission for happy");
         expect(text(await h.run(session))).toBe("permission=yes");
-        expect(asked).toHaveLength(2);
+        expect(asked).toHaveLength(1);
 
         // The agent is told which bridged tools it may call without asking at all.
         expect(h.log().find((entry) => entry.method === "newSession")).toMatchObject({
@@ -763,8 +775,13 @@ describe("AcpSession", () => {
         }
         expect(asked).toEqual([]);
 
-        // A call the tool's own rule wants reviewed still goes to the person.
+        // In Auto, a call the tool's own rule wants reviewed goes ahead too, to be reviewed by
+        // Happy when it runs; in Workspace write it goes to the person.
         review = true;
+        h.user("needs agy permission for call_tool");
+        expect(text(await h.run(session))).toBe("permission=allow");
+        expect(asked).toEqual([]);
+        h.setPermissionMode("workspace_write");
         h.user("needs agy permission for call_tool");
         expect(text(await h.run(session))).toBe("permission=deny");
         expect(asked).toHaveLength(1);

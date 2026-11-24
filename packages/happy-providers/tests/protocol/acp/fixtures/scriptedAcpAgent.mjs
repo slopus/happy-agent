@@ -207,7 +207,7 @@ class ScriptedAgent {
             });
             const chosen =
                 answer.outcome.outcome === "selected" ? answer.outcome.optionId : "cancelled";
-            log({ method: "permission", chosen });
+            log({ method: "permission", chosen, reason: answer._meta?.["happy/refusalReason"] });
             await this.#say(params.sessionId, `permission=${chosen}`);
             return { stopReason: "end_turn" };
         }

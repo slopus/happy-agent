@@ -18,6 +18,7 @@ import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import {
     ACP_APPROVED_TOOLS_META,
     ACP_BRIDGED_CALL_META,
+    ACP_REFUSAL_REASON_META,
     type AcpAgentConnection,
     type AcpConnect,
     type AcpConnection,
@@ -359,12 +360,16 @@ class ClaudeAgentConnection implements AcpAgentConnection {
                 updatedPermissions: grants.map((update) => ({ ...update, destination: "session" })),
             };
         }
+        // A refusal that says why, such as Happy's Auto reviewer's, is what Claude is told.
+        const reason = answer._meta?.[ACP_REFUSAL_REASON_META];
         return {
             behavior: "deny",
             message:
                 answer.outcome.outcome === "cancelled"
                     ? "The request was withdrawn before anyone answered it."
-                    : "Not allowed: Happy's permission mode or the person refused this action.",
+                    : typeof reason === "string" && reason.length > 0
+                      ? reason
+                      : "Not allowed: Happy's permission mode or the person refused this action.",
         };
     }
 

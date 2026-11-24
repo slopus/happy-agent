@@ -5,7 +5,6 @@ import { agentModuleConfig, agentPermissionMode } from "@slopus/happy-agent-base
 import {
     AcpProvider,
     foreignAgent,
-    type AcpPermissionAnswer,
     type AcpPermissionQuestion,
     type AcpTurnEnvironment,
     type ForeignAgent,
@@ -15,6 +14,7 @@ import {
 import type { Context } from "@steve.kite/stdlib";
 
 import type { HappyAgentConfigValues, HappyAgentConfiguration } from "../ConfigModule.js";
+import type { HarnessPermissionDecision } from "../HarnessPermission.js";
 import {
     harnessAcceptsProvider,
     isAttachedHarness,
@@ -114,7 +114,7 @@ export function happyHarnessAccepts(
  *
  * The agent runs in the Happy agent's own folder — the one its compute is configured with — under
  * the permission mode the Happy agent is in when each turn starts. Whatever its own permission
- * system asks and that mode leaves open is put to the person through `askPermission`. Its session
+ * system asks and that mode leaves open is decided through `askPermission`. Its session
  * records live in a private directory per harness and account, so two accounts never continue
  * each other's foreign sessions.
  */
@@ -137,21 +137,25 @@ export function createForeignAgentProvider(
             ...(askPermission === undefined
                 ? {}
                 : {
-                      askPermission: (question: AcpPermissionQuestion, signal: AbortSignal) =>
-                          askPermission(ctx, route.harnessId, question, signal),
+                      // happy-providers 0.0.66 hands a refusal's reason to the agent; 0.0.65
+                      // types the answer without one and treats a refusal as a plain deny.
+                      askPermission: ((question: AcpPermissionQuestion, signal: AbortSignal) =>
+                          askPermission(ctx, route.harnessId, question, signal)) as NonNullable<
+                          AcpTurnEnvironment["askPermission"]
+                      >,
                   }),
         }),
         profile: route.agent.profile,
     });
 }
 
-/** Puts what a route's foreign agent asks to the person running it as `ctx`'s agent. */
+/** Decides what a route's foreign agent asks, on behalf of `ctx`'s agent. */
 export type ForeignAgentPermissionAsker = (
     ctx: Context,
     harnessId: string,
     question: AcpPermissionQuestion,
     signal: AbortSignal,
-) => Promise<AcpPermissionAnswer>;
+) => Promise<HarnessPermissionDecision>;
 
 /** The private directory one route keeps its state in. */
 export function foreignAgentDirectory(agentHome: string, route: ForeignAgentRoute): string {

@@ -17,7 +17,13 @@ export {
     type HappyAgentConfigurationPaths,
     type TailcatExposurePaths,
 } from "./ConfigModule.js";
-export type { HarnessPermissionAsk, HarnessPermissionAsker } from "./HarnessPermission.js";
+export type {
+    HarnessPermissionAsk,
+    HarnessPermissionAsker,
+    HarnessPermissionDecision,
+    HarnessPermissionReview,
+    HarnessPermissionReviewer,
+} from "./HarnessPermission.js";
 export { DEFAULT_TELEGRAM_API_URL } from "./TelegramConfig.js";
 export { PublicApiConfigError } from "./PublicApiConfig.js";
 export { ClaudeSetupTokenError } from "./ClaudeSetupToken.js";

@@ -68,6 +68,12 @@
   and cancellation signal. Denials, malformed normal answers, and ordinary inference failures
   never trigger fallback. No failed-route blacklist survives the review; a route change rebuilds
   the private conversation rather than continuing another model's review history.
+- An agent on a foreign harness (Antigravity, Claude Code, Codex CLI) now has its asks reviewed
+  too, and its own model is a harness model: reviewing on it would start another foreign agent,
+  and Antigravity's account serves nothing else. Its routes are the account's hidden reviewer
+  routes (Sonnet on a Claude account, Codex Auto Review or GPT-5.4 on a Codex account), then the
+  routes of Happy's default model (`config.models`, default first), with the same fall-through on
+  an unavailable route; a harness model is never a reviewer route.
 - The `messageOrigin` stamp must be the metadata's own property. Reading it through the prototype
   chain lets a shared or polluted prototype authorize every message that omits the marker, which is
   the forgery the positive-marker rule exists to prevent.

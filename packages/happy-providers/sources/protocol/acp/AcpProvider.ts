@@ -28,18 +28,29 @@ export interface AcpPermissionQuestion {
 /** The person's decision; `cancelled` when the question was withdrawn before they answered. */
 export type AcpPermissionAnswer = "allow_once" | "allow_for_session" | "deny" | "cancelled";
 
+/**
+ * A refusal that says why, such as Happy's Auto reviewer denying the action. Claude Code tells its
+ * model the reason; an agent whose protocol carries no reason only learns it was refused.
+ */
+export interface AcpPermissionRefusal {
+    readonly answer: "deny";
+    /** Why, in words addressed to the agent. */
+    readonly reason: string;
+}
+
 /** Where and under what permission one turn of the foreign agent runs. */
 export interface AcpTurnEnvironment {
     readonly cwd: string;
     readonly permissionMode?: AcpPermissionMode;
     /**
-     * Put an action the agent asked about to the person. `signal` aborts when the turn stops and
-     * the question must be withdrawn. Without it, an ask the mode leaves open is refused.
+     * Decide an action the agent asked about, by putting it to the person or, in Auto, to Happy's
+     * own reviewer first. `signal` aborts when the turn stops and the question must be withdrawn.
+     * Without it, an ask the mode leaves open is refused.
      */
     readonly askPermission?: (
         question: AcpPermissionQuestion,
         signal: AbortSignal,
-    ) => Promise<AcpPermissionAnswer>;
+    ) => Promise<AcpPermissionAnswer | AcpPermissionRefusal>;
 }
 
 /** One ACP session configuration option to set before a prompt. */

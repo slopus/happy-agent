@@ -11,6 +11,7 @@ import type { SessionUsage } from "@/core/SessionUsage.js";
 import type {
     AcpConfigOptionValue,
     AcpPermissionAnswer,
+    AcpPermissionRefusal,
     AcpProviderOptions,
     AcpTurnEnvironment,
 } from "@/protocol/acp/AcpProvider.js";
@@ -18,6 +19,7 @@ import { acpCompactWithAgent } from "@/protocol/acp/impl/acpCompactWithAgent.js"
 import {
     ACP_APPROVED_TOOLS_META,
     ACP_BRIDGED_CALL_META,
+    ACP_REFUSAL_REASON_META,
     type AcpConnection,
 } from "@/protocol/acp/AcpConnection.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
@@ -772,9 +774,11 @@ export class AcpSession extends BaseSession {
 
     /**
      * The agent's own permission system asks before acting. Read only refuses and Full access
-     * allows without asking anyone. Otherwise a call of a bridged Happy tool that its own rule says
-     * needs no approval goes ahead in Workspace write and Auto, as Claude Code runs those tools
-     * without asking in every mode, and everything else is put to the person.
+     * allows without asking anyone. A call of a bridged Happy tool goes ahead in Auto, where
+     * Happy's own reviewer decides the call itself when it runs, and in Workspace write when the
+     * tool's own rule says it needs no approval, as Claude Code runs those tools without asking in
+     * every mode. Everything else goes to `askPermission`: in Auto, Happy's own reviewer first,
+     * and otherwise the person.
      */
     async #answerPermission(
         params: acp.RequestPermissionRequest,
@@ -789,7 +793,7 @@ export class AcpSession extends BaseSession {
         }
         if (
             (mode === "workspace_write" || mode === "auto") &&
-            (await this.#needsNoApproval(params))
+            (await this.#needsNoApproval(params, mode))
         ) {
             return pick(params, "allow_once");
         }
@@ -817,8 +821,11 @@ export class AcpSession extends BaseSession {
         }
     }
 
-    /** Whether the ask is about a bridged Happy tool call that its own rule lets through. */
-    async #needsNoApproval(params: acp.RequestPermissionRequest): Promise<boolean> {
+    /** Whether the ask is about a bridged Happy tool call that needs no approval from the agent. */
+    async #needsNoApproval(
+        params: acp.RequestPermissionRequest,
+        mode: "workspace_write" | "auto",
+    ): Promise<boolean> {
         const call = acpBridgedCallOfAsk(
             params.toolCall,
             params.toolCall._meta?.[ACP_BRIDGED_CALL_META],
@@ -828,7 +835,7 @@ export class AcpSession extends BaseSession {
             (candidate) => AcpToolBridgeServer.toolName(candidate) === call?.name,
         );
         if (call === undefined || tool === undefined || this.#runCtx === undefined) return false;
-        if (tool.autoReview === "never") return true;
+        if (mode === "auto" || tool.autoReview === "never") return true;
         try {
             return (await tool.shouldReviewInAutoMode?.(call.arguments, this.#runCtx)) === false;
         } catch {
@@ -933,11 +940,19 @@ async function settleWithin(promise: Promise<unknown>, ms: number): Promise<void
     ]);
 }
 
-/** The agent's option for an answer, or a cancelled outcome when it offers none that fits. */
+/**
+ * The agent's option for an answer, or a cancelled outcome when it offers none that fits. A
+ * refusal's reason travels in `_meta` for a driver that can tell its model.
+ */
 function pick(
     params: acp.RequestPermissionRequest,
-    answer: AcpPermissionAnswer,
+    decision: AcpPermissionAnswer | AcpPermissionRefusal,
 ): acp.RequestPermissionResponse {
+    if (typeof decision !== "string") {
+        const refused = pick(params, decision.answer);
+        return { ...refused, _meta: { [ACP_REFUSAL_REASON_META]: decision.reason } };
+    }
+    const answer = decision;
     if (answer === "cancelled") return { outcome: { outcome: "cancelled" } };
     const kinds: readonly acp.PermissionOptionKind[] =
         answer === "allow_for_session"

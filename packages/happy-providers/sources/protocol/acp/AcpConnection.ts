@@ -53,5 +53,11 @@ export const ACP_APPROVED_TOOLS_META = "happy/approvedTools";
  */
 export const ACP_BRIDGED_CALL_META = "happy/bridgedCall";
 
+/**
+ * `_meta` key on a permission response that refuses: why, in words addressed to the agent, for a
+ * driver that can pass a reason on to its model.
+ */
+export const ACP_REFUSAL_REASON_META = "happy/refusalReason";
+
 /** Start a foreign agent working in `cwd` that reports to `client`. */
 export type AcpConnect = (cwd: string, client: acp.Client) => Promise<AcpConnection>;

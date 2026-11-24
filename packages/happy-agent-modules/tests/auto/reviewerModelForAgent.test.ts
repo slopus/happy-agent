@@ -173,4 +173,50 @@ describe("reviewerModelForAgent", () => {
             effort: "low",
         });
     });
+
+    describe("for an agent on a foreign harness", () => {
+        const models = [
+            model("claude", "claude-code/sonnet", ["low", "high"], "high"),
+            model("claude", "anthropic/sonnet-5", ["low", "medium"], "medium"),
+            model("codex", "openai/gpt-5.6-sol", ["low", "medium"], "medium"),
+            model("codex", "openai/codex-auto-review", ["low", "medium"], "low"),
+            model("antigravity", "antigravity/gemini-4-carbon", ["low", "high"], "high"),
+        ];
+        const fallbacks = [
+            model("antigravity", "antigravity/gemini-4-carbon", ["low", "high"], "high"),
+            model("codex", "openai/gpt-5.6-sol", ["low", "medium"], "medium"),
+        ];
+
+        it("tries the account's own reviewer, then Happy's default model's routes, never a harness", () => {
+            expect(
+                reviewerModelsForAgent({
+                    models,
+                    active: active("claude", "claude-code/sonnet", "high"),
+                    fallbacks,
+                }),
+            ).toEqual([
+                { providerId: "claude", modelId: "anthropic/sonnet-5", effort: "medium" },
+                { providerId: "codex", modelId: "openai/codex-auto-review", effort: "low" },
+                { providerId: "codex", modelId: "openai/gpt-5.6-sol", effort: "medium" },
+            ]);
+            // Antigravity's own account serves no model Happy can run.
+            expect(
+                reviewerModelsForAgent({
+                    models,
+                    active: active("antigravity", "antigravity/gemini-4-carbon", "high"),
+                    fallbacks,
+                }).map((route) => route.modelId),
+            ).toEqual(["openai/codex-auto-review", "openai/gpt-5.6-sol"]);
+        });
+
+        it("fails when nothing Happy runs can review it", () => {
+            expect(() =>
+                reviewerModelsForAgent({
+                    models,
+                    active: active("antigravity", "antigravity/gemini-4-carbon", "high"),
+                    fallbacks: [fallbacks[0]!],
+                }),
+            ).toThrow("runs on a foreign harness");
+        });
+    });
 });

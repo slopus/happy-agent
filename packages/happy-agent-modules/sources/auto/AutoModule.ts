@@ -456,6 +456,7 @@ export class AutoModule implements AgentModule {
         const routes = reviewerModelsForAgent({
             models: this.#catalog,
             active: this.#activeRoute(request),
+            fallbacks: this.#config.models,
         });
         const failures: string[] = [];
         for (const route of routes) {
@@ -854,7 +855,13 @@ export class AutoModule implements AgentModule {
         const active = this.#activeRoutes.get(parentId);
         if (active === undefined) return fallback;
         try {
-            return reviewerModelsForAgent({ models: this.#catalog, active })[0] ?? fallback;
+            return (
+                reviewerModelsForAgent({
+                    models: this.#catalog,
+                    active,
+                    fallbacks: this.#config.models,
+                })[0] ?? fallback
+            );
         } catch {
             return fallback;
         }

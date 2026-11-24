@@ -91,7 +91,8 @@ long-window rate.
 
 ## External functions
 
-- `new PermissionsModule(compute: ComputeModule, auto?: AutoModule)` — constructs the module.
+- `new PermissionsModule(compute: ComputeModule, auto?: AutoModule, config?: ConfigModule)` —
+  constructs the module. With `config`, it registers `reviewHarnessAsk` there (see below).
   `compute` is the machine the agents work on: a committed reduction of the mode has to end the
   commands still running under the wider one, so the module asks the module that owns those
   commands (`runningCommands` / `stopCommand`) rather than being handed a way to end them; a
@@ -101,6 +102,13 @@ long-window rate.
   honest rather than refused as unsafe. The reviewer is read off the module at the moment of each
   review, not captured at construction. One instance serves every agent in a collection, keeping
   only bounded in-memory refusal circuits per agent.
+- `reviewHarnessAsk(ctx, ask, signal): Promise<HarnessPermissionReview>` — decide, in Auto, an
+  action a foreign harness's own permission system asked about. The ask goes to the same reviewer,
+  under the same timeout, risk policy, and refusal circuit, as a Happy tool call, never elevated:
+  `allowed` approves it once, `denied` carries the refusal text for the agent, and `escalate` —
+  any other mode, a cancelled turn, or an unproven review — leaves it to the person. It emits no
+  per-call event, because the public history keys a review to a Happy tool call. In Auto a foreign
+  harness's calls of Happy's own tools are reviewed in `beforeToolCall` like any other.
 - `onEvent(listener): PermissionUnsubscribe` — be told about every mode change and decision once it
   is durable. This is where a host makes permission history its own; the module keeps nothing of
   the sort itself. The returned function ends the subscription, and calling it more than once does

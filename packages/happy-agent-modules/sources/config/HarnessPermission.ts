@@ -23,3 +23,25 @@ export type HarnessPermissionAsker = (
     ask: HarnessPermissionAsk,
     signal: AbortSignal,
 ) => Promise<AcpPermissionAnswer>;
+
+/** How a harness's ask was decided: an answer, or a refusal that tells the agent why. */
+export type HarnessPermissionDecision =
+    | AcpPermissionAnswer
+    | { readonly answer: "deny"; readonly reason: string };
+
+/**
+ * What Happy's own Auto reviewer made of a harness's ask. `allowed` approves it once; `denied`
+ * refuses it with `reason`, addressed to the agent; `escalate` means nothing decided it, because
+ * the agent is not in Auto or the reviewer could not answer, so it goes to the person.
+ */
+export type HarnessPermissionReview =
+    | { readonly outcome: "allowed" }
+    | { readonly outcome: "denied"; readonly reason: string }
+    | { readonly outcome: "escalate" };
+
+/** Reviews a harness's ask before anyone is asked; see {@link HarnessPermissionReview}. */
+export type HarnessPermissionReviewer = (
+    ctx: Context,
+    ask: HarnessPermissionAsk,
+    signal: AbortSignal,
+) => Promise<HarnessPermissionReview>;

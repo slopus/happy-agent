@@ -24,7 +24,6 @@ import {
     CodexSessionCredential,
     GrokProvider,
     GrokSessionCredential,
-    type AcpPermissionAnswer,
     type AcpPermissionQuestion,
     type AnthropicBedrockTransport,
     type BaseProvider,
@@ -45,7 +44,11 @@ import { parse, stringify, TomlDate, type TomlTable, type TomlValue } from "smol
 
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
 import { normalizeClaudeSetupToken } from "./ClaudeSetupToken.js";
-import type { HarnessPermissionAsker } from "./HarnessPermission.js";
+import type {
+    HarnessPermissionAsker,
+    HarnessPermissionDecision,
+    HarnessPermissionReviewer,
+} from "./HarnessPermission.js";
 import { getManagedWorkspacesDirectory } from "../impl/managedWorkspacesDirectory.js";
 import { machinePaths } from "../impl/machinePaths.js";
 import { isUserOriginMetadata } from "../impl/messageOrigin.js";
@@ -1919,6 +1922,7 @@ export class ConfigModule implements AgentModule {
     #peerMessaging: PeerMessagingConfig;
     readonly #accountUsageListeners = new Set<(usage: ProviderUsage) => void>();
     #harnessAsker: HarnessPermissionAsker | undefined;
+    #harnessReviewer: HarnessPermissionReviewer | undefined;
     #resolvedScripted: ConfigInferenceOverride | undefined;
     #scriptedModelSnapshot: readonly AgentModel[] | undefined;
     #workspacesHome: string | undefined;
@@ -3455,20 +3459,54 @@ export class ConfigModule implements AgentModule {
         };
     }
 
+    /**
+     * Review what foreign agents' own permission systems ask with `reviewer`, the module that owns
+     * Auto review, before anyone is asked. Returns the function that stops it.
+     */
+    onHarnessPermissionReview(reviewer: HarnessPermissionReviewer): () => void {
+        this.#harnessReviewer = reviewer;
+        return () => {
+            if (this.#harnessReviewer === reviewer) this.#harnessReviewer = undefined;
+        };
+    }
+
+    /**
+     * Decide a foreign agent's ask: the reviewer first, which approves or refuses it in Auto, then
+     * the person for whatever it leaves undecided, including a reviewer that failed.
+     */
     async #askHarnessPermission(
         ctx: Context,
         harnessId: string,
         question: AcpPermissionQuestion,
         signal: AbortSignal,
-    ): Promise<AcpPermissionAnswer> {
-        const asker = this.#harnessAsker;
+    ): Promise<HarnessPermissionDecision> {
         const agent = contextAgentId(ctx);
-        if (asker === undefined || agent === undefined) return "deny";
-        return await asker(
-            ctx,
-            { agentId: agent, harnessId, harnessName: this.harnessName(harnessId), ...question },
-            signal,
-        );
+        if (agent === undefined) return "deny";
+        const ask = {
+            agentId: agent,
+            harnessId,
+            harnessName: this.harnessName(harnessId),
+            ...question,
+        };
+        const reviewer = this.#harnessReviewer;
+        if (reviewer !== undefined) {
+            try {
+                const review = await reviewer(ctx, ask, signal);
+                if (signal.aborted) return "cancelled";
+                if (review.outcome === "allowed") return "allow_once";
+                if (review.outcome === "denied") return { answer: "deny", reason: review.reason };
+            } catch (error: unknown) {
+                if (signal.aborted) return "cancelled";
+                ctx.log.warn(
+                    `Reviewing ${ask.harnessName}'s ask failed; asking the person.`,
+                    {},
+                    error,
+                );
+            }
+        }
+        const asker = this.#harnessAsker;
+        if (asker === undefined) return "deny";
+        return await asker(ctx, ask, signal);
     }
 
     /** Sign-in state is bookkeeping too; a listener that throws never breaks inference. */

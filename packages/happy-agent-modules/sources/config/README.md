@@ -155,9 +155,11 @@ agents are the one exception to the curated list: each reports its own models wh
 starts (`impl/foreignAgentModels.ts`), cached per route, with the built-in list until it answers.
 
 A foreign agent keeps its own permission system. When it asks before an action that the agent's
-permission mode leaves open, the route hands the ask to whatever module registered with
-`onHarnessPermission` — the user-input module, which puts it to the person — named after the
-harness. With nothing registered, the ask is refused.
+permission mode leaves open, the route hands the ask, named after the harness, to whatever module
+registered with `onHarnessPermissionReview` — the permissions module, which in Auto puts it to
+Happy's reviewer and allows or refuses it — and then, if that left it undecided, to whatever
+registered with `onHarnessPermission` — the user-input module, which puts it to the person. With
+nothing to decide it, the ask is refused.
 
 `harnessAllowsSubagents` decides which harnesses an agent on one harness may start sub-agents on:
 its own; else the creator's `subagent_harnesses`; else, for `happy`, only `antigravity` (models

@@ -142,52 +142,94 @@ shows each as one tool call.
 ## Permissions
 
 A foreign agent does not run inside Happy's sandbox. It keeps its own permission system and its
-own Auto reviewer, and Happy sets the agent's mode from the conversation's permission mode. When
-the agent asks before an action, the ask reaches the person as a permission question from that
-harness (`permissionRequest.source = "harness"`), with Allow once, Allow for this session when
-the agent offers it, and Deny. Stop withdraws an open question and cancels the agent's ask.
+own reviewer, and Happy sets the agent's mode from the conversation's permission mode. When the
+agent asks before an action, Happy answers by mode:
 
-| Happy mode      | Claude Code             | Codex CLI                               | Antigravity    | Asks the agent makes                     |
-| --------------- | ----------------------- | --------------------------------------- | -------------- | ---------------------------------------- |
-| Read only       | `plan`                  | `read-only`, never asks                 | `plan`         | refused without asking anyone            |
-| Workspace write | `acceptEdits`           | `workspace-write`, asks the person      | `accept-edits` | go to the person                         |
-| Auto            | `auto` (its classifier) | `workspace-write`, its Guardian reviews | `auto`         | its reviewer's handoffs go to the person |
-| Full access     | `bypassPermissions`     | `danger-full-access`, never asks        | `auto`         | allowed without asking                   |
+| Happy mode      | Claude Code             | Codex CLI                               | Antigravity    | Asks the agent makes                                       |
+| --------------- | ----------------------- | --------------------------------------- | -------------- | ---------------------------------------------------------- |
+| Read only       | `plan`                  | `read-only`, never asks                 | `plan`         | refused without asking anyone                              |
+| Workspace write | `acceptEdits`           | `workspace-write`, asks the person      | `accept-edits` | go to the person                                           |
+| Auto            | `auto` (its classifier) | `workspace-write`, its Guardian reviews | `auto`         | Happy's Auto reviewer decides; the person only if it fails |
+| Full access     | `bypassPermissions`     | `danger-full-access`, never asks        | `auto`         | allowed without asking                                     |
 
-Happy's own tools reach the agent as MCP tools, and the agent's permission system decides those
-too. Tools Happy never reviews (reading history, listing projects, and the like) are approved in
-advance on Claude Code and Codex CLI; the user's other MCP servers are not. In Workspace write and
-Auto, any other Happy tool the agent asks about is allowed when Happy itself would not review that
-call, and goes to the person otherwise. Antigravity asks before every MCP call in `accept-edits`
-and `auto`, and Happy answers those asks the same way, so its never-reviewed Happy tools, such as
-`create_agent` and `send_agent_message`, run without a question. An agent that never asks before
-MCP calls runs every Happy tool with no question and no review by anyone, including tools that
-reach the user's own MCP servers through Happy. Only Happy's own mode limits still apply, such as
-MCP tools needing Auto or Full access.
+A question to the person comes from that harness (`permissionRequest.source = "harness"`), with
+Allow once, Allow for this session when the agent offers it, and Deny. Stop withdraws an open
+question and cancels the agent's ask.
 
-What each agent's reviewer does is its own, and it is more permissive than Happy's Auto review.
-Seen against the pinned releases:
+In Auto, an ask goes to Happy's own Auto reviewer first, the same one that reviews Happy's own
+tool calls: it reads the conversation's transcript under the same authorization rules, follows
+the user's `SECURITY.md`, and can ask the parent chain. Allowed, the ask is approved once, never
+for the session. Refused, it is denied: Claude Code's model is told Happy's refusal and why;
+Codex and Antigravity carry no reason over their protocols and only learn the action was
+refused. Refusals count toward the same limit as Happy's own (3 in a row, or 10 of the last 50,
+stop the turn). Only when the reviewer decides nothing — every reviewer model unavailable, or no
+answer in 120 seconds — does the ask go to the person, as it would in Workspace write; a
+sub-agent then waits for an answer.
+
+The reviewer never runs on the harness itself. It uses the account's own reviewer model when it
+has one (Sonnet on a Claude account, Codex Auto Review or GPT-5.4 on a Codex account), then the
+reviewer models of Happy's default model, trying each until one is available. An Antigravity
+agent is therefore reviewed on Happy's default model.
+
+Happy's own tools reach the agent as MCP tools. Tools Happy never reviews (reading history,
+listing projects, and the like) are approved in advance on Claude Code and Codex CLI; the user's
+other MCP servers are not. In Auto, the agent's ask about any other Happy tool is approved, and
+Happy reviews the call itself when it runs, exactly as it reviews its own loop's calls: refused,
+the agent gets the refusal as the tool's result. In Workspace write, a Happy tool the agent asks
+about is allowed when Happy would not review that call, and goes to the person otherwise.
+Antigravity asks before every MCP call in `accept-edits` and `auto`, and those asks are answered
+the same way. Only Happy's own mode limits apply beyond that, such as MCP tools needing Auto or
+Full access.
+
+Happy sees only what the agent asks about. What its own rules allow alone is never reviewed, and
+each agent's own reviewer is more permissive than Happy's. Seen against the pinned releases:
 
 - Claude Code's `auto` classifier allowed a force push, `rm` outside the project, and writes to
   `.git/hooks` without asking anyone.
-- Antigravity's `auto` allowed a force push and `rm -rf` outside the project, and its sandbox
-  leaves `/tmp` writable. It does hand writes outside the project to the person.
-- Codex's Guardian decides alone; Happy treats its denials as final. Codex's `workspace-write`
-  sandbox, used in Workspace write and Auto, also leaves `/tmp` writable and blocks the network.
+- Antigravity's `auto` runs most commands without asking, including some outside its sandbox;
+  see [Antigravity's own permissions](#antigravitys-own-permissions).
+- Codex's Guardian decides alone. Codex's `workspace-write` sandbox, used in Workspace write and
+  Auto, also leaves `/tmp` writable and blocks the network.
 
 Workspace write puts the most in front of the person, but it does not put everything there. The
 agent still acts without asking where its own rules allow it: reading outside the project,
 writing to `/tmp` where its sandbox allows that, commands it judges safe, and anything its own
 settings allow. Claude Code reads the user's and the project's settings, so a repository's
-`.claude/settings.json` allow rules apply. The agent's own sub-agents (Claude Code's Task tool, Codex's agents) ask on the conversation that
-started them. Antigravity's sub-agents never send an ask; they stall until stopped. A Happy
-sub-agent asks on its own conversation, like any other agent.
+`.claude/settings.json` allow rules apply. The agent's own sub-agents (Claude Code's Task tool,
+Codex's agents) ask on the conversation that started them. A Happy sub-agent asks on its own
+conversation, like any other agent.
 
 Antigravity gives its model only about 60 KB of MCP tools and drops the rest without a way to call
 them, which used to leave Happy's largest tools, `create_agent` and `create_subtask` among them,
 out of reach. Happy now offers Antigravity its smallest tools directly and every other one through
 a single `call_tool`, which describes a Happy tool by name and runs it. That call is handled as the
 named Happy tool, under the same rules as any other.
+
+### Antigravity's own permissions
+
+What `agy` 1.5.15 does in each mode, probed over ACP on scratch folders. "Asks" is an ACP
+permission request, which Happy answers as above; Antigravity offers only Allow and Deny, never
+Allow for this session. On Deny or a cancelled ask the action fails and Antigravity ends its turn
+at once, without a word to the model's reply.
+
+| Action                                                            | `auto` (Happy Auto, Full access)                   | `accept-edits` (Workspace write) | `plan` (Read only)      |
+| ----------------------------------------------------------------- | -------------------------------------------------- | -------------------------------- | ----------------------- |
+| Read in the project                                               | silent                                             | not probed                       | not probed              |
+| Read outside it, including a missing path under `~`               | silent                                             | asks                             | asks                    |
+| Write, edit, or delete in the project                             | silent                                             | silent                           | asks to run `ls` first  |
+| Write outside it with the file tool, `/tmp` and symlinks included | asks                                               | asks                             | writes a plan and stops |
+| Command in the project (`ls`, `echo $HOME`)                       | silent                                             | asks                             | writes a plan and stops |
+| Command writing or `rm -rf` in `/tmp`                             | silent; the sandbox leaves `/tmp` writable         | asks                             | writes a plan and stops |
+| Command writing outside the project and `/tmp`                    | silent: retried outside the sandbox without asking | not probed                       | not probed              |
+| `rm` of a file outside the project and `/tmp`                     | asks, to run outside the sandbox                   | not probed                       | not probed              |
+| Network command (`curl`)                                          | silent                                             | not probed                       | not probed              |
+| `git push --force` to a local remote                              | refused by its own policy, no ask                  | not probed                       | not probed              |
+| Any MCP tool call, Happy's included                               | asks                                               | asks                             | writes a plan and stops |
+| Its own sub-agent (`invoke_subagent`)                             | silent; its sub-agents never send an ask           | not probed                       | not probed              |
+
+In `plan`, Antigravity writes an implementation plan under `~/.gemini/antigravity-cli/brain/`
+and waits for its approval instead of acting; Happy's Read only answers no ask with yes, so
+nothing in the plan runs.
 
 ## Antigravity from Happy
 
@@ -210,8 +252,8 @@ The quota is shown to agents only; the app's usage panel does not show Antigravi
 
 A generic agent gets Happy's tools only if it accepts HTTP MCP servers over ACP. Its model
 selector must be an ACP session config option of category `model`. Its permission requests
-follow the [table above](#permissions): Read only refuses them, Full access allows them, and
-otherwise they reach the person. Everything the agent does without asking follows its own
+follow the [table above](#permissions): Read only refuses them, Full access allows them, Auto
+puts them to Happy's reviewer first, and otherwise they reach the person. Everything the agent does without asking follows its own
 settings, so set those to match what the user expects.
 
 ## Check

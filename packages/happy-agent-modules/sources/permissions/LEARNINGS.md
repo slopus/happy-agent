@@ -34,14 +34,25 @@ data after the risk is explained, or by adding the destination as trusted to the
 `SECURITY.md`, whose path the auto module supplies from configuration. Unproven outcomes carry no
 such remedy, because nothing judged the destination.
 
-## A foreign harness keeps its own Auto reviewer
+## In Auto, Happy's reviewer answers a foreign harness before the person does
 
-Happy's Auto reviewer judged Happy tool calls a foreign harness made over MCP, after the harness's
-own reviewer had already decided them, so one action was reviewed twice by two policies. In Auto,
-Permissions now leaves calls from an agent on a foreign harness to that harness's reviewer and
-never elevates them. Compute decides, the same way it decides which tools the agent gets: Claude
-Code and Codex CLI run on ordinary `claude` and `codex` accounts, so a first version that tested
-the provider kind still reviewed both twice, and a gateway's model ID can look like a harness's
-while running on Happy's own loop. Harness reviewers are more permissive than Happy's (Claude Code's
-classifier allowed a force push and `rm` outside the project); Workspace write is the mode that
-puts every outside action to the person.
+Auto sent every ask a foreign harness made (Antigravity's `auto` handoffs and MCP-call asks,
+Claude Code's classifier handoffs, Codex's escalations) straight to the person, and a sub-agent
+had nobody to answer, so it stalled; Kirill asked for Happy's reviewer to answer first and the
+person only when it fails. `reviewHarnessAsk`, registered with config, now puts the ask to the
+automatic reviewer under the same timeout, risk policy, refusal text, and refusal circuit as a
+Happy tool call. Allowed, the harness's action is approved once and never elevated, because the
+harness runs it outside Happy's sandbox. Denied, it is refused with the reason addressed to the
+agent, which is final as it is for Happy's own calls. Unproven — no reviewer, every route
+unavailable, a timeout — goes to the person and does not move the circuit, since nothing judged
+it. These reviews emit no per-call permission event: the public history records a review against
+a Happy tool call, and a harness's own action has none.
+
+## A foreign harness's Happy tool calls are reviewed like Happy's own
+
+Happy used to skip Auto review for Happy tool calls from a foreign harness, leaving them to the
+harness's reviewer, which is more permissive than Happy's (Claude Code's classifier allowed a force
+push and `rm` outside the project). Now that Happy reviews the harness's asks, the harness's ask
+about a Happy tool is approved without review and the call itself is reviewed here when it runs,
+with its real tool, arguments, events, and Full access lending, so each call is reviewed exactly
+once and its refusal reaches every harness as the tool's result.

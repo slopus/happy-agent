@@ -32,11 +32,14 @@ Agent Base ── run(context) ──▶ AcpSession ── ACP over stdio ──
 - **Permission.** The agent's own permission is mapped onto its config options by the vendor
   profile, and the agent's own reviewer decides what it does without asking. Its
   `session/request_permission` asks are answered from the Happy mode: Read only refuses, Full
-  access allows, and otherwise the turn environment's `askPermission` puts the action to the
-  person, offering Allow for this session only when the agent offers `allow_always`. Stopping the
-  turn withdraws the question and answers the agent `cancelled`. In Workspace write and Auto, an ask
-  about a Happy tool is allowed without asking when that tool has `autoReview: "never"` or its
-  `shouldReviewInAutoMode` is false for the call. The ask is recognized by `happy/bridgedCall`
+  access allows, and otherwise the turn environment's `askPermission` decides: in Auto Happy's
+  own reviewer first, else the person, offered Allow for this session only when the agent offers
+  `allow_always`. A refusal may carry a reason, sent back in the response's
+  `happy/refusalReason` metadata for a first-party driver to tell its model. Stopping the turn
+  withdraws the question and answers the agent `cancelled`. In Auto, an ask about a Happy tool is
+  allowed, because Happy reviews the call itself when it runs; in Workspace write it is allowed
+  when that tool has `autoReview: "never"` or its `shouldReviewInAutoMode` is false for the call.
+  The ask is recognized by `happy/bridgedCall`
   metadata from a first-party driver, or by Antigravity's `mcp_happy_<tool>` function name; an ask
   about `call_tool` is judged as the tool it names, and one that only reads a description passes. New sessions
   carry the never-reviewed Happy tool names in `happy/approvedTools` metadata so a first-party

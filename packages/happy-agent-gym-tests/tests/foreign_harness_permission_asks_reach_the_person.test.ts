@@ -115,9 +115,11 @@ describe("A foreign harness's own permission asks", () => {
         await gym.waitForRun(allowing.runId);
         expect(await gym.readFile("granted.txt")).toBe("always");
 
+        // Auto puts the ask to Happy's reviewer first; see
+        // foreign_harness_asks_meet_happys_reviewer_in_auto.test.ts.
         const denying = await gym.send("Please write granted.txt again.", {
             ...select,
-            permissionMode: "auto",
+            permissionMode: "workspace_write",
             wait: false,
         });
         const second = await pendingQuestion(gym);

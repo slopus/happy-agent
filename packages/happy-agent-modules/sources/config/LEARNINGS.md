@@ -619,10 +619,13 @@ A chat UI action sets the default model through `setDefaultModel`, not through t
 nothing told clients it changed. Config now calls `onDefaultModelChanged` listeners after the
 write, and the API announces `config.updated` from there for every caller.
 
-## A harness's permission ask reaches the person through user input
+## A harness's permission ask reaches the reviewer, then the person
 
-Foreign-agent providers are built in config, but asking the person belongs to user input, which
-config cannot depend on. Config therefore exposes `onHarnessPermission`: user input registers its
-asker, and every foreign provider's turn environment calls it with the agent from the context and
-the harness's display name. With no asker registered or no agent in the context, the ask is denied
-rather than allowed, because nobody could have approved it.
+Foreign-agent providers are built in config, but reviewing belongs to permissions and asking the
+person to user input, neither of which config can depend on. Config therefore exposes
+`onHarnessPermissionReview`, which permissions registers, and `onHarnessPermission`, which user
+input registers. Every foreign provider's turn environment hands its ask, with the agent from the
+context and the harness's display name, to the reviewer first: in Auto it allows or refuses, with
+the refusal's reason passed on to the agent. Whatever it leaves undecided, including a reviewer
+that throws, goes to the person. With no agent in the context or no asker registered, an
+undecided ask is denied rather than allowed, because nobody could have approved it.
