@@ -464,6 +464,16 @@ phone. Every call returns the complete snapshot, and `mobile_connector.updated` 
 owner only; keep the one with the greater `version`. Phones implement their side natively from the
 specification. `404` from `getMobileConnector()` means a daemon older than protocol 27.
 
+Push registrations tell a server which phones it may notify. A server that takes them reports
+`capabilities.pushRegistrations` in `getHealth()`; register only then. `registerPush(id, { token,
+platform, appId, locale })` registers the capability Happy's push relay gave the phone under a
+lowercase UUID the phone keeps for that server, and calling it again renews the registration for
+another 30 days under a new `version`. `unregisterPush(id, { ifMatch: version })` removes it and
+also succeeds when it is already gone. `getPushSettings()` and `savePushSettings({ enabled })` read
+and replace whether the server may notify the caller's phones. Registrations and settings belong
+to the authenticated person. The token lets its holder send to the phone, so never log it; no
+route returns it.
+
 The global secrets surface exposes only safe metadata: descriptions, environment-variable names,
 availability, attachments, versions, and timestamps. Raw values appear only in typed create and
 update request bodies. Project, workspace, and exact-agent attachment targets are discriminated by
