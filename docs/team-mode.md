@@ -437,8 +437,11 @@ installation serves the same routes for its one person.
 - Each phone gets one request per notification and nothing is retried. A phone the relay no longer
   knows is removed from the server.
 
-Registering sends nothing by itself. A notification goes out only when a feature of the server
-decides to send one.
+Registering sends nothing by itself. An agent says what happened with its `send_push_notification`
+tool, and the server sends the last thing it said when that agent goes idle. On a team server it
+goes to the owner of the task the agent works under. A bot, or a conversation in a shared project,
+belongs to no one member, so its notifications reach nobody; the server log says so with
+`push:notification outcome=no_recipient`. A standalone installation sends to its one person.
 
 ## Shared profile updates
 

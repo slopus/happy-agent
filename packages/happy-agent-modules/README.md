@@ -175,7 +175,7 @@ its public methods, and its storage and event contracts.
 | [Presence](sources/presence/README.md)           | Configured versus effective availability, custom and temporary states, schedules, and status events.    |
 | [Profile](sources/profile/README.md)             | The one person this installation belongs to, and the machine that may speak for them.                   |
 | [User settings](sources/userSettings/README.md)  | Each person's opaque key-value preferences, last-write-wins per key and synced across their devices.    |
-| [Push](sources/push/README.md)                   | The phones a person can be notified on, and one-attempt delivery to them through Happy's push relay.    |
+| [Push](sources/push/README.md)                   | The phones a person can be notified on, and the agent tool whose last word is sent when an agent idles. |
 | [Happy teams](sources/happyTeams/README.md)      | Reviewed standalone tools for Cloud identity, team management, and publishing server endpoints.         |
 | [Exported bots](sources/exportedBots/README.md)  | Bots people reach from Telegram or a bridge, as guests with a subtask each, let in by the Chief.        |
 

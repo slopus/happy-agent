@@ -5,13 +5,18 @@ Cloud already let a phone register for notifications; this module gives a self-h
 server the same thing, behind the same routes, so the mobile apps use one implementation.
 
 It depends on the team module, to find the authenticated member, on the config module, for this
-installation's `instanceId`, and on Durable Functions, to carry a notification from the caller's
-commit to the relay. It has no tools: nothing here decides that a person should be notified.
+installation's `instanceId`, on Durable Functions, to carry a notification from the caller's
+commit to the relay, and on the tasks and subtasks modules, to know whose agent is speaking and
+whether a person can see it. Nothing here decides that a person should be notified: an agent says
+what happened with `send_push_notification`, and the module sends it when that agent goes idle.
 
 ```text
 phone ── native token ──> Happy's relay ── HappyPushToken[...] ──> phone
 phone ── PUT /v0/cloud/push/registrations/:id ──> API ──> register()      (stores the token)
 
+agent ── send_push_notification ──> kept in the agent's run, last call wins
+                                         │ the run settles: the agent is idle
+                                         v
 caller ── send(ctx, recipient, notification) ──> durable call, committed with the caller
                                                       │ after commit, one person at a time
                                                       v
@@ -63,6 +68,49 @@ A refused operation throws `PushError` with `invalid_request` for a malformed ID
 `not_found` for an `id` that belongs to someone else, and `registrations_full` for a new phone past
 the limit. Its message is safe to show.
 
+## The agent tool
+
+`send_push_notification` takes a `title` of 1–80 characters and an optional `subtitle` of at most
+160, and answers `{ "ok": true }` for any valid call. Its name, schema, and description are the
+push program's and are the same on Happy Cloud; a test pins the description's SHA-256 to the
+cloud's so the two cannot drift. The description is the whole of the guidance: when to call, what
+a good title is, and that a routine run stays quiet.
+
+- **Who holds it.** An agent a person can see and talk to: one with no parent, which is every
+  conversation, task, and bot a person or the API started, or a subtask. An agent another agent
+  created to help it is hidden and is not offered the tool; a call it makes anyway is refused by
+  the agent loop as a tool it does not have. The check runs again when the run settles, so a
+  record on a hidden agent still sends nothing.
+- **Permission.** It runs in every permission mode and is never reviewed: it sets no
+  `requiresAutoOrFullAccess`, its `shouldReviewInAutoMode` is always false, and `autoReview` is
+  `"never"`, so a foreign harness does not ask either. It reaches only the person the agent works
+  for, with words the agent's reply could carry, and a refusal would tell the model what happened.
+- **When it is sent.** Never at call time. The call writes `{ notificationId, title, body }` to the
+  agent's run store in the same transaction as its result, replacing what an earlier call of the
+  run wrote; `notificationId` is the call's own ID and `body` is the subtitle, or empty. When the
+  run settles, the settling transaction hands that record to `send` and erases the run store, so
+  it is sent once or not at all. Loaded by default, because an agent must not have to search for
+  the way to say it is done or stuck.
+- **When it is dropped.** A run that ended in an error, a turn someone stopped, and a run the last
+  process left unfinished all drop what they had asked to say. A restart must never send a stale
+  notification: the resumed run says it again if it still matters.
+- **To whom.** Standalone, the installation's one person. In team mode, the owner of the task at
+  the root of the agent's tree. A team bot, or a conversation in a shared project, belongs to no
+  one person, and the daemon records no human creator for it, so it has no recipient and nothing
+  is sent. The agent never names a recipient.
+- **What the agent learns.** Nothing. Every reason nothing was sent goes to the daemon log as one
+  line, `push:notification outcome=run_failed|stopped|restarted|hidden_agent|no_recipient` or
+  `push:delivery outcome=disabled|no_phones`, with the notification and agent IDs and never the
+  words or a token.
+
+A tool's limits are checked on UTF-16 units, as every tool schema is, where `send` and Happy Cloud
+count characters. A title of more than 40 characters outside the Basic Multilingual Plane, such as
+emoji, is therefore refused here and accepted there.
+
+`collapseId` is not sent. Happy's relay refuses a request that carries it until its own change is
+deployed; once it is, the one line goes where the settling hook builds the notification for
+`send`, next to `agentId`.
+
 ## Registration rules
 
 One transaction applies them in this order, matching Happy Cloud:
@@ -78,14 +126,16 @@ Two people may register the same phone; each holds their own registration of it.
 
 ## Delivery
 
-`send` writes one durable call in the caller's transaction and returns. Nothing reaches the relay
+The settling hook is the only caller of `send`. `send` writes one durable call in the caller's
+transaction and returns. Nothing reaches the relay
 if that transaction rolls back, and a committed notification survives a restart. Calls for one
 person run one at a time in the order they were sent, so a later notification with the same
 `collapseId` reaches the relay after the one it replaces. Nobody is told what became of a
 notification, by design: the agent that asked is never to learn whether or where it was shown.
 
 When the call runs, the module reads the person's settings and unexpired registrations as they are
-then. A person who turned notifications off, or has no live phone, gets nothing. Otherwise each
+then. A person who turned notifications off, or has no live phone, gets nothing, and the log says
+which. Otherwise each
 phone gets one `POST https://push.cluster-fluster.com/v1/push/send` with this body:
 
 ```json
