@@ -555,3 +555,18 @@ agent's running run as `aborted/abort` when Events is not answering it, announce
 `run.finished`, and bumps the agent's version. A manual compaction's run is skipped, since the
 abort already cancelled the compaction and Compactions ends that run. A failure here is logged;
 the stop was already accepted.
+
+## Push registration keeps Happy Cloud's shapes, not this API's habits
+
+Mobile push worked only on Happy Cloud because the daemon had no registration routes. The routes
+under `/v0/cloud/push` copy Happy Cloud's contract exactly so the mobile apps reuse one client, and
+that is why they differ from their neighbours: the removal answers `204` with no body where other
+deletions answer `200 {}`, the bodies are closed and take no `mutationId`, and settings are the
+bare `{ "enabled" }` object. Keep them that way; a "consistency" fix here breaks the phones. The
+`cloud` prefix is part of the copied path and has nothing to do with the Cloud account routes.
+
+The handler passes the parsed JSON to the push module unchecked and only maps its refusals to
+statuses. The module owns the rules, and the token is parsed there into a type that cannot be
+printed, so no API code ever holds a token it could log. Health reports
+`capabilities.pushRegistrations` whenever the module is installed. The routes announce nothing in
+the event journal: no client reads such an event today, and a new event type needs a client release.

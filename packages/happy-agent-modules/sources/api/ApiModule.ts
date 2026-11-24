@@ -371,6 +371,7 @@ import {
     UserSettingsError,
     UserSettingsModule,
 } from "../userSettings/index.js";
+import { PushError, PushModule } from "../push/index.js";
 import {
     WorkspaceInputError,
     WorkspaceLifecycleError,
@@ -505,6 +506,7 @@ const MAX_FILE_WRITE_BODY_BYTES = 72 * 1024 * 1024;
 // One setting write carries a value of at most 64 KiB as compact JSON. A body sixteen times that
 // leaves room for any reasonable spacing and escaping, and anything larger is refused unparsed.
 const MAX_USER_SETTING_BODY_BYTES = 1024 * 1024;
+const MAX_PUSH_BODY_BYTES = 4096;
 const MAX_SSE_BUFFER_BYTES = 64 * 1024 * 1024;
 const HEARTBEAT_MS = 15_000;
 /** How often every WebSocket the daemon serves is pinged, so no intermediary finds it idle. */
@@ -706,6 +708,7 @@ export class ApiModule implements AgentModule {
     readonly #chatMedia: ChatMediaModule | undefined;
     readonly #exportedBots: ExportedBotsModule | undefined;
     readonly #userSettings: UserSettingsModule | undefined;
+    readonly #push: PushModule | undefined;
     readonly #userEnvironment: UserEnvironmentModule | undefined;
     readonly #secretRequests: SecretRequestsModule | undefined;
     readonly #attachments: AttachmentsModule | undefined;
@@ -900,7 +903,9 @@ export class ApiModule implements AgentModule {
         userEnvironment?: UserEnvironmentModule,
         secretRequests?: SecretRequestsModule,
         attachments?: AttachmentsModule,
+        push?: PushModule,
     ) {
+        this.#push = push;
         this.#secretRequests = secretRequests;
         this.#teammates = teammates;
         this.#userEnvironment = userEnvironment;
@@ -1948,6 +1953,10 @@ export class ApiModule implements AgentModule {
                 url.pathname === "/v0/environment"
             ) {
                 await this.#handleEnvironmentReport(ctx, request, response, this.#userEnvironment);
+                return;
+            }
+            if (this.#push !== undefined && url.pathname.startsWith("/v0/cloud/push/")) {
+                await this.#handlePushRoute(ctx, request, response, url.pathname, this.#push);
                 return;
             }
             if (
@@ -10193,6 +10202,51 @@ export class ApiModule implements AgentModule {
         }
     }
 
+    /**
+     * A phone's push registration and the caller's push settings, at the paths and with the status
+     * codes Happy Cloud serves so the mobile apps use one implementation.
+     */
+    async #handlePushRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        pathname: string,
+        push: PushModule,
+    ): Promise<void> {
+        const registrationId = /^\/v0\/cloud\/push\/registrations\/([^/]+)$/u.exec(pathname)?.[1];
+        try {
+            if (pathname === "/v0/cloud/push/settings" && request.method === "GET") {
+                sendJson(response, 200, await push.settings(ctx));
+                return;
+            }
+            if (pathname === "/v0/cloud/push/settings" && request.method === "PUT") {
+                const body = await readJson(request, MAX_PUSH_BODY_BYTES);
+                sendJson(response, 200, await push.saveSettings(ctx, body));
+                return;
+            }
+            if (registrationId !== undefined && request.method === "PUT") {
+                const body = await readJson(request, MAX_PUSH_BODY_BYTES);
+                sendJson(response, 200, {
+                    registration: await push.register(ctx, registrationId, body),
+                });
+                return;
+            }
+            if (registrationId !== undefined && request.method === "DELETE") {
+                const version = request.headers["if-match"]?.trim().replace(/^"(.*)"$/u, "$1");
+                if (version === undefined) {
+                    throw invalidRequest("This request requires an If-Match header.");
+                }
+                await push.unregister(ctx, registrationId, version);
+                response.writeHead(204).end();
+                return;
+            }
+        } catch (error: unknown) {
+            if (!(error instanceof PushError)) throw error;
+            throw pushApiError(error);
+        }
+        throw notFound("The requested push endpoint does not exist.");
+    }
+
     async #handleProfilePatch(
         ctx: Context,
         request: IncomingMessage,
@@ -10936,6 +10990,7 @@ export class ApiModule implements AgentModule {
                 ...(this.#userEnvironment === undefined ? {} : { userEnvironment: true }),
                 ...(this.#attachments === undefined ? {} : { attachments: true }),
                 ...(this.#secretRequests === undefined ? {} : { artifactSecretActions: true }),
+                ...(this.#push === undefined ? {} : { pushRegistrations: true }),
                 ...(this.#live === undefined
                     ? {}
                     : { desktopLiveCapabilities: [...this.#live.desktopCapabilities] }),
@@ -11615,6 +11670,20 @@ const MOBILE_UNAUTHORIZED: ApiSocketRejection = {
 
 function mobileUnauthorized(): ApiError {
     return new ApiError(401, "unauthorized", "Unauthorized");
+}
+
+/** A push refusal with the status code Happy Cloud answers for the same case. */
+function pushApiError(error: PushError): ApiError {
+    switch (error.code) {
+        case "invalid_request":
+            return invalidRequest(error.message);
+        case "not_found":
+            return notFound(error.message);
+        case "registrations_full":
+            return new ApiError(409, "conflict", error.message);
+        default:
+            return error.code satisfies never;
+    }
 }
 
 /** Daemon lifecycle, debugging, and mobile connector management stay with the desktop. */
