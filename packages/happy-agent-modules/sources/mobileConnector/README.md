@@ -117,6 +117,11 @@ every request, stream, WebSocket, and tunnel opened with it. A device's `lastSee
 most once a minute. `onEvent` delivers `{ owner, mobileConnector }` after each change commits,
 with a UUIDv7 `version` per owner.
 
+`onDeviceRemovedTransactional` lets another module take part in the transaction that deletes a
+device row, whether a person revoked the phone or a pairing ended before the phone could keep its
+token. Push uses it to delete the registrations that phone made. A listener that throws rolls the
+removal back, so the phone stays paired rather than half removed.
+
 ## Storage
 
 Migration `001-mobile-devices` creates `happy_agent_mobile_devices`: ID, owner, name, platform,

@@ -62,3 +62,11 @@ The module used to start its own listener and reconcile in `afterStart`. With th
 listener, the exposure can only open once the daemon has bound it, so `attachTransport` triggers
 the first reconciliation and a pairing started earlier fails with "not ready yet" instead of
 showing a code nothing can answer.
+
+## Removing a phone removes what was stored for it, in the same transaction
+
+Unpairing deleted the device row and closed its connections, but the phone's push registration
+stayed for up to 30 days and the phone kept receiving notifications. That was reported as a
+defect. The connector does not know what other modules keep for a phone, so it offers
+`onDeviceRemovedTransactional`: a listener runs inside the transaction that deletes the row, on
+every path that deletes one. Removal and its consequences commit together or not at all.

@@ -38,6 +38,7 @@ import {
     type MobileConnectorStatus,
     type MobileConnectorTransport,
     type MobileCredential,
+    type MobileDeviceRemovedListener,
     type MobileHandshakeStart,
     type MobileHandshakeStatus,
     type MobileOwner,
@@ -87,6 +88,7 @@ export class MobileConnectorModule implements AgentModule {
     readonly #pairingLock: AsyncLock = asyncLock({ reentry: "block" });
     readonly #uuid = createUuidV7Factory();
     readonly #listeners = new Set<MobileConnectorListener>();
+    readonly #removalListeners = new Set<MobileDeviceRemovedListener>();
     /** Each owner's current or most recently finished pairing. */
     readonly #pairings = new Map<MobileOwner, MobilePairing>();
     readonly #byToken = new Map<string, MobilePairing>();
@@ -429,7 +431,7 @@ export class MobileConnectorModule implements AgentModule {
     async revokeDevice(ctx: Context, deviceId: string): Promise<MobileConnectorSnapshot> {
         const owner = this.#owner(ctx);
         await ctx.inTx(async (txCtx) => {
-            if (!(await deleteMobileDevice(txCtx, owner, deviceId))) {
+            if (!(await this.#removeDevice(txCtx, owner, deviceId))) {
                 throw new MobileConnectorError("not_found", "That phone is not paired.");
             }
             await this.#scheduleReconcile(txCtx);
@@ -449,6 +451,17 @@ export class MobileConnectorModule implements AgentModule {
         this.#listeners.add(listener);
         return () => {
             this.#listeners.delete(listener);
+        };
+    }
+
+    /**
+     * Take part in the transaction that removes a paired phone, so what was stored for that
+     * phone goes in the same step. A listener that fails keeps the phone paired.
+     */
+    onDeviceRemovedTransactional(listener: MobileDeviceRemovedListener): () => void {
+        this.#removalListeners.add(listener);
+        return () => {
+            this.#removalListeners.delete(listener);
         };
     }
 
@@ -579,6 +592,18 @@ export class MobileConnectorModule implements AgentModule {
     // Phone-facing bookkeeping.
 
     /** Record that a device was seen, at most once a minute. */
+    /**
+     * Delete one owner's phone inside the caller's transaction and let everything that depended
+     * on it follow. Reports whether there was such a phone.
+     */
+    async #removeDevice(ctx: Context, owner: MobileOwner, deviceId: string): Promise<boolean> {
+        if (!(await deleteMobileDevice(ctx, owner, deviceId))) return false;
+        for (const listener of Array.from(this.#removalListeners)) {
+            await listener(ctx, { owner, deviceId });
+        }
+        return true;
+    }
+
     async #touch(ctx: Context, owner: MobileOwner, deviceId: string): Promise<void> {
         const now = Date.now();
         const last = this.#lastTouched.get(deviceId);
@@ -627,7 +652,7 @@ export class MobileConnectorModule implements AgentModule {
                 // The pairing ended before this commit was seen, so the phone never receives
                 // the proof it needs to keep the token. A device nobody can use must not remain.
                 await this.#moduleContext().inTx(async (cleanupCtx) => {
-                    await deleteMobileDevice(cleanupCtx, pairing.owner, device.id);
+                    await this.#removeDevice(cleanupCtx, pairing.owner, device.id);
                     await this.#scheduleReconcile(cleanupCtx);
                 });
             });

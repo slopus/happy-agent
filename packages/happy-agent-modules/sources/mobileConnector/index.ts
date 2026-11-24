@@ -13,6 +13,8 @@ export {
     type MobileConnectorTransport,
     type MobileCredential,
     type MobileDevice,
+    type MobileDeviceRemoval,
+    type MobileDeviceRemovedListener,
     type MobileHandshakeStart,
     type MobileHandshakeStatus,
     type MobileOwner,

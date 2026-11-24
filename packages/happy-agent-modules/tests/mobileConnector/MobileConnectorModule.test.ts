@@ -481,6 +481,43 @@ describe("MobileConnectorModule", () => {
         ).resolves.toMatchObject({ kind: "device", deviceId: paired.deviceId });
     });
 
+    it("tells what depends on a phone that it is going, inside the transaction that removes it", async () => {
+        const target = await world();
+        const paired = await pairedPhone(target);
+        const removed: { owner: string; deviceId: string; stillStored: number }[] = [];
+        target.mobile.onDeviceRemovedTransactional(async (ctx, device) => {
+            // The row is already gone for this transaction, and for nobody else until it commits.
+            const rows = await storedDevices({ ...target, ctx });
+            removed.push({ ...device, stillStored: rows.length });
+        });
+
+        await target.mobile.revokeDevice(target.ctx, paired.deviceId);
+
+        expect(removed).toEqual([
+            { owner: "standalone", deviceId: paired.deviceId, stillStored: 0 },
+        ]);
+    });
+
+    it("keeps the phone paired when something that depends on it cannot let it go", async () => {
+        const target = await world();
+        const paired = await pairedPhone(target);
+        const device = await target.mobile.authenticate(target.ctx, `Bearer ${paired.deviceToken}`);
+        const stop = target.mobile.onDeviceRemovedTransactional(async () => {
+            throw new Error("The registrations could not be removed.");
+        });
+
+        await expect(target.mobile.revokeDevice(target.ctx, paired.deviceId)).rejects.toThrow(
+            "The registrations could not be removed.",
+        );
+        expect(await storedDevices(target)).toHaveLength(1);
+        expect(device?.kind === "device" && device.revoked.aborted).toBe(false);
+
+        // Once it can, the phone goes as usual.
+        stop();
+        await target.mobile.revokeDevice(target.ctx, paired.deviceId);
+        expect(await storedDevices(target)).toEqual([]);
+    });
+
     it("reopens the socket once the transport is attached when devices exist", async () => {
         const first = await world();
         const paired = await pairedPhone(first);

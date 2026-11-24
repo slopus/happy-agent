@@ -106,6 +106,18 @@ export type MobileConnectorListener = (
     event: MobileConnectorEvent,
 ) => void | Promise<void>;
 
+/** One owner's paired phone that is being removed. Its ID is never used again. */
+export interface MobileDeviceRemoval {
+    readonly owner: MobileOwner;
+    readonly deviceId: string;
+}
+
+/** Takes part in the transaction that removes a phone; a failure keeps the phone paired. */
+export type MobileDeviceRemovedListener = (
+    ctx: Context,
+    removed: MobileDeviceRemoval,
+) => Promise<void>;
+
 /**
  * What a bearer credential on the connector's socket proved. A device acts as its owner until
  * `revoked` aborts; a pairing token may only start a handshake, and a handshake credential may
