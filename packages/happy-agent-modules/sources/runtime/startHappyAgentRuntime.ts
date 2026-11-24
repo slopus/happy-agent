@@ -665,7 +665,14 @@ export async function startHappyAgentRuntime(
             botSettings,
             runners,
         );
-        const push = new PushModule(team, config, durableFunctions, tasks, subtasks);
+        const push = new PushModule(
+            team,
+            config,
+            durableFunctions,
+            tasks,
+            subtasks,
+            mobileConnector,
+        );
         const scheduling = new SchedulingModule(botSettings, history);
         const cleanup = new CleanupModule(
             config,

@@ -436,6 +436,11 @@ installation serves the same routes for its one person.
   every delivery is logged as `push:delivery outcome=unknown` and nothing arrives.
 - Each phone gets one request per notification and nothing is retried. A phone the relay no longer
   knows is removed from the server.
+- Unpairing a phone on the desktop removes the registrations that phone made in the same step, so
+  it stops receiving at once. A member's other phones are untouched.
+- The server keeps no record of a member leaving. A member whose sign-in is revoked at the identity
+  provider can no longer register or renew a phone, but phones they registered earlier keep
+  receiving what their own tasks say until those registrations expire, at most 30 days later.
 
 Registering sends nothing by itself. An agent says what happened with its `send_push_notification`
 tool, and the server sends the last thing it said when that agent goes idle. On a team server it

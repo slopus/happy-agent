@@ -25,13 +25,15 @@ const countSchema = Type.Object({ held: Type.Integer({ minimum: 0 }) });
  * The person's expired registrations go first, so they never count toward the limit. An `id` held
  * by someone else is refused as not found. The same token under another of the person's IDs, as a
  * reinstalled app sends, is replaced. A new `id` past the limit is refused. Otherwise the
- * registration is stored for another lifetime under a newly minted version.
+ * registration is stored for another lifetime under a newly minted version, and belongs to the
+ * paired phone that sent it this time, or to none.
  */
 export async function savePushRegistration(
     ctx: Context,
     owner: PushOwner,
     id: string,
     input: PushRegistrationInput,
+    deviceId: string | undefined,
     now: number,
 ): Promise<PushRegistration> {
     return await ctx.inTx(async (txCtx) => {
@@ -79,16 +81,17 @@ export async function savePushRegistration(
         await agentDatabaseRun(
             txCtx.db,
             sql`INSERT INTO ${table}
-                (id, owner_id, version, token, platform, app_id, locale, expires_at)
+                (id, owner_id, version, token, platform, app_id, locale, expires_at, device_id)
                 VALUES (${id}, ${owner}, ${version}, ${token}, ${input.platform}, ${input.appId},
-                    ${input.locale}, ${expiresAt})
+                    ${input.locale}, ${expiresAt}, ${deviceId ?? null})
                 ON CONFLICT (id) DO UPDATE SET
                     version = excluded.version,
                     token = excluded.token,
                     platform = excluded.platform,
                     app_id = excluded.app_id,
                     locale = excluded.locale,
-                    expires_at = excluded.expires_at`,
+                    expires_at = excluded.expires_at,
+                    device_id = excluded.device_id`,
         );
         return { id, version, expiresAt };
     });

@@ -10227,7 +10227,13 @@ export class ApiModule implements AgentModule {
             if (registrationId !== undefined && request.method === "PUT") {
                 const body = await readJson(request, MAX_PUSH_BODY_BYTES);
                 sendJson(response, 200, {
-                    registration: await push.register(ctx, registrationId, body),
+                    // A paired phone's registration leaves with its pairing.
+                    registration: await push.register(
+                        ctx,
+                        registrationId,
+                        body,
+                        mobileDevice(ctx)?.deviceId,
+                    ),
                 });
                 return;
             }

@@ -6,8 +6,8 @@ server the same thing, behind the same routes, so the mobile apps use one implem
 
 It depends on the team module, to find the authenticated member, on the config module, for this
 installation's `instanceId`, on Durable Functions, to carry a notification from the caller's
-commit to the relay, and on the tasks and subtasks modules, to know whose agent is speaking and
-whether a person can see it. Nothing here decides that a person should be notified: an agent says
+commit to the relay, on the tasks and subtasks modules, to know whose agent is speaking and
+whether a person can see it, and on the mobile connector, to hear that a paired phone was removed. Nothing here decides that a person should be notified: an agent says
 what happened with `send_push_notification`, and the module sends it when that agent goes idle.
 
 ```text
@@ -46,8 +46,9 @@ daemon has no sealing facility, so anyone who can read the database can already 
 
 ## Public operations
 
-- `register(ctx, id, request)` registers the caller's phone under `id`, a lowercase UUID the phone
-  keeps for this server, or renews it. `request` is what the phone sent, unchecked: `{ token,
+- `register(ctx, id, request, pairedDeviceId?)` registers the caller's phone under `id`, a
+  lowercase UUID the phone keeps for this server, or renews it. `pairedDeviceId` is the paired
+  phone the request authenticated as, which the API knows; see Unpairing. `request` is what the phone sent, unchecked: `{ token,
 platform, appId, locale? }`. It returns `{ id, version, expiresAt }`, with a new UUID `version`
   every time and `expiresAt` 30 days ahead. A `locale` is 1–64 characters with no control
   characters, and `null` is the same as none.
@@ -121,9 +122,23 @@ One transaction applies them in this order, matching Happy Cloud:
 3. The same token under another of the caller's IDs is removed. A reinstalled app registers under
    a new ID, and one phone must not receive each notification twice.
 4. A new `id` when the caller already holds 20 is refused. Renewing one of the 20 is accepted.
-5. The registration is stored for another 30 days under a newly minted version.
+5. The registration is stored for another 30 days under a newly minted version, and belongs to
+   the paired phone that sent it this time, or to none.
 
 Two people may register the same phone; each holds their own registration of it.
+
+## Unpairing
+
+A registration remembers the paired phone that made it. When the mobile connector removes a
+phone, because its person unpaired it on the desktop or its pairing never completed, the same
+transaction deletes every registration that phone made, and the log gains
+`push:registration outcome=device_removed deviceId=… removed=N`. The person's other phones, and
+everyone else's, are untouched. If the registrations cannot be deleted, the phone stays paired.
+
+A registration has no phone when it was made with a person's own sign-in rather than through a
+pairing, and when it was stored before the server remembered phones. Unpairing never removes
+those. They leave by expiry, by `unregister`, or when the relay reports the phone gone; a
+registration its phone renews belongs to that phone from then on.
 
 ## Delivery
 
@@ -136,7 +151,9 @@ notification, by design: the agent that asked is never to learn whether or where
 
 When the call runs, the module reads the person's settings and unexpired registrations as they are
 then. A person who turned notifications off, or has no live phone, gets nothing, and the log says
-which. Otherwise each
+which. Each registration is checked once more just before its request, so a phone unpaired or
+removed while a notification was going out to the person's other phones gets no request; one
+already on its way to the relay cannot be recalled. Otherwise each
 phone gets one `POST https://push.cluster-fluster.com/v1/push/send` with this body:
 
 ```json
@@ -183,3 +200,5 @@ any phone a second request. Each outcome is logged as one `push:delivery` line.
 Migration `001-push` creates two tables. `happy_agent_push_registrations` holds one row per
 registration: its ID, owner, version, token, platform, app, locale, and expiry, with the owner and
 token unique together. `happy_agent_push_settings` holds a row only for a person who has chosen.
+Migration `002-push-registration-device` adds the nullable `device_id`, the paired phone a
+registration belongs to; rows stored before it keep working with none.

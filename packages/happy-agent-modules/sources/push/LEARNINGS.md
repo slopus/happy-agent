@@ -106,3 +106,16 @@ a title of 41 emoji was refused here while Happy Cloud, counting characters, tak
 sent back: one tool contract must behave the same on both servers. The title and subtitle are now
 checked in characters by a schema type of the module's own, and the schema the model receives is
 still the contract's plain `minLength` and `maxLength`.
+
+## Unpairing a phone must stop its notifications at once
+
+A registration lived for 30 days whoever unpaired the phone, so a phone removed on the desktop
+went on receiving what the agents said. That was reported as a defect, not a nicety: unpairing is
+how a person takes a phone away. A registration now remembers the paired phone that made it, and
+the mobile connector's own transaction deletes that phone's registrations as it deletes the
+phone. Delivery checks each registration again just before its request, because the list is read
+once and a notification may be halfway through a person's phones when one is removed.
+
+Rows with no phone are left alone on purpose. Deleting them on any unpairing would silence a
+person's other phones until each opened the app again, to guard against rows only a build that
+was never released could have written.

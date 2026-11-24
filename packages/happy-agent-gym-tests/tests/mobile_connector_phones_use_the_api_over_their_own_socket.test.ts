@@ -5,7 +5,12 @@ import { createConnection, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createAgentGym, GymHttpClient, type AgentGym } from "@slopus/happy-agent-gym";
+import {
+    createAgentGym,
+    GymHttpClient,
+    type AgentGym,
+    type GymInference,
+} from "@slopus/happy-agent-gym";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import { surfaceTeamClients } from "./support/surfaceTeamClients.js";
@@ -78,11 +83,13 @@ afterEach(async () => {
     await Promise.all([...running].map(async (gym) => await gym.dispose()));
     running.clear();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     if (fakeTailcatRoot !== undefined) await rm(fakeTailcatRoot, { force: true, recursive: true });
 });
 
-async function mobileGym(): Promise<AgentGym> {
+async function mobileGym(inference?: GymInference): Promise<AgentGym> {
     const gym = await createAgentGym({
+        ...(inference === undefined ? {} : { inference }),
         config: `[feature.mobile_connector]\nport = ${String(PORT)}\n[api]\npublic_port = ${String(TAILNET_PORT)}\n${transport === "https" ? `public_url = "${PUBLIC_ORIGIN}"\n` : ""}`,
         timeoutMs: 15_000,
     });
@@ -493,6 +500,80 @@ describe.each(["tailcat", "https"] as const)("phones use the API over %s", (mode
             status: 200,
         });
         keptSocket.terminate();
+        expect(gym.errors).toEqual([]);
+    }, 60_000);
+
+    it("stops notifying a phone the moment it is unpaired, and keeps notifying the other", async () => {
+        const RELAY = "https://push.cluster-fluster.com/v1/push/send";
+        const relay: { readonly to: unknown; readonly title: unknown }[] = [];
+        const nativeFetch = globalThis.fetch;
+        // Happy's relay is the only thing replaced; the phones' own requests go through.
+        vi.stubGlobal("fetch", (input: string | URL | Request, init?: RequestInit) => {
+            if (String(input) !== RELAY) return nativeFetch(input, init);
+            relay.push(JSON.parse(String(init?.body)) as { to: unknown; title: unknown });
+            return Promise.resolve(Response.json({ data: [{ status: "ok", id: "ticket-1" }] }));
+        });
+        let turns = 0;
+        const gym = await mobileGym((request) => {
+            if (request.sessionId.startsWith("naming:")) {
+                return {
+                    content: [{ text: "<title>Deploy</title><slug>deploy</slug>", type: "text" }],
+                };
+            }
+            if (request.messages.at(-1)?.role === "tool") {
+                return { content: [{ text: "Told you.", type: "text" }] };
+            }
+            turns += 1;
+            return {
+                content: [
+                    {
+                        arguments: { title: `Deploy ${String(turns)} finished` },
+                        callId: `notify${String(turns)}`,
+                        name: "send_push_notification",
+                        type: "tool_call" as const,
+                    },
+                ],
+            };
+        });
+        const removed = await pairPhone(gym);
+        const kept = await pairPhone(gym);
+        // The phone that will be unpaired sorts first, so a request to it would come first.
+        const registrations = [
+            [
+                removed,
+                "00000000-0000-4000-8000-000000000001",
+                "HappyPushToken[removed000000000000001]",
+            ],
+            [
+                kept,
+                "00000000-0000-4000-8000-000000000002",
+                "HappyPushToken[kept000000000000000002]",
+            ],
+        ] as const;
+        for (const [phone, id, token] of registrations) {
+            await expect(
+                phoneHttp("PUT", `/v0/cloud/push/registrations/${id}`, phone.deviceToken, {
+                    token,
+                    platform: "ios",
+                    appId: "com.ex3ndr.happy",
+                }),
+            ).resolves.toMatchObject({ status: 200 });
+        }
+
+        await gym.send("Deploy.");
+        await gym.waitUntil(() => relay.length === 2 || undefined, "both phones to be notified");
+        expect(relay.map((request) => [request.to, request.title])).toEqual([
+            ["HappyPushToken[removed000000000000001]", "Deploy 1 finished"],
+            ["HappyPushToken[kept000000000000000002]", "Deploy 1 finished"],
+        ]);
+
+        await gym.http.ok("DELETE", `/v0/mobile-connector/devices/${removed.deviceId}`);
+
+        await gym.send("Deploy again.");
+        await gym.waitUntil(() => relay.length >= 3 || undefined, "the kept phone to be notified");
+        expect(relay.slice(2).map((request) => [request.to, request.title])).toEqual([
+            ["HappyPushToken[kept000000000000000002]", "Deploy 2 finished"],
+        ]);
         expect(gym.errors).toEqual([]);
     }, 60_000);
 

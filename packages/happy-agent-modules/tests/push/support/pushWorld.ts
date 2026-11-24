@@ -6,6 +6,7 @@ import { vi } from "vitest";
 
 import type { ConfigModule } from "../../../sources/config/index.js";
 import { DurableFunctionsModule } from "../../../sources/durableFunctions/index.js";
+import type { MobileConnectorModule } from "../../../sources/mobileConnector/index.js";
 import { PushModule, type PushNotification } from "../../../sources/push/index.js";
 import type { SubtasksModule } from "../../../sources/subtasks/index.js";
 import type { TasksModule } from "../../../sources/tasks/index.js";
@@ -85,6 +86,30 @@ export interface PushWorldAgents {
     readonly taskOwners?: Readonly<Record<string, string>>;
 }
 
+type DeviceRemovedListener = (
+    ctx: Context,
+    removed: { readonly owner: string; readonly deviceId: string },
+) => Promise<void>;
+
+/** The mobile connector as push sees it: something that says when a paired phone is removed. */
+function pairings() {
+    const listeners = new Set<DeviceRemovedListener>();
+    return {
+        connector: {
+            onDeviceRemovedTransactional: (listener: DeviceRemovedListener) => {
+                listeners.add(listener);
+                return () => listeners.delete(listener);
+            },
+        } as unknown as MobileConnectorModule,
+        /** Remove a paired phone the way the connector does, inside the caller's transaction. */
+        remove: async (ctx: Context, owner: string, deviceId: string): Promise<void> => {
+            await ctx.inTx(async (txCtx) => {
+                for (const listener of listeners) await listener(txCtx, { owner, deviceId });
+            });
+        },
+    };
+}
+
 function pushModule(team: boolean, durable: DurableFunctionsModule, agents: PushWorldAgents = {}) {
     const tasks = {
         forAgent: (_ctx: Context, agentId: string) =>
@@ -98,12 +123,16 @@ function pushModule(team: boolean, durable: DurableFunctionsModule, agents: Push
         isSubtask: (agent: { readonly id?: string } | undefined) =>
             agent?.id !== undefined && (agents.subtasks ?? []).includes(agent.id),
     } as unknown as SubtasksModule;
-    return new PushModule(createTeam(team), config, durable, tasks, subtasks);
+    const paired = pairings();
+    return {
+        push: new PushModule(createTeam(team), config, durable, tasks, subtasks, paired.connector),
+        unpair: paired.remove,
+    };
 }
 
 export function pushDatabase(name: string): ModuleDatabase {
     const durable = new DurableFunctionsModule();
-    const push = pushModule(false, durable);
+    const { push } = pushModule(false, durable);
     const database = moduleDatabase([...durable.migrations, ...push.migrations], name);
     ensureAgentDatabaseConnection(database.database);
     return database;
@@ -119,7 +148,7 @@ export async function startWorld(
     },
 ) {
     const durable = new DurableFunctionsModule();
-    const push = pushModule(options.team, durable, options.agents);
+    const { push, unpair } = pushModule(options.team, durable, options.agents);
     const database = options.database ?? pushDatabase(name);
     await database.ready;
     const logs: string[] = [];
@@ -151,6 +180,8 @@ export async function startWorld(
         ctx,
         logs,
         settle,
+        /** Remove one person's paired phone, as unpairing it on the desktop does. */
+        unpair,
         /** Notify one person and wait until every phone has been tried. */
         send: async (recipient: string, notification: PushNotification) => {
             await push.send(ctx, recipient, notification);

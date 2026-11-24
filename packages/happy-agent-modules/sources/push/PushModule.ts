@@ -13,12 +13,14 @@ import type { Context } from "@steve.kite/stdlib";
 import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { requireDurableCommit } from "../impl/durableCommit.js";
+import { MobileConnectorModule } from "../mobileConnector/index.js";
 import { SubtasksModule } from "../subtasks/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { TeamAuthenticationError, TeamModule, teamUser } from "../team/index.js";
 
 import { pushRelayMessage } from "./impl/pushRelayMessage.js";
 import { pushRelaySend } from "./impl/pushRelaySend.js";
+import { deleteDevicePushRegistrations } from "./persistence/deleteDevicePushRegistrations.js";
 import { deletePushRegistration } from "./persistence/deletePushRegistration.js";
 import { queryLivePushRegistrations } from "./persistence/queryLivePushRegistrations.js";
 import { queryPushSettings } from "./persistence/queryPushSettings.js";
@@ -70,6 +72,9 @@ type DeliveryArguments = Static<typeof deliveryArgumentsSchema>;
  * last thing said in the agent's run and sends it when that run settles, so nothing is sent while
  * the agent is still working and nothing at all for a run that was stopped, failed, or cut off by
  * a restart.
+ *
+ * A registration remembers the paired phone that made it. Unpairing that phone removes its
+ * registrations in the same transaction, so nothing is sent to a phone its person took away.
  */
 export class PushModule implements AgentModule {
     readonly name = "push";
@@ -88,12 +93,20 @@ export class PushModule implements AgentModule {
         durableFunctions: DurableFunctionsModule,
         tasks: TasksModule,
         subtasks: SubtasksModule,
+        mobileConnector: MobileConnectorModule,
     ) {
         this.#team = team;
         this.#config = config;
         this.#durableFunctions = durableFunctions;
         this.#tasks = tasks;
         this.#subtasks = subtasks;
+        mobileConnector.onDeviceRemovedTransactional(async (ctx, removed) => {
+            const count = await deleteDevicePushRegistrations(ctx, removed.owner, removed.deviceId);
+            if (count === 0) return;
+            ctx.log.info(
+                `push:registration outcome=device_removed deviceId=${removed.deviceId} removed=${String(count)}`,
+            );
+        });
         durableFunctions.register({
             name: DELIVER_FUNCTION,
             argumentsSchema: deliveryArgumentsSchema,
@@ -162,16 +175,23 @@ export class PushModule implements AgentModule {
 
     /**
      * Register the caller's phone under `id`, or renew it for another 30 days under a new
-     * version. `request` is what the phone sent, unchecked.
+     * version. `request` is what the phone sent, unchecked. `pairedDeviceId` is the paired phone
+     * the request authenticated as, when it came from one: unpairing that phone removes the
+     * registration.
      */
-    async register(ctx: Context, id: string, request: unknown): Promise<PushRegistration> {
+    async register(
+        ctx: Context,
+        id: string,
+        request: unknown,
+        pairedDeviceId?: string,
+    ): Promise<PushRegistration> {
         const owner = this.#owner(ctx);
         checkRegistrationId(id);
         const input = parsePushRegistrationInput(request);
         if (input === undefined) {
             throw new PushError("invalid_request", "The push registration is invalid.");
         }
-        return await savePushRegistration(ctx, owner, id, input, Date.now());
+        return await savePushRegistration(ctx, owner, id, input, pairedDeviceId, Date.now());
     }
 
     /**
@@ -245,6 +265,17 @@ export class PushModule implements AgentModule {
             // A phone is marked before its request, so a restart never sends it a second one,
             // even when the first request's fate is unknown.
             if ((await attempts.read(ctx, registration.id)) !== undefined) continue;
+            // The list was read before the first request. A phone unpaired or removed since then
+            // must not be sent to, however far along this notification already is.
+            const live = await queryLivePushRegistrations(ctx, recipient, Date.now());
+            if (
+                !live.some(
+                    (current) =>
+                        current.id === registration.id && current.version === registration.version,
+                )
+            ) {
+                continue;
+            }
             await attempts.write(ctx, registration.id, true);
             await requireDurableCommit(ctx);
             const outcome = await pushRelaySend(
