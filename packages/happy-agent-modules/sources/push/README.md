@@ -44,9 +44,11 @@ daemon has no sealing facility, so anyone who can read the database can already 
 - `register(ctx, id, request)` registers the caller's phone under `id`, a lowercase UUID the phone
   keeps for this server, or renews it. `request` is what the phone sent, unchecked: `{ token,
 platform, appId, locale? }`. It returns `{ id, version, expiresAt }`, with a new UUID `version`
-  every time and `expiresAt` 30 days ahead.
-- `unregister(ctx, id, version)` removes the caller's registration at exactly that version. One
-  that is gone, someone else's, or renewed since is left alone, and the call still succeeds.
+  every time and `expiresAt` 30 days ahead. A `locale` is 1–64 characters with no control
+  characters, and `null` is the same as none.
+- `unregister(ctx, id, version)` removes the caller's registration at exactly that version, read
+  in either letter case. One that is gone, someone else's, or renewed since is left alone, and the
+  call still succeeds.
 - `settings(ctx)` and `saveSettings(ctx, settings)` read and replace `{ enabled }`, which is `true`
   until the person turns it off.
 - `send(ctx, recipient, notification)` notifies one person on their phones. See Delivery.

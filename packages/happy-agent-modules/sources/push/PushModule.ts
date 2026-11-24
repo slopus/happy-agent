@@ -22,7 +22,7 @@ import {
     parsePushRegistrationInput,
     pushOwnerSchema,
     pushRegistrationIdSchema,
-    pushRegistrationVersionSchema,
+    parsePushRegistrationVersion,
     pushSettingsSchema,
     STANDALONE_PUSH_OWNER,
     type PushOwner,
@@ -91,10 +91,11 @@ export class PushModule implements AgentModule {
     async unregister(ctx: Context, id: string, version: string): Promise<void> {
         const owner = this.#owner(ctx);
         checkRegistrationId(id);
-        if (!Value.Check(pushRegistrationVersionSchema, version)) {
+        const named = parsePushRegistrationVersion(version);
+        if (named === undefined) {
             throw new PushError("invalid_request", "The registration version must be a UUID.");
         }
-        await deletePushRegistration(ctx, owner, id, version);
+        await deletePushRegistration(ctx, owner, id, named);
     }
 
     /** Whether the server may notify the caller's phones. */

@@ -2,6 +2,7 @@ import { cuid2Schema } from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 
+import { characterCountPattern } from "./impl/characterCountPattern.js";
 import { PushToken } from "./PushToken.js";
 
 /** The one person of a standalone installation, who has no team user ID. */
@@ -25,6 +26,18 @@ export const pushRegistrationIdSchema = Type.String({ pattern: `^${UUID_PATTERN}
 /** The UUID minted by every registration; a removal names the exact one it means. */
 export const pushRegistrationVersionSchema = Type.String({ pattern: `^${UUID_PATTERN}$` });
 
+const versionInAnyCaseSchema = Type.String({
+    pattern: `^${UUID_PATTERN.replaceAll("a-f", "a-fA-F")}$`,
+});
+
+/**
+ * The version a removal names, or `undefined` when it is not a UUID. Happy Cloud reads the UUID in
+ * either letter case, so a phone that sends it in uppercase still names the version it was given.
+ */
+export function parsePushRegistrationVersion(value: unknown): string | undefined {
+    return Value.Check(versionInAnyCaseSchema, value) ? value.toLowerCase() : undefined;
+}
+
 const pushRegistrationRequestSchema = Type.Object(
     {
         token: Type.String(),
@@ -34,7 +47,15 @@ const pushRegistrationRequestSchema = Type.Object(
             Type.Literal("com.slopus.happy.preview"),
             Type.Literal("com.slopus.happy.dev"),
         ]),
-        locale: Type.Optional(Type.String({ minLength: 1 })),
+        /** 1–64 characters with no control characters. `null` is no locale, as on Happy Cloud. */
+        locale: Type.Optional(
+            Type.Union([
+                Type.String({
+                    pattern: characterCountPattern(1, 64, "\\u0000-\\u001f\\u007f-\\u009f"),
+                }),
+                Type.Null(),
+            ]),
+        ),
     },
     { additionalProperties: false },
 );
@@ -48,19 +69,17 @@ export type PushRegistrationInput = Omit<
     readonly locale: string | null;
 };
 
-const CONTROL_CHARACTER = /\p{Cc}/u;
-
 /** A phone's registration request as its parsed input, or `undefined` when it is not one. */
 export function parsePushRegistrationInput(value: unknown): PushRegistrationInput | undefined {
     if (!Value.Check(pushRegistrationRequestSchema, value)) return undefined;
     const token = PushToken.parse(value.token);
     if (token === undefined) return undefined;
-    const locale = value.locale ?? null;
-    // Counted in characters rather than UTF-16 units, as Happy Cloud counts them.
-    if (locale !== null && ([...locale].length > 64 || CONTROL_CHARACTER.test(locale))) {
-        return undefined;
-    }
-    return { token, platform: value.platform, appId: value.appId, locale };
+    return {
+        token,
+        platform: value.platform,
+        appId: value.appId,
+        locale: value.locale ?? null,
+    };
 }
 
 /** A phone's registration as callers see it. It never carries the token. */

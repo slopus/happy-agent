@@ -186,6 +186,21 @@ it("removes a registration only at its current version, and removing again still
     }
 });
 
+it("removes a registration whose version arrives in another letter case", async () => {
+    const world = await startWorld("push-unregister-case", { team: false });
+    try {
+        const { version } = await world.push.register(world.ctx, id(1), phone(1));
+        const relay = stubRelay();
+        expect(version.toUpperCase()).not.toBe(version);
+
+        await world.push.unregister(world.ctx, id(1), version.toUpperCase());
+        await world.send("standalone", notice);
+        expect(relay).toEqual([]);
+    } finally {
+        world.close();
+    }
+});
+
 it.each([
     ["an uppercase ID", id(1).replace("4000", "4AAA"), phone(1)],
     ["an ID without hyphens", id(1).replaceAll("-", ""), phone(1)],
@@ -196,6 +211,12 @@ it.each([
     ["an empty locale", id(1), { ...phone(1), locale: "" }],
     ["a locale with a control character", id(1), { ...phone(1), locale: "en\u0007US" }],
     ["a locale over 64 characters", id(1), { ...phone(1), locale: "x".repeat(65) }],
+    ["a locale with half of a surrogate pair", id(1), { ...phone(1), locale: "en\ud83d" }],
+    [
+        "a locale over 64 characters outside the Basic Multilingual Plane",
+        id(1),
+        { ...phone(1), locale: "😀".repeat(65) },
+    ],
     ["an unknown field", id(1), { ...phone(1), mutationId: "m" }],
     ["a body that is not an object", id(1), token(1)],
 ])(
@@ -224,6 +245,19 @@ it("accepts a 64-character locale counted in characters, not UTF-16 units", asyn
             platform: "android",
             appId: "com.slopus.happy.dev",
             locale: "😀".repeat(64),
+        });
+        expect(registered.id).toBe(id(1));
+    } finally {
+        world.close();
+    }
+});
+
+it("takes a null locale as no locale, as Happy Cloud does", async () => {
+    const world = await startWorld("push-locale-null", { team: false });
+    try {
+        const registered = await world.push.register(world.ctx, id(1), {
+            ...phone(1),
+            locale: null,
         });
         expect(registered.id).toBe(id(1));
     } finally {

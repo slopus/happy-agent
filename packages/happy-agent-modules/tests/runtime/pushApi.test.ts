@@ -276,6 +276,8 @@ it("serves Happy Cloud's push registration contract to each team member's phone"
         code: "conflict",
     });
     expect((await bob.register(21)).status).toBe(200);
+    // A null locale means none, as on Happy Cloud.
+    expect((await bob.register(21, { ...phone(21), locale: null })).status).toBe(200);
 
     // The token is a send capability: no answer ever repeats one.
     expect(everyAnswer.join("\n")).not.toContain("HappyPushToken");
@@ -300,6 +302,12 @@ it("serves Happy Cloud's push registration contract to each team member's phone"
     expect([removed.status, removed.text]).toEqual([204, ""]);
     expect((await alice.unregister(1, renewed.version)).status).toBe(204);
     expect((await alice.register(22)).status).toBe(200);
+
+    // The version is a UUID in either letter case, as Happy Cloud reads it, and still removes.
+    const second = (await alice.register(2)).json!.registration as { version: string };
+    const uppercase = await alice.unregister(2, second.version.toUpperCase());
+    expect([uppercase.status, uppercase.text]).toEqual([204, ""]);
+    expect((await alice.register(24)).status).toBe(200);
 
     expect((await call(aliceToken, "GET", "/v0/cloud/push/registrations")).status).toBe(404);
     expect((await call(aliceToken, "GET", `/v0/cloud/push/registrations/${id(2)}`)).status).toBe(

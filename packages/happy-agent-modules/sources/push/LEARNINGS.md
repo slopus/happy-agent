@@ -43,3 +43,13 @@ write made durable, before its request. A restart carries on with the phones not
 Registration, removal, and settings take their owner from the caller's context. An ID another
 person holds answers not found rather than revealing or replacing it, and a removal that names
 someone else's registration, or a version since renewed, succeeds without removing anything.
+
+## Matching Happy Cloud means matching what it tolerates, too
+
+An independent check against Happy Cloud found three places where the first version was stricter or
+counted differently: an uppercase `If-Match` UUID was refused where the cloud answers `204`, a
+`null` locale was refused where the cloud takes it as none, and a schema `maxLength` counted UTF-16
+units where the cloud counts characters. The module now reads the version in either letter case and
+compares it in lowercase, takes a `null` locale as none, and counts every length with a pattern
+that charges a surrogate pair once. That pattern's alternatives must never overlap: a first draft
+let one pair also match as two single units and took minutes to refuse a 65-emoji string.
