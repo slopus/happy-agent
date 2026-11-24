@@ -58,6 +58,9 @@ export * from "./artifactData/index.js";
 // User settings: each person's opaque key-value preferences, synced across their devices.
 export * from "./userSettings/index.js";
 
+// Push: the phones a person can be notified on, and delivery to them through Happy's push relay.
+export * from "./push/index.js";
+
 // User environment: each person's reported time zone, languages, clock, week, and calendar,
 // announced to their agents once and again when it changes.
 export * from "./userEnvironment/index.js";
