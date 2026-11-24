@@ -410,6 +410,54 @@ it("removes the phone the relay no longer knows and keeps the others", async () 
     }
 });
 
+it.each([
+    ["no title", { title: "" }],
+    ["a title over 80 characters", { title: "x".repeat(81) }],
+    ["a title over 80 characters outside the Basic Multilingual Plane", { title: "😀".repeat(81) }],
+    ["a body over 160 characters", { body: "x".repeat(161) }],
+])("refuses to send a notification with %s, and records nothing", async (_name, change) => {
+    const world = await startWorld("push-bounds", { team: false });
+    try {
+        await world.push.register(world.ctx, id(1), phone(1));
+        const relay = stubRelay();
+
+        const refused = await world.push
+            .send(world.ctx, "standalone", { ...notice, ...change })
+            .catch((e) => e);
+        expect(refused).toBeInstanceOf(PushError);
+        expect(refused).toMatchObject({
+            code: "invalid_request",
+            message:
+                "A notification needs a title of 1 to 80 characters and a body of at most 160.",
+        });
+        await world.settle();
+        expect(relay).toEqual([]);
+    } finally {
+        world.close();
+    }
+});
+
+it("sends the longest title and body, counted in characters, and an empty body", async () => {
+    const world = await startWorld("push-bounds-longest", { team: false });
+    try {
+        await world.push.register(world.ctx, id(1), phone(1));
+        const relay = stubRelay();
+
+        await world.send("standalone", {
+            ...notice,
+            title: "😀".repeat(80),
+            body: "é".repeat(160),
+        });
+        await world.send("standalone", { ...notice, title: "x", body: "" });
+        expect(relay.map((request) => [request.body.title, request.body.body])).toEqual([
+            ["😀".repeat(80), "é".repeat(160)],
+            ["x", ""],
+        ]);
+    } finally {
+        world.close();
+    }
+});
+
 it("sends nothing while the person has turned push off, has no phone, or has only expired ones", async () => {
     const world = await startWorld("push-nothing", { team: false });
     try {

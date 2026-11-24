@@ -53,3 +53,10 @@ units where the cloud counts characters. The module now reads the version in eit
 compares it in lowercase, takes a `null` locale as none, and counts every length with a pattern
 that charges a surrogate pair once. That pattern's alternatives must never overlap: a first draft
 let one pair also match as two single units and took minutes to refuse a 65-emoji string.
+
+## `send` enforces the notification's bounds
+
+The first schema accepted an empty title and 4,096 characters of each line, leaving the limits to
+whatever would call `send` later. The limits belong to the notification, so `send` now refuses a
+title outside 1–80 characters or a body over 160, before anything is recorded. Every caller
+inherits the same contract instead of restating it.

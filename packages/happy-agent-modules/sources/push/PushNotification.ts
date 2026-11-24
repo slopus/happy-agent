@@ -1,13 +1,16 @@
 import { Type, type Static } from "@sinclair/typebox";
 
+import { characterCountPattern } from "./impl/characterCountPattern.js";
+
 /** One thing to tell a person on their phone. */
 export const pushNotificationSchema = Type.Object(
     {
         /** One ID per notification, the same on every phone it reaches, so a phone shows it once. */
         notificationId: Type.String({ minLength: 1, maxLength: 256 }),
-        title: Type.String({ maxLength: 4096 }),
-        /** The second line; empty when there is none. */
-        body: Type.String({ maxLength: 4096 }),
+        /** What happened, in 1–80 characters. */
+        title: Type.String({ pattern: characterCountPattern(1, 80) }),
+        /** The second line, in at most 160 characters; empty when there is none. */
+        body: Type.String({ pattern: characterCountPattern(0, 160) }),
         /** The agent the notification is about, which the phone opens. */
         agentId: Type.String({ minLength: 1, maxLength: 128 }),
         /** A later notification with the same value replaces the earlier one on the phone. */

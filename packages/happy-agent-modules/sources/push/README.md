@@ -51,7 +51,13 @@ platform, appId, locale? }`. It returns `{ id, version, expiresAt }`, with a new
   call still succeeds.
 - `settings(ctx)` and `saveSettings(ctx, settings)` read and replace `{ enabled }`, which is `true`
   until the person turns it off.
-- `send(ctx, recipient, notification)` notifies one person on their phones. See Delivery.
+- `send(ctx, recipient, notification)` notifies one person on their phones. See Delivery. The
+  notification is `{ notificationId, title, body, agentId, collapseId? }`, with a `title` of 1–80
+  characters and a `body` of at most 160, empty when there is no second line. One outside those
+  bounds is refused with `invalid_request` and nothing is recorded.
+
+Every length here counts characters as Happy Cloud does, so one outside the Basic Multilingual
+Plane counts once although it is two UTF-16 units.
 
 A refused operation throws `PushError` with `invalid_request` for a malformed ID, body, or version,
 `not_found` for an `id` that belongs to someone else, and `registrations_full` for a new phone past

@@ -117,9 +117,17 @@ export class PushModule implements AgentModule {
      * Notify one person on their phones. The notification is recorded with the caller's
      * transaction, so it is sent only if that commits, and it survives a restart. Whether the
      * person allows notifications and which phones are registered are read when it is delivered.
-     * Notifications to one person are delivered in the order they were sent.
+     * Notifications to one person are delivered in the order they were sent. A notification
+     * outside the schema's bounds, a title of 1 to 80 characters and a body of at most 160, is
+     * refused here and nothing is recorded.
      */
     async send(ctx: Context, recipient: PushOwner, notification: PushNotification): Promise<void> {
+        if (!Value.Check(pushNotificationSchema, notification)) {
+            throw new PushError(
+                "invalid_request",
+                "A notification needs a title of 1 to 80 characters and a body of at most 160.",
+            );
+        }
         await this.#durableFunctions.invoke(ctx, {
             function: DELIVER_FUNCTION,
             arguments: { recipient, notification } satisfies DeliveryArguments,
