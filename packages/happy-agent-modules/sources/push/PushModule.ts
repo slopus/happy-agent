@@ -1,4 +1,11 @@
-import type { AgentKV, AgentModule } from "@slopus/happy-agent-base";
+import type {
+    AgentKV,
+    AgentModule,
+    AgentModuleHooks,
+    AgentModuleScope,
+    AgentSystemRef,
+    AnyAgentTool,
+} from "@slopus/happy-agent-base";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
@@ -6,6 +13,8 @@ import type { Context } from "@steve.kite/stdlib";
 import { ConfigModule } from "../config/index.js";
 import { DurableFunctionsModule } from "../durableFunctions/index.js";
 import { requireDurableCommit } from "../impl/durableCommit.js";
+import { SubtasksModule } from "../subtasks/index.js";
+import { TasksModule } from "../tasks/index.js";
 import { TeamAuthenticationError, TeamModule, teamUser } from "../team/index.js";
 
 import { pushRelayMessage } from "./impl/pushRelayMessage.js";
@@ -29,8 +38,18 @@ import {
     type PushRegistration,
     type PushSettings,
 } from "./PushRegistration.js";
+import { sendPushNotificationTool } from "./tools/send_push_notification.js";
 
 const DELIVER_FUNCTION = "push.deliver";
+
+/** Where a run keeps what its agent last asked the person to be told. */
+const PENDING_KEY = "pending";
+const pendingSchema = Type.Pick(pushNotificationSchema, ["notificationId", "title", "body"], {
+    additionalProperties: false,
+});
+
+/** How far up its parents an agent is followed to the conversation a person started. */
+const MAX_PARENT_DEPTH = 8;
 
 const deliveryArgumentsSchema = Type.Object(
     { recipient: pushOwnerSchema, notification: pushNotificationSchema },
@@ -46,6 +65,11 @@ type DeliveryArguments = Static<typeof deliveryArgumentsSchema>;
  * from the caller's context, so no caller can name another person's phone. `send` is the one way
  * to notify someone: it records the notification with the caller's transaction and delivers after
  * commit, once per phone, with no retry. The capability is never returned, logged, or announced.
+ *
+ * An agent a person can see says what happened with `send_push_notification`. The module keeps the
+ * last thing said in the agent's run and sends it when that run settles, so nothing is sent while
+ * the agent is still working and nothing at all for a run that was stopped, failed, or cut off by
+ * a restart.
  */
 export class PushModule implements AgentModule {
     readonly name = "push";
@@ -54,11 +78,22 @@ export class PushModule implements AgentModule {
     readonly #team: TeamModule;
     readonly #config: ConfigModule;
     readonly #durableFunctions: DurableFunctionsModule;
+    readonly #tasks: TasksModule;
+    readonly #subtasks: SubtasksModule;
+    #agents: AgentSystemRef | undefined;
 
-    constructor(team: TeamModule, config: ConfigModule, durableFunctions: DurableFunctionsModule) {
+    constructor(
+        team: TeamModule,
+        config: ConfigModule,
+        durableFunctions: DurableFunctionsModule,
+        tasks: TasksModule,
+        subtasks: SubtasksModule,
+    ) {
         this.#team = team;
         this.#config = config;
         this.#durableFunctions = durableFunctions;
+        this.#tasks = tasks;
+        this.#subtasks = subtasks;
         durableFunctions.register({
             name: DELIVER_FUNCTION,
             argumentsSchema: deliveryArgumentsSchema,
@@ -69,6 +104,61 @@ export class PushModule implements AgentModule {
             },
         });
     }
+
+    readonly #hooks: AgentModuleHooks = {
+        /** Only an agent a person can see and talk to may tell them something. */
+        tools: async (ctx: Context, scope: AgentModuleScope): Promise<readonly AnyAgentTool[]> => {
+            if (!(await this.#userVisible(ctx, scope))) return [];
+            return [
+                sendPushNotificationTool(async (toolCtx, said) => {
+                    // The last call of a run wins; nothing leaves before the run settles.
+                    await scope.runKV.write(toolCtx, PENDING_KEY, {
+                        notificationId: said.callId,
+                        title: said.title,
+                        body: said.subtitle ?? "",
+                    } satisfies Static<typeof pendingSchema>);
+                }),
+            ];
+        },
+
+        /**
+         * A run the last process left unfinished resumes here. What it had asked to say is
+         * dropped: the person may have been back since, and a restart must never send a stale
+         * notification. If the resumed run still has something to say, it says it again.
+         */
+        afterAgentActivatedTransact: async (ctx, scope, activation): Promise<void> => {
+            if (activation.restored) await this.#drop(ctx, scope, "restarted");
+        },
+
+        /** A turn someone stopped did not end by the agent's choice, so it tells nobody. */
+        afterTurnTransact: async (ctx, scope, turn): Promise<void> => {
+            if (turn.aborted) await this.#drop(ctx, scope, "stopped");
+        },
+
+        /**
+         * The agent has gone idle. What its run last said is handed to `send` in the transaction
+         * that settles the run and erases the run's store, so it is sent once or not at all.
+         */
+        afterAgentSettledTransact: async (ctx, scope, settlement): Promise<void> => {
+            const pending = await scope.runKV.read(ctx, PENDING_KEY);
+            if (!Value.Check(pendingSchema, pending)) return;
+            const unsent = (outcome: string): void => {
+                ctx.log.info(
+                    `push:notification outcome=${outcome} notificationId=${pending.notificationId} agentId=${scope.agent.id}`,
+                );
+            };
+            if (settlement.error !== undefined) return unsent("run_failed");
+            if (!(await this.#userVisible(ctx, scope))) return unsent("hidden_agent");
+            const recipient = await this.#recipient(ctx, scope.agent.id);
+            if (recipient === undefined) return unsent("no_recipient");
+            await this.send(ctx, recipient, { ...pending, agentId: scope.agent.id });
+        },
+    };
+
+    readonly beforeStart = (_ctx: Context, agents: AgentSystemRef): AgentModuleHooks => {
+        this.#agents = agents;
+        return this.#hooks;
+    };
 
     /**
      * Register the caller's phone under `id`, or renew it for another 30 days under a new
@@ -140,9 +230,14 @@ export class PushModule implements AgentModule {
         { recipient, notification }: DeliveryArguments,
         attempts: AgentKV,
     ): Promise<void> {
-        if (!(await queryPushSettings(ctx, recipient)).enabled) return;
+        const unsent = (outcome: string): void => {
+            ctx.log.info(
+                `push:delivery outcome=${outcome} notificationId=${notification.notificationId} agentId=${notification.agentId}`,
+            );
+        };
+        if (!(await queryPushSettings(ctx, recipient)).enabled) return unsent("disabled");
         const registrations = await queryLivePushRegistrations(ctx, recipient, Date.now());
-        if (registrations.length === 0) return;
+        if (registrations.length === 0) return unsent("no_phones");
         const address = { instanceId: await this.#config.instanceId(), userId: recipient };
         for (const registration of registrations) {
             // A shutdown mid-send keeps the call for the next start, which carries on from here.
@@ -163,6 +258,48 @@ export class PushModule implements AgentModule {
                 `push:delivery outcome=${outcome.kind === "rejected" ? outcome.reason : outcome.kind} registrationId=${registration.id} notificationId=${notification.notificationId} agentId=${notification.agentId}`,
             );
         }
+    }
+
+    /** Forget what the agent's run asked to say, and tell the operator why. */
+    async #drop(ctx: Context, scope: AgentModuleScope, outcome: string): Promise<void> {
+        const pending = await scope.runKV.read(ctx, PENDING_KEY);
+        if (pending === undefined) return;
+        await scope.runKV.delete(ctx, PENDING_KEY);
+        if (!Value.Check(pendingSchema, pending)) return;
+        ctx.log.info(
+            `push:notification outcome=${outcome} notificationId=${pending.notificationId} agentId=${scope.agent.id}`,
+        );
+    }
+
+    /**
+     * Whether a person can see and talk to this agent: a conversation they started themselves,
+     * which has no parent, or a subtask. An agent another agent created to help it is hidden.
+     */
+    async #userVisible(ctx: Context, scope: AgentModuleScope): Promise<boolean> {
+        if (this.#subtasks.isSubtask(scope.agent)) return true;
+        return (await this.#requireAgents().parentOf(ctx, scope.agent.id)) === null;
+    }
+
+    /**
+     * Who an agent works for. Standalone, the installation's one person. In team mode, the owner
+     * of the task at the root of the agent's tree; a bot or a shared conversation there belongs
+     * to no one person, so it has no recipient. An agent never names one.
+     */
+    async #recipient(ctx: Context, agentId: string): Promise<PushOwner | undefined> {
+        if (!this.#team.enabled) return STANDALONE_PUSH_OWNER;
+        const agents = this.#requireAgents();
+        let root = agentId;
+        for (let depth = 0; depth < MAX_PARENT_DEPTH; depth += 1) {
+            const parent = await agents.parentOf(ctx, root);
+            if (parent === null) return (await this.#tasks.forAgent(ctx, root))?.ownerUserId;
+            root = parent;
+        }
+        return undefined;
+    }
+
+    #requireAgents(): AgentSystemRef {
+        if (this.#agents === undefined) throw new Error("Push has not started.");
+        return this.#agents;
     }
 
     #owner(ctx: Context): PushOwner {

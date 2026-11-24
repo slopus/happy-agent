@@ -597,7 +597,6 @@ export async function startHappyAgentRuntime(
         registerShutdown("team", async () => team.close());
         const userSettings = new UserSettingsModule(team);
         const userEnvironment = new UserEnvironmentModule(team, tasks);
-        const push = new PushModule(team, config, durableFunctions);
         const taskAutoJoin = new TaskAutoJoinModule(tasks, team, userSettings, durableFunctions);
         const surfaces = new SurfacesModule(
             durableFunctions,
@@ -666,6 +665,7 @@ export async function startHappyAgentRuntime(
             botSettings,
             runners,
         );
+        const push = new PushModule(team, config, durableFunctions, tasks, subtasks);
         const scheduling = new SchedulingModule(botSettings, history);
         const cleanup = new CleanupModule(
             config,

@@ -19,13 +19,15 @@ const eagerDirectories = [
     "userInput",
 ];
 // Voice receives its whole tool arrays without tool search, every model is offered
-// read_attachment so it can open the files people attach, and the private permission reviewer
-// has no tool search at all.
+// read_attachment so it can open the files people attach, the private permission reviewer
+// has no tool search at all, and an agent must not have to search for the way to tell its person
+// that it is done or stuck.
 const eagerFiles = [
     "attachments/tools/read_attachment.ts",
     "auto/impl/askParentTool.ts",
     "live/impl/voiceSidebarTools.ts",
     "live/impl/liveDesktopTools.ts",
+    "push/tools/send_push_notification.ts",
 ];
 
 interface ToolDefinition {

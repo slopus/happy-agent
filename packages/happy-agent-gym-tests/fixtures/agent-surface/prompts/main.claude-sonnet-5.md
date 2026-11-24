@@ -176,6 +176,7 @@ Tool capabilities:
 - Read and update the user's presence and availability.
 - Create, inspect, update, and clear persistent long-running goals.
 - Inspect agent token and timing usage.
+- Send a push notification to the person you work for.
 - Read live host CPU, GPU, memory, disk, and process usage.
 - Find shared Surfaces and their members.
 - Rename a shared Surface or change or remove its picture.

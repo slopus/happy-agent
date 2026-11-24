@@ -113,6 +113,7 @@ Tool capabilities:
 - Read and update the user's presence and availability.
 - Create, inspect, update, and clear persistent long-running goals.
 - Inspect agent token and timing usage.
+- Send a push notification to the person you work for.
 - See who is on the team and loop a teammate into this task.
 - Read live host CPU, GPU, memory, disk, and process usage.
 - Find shared Surfaces and their members.

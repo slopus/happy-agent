@@ -60,3 +60,41 @@ The first schema accepted an empty title and 4,096 characters of each line, leav
 whatever would call `send` later. The limits belong to the notification, so `send` now refuses a
 title outside 1–80 characters or a body over 160, before anything is recorded. Every caller
 inherits the same contract instead of restating it.
+
+## The agent says what happened; the server decides when it leaves
+
+Kirill pointed out that a local Happy Agent on a desktop with the new native phone app is the
+majority of new users, and they got no push at all: the module could deliver but nothing asked it
+to. Agents now hold `send_push_notification`, with the same name, schema, and description as
+Happy Cloud. His rule for when it is sent: "ONLY send pushes when a top level task or agent
+becomes idle - including subtasks". So the call sends nothing. It leaves a record in the agent's
+run store, the last call of a run wins, and the transaction that settles the run hands the record
+to `send`. An agent that calls it mid-work and keeps going notifies nobody until it stops.
+
+The run store is the right home because Agent Base erases it in the settling transaction: the
+record cannot outlive its run, and the send and the erasure commit together. A separate table
+would have needed its own cleanup on every way a run can end.
+
+## A run that did not end by the agent's choice tells nobody
+
+A run store survives a crash so a resumed run can read it, which would have sent a notification
+written before the restart, possibly hours later. The record is dropped when a run is restored by
+a new process, when a turn is stopped, and when the run settles with an error. The resumed run can
+call the tool again. Dropping on a stop follows the collaboration module, whose interrupted run
+owes its creator no report either.
+
+## Only agents a person can see hold the tool
+
+The tool is offered to an agent with no parent, or a subtask. The API projects `userVisible` from
+list membership that only it can read; the facts underneath are that every root agent was started
+by a person, the API, a task, or a bot, and that a child agent is hidden unless Subtasks made it.
+Hidden helpers cannot call the tool at all, so "a forced call reads ok" from the cloud's contract
+is not reachable here: Agent Base refuses a tool the agent does not hold. The settling hook checks
+visibility again so a record on a hidden agent can never send.
+
+## The agent never learns the outcome, so the operator must
+
+The tool answers `{ "ok": true }` whatever happens next, and the first version of delivery returned
+silently when the person had turned notifications off or had no phone. Nobody could then tell why
+a notification did not arrive. Every such ending now writes one log line with the notification and
+agent IDs. The title and subtitle never reach a log.

@@ -7,6 +7,8 @@ import { vi } from "vitest";
 import type { ConfigModule } from "../../../sources/config/index.js";
 import { DurableFunctionsModule } from "../../../sources/durableFunctions/index.js";
 import { PushModule, type PushNotification } from "../../../sources/push/index.js";
+import type { SubtasksModule } from "../../../sources/subtasks/index.js";
+import type { TasksModule } from "../../../sources/tasks/index.js";
 import { TeamModule, withTeamUser, type TeamUser } from "../../../sources/team/index.js";
 import {
     pendingCallCount,
@@ -73,9 +75,35 @@ export function stubRelay(
     return requests;
 }
 
+/** Whose agents these are: nobody's task, no subtasks, and no parents unless a test says so. */
+export interface PushWorldAgents {
+    /** Each agent's parent; an agent not listed is a root. */
+    readonly parents?: Readonly<Record<string, string>>;
+    /** The agents that are user-visible subtasks. */
+    readonly subtasks?: readonly string[];
+    /** The team user who owns the task whose agent this is. */
+    readonly taskOwners?: Readonly<Record<string, string>>;
+}
+
+function pushModule(team: boolean, durable: DurableFunctionsModule, agents: PushWorldAgents = {}) {
+    const tasks = {
+        forAgent: (_ctx: Context, agentId: string) =>
+            Promise.resolve(
+                agents.taskOwners?.[agentId] === undefined
+                    ? undefined
+                    : { ownerUserId: agents.taskOwners[agentId] },
+            ),
+    } as unknown as TasksModule;
+    const subtasks = {
+        isSubtask: (agent: { readonly id?: string } | undefined) =>
+            agent?.id !== undefined && (agents.subtasks ?? []).includes(agent.id),
+    } as unknown as SubtasksModule;
+    return new PushModule(createTeam(team), config, durable, tasks, subtasks);
+}
+
 export function pushDatabase(name: string): ModuleDatabase {
     const durable = new DurableFunctionsModule();
-    const push = new PushModule(createTeam(false), config, durable);
+    const push = pushModule(false, durable);
     const database = moduleDatabase([...durable.migrations, ...push.migrations], name);
     ensureAgentDatabaseConnection(database.database);
     return database;
@@ -84,10 +112,14 @@ export function pushDatabase(name: string): ModuleDatabase {
 /** A push module on a started Durable Functions module, as the daemon runs them. */
 export async function startWorld(
     name: string,
-    options: { readonly team: boolean; readonly database?: ModuleDatabase },
+    options: {
+        readonly team: boolean;
+        readonly database?: ModuleDatabase;
+        readonly agents?: PushWorldAgents;
+    },
 ) {
     const durable = new DurableFunctionsModule();
-    const push = new PushModule(createTeam(options.team), config, durable);
+    const push = pushModule(options.team, durable, options.agents);
     const database = options.database ?? pushDatabase(name);
     await database.ready;
     const logs: string[] = [];
@@ -102,14 +134,20 @@ export async function startWorld(
         error: record,
         fatal: record,
     });
-    const agents = {} as AgentSystemRef;
-    const hooks = await resolveModuleHooks(ctx, durable, agents);
-    await hooks.afterStart?.(ctx, agents);
+    const agents = {
+        parentOf: (_ctx: Context, agentId: string) =>
+            Promise.resolve(options.agents?.parents?.[agentId] ?? null),
+    } as unknown as AgentSystemRef;
+    const durableHooks = await resolveModuleHooks(ctx, durable, agents);
+    const hooks = await resolveModuleHooks(ctx, push, agents);
+    await durableHooks.afterStart?.(ctx, agents);
     const settle = async () => {
         await waitForCondition(async () => (await pendingCallCount(ctx)) === 0);
     };
     return {
         push,
+        /** The push module's agent hooks, as the agent loop calls them. */
+        hooks,
         ctx,
         logs,
         settle,

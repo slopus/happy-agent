@@ -10,6 +10,7 @@
   "clear_goal",
   "get_usage",
   "get_agent_tree_usage",
+  "send_push_notification",
   "read_system_monitor",
   "list_surfaces",
   "update_surface",

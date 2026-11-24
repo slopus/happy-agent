@@ -11,6 +11,7 @@
   "get_usage",
   "get_agent_tree_usage",
   "get_local_profile",
+  "send_push_notification",
   "read_system_monitor",
   "list_surfaces",
   "update_surface",
