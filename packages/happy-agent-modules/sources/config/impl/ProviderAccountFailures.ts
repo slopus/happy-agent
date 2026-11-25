@@ -26,6 +26,8 @@ export class ProviderAccountFailures {
          * that it rejected it. Other failures prove nothing and are not reported.
          */
         readonly onSignIn?: (providerId: string, signIn: ProviderSignInObservation) => void,
+        /** Told each time the account answered a request completely. */
+        readonly onServed?: (providerId: string) => void,
     ) {}
 
     /** Learn from one terminal inference event of this concrete account. */
@@ -33,6 +35,7 @@ export class ProviderAccountFailures {
         if (event.state === "normal" || event.state === "tool_call") {
             this.#failedAt.delete(providerId);
             this.onSignIn?.(providerId, "signed_in");
+            this.onServed?.(providerId);
             return;
         }
         const type = event.state === "error" ? event.providerError?.type : undefined;

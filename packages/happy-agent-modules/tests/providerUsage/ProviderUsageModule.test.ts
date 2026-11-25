@@ -76,6 +76,8 @@ async function createHarness(options: { sources?: readonly string[]; start?: boo
     const probe = vi
         .spyOn(config, "probeLocalProviderCredentials")
         .mockImplementation(async () => credentials);
+    // The machine's own vendor logins must never leak into a test.
+    vi.spyOn(config, "providerLogin").mockResolvedValue(null);
     const module = new ProviderUsageModule(config);
     const events: ProviderUsageEntry[] = [];
     module.onChanged((entry) => events.push(entry));

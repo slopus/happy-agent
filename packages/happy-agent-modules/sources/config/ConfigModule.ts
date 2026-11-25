@@ -56,6 +56,7 @@ import { parse, stringify, TomlDate, type TomlTable, type TomlValue } from "smol
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
 import { normalizeClaudeSetupToken } from "./ClaudeSetupToken.js";
 import type { ProviderCredentialSource } from "./ProviderCredentialSource.js";
+import type { ProviderLoginChange } from "./ProviderLoginChange.js";
 import type {
     HarnessPermissionAsker,
     HarnessPermissionDecision,
@@ -91,7 +92,15 @@ import {
     foreignAgentRoutes,
     foreignAgentStart,
 } from "./impl/createForeignAgentProvider.js";
-import { describeCredentialRefreshFailure } from "./impl/describeCredentialRefreshFailure.js";
+import {
+    describeCredentialRefreshFailure,
+    readCredentialRefreshFailure,
+} from "./impl/describeCredentialRefreshFailure.js";
+import {
+    readProviderLogin,
+    type ProviderLoginLocation,
+    type ProviderLoginTimes,
+} from "./impl/readProviderLogin.js";
 import { refreshForeignAgentModels } from "./impl/foreignAgentModels.js";
 import { refreshOpenAICompatibleMetadata } from "./impl/openAICompatibleModels.js";
 import { readAntigravityUsage, type HarnessUsageWindow } from "./impl/harnessUsage.js";
@@ -1736,12 +1745,20 @@ export class ConfigModule implements AgentModule {
     readonly #credentialFailures = new ProviderCredentialFailures(Date.now, (providerId) => {
         this.#reportSignIn(providerId, "signed_out");
     });
-    readonly #accountFailures = new ProviderAccountFailures(Date.now, (providerId, signIn) => {
-        this.#reportSignIn(providerId, signIn);
-    });
+    readonly #accountFailures = new ProviderAccountFailures(
+        Date.now,
+        (providerId, signIn) => {
+            this.#reportSignIn(providerId, signIn);
+        },
+        (providerId) => {
+            this.#report(this.#servedListeners, (listener) => listener(providerId));
+        },
+    );
     readonly #signInListeners = new Set<
         (providerId: string, signIn: ProviderSignInObservation) => void
     >();
+    readonly #servedListeners = new Set<(providerId: string) => void>();
+    readonly #loginListeners = new Set<(providerId: string, change: ProviderLoginChange) => void>();
 
     /**
      * The typed details of a failure configuration raised because a provider had no credential,
@@ -3391,6 +3408,77 @@ export class ConfigModule implements AgentModule {
         this.#runtimeValues = next;
         this.#configuration = configuration;
         this.#credentialFailures.clear(providerId);
+        this.#report(this.#loginListeners, (listener) =>
+            listener(providerId, { kind: "signed_in" }),
+        );
+    }
+
+    /**
+     * The login one account is configured to use, found the way its provider finds it: a
+     * configured key or token outranks a stored sign-in, and an account without credential
+     * isolation falls back to the vendor CLI's own sign-in. Undefined for an account that cannot
+     * sign in at all.
+     */
+    #providerLoginLocation(providerId: string): ProviderLoginLocation | undefined {
+        const provider = this.configuration.values.providers[providerId];
+        const environment = this.processEnvironment;
+        const home = environment.HOME?.trim() || homedir();
+        const ambient = !(
+            provider !== undefined &&
+            "credentialIsolation" in provider &&
+            provider.credentialIsolation === true
+        );
+        switch (provider?.type) {
+            case "codex": {
+                if (provider.apiKey !== undefined) return { kind: "none" };
+                if (provider.authFile !== undefined) {
+                    return { kind: "codex", authFile: provider.authFile };
+                }
+                if (!ambient) return { kind: "none" };
+                const directory = environment.CODEX_HOME?.trim();
+                return {
+                    kind: "codex",
+                    authFile: join(directory || join(home, ".codex"), "auth.json"),
+                };
+            }
+            case "grok": {
+                if (provider.apiKey !== undefined) return { kind: "none" };
+                if (ambient && (environment.XAI_API_KEY?.trim().length ?? 0) > 0) {
+                    return { kind: "none" };
+                }
+                if (provider.authFile !== undefined) {
+                    return { kind: "grok", authFile: provider.authFile };
+                }
+                if (!ambient) return { kind: "none" };
+                const directory = environment.GROK_HOME?.trim();
+                return {
+                    kind: "grok",
+                    authFile: join(directory || join(home, ".grok"), "auth.json"),
+                };
+            }
+            case "claude": {
+                if (provider.oauthToken !== undefined) return { kind: "setup_token" };
+                if (ambient && (environment.CLAUDE_CODE_OAUTH_TOKEN?.trim().length ?? 0) > 0) {
+                    return { kind: "setup_token" };
+                }
+                if (provider.apiKey !== undefined || provider.authToken !== undefined) {
+                    return { kind: "none" };
+                }
+                const configDir =
+                    provider.configDir ??
+                    (ambient ? environment.CLAUDE_CONFIG_DIR?.trim() || undefined : undefined);
+                if (configDir === undefined && !ambient) return { kind: "none" };
+                return {
+                    kind: "claude",
+                    configDir,
+                    defaultConfigDir: join(home, ".claude"),
+                    customOAuth: (environment.CLAUDE_CODE_CUSTOM_OAUTH_URL?.length ?? 0) > 0,
+                    user: environment.USER,
+                };
+            }
+            default:
+                return undefined;
+        }
     }
 
     /** One account's sign-in folders: a readable name when its ID is safe, a hash otherwise. */
@@ -3654,6 +3742,37 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
+     * Watch each complete response a concrete account serves, the moment it finishes. Returns the
+     * function that ends the subscription.
+     */
+    onProviderAccountServed(listener: (providerId: string) => void): () => void {
+        this.#servedListeners.add(listener);
+        return () => this.#servedListeners.delete(listener);
+    }
+
+    /**
+     * Watch what happens to each account's stored login: background renewals succeeding or failing,
+     * and new credentials replacing it. Returns the function that ends the subscription.
+     */
+    onProviderLoginChanged(
+        listener: (providerId: string, change: ProviderLoginChange) => void,
+    ): () => void {
+        this.#loginListeners.add(listener);
+        return () => this.#loginListeners.delete(listener);
+    }
+
+    /**
+     * When the login an account uses was last renewed and when its access token expires, read
+     * from that credential itself. Undefined for an account that cannot sign in; null for one
+     * that uses no login, such as an API key, or whose login is missing.
+     */
+    async providerLogin(providerId: string): Promise<ProviderLoginTimes | null | undefined> {
+        const location = this.#providerLoginLocation(providerId);
+        if (location === undefined) return undefined;
+        return (await readProviderLogin(location)) ?? null;
+    }
+
+    /**
      * Put what foreign agents' own permission systems ask to the person with `asker`, the module
      * that owns asking. Until one is set, such an ask is refused. Returns the function that stops
      * it.
@@ -3717,11 +3836,16 @@ export class ConfigModule implements AgentModule {
 
     /** Sign-in state is bookkeeping too; a listener that throws never breaks inference. */
     #reportSignIn(providerId: string, signIn: ProviderSignInObservation): void {
-        for (const listener of this.#signInListeners) {
+        this.#report(this.#signInListeners, (listener) => listener(providerId, signIn));
+    }
+
+    /** Tell bookkeeping listeners something; one that throws never breaks the work reporting. */
+    #report<Listener>(listeners: Set<Listener>, call: (listener: Listener) => void): void {
+        for (const listener of listeners) {
             try {
-                listener(providerId, signIn);
+                call(listener);
             } catch {
-                // A sign-in listener never decides whether inference continues.
+                // A bookkeeping listener never decides whether inference or maintenance continues.
             }
         }
     }
@@ -3878,6 +4002,9 @@ export class ConfigModule implements AgentModule {
                     return;
                 if (configured.type !== "codex" && configured.type !== "grok") return;
                 if (configured.apiKey !== undefined) return;
+                // Only the renewal itself is reported as a refresh outcome: an account whose
+                // credential cannot even be loaded is signed out, which inference already says.
+                let renewing = false;
                 try {
                     // Use exactly the same account construction, isolation, and credential precedence
                     // as inference. Scripted providers and static keys have no maintenance surface.
@@ -3896,11 +4023,18 @@ export class ConfigModule implements AgentModule {
                         ctx.lifetime === undefined
                             ? this.#providerLifetime.signal
                             : AbortSignal.any([ctx.lifetime, this.#providerLifetime.signal]);
+                    renewing = true;
                     const refreshed = await credential.refreshForMaintenance({ signal });
-                    if (!refreshed && !signal.aborted) {
+                    if (signal.aborted) return;
+                    if (refreshed) {
+                        this.#report(this.#loginListeners, (listener) =>
+                            listener(id, { kind: "refreshed" }),
+                        );
+                    } else {
                         ctx.log.warn(
                             `Could not refresh the sign-in for provider "${id}" in the background.`,
                         );
+                        this.#reportRefreshFailure(id, undefined);
                     }
                 } catch (error) {
                     // Vendor diagnostics and credential-file parse failures can contain secrets, so
@@ -3910,10 +4044,23 @@ export class ConfigModule implements AgentModule {
                         ctx.log.warn(
                             `Could not refresh the sign-in for provider "${id}" in the background${describeCredentialRefreshFailure(error)}`,
                         );
+                        if (renewing) this.#reportRefreshFailure(id, error);
                     }
                 }
             }),
         );
+    }
+
+    /** Tell login listeners a renewal failed, with only what its error may safely say. */
+    #reportRefreshFailure(providerId: string, error: unknown): void {
+        const failure = readCredentialRefreshFailure(error);
+        const change: ProviderLoginChange = {
+            kind: "refresh_failed",
+            status: failure?.status ?? null,
+            code: failure?.code ?? null,
+            permanent: failure?.permanent ?? false,
+        };
+        this.#report(this.#loginListeners, (listener) => listener(providerId, change));
     }
 
     /**

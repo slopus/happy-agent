@@ -236,6 +236,70 @@ describe("configuration-owned credential maintenance", () => {
         ]);
     });
 
+    it("tells login listeners how each renewal ended, but not when the credential cannot load", async () => {
+        const config = await fixture("[providers.codex]\nenabled = true");
+        const credential = CodexSessionCredential.fromAuth(
+            { accessToken: "fixture" },
+            { authFile: "/not-used" },
+        );
+        const resolve = vi
+            .spyOn(config, "resolveProviderUnchecked")
+            .mockResolvedValue(new CodexProvider({ credential }));
+        const failure = Object.assign(new Error("DO_NOT_REPORT_THIS_SECRET"), {
+            status: 401,
+            code: "refresh_token_reused",
+            permanent: true,
+        });
+        vi.spyOn(credential, "refreshForMaintenance")
+            .mockRejectedValueOnce(failure)
+            .mockRejectedValueOnce(new Error("DO_NOT_REPORT_THIS_SECRET"))
+            .mockResolvedValueOnce(credential);
+        const changes: unknown[] = [];
+        config.onProviderLoginChanged((providerId, change) => changes.push({ providerId, change }));
+        for (let pass = 0; pass < 3; pass++) await config.refreshProviderCredentials(ctx);
+        resolve.mockRejectedValueOnce(new Error("The Codex sign-in is missing."));
+        await config.refreshProviderCredentials(ctx);
+
+        expect(changes).toEqual([
+            {
+                providerId: "codex",
+                change: {
+                    kind: "refresh_failed",
+                    status: 401,
+                    code: "refresh_token_reused",
+                    permanent: true,
+                },
+            },
+            {
+                providerId: "codex",
+                change: { kind: "refresh_failed", status: null, code: null, permanent: false },
+            },
+            { providerId: "codex", change: { kind: "refreshed" } },
+        ]);
+        expect(JSON.stringify(changes)).not.toContain("DO_NOT_REPORT");
+    });
+
+    it("reports a Grok renewal that returned no credential as a failure without a status", async () => {
+        const config = await fixture("[providers.grok]\nenabled = true");
+        const provider = await grokProvider();
+        vi.spyOn(config, "resolveProviderUnchecked").mockResolvedValue(provider);
+        vi.spyOn(provider.credential as GrokSessionCredential, "refreshForMaintenance")
+            .mockResolvedValueOnce(false)
+            .mockResolvedValueOnce(true);
+        const changes: unknown[] = [];
+        config.onProviderLoginChanged((providerId, change) => changes.push({ providerId, change }));
+        await config.refreshProviderCredentials(ctx);
+        await config.refreshProviderCredentials(ctx);
+
+        expect(changes).toEqual([
+            {
+                providerId: "grok",
+                change: { kind: "refresh_failed", status: null, code: null, permanent: false },
+            },
+            { providerId: "grok", change: { kind: "refreshed" } },
+        ]);
+    });
+
     it("does not mistake an environment API key for a refreshable session", async () => {
         const config = await fixture("[providers.codex]\nenabled = true");
         const credential = await CodexApiKeyCredential.tryLoad({ apiKey: "fixture" });

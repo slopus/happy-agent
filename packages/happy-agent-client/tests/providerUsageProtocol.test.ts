@@ -63,6 +63,45 @@ describe("provider-account usage protocol", () => {
         expect(Value.Check(providerUsageUpdatedPayloadSchema, withoutRefreshing)).toBe(false);
     });
 
+    it("carries when an account was last used and how its login stands", () => {
+        const login = {
+            refreshedAt: 1_755_390_000_000,
+            expiresAt: 1_755_426_000_000,
+            refreshError: {
+                status: 401,
+                code: "refresh_token_expired",
+                permanent: true,
+                since: 1_755_300_000_000,
+                at: 1_755_399_000_000,
+            },
+        };
+        const withActivity = { ...state, lastUsedAt: 1_755_399_900_000, login };
+
+        expect(Value.Check(providerUsageUpdatedPayloadSchema, withActivity)).toBe(true);
+        expect(
+            Value.Check(providerUsageUpdatedPayloadSchema, {
+                ...state,
+                lastUsedAt: null,
+                login: null,
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(providerUsageUpdatedPayloadSchema, {
+                ...withActivity,
+                login: { ...login, refreshError: { ...login.refreshError, since: undefined } },
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(providerUsageEntrySchema, {
+                ...withActivity,
+                type: "claude",
+                enabled: true,
+                models: [],
+                login: { refreshedAt: null, expiresAt: null, refreshError: null },
+            }),
+        ).toBe(true);
+    });
+
     it("still accepts a usage entry from a protocol-28 daemon", () => {
         const entry = {
             providerId: "codex",

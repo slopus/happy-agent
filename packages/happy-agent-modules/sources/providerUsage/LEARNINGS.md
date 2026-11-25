@@ -84,3 +84,14 @@ failed. `requestRefresh` now returns every selected account in `started` or `ski
 with one closed-union reason and `until` when the reason has an end. `force` drops only the age
 floor and the probe budget; blocked-until-reset and `retryAt` still apply, because Kirill asked that
 nothing be read before the window and the vendor's deadline is the vendor's.
+
+## Settings show an account's last use and login, and remember them
+
+The settings account list needed "Used 4m ago · refreshed 2h ago" or "Needs sign-in since Nov 9",
+which no usage reading can say. Steve asked for `lastUsedAt` and `login` on Claude, Codex, and
+Grok entries. `lastUsedAt` and the renewal failure streak (`since` included) persist in a
+module-owned table, so a restart neither forgets an account's last use nor restarts a streak.
+`login` times are read from the credential the account actually uses, never stored, and never
+carry token contents. Uses are announced at most once a minute per account, so a busy turn does not
+flood `provider.usage.updated`. A credential renewed after the latest failure, by inference or the
+vendor's own program, ends the streak, since only background renewals report their outcome.

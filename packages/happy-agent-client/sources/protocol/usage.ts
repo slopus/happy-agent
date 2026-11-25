@@ -71,9 +71,45 @@ export const providerAccountSignInSchema = Type.Union([
 ]);
 export type ProviderAccountSignIn = Static<typeof providerAccountSignInSchema>;
 
+/** The latest failed renewal of an account's login in its current failure streak. */
+export const providerAccountRefreshErrorSchema = Type.Object({
+    /** The HTTP status of the refusal, or `null` when the renewal failed without one. */
+    status: Nullable(Type.Integer()),
+    /** The vendor's OAuth error code, only when it matches `^[a-z0-9_]{1,64}$`. */
+    code: Nullable(Type.String()),
+    /** Only a new sign-in can restore the login. */
+    permanent: Type.Boolean(),
+    /** The first failure of this streak. */
+    since: Type.Number(),
+    /** The latest failure. */
+    at: Type.Number(),
+});
+export type ProviderAccountRefreshError = Static<typeof providerAccountRefreshErrorSchema>;
+
+/** An account's stored login, read from the credential it actually uses; never its contents. */
+export const providerAccountLoginSchema = Type.Object({
+    /** The last successful renewal or sign-in, or `null` when the credential does not say. */
+    refreshedAt: Nullable(Type.Number()),
+    /** When the current access token expires, or `null` when unknown or non-expiring. */
+    expiresAt: Nullable(Type.Number()),
+    /** `null` after any successful renewal or new sign-in. */
+    refreshError: Nullable(providerAccountRefreshErrorSchema),
+});
+export type ProviderAccountLogin = Static<typeof providerAccountLoginSchema>;
+
 const providerAccountSignInFieldSchema = Type.Object({
     /** Absent for a smart provider and from older daemons; clients treat absent as `unknown`. */
     signIn: Type.Optional(providerAccountSignInSchema),
+    /**
+     * When the account last served a complete response. Present for Claude, Codex, and Grok
+     * accounts; absent for other types and from older daemons.
+     */
+    lastUsedAt: Type.Optional(Nullable(Type.Number())),
+    /**
+     * The account's stored login, or `null` when it uses none, such as an API key, or its
+     * credential is missing. Present exactly when `lastUsedAt` is.
+     */
+    login: Type.Optional(Nullable(providerAccountLoginSchema)),
 });
 
 const providerAccountReadStateSchema = Type.Object({
@@ -108,8 +144,8 @@ export const providerAccountUsageStateSchema = Type.Composite([
 export type ProviderAccountUsageState = Static<typeof providerAccountUsageStateSchema>;
 
 /**
- * The `provider.usage.updated` payload: every read-state field is always sent, while `signIn` stays
- * optional because smart providers and older daemons omit it.
+ * The `provider.usage.updated` payload: every read-state field is always sent, while `signIn`,
+ * `lastUsedAt`, and `login` stay optional because some accounts and older daemons omit them.
  */
 export const providerAccountUsageSnapshotSchema = Type.Composite([
     Type.Required(providerAccountReadStateSchema),

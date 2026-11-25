@@ -1,4 +1,4 @@
-import type { AgentModule } from "@slopus/happy-agent-base";
+import { agentDatabase, withAgentDatabase, type AgentModule } from "@slopus/happy-agent-base";
 import {
     ProviderUsageRequestError,
     type ClaudeUsageEndpointRefusal,
@@ -15,7 +15,18 @@ import {
     type Context,
 } from "@steve.kite/stdlib";
 
-import { ConfigModule, type ProviderSignInObservation } from "../config/index.js";
+import {
+    ConfigModule,
+    type ProviderLoginChange,
+    type ProviderLoginTimes,
+    type ProviderSignInObservation,
+} from "../config/index.js";
+import {
+    providerAccountActivityMigrations,
+    readProviderAccountActivity,
+    writeProviderAccountActivity,
+    type ProviderAccountRefreshError,
+} from "./persistence/accountActivity.js";
 import {
     providerAccountState,
     windowsOf,
@@ -48,6 +59,24 @@ const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 const NOT_REPORTED = "The provider did not report account usage.";
 /** How long a read that returned nothing may spend looking for the account's credential locally. */
 const CREDENTIAL_PROBE_TIMEOUT_MS = 10_000;
+/** The most often one account's `lastUsedAt` is announced and remembered. */
+export const PROVIDER_LAST_USED_INTERVAL_MS = 60_000;
+/** How long startup waits for the accounts' stored logins before serving without them. */
+const LOGIN_STARTUP_TIMEOUT_MS = 2_000;
+/** The provider types that sign in to an account, and so have a login to describe. */
+const LOGIN_PROVIDER_TYPES = new Set(["claude", "codex", "grok"]);
+
+export type { ProviderAccountRefreshError } from "./persistence/accountActivity.js";
+
+/** An account's stored login, read from the credential it uses, without any of its secrets. */
+export interface ProviderAccountLogin {
+    /** When the login was last renewed or signed in, or null when its credential does not say. */
+    readonly refreshedAt: number | null;
+    /** When its current access token expires, or null when unknown or non-expiring. */
+    readonly expiresAt: number | null;
+    /** The latest failed renewal of the current failure streak; null after any success. */
+    readonly refreshError: ProviderAccountRefreshError | null;
+}
 
 /** An account's sign-in as the daemon last learned it; `unknown` until something tells. */
 export type ProviderAccountSignIn = ProviderSignInObservation | "unknown";
@@ -69,6 +98,13 @@ export interface ProviderUsageEntry {
     readonly refreshing: boolean;
     /** The account's sign-in; absent for a smart provider, which is not an account. */
     readonly signIn?: ProviderAccountSignIn;
+    /**
+     * When the account last served a complete response. Present, possibly null, exactly for
+     * Claude, Codex, and Grok accounts, like `login`.
+     */
+    readonly lastUsedAt?: number | null;
+    /** The account's stored login, or null when it uses none, such as an API key. */
+    readonly login?: ProviderAccountLogin | null;
 }
 
 export interface ProviderUsageRefreshOptions {
@@ -121,6 +157,7 @@ interface ResetRecheck {
 /** Keeps the latest advisory account-usage reading for every configured provider in memory. */
 export class ProviderUsageModule implements AgentModule {
     readonly name = "providerUsage";
+    readonly migrations = providerAccountActivityMigrations;
 
     readonly #config: ConfigModule;
     readonly #entries: Map<string, ProviderUsageEntry>;
@@ -141,6 +178,18 @@ export class ProviderUsageModule implements AgentModule {
     /** When inference last reported each account refused, which a windowless reading cannot date. */
     readonly #refusedAt = new Map<string, number>();
     readonly #closing = new AbortController();
+    /** Serializes every change to `lastUsedAt` and `login`, each remembered before announced. */
+    readonly #activity = asyncQueue();
+    /** The context activity is remembered in: the daemon database, outliving any request. */
+    #activityContext: Context | undefined;
+    /** The latest failed renewal of each account's current failure streak, as remembered. */
+    readonly #refreshErrors = new Map<string, ProviderAccountRefreshError>();
+    /** Uses not yet announced, by account, with when each account's use was last announced. */
+    readonly #pendingUse = new Map<string, number>();
+    readonly #usedAnnouncedAt = new Map<string, number>();
+    readonly #useTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    /** While startup reads the stored logins, what they find is the entries' start, not news. */
+    #loadingActivity = false;
     #backgroundContext: Context | undefined;
     readonly #unsubscribe: (() => void)[] = [];
     #started = false;
@@ -164,16 +213,25 @@ export class ProviderUsageModule implements AgentModule {
                     ...(config.configuration.values.providers[providerId]?.type === "smart"
                         ? {}
                         : { signIn: "unknown" as const }),
+                    ...(LOGIN_PROVIDER_TYPES.has(
+                        config.configuration.values.providers[providerId]?.type ?? "",
+                    )
+                        ? { lastUsedAt: null, login: null }
+                        : {}),
                 },
             ]),
         );
         this.#queues = new Map(providerIds.map((providerId) => [providerId, asyncQueue()]));
     }
 
-    readonly beforeStart = (ctx: Context): void => {
+    readonly beforeStart = async (ctx: Context): Promise<void> => {
         if (this.#started) return;
         this.#started = true;
         this.#backgroundContext = this.#ownContext(ctx);
+        const database = agentDatabase(ctx);
+        const activityContext = detach(ctx).named("provider-account-activity");
+        this.#activityContext =
+            database === undefined ? activityContext : withAgentDatabase(activityContext, database);
         // A vendor that measures the account on every response is the better source: the reading
         // is current, it costs nothing, and it cannot be rate limited. Polling remains for the
         // cold start and for vendors that only answer when asked.
@@ -186,7 +244,17 @@ export class ProviderUsageModule implements AgentModule {
             this.#config.onProviderSignIn((providerId, signIn) => {
                 this.#observeSignIn(providerId, signIn);
             }),
+            // Settings show when each account was last used and how its login stands.
+            this.#config.onProviderAccountServed((providerId) => {
+                this.#observeUse(providerId);
+            }),
+            this.#config.onProviderLoginChanged((providerId, change) => {
+                this.#observeLogin(providerId, change);
+            }),
         );
+        // What was remembered and each stored login are where the entries start, not changes, so
+        // they are in place before any read is announced.
+        await this.#loadActivity(ctx);
         // The loops end with the runtime or with this module, whichever closes first.
         const loopCtx = withLifetime(ctx, this.#lifetime(ctx));
         for (const providerId of this.#entries.keys()) {
@@ -379,6 +447,194 @@ export class ProviderUsageModule implements AgentModule {
         const previous = this.#entries.get(providerId);
         if (previous?.signIn === undefined || previous.signIn === signIn) return;
         this.#set({ ...previous, signIn });
+        // Whatever changed the sign-in may have changed the stored login too.
+        if (previous.login !== undefined && !this.#closed) {
+            this.#track(this.#updateActivity(providerId));
+        }
+    }
+
+    /**
+     * Note that an account served a response. Announcing every response would flood clients
+     * during a busy turn, so an account's `lastUsedAt` moves at most once a minute; the latest
+     * use within that minute is announced when it ends.
+     */
+    #observeUse(providerId: string): void {
+        if (this.#entries.get(providerId)?.lastUsedAt === undefined || this.#closed) return;
+        const now = Date.now();
+        this.#pendingUse.set(providerId, now);
+        if (this.#useTimers.has(providerId)) return;
+        const wait =
+            (this.#usedAnnouncedAt.get(providerId) ?? -Infinity) +
+            PROVIDER_LAST_USED_INTERVAL_MS -
+            now;
+        if (wait <= 0) {
+            void this.#announceUse(providerId);
+            return;
+        }
+        const timer = setTimeout(() => {
+            this.#useTimers.delete(providerId);
+            void this.#announceUse(providerId);
+        }, wait);
+        timer.unref?.();
+        this.#useTimers.set(providerId, timer);
+    }
+
+    #announceUse(providerId: string): Promise<void> {
+        const at = this.#pendingUse.get(providerId);
+        if (at === undefined) return Promise.resolve();
+        this.#pendingUse.delete(providerId);
+        this.#usedAnnouncedAt.set(providerId, Date.now());
+        const work = this.#updateActivity(providerId, { lastUsedAt: at });
+        this.#track(work);
+        return work;
+    }
+
+    /**
+     * Record what happened to an account's stored login. A failed renewal extends the current
+     * failure streak, or starts one; a renewal that succeeded or a new credential ends it.
+     */
+    #observeLogin(providerId: string, change: ProviderLoginChange): void {
+        if (this.#entries.get(providerId)?.login === undefined || this.#closed) return;
+        if (change.kind !== "refresh_failed") {
+            this.#track(this.#updateActivity(providerId, { refreshError: () => null }));
+            return;
+        }
+        const at = Date.now();
+        this.#track(
+            this.#updateActivity(providerId, {
+                refreshError: (remembered) => ({
+                    status: change.status,
+                    code: change.code,
+                    permanent: change.permanent,
+                    since: remembered?.since ?? at,
+                    at,
+                }),
+            }),
+        );
+    }
+
+    /**
+     * Restore what the daemon remembered about each account, then read every stored login, without
+     * announcing either. Startup waits only briefly; a login read after that is announced.
+     */
+    async #loadActivity(ctx: Context): Promise<void> {
+        const activityContext = this.#activityContext;
+        const providerIds = [...this.#entries.values()]
+            .filter((entry) => entry.login !== undefined)
+            .map((entry) => entry.providerId);
+        if (activityContext === undefined || providerIds.length === 0) return;
+        this.#loadingActivity = true;
+        try {
+            await this.#activity.runInLock(activityContext, async () => {
+                const remembered = await readProviderAccountActivity(activityContext, providerIds);
+                for (const [providerId, activity] of remembered) {
+                    if (activity.refreshError !== null) {
+                        this.#refreshErrors.set(providerId, activity.refreshError);
+                    }
+                    const current = this.#current(providerId);
+                    if (activity.lastUsedAt !== null && current.lastUsedAt === null) {
+                        this.#entries.set(providerId, {
+                            ...current,
+                            lastUsedAt: activity.lastUsedAt,
+                        });
+                    }
+                }
+            });
+        } catch (error) {
+            ctx.log.warn("Could not read the remembered provider account activity.", {}, error);
+        }
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const logins = Promise.allSettled(
+            providerIds.map(async (providerId) => {
+                const work = this.#updateActivity(providerId);
+                this.#track(work);
+                await work;
+            }),
+        );
+        await Promise.race([
+            logins,
+            new Promise<void>((resolve) => {
+                timeout = setTimeout(resolve, LOGIN_STARTUP_TIMEOUT_MS);
+                timeout.unref?.();
+            }),
+        ]);
+        clearTimeout(timeout);
+        // A read that outlasted the wait finds this cleared and is announced like any change.
+        this.#loadingActivity = false;
+    }
+
+    /**
+     * Apply one change to an account's activity and read its stored login again. The result is
+     * remembered before it is announced, and announced only when something a client sees
+     * changed. Changes run one at a time, so a failure streak's start is never lost.
+     */
+    async #updateActivity(
+        providerId: string,
+        change: {
+            readonly lastUsedAt?: number;
+            readonly refreshError?: (
+                remembered: ProviderAccountRefreshError | null,
+            ) => ProviderAccountRefreshError | null;
+        } = {},
+    ): Promise<void> {
+        const ctx = this.#activityContext;
+        if (ctx === undefined) return;
+        try {
+            await this.#activity.runInLock(ctx, async () => {
+                const previous = this.#current(providerId);
+                if (previous.login === undefined) return;
+                const times = await this.#readLogin(providerId);
+                const remembered = this.#refreshErrors.get(providerId) ?? null;
+                let refreshError =
+                    change.refreshError === undefined
+                        ? remembered
+                        : change.refreshError(remembered);
+                // A login renewed after the failure, during inference or by the vendor's own
+                // program, has ended the failure streak.
+                if (
+                    refreshError !== null &&
+                    times?.refreshedAt !== undefined &&
+                    times.refreshedAt !== null &&
+                    times.refreshedAt > refreshError.at
+                ) {
+                    refreshError = null;
+                }
+                const lastUsedAt =
+                    change.lastUsedAt === undefined
+                        ? (previous.lastUsedAt ?? null)
+                        : Math.max(change.lastUsedAt, previous.lastUsedAt ?? 0);
+                if (
+                    lastUsedAt !== (previous.lastUsedAt ?? null) ||
+                    !sameRefreshError(refreshError, remembered)
+                ) {
+                    await writeProviderAccountActivity(ctx, providerId, {
+                        lastUsedAt,
+                        refreshError,
+                    });
+                    if (refreshError === null) this.#refreshErrors.delete(providerId);
+                    else this.#refreshErrors.set(providerId, refreshError);
+                }
+                const login = times === null ? null : { ...times, refreshError };
+                const current = this.#current(providerId);
+                if (lastUsedAt === current.lastUsedAt && sameLogin(login, current.login ?? null)) {
+                    return;
+                }
+                const next = { ...current, lastUsedAt, login };
+                if (this.#loadingActivity) this.#entries.set(providerId, next);
+                else this.#set(next);
+            });
+        } catch (error) {
+            ctx.log.warn(`Could not update the activity of provider "${providerId}".`, {}, error);
+        }
+    }
+
+    /** The account's stored login as its credential says now; null when it has none. */
+    async #readLogin(providerId: string): Promise<ProviderLoginTimes | null> {
+        try {
+            return (await this.#config.providerLogin(providerId)) ?? null;
+        } catch {
+            return null;
+        }
     }
 
     /**
@@ -556,6 +812,10 @@ export class ProviderUsageModule implements AgentModule {
         for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
         for (const recheck of this.#rechecks.values()) clearTimeout(recheck.timer);
         this.#rechecks.clear();
+        // Remember the latest use even when its minute has not ended yet.
+        for (const timer of this.#useTimers.values()) clearTimeout(timer);
+        this.#useTimers.clear();
+        for (const providerId of this.#pendingUse.keys()) void this.#announceUse(providerId);
         this.#closing.abort(new Error("Provider usage is shutting down."));
         await Promise.allSettled([...this.#loops, ...this.#background]);
     }
@@ -701,6 +961,29 @@ function resetOf(state: ProviderAccountState): number | null {
     if (state.kind === "blocked") return state.resetsAt;
     if (state.kind === "resetPassed") return state.resetAt;
     return null;
+}
+
+function sameRefreshError(
+    left: ProviderAccountRefreshError | null,
+    right: ProviderAccountRefreshError | null,
+): boolean {
+    if (left === null || right === null) return left === right;
+    return (
+        left.status === right.status &&
+        left.code === right.code &&
+        left.permanent === right.permanent &&
+        left.since === right.since &&
+        left.at === right.at
+    );
+}
+
+function sameLogin(left: ProviderAccountLogin | null, right: ProviderAccountLogin | null): boolean {
+    if (left === null || right === null) return left === right;
+    return (
+        left.refreshedAt === right.refreshedAt &&
+        left.expiresAt === right.expiresAt &&
+        sameRefreshError(left.refreshError, right.refreshError)
+    );
 }
 
 /** The sign-in an account entry takes; a smart provider's entry carries none. */

@@ -285,7 +285,7 @@ import {
     type ProjectCompute,
     type ProjectEvent,
 } from "../projects/index.js";
-import { ProviderUsageModule } from "../providerUsage/index.js";
+import { ProviderUsageModule, type ProviderUsageEntry } from "../providerUsage/index.js";
 import { ProviderNotFoundError, ProviderScanModule } from "../providerScan/index.js";
 import {
     SlashCommandInputError,
@@ -3188,6 +3188,7 @@ export class ApiModule implements AgentModule {
                     retryAt: entry.retryAt,
                     refreshing: entry.refreshing,
                     ...(entry.signIn === undefined ? {} : { signIn: entry.signIn }),
+                    ...accountActivity(entry),
                 });
             }),
             this.#connections.onUpdated((_eventCtx, snapshot, mutationId) => {
@@ -10902,6 +10903,7 @@ export class ApiModule implements AgentModule {
                     retryAt: account?.retryAt ?? null,
                     refreshing: account?.refreshing ?? false,
                     ...(account?.signIn === undefined ? {} : { signIn: account.signIn }),
+                    ...(account === undefined ? {} : accountActivity(account)),
                     ...(provider.pool === undefined ? {} : { pool: provider.pool }),
                 };
             },
@@ -12652,6 +12654,14 @@ function sameJsonValue(left: unknown, right: unknown): boolean {
     } catch {
         return false;
     }
+}
+
+/** An account's `lastUsedAt` and `login`, which only Claude, Codex, and Grok accounts carry. */
+function accountActivity(
+    entry: ProviderUsageEntry,
+): { lastUsedAt: number | null; login: ProviderUsageEntry["login"] } | Record<string, never> {
+    if (entry.lastUsedAt === undefined || entry.login === undefined) return {};
+    return { lastUsedAt: entry.lastUsedAt, login: entry.login };
 }
 
 function isCloudOrganizationRoute(pathname: string): boolean {

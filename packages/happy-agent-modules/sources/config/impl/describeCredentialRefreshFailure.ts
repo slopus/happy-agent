@@ -12,10 +12,24 @@ const refreshFailureSchema = Type.Object(
     { additionalProperties: true },
 );
 
+/** What a refused renewal may safely say about itself: never vendor text or credential contents. */
+export interface CredentialRefreshFailure {
+    readonly status: number;
+    readonly code: string | null;
+    readonly permanent: boolean;
+}
+
+/** The status, vetted OAuth code, and permanence of a refused renewal, if the error carries them. */
+export function readCredentialRefreshFailure(error: unknown): CredentialRefreshFailure | undefined {
+    if (!Value.Check(refreshFailureSchema, error)) return undefined;
+    return { status: error.status, code: error.code ?? null, permanent: error.permanent };
+}
+
 /** The status, code, and next step a background refresh failure can safely log, if any. */
 export function describeCredentialRefreshFailure(error: unknown): string {
-    if (!Value.Check(refreshFailureSchema, error)) return ".";
-    const reason = error.code === undefined ? "" : `, ${error.code}`;
-    const next = error.permanent ? " Sign in to this account again." : "";
-    return ` (HTTP ${error.status}${reason}).${next}`;
+    const failure = readCredentialRefreshFailure(error);
+    if (failure === undefined) return ".";
+    const reason = failure.code === null ? "" : `, ${failure.code}`;
+    const next = failure.permanent ? " Sign in to this account again." : "";
+    return ` (HTTP ${failure.status}${reason}).${next}`;
 }

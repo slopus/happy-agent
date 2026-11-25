@@ -656,3 +656,19 @@ undecided ask is denied rather than allowed, because nobody could have approved 
 Removing `subagent_harnesses` would have made every configuration that still named it fail to
 load, because `[harnesses]` refused any setting it did not know. Harness tables now report an
 unknown setting through `unknownSettings` and leave it out, like the other tables.
+
+## Config reports what happens to each account's login, and how to read it
+
+Settings show when an account was last used and how its login stands, but Config owns the
+credentials. It now reports three things and keeps nothing:
+
+- `onProviderAccountServed` fires on every complete response.
+- `onProviderLoginChanged` fires on each background renewal outcome. Failures carry only the
+  status, vetted OAuth code, and permanence of #175's refresh error, checked by shape. A
+  credential that cannot even be loaded reports nothing, since that is a missing sign-in, not a
+  failed renewal. It also fires `signed_in` whenever a new credential is written to runtime.toml.
+- `providerLogin` reads renewal and expiry from the credential the account actually uses, with the
+  same precedence as its provider: Codex `last_refresh` and the access token's `exp`, Grok's
+  `expires_at`, and Claude's `expiresAt` from the macOS keychain or `.credentials.json`. Grok and
+  Claude record no renewal time, so their file's modification time stands in. An API key or a
+  missing credential has no login. A setup token has one whose times are unknown.

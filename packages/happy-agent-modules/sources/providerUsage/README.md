@@ -2,7 +2,8 @@
 
 `ProviderUsageModule` owns the latest account-level quota reading for every configured inference
 provider. It is deliberately separate from `UsageModule`: token accounting is durable work
-history, while vendor quotas are an advisory snapshot that lives only in memory.
+history, while vendor quotas are an advisory snapshot that lives only in memory. Only each
+account's last use and login failure streak are remembered across restarts.
 
 Readings arrive two ways. A vendor that measures the account on every response delivers its
 reading in band through `ConfigModule.onProviderAccountUsage`, so ordinary work keeps the number
@@ -37,6 +38,23 @@ Each entry separates the last success from the last attempt:
 - `signIn` — `signed_in`, `signed_out`, or `unknown`, from the latest evidence that could tell: a
   reading, Config's `onProviderSignIn`, or a local credential probe after a read returned nothing.
   Smart-provider entries omit it, and an unchanged value emits no change.
+
+## Last use and login
+
+Claude, Codex, and Grok entries also carry `lastUsedAt` and `login`; every other entry omits both.
+`lastUsedAt` follows Config's `onProviderAccountServed`, announced at most once a minute per
+account: the first use after a quiet minute at once, the latest use of a busy minute when it ends,
+and a use still waiting when the module closes. `login` is `ConfigModule.providerLogin` (when the
+login was renewed and when its token expires, never its contents) plus `refreshError`, the current
+failure streak built from `onProviderLoginChanged`. A failed renewal keeps the streak's `since`; a
+renewal, a new credential, or a credential renewed after the latest failure ends it. The login is
+read again at startup, after each announced use, each login change, and each `signIn` change.
+
+These are the only values the module keeps across restarts, in its own
+`happy_agent_provider_account_activity` table: `lastUsedAt` and `refreshError` per account, rows of
+unconfigured accounts deleted at startup. Every change runs on one queue, is written before it is
+announced, and is announced only when something a client sees changed. Without a database, as in
+unit tests, the values live in memory.
 
 ## Choosing Claude's method
 
