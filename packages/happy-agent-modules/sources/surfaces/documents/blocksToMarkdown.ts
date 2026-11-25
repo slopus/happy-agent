@@ -17,6 +17,7 @@ export type OmittedContent =
     | "alignment"
     | "toggles"
     | "nesting"
+    | "trailing line breaks"
     | "some formatting";
 
 type Text = { type: "text"; text: string; styles?: Record<string, unknown> };
@@ -238,7 +239,31 @@ function normalizeInline(content: unknown, context: Context): (Text | Link)[] {
             });
         else if (node?.type === "text" && node.text !== "") out.push(text(node));
     }
+    if (dropTrailingBreaks(out)) context.omitted.add("trailing line breaks");
     return sharedWhitespace(out);
+}
+
+/**
+ * A line break that ends a block shows as nothing in Markdown: a `\` there is a backslash, not a
+ * break. Leave such breaks out, so a block reads as text that parses back to the same block.
+ */
+function dropTrailingBreaks(nodes: (Text | Link)[]): boolean {
+    let dropped = false;
+    for (let last = nodes.at(-1); last !== undefined; last = nodes.at(-1)) {
+        if (last.type === "link") {
+            dropped = dropTrailingBreaks(last.content) || dropped;
+            if (last.content.length > 0) break;
+        } else {
+            const kept = last.text.replace(/\n+$/, "");
+            dropped ||= kept !== last.text;
+            if (kept !== "") {
+                nodes[nodes.length - 1] = { ...last, text: kept };
+                break;
+            }
+        }
+        nodes.pop();
+    }
+    return dropped;
 }
 
 /**
