@@ -22,8 +22,8 @@ export class EventStreamProtocolError extends Error {
  * frame is one event, its SSE `id:` carrying the event's cursor and its
  * `event:` carrying the event's type.
  *
- * Nothing is validated beyond what the framing itself proves: this package has
- * no runtime dependencies, so a parsed envelope is trusted to be what the
+ * Nothing is validated beyond what the framing itself proves: like every
+ * response this client reads, a parsed envelope is trusted to be what the
  * specification says the daemon sends.
  */
 export async function* readEventStream(
