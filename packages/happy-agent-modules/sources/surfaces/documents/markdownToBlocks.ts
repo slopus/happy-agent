@@ -17,7 +17,7 @@ export type MarkdownBlock = {
 };
 
 const markdown = new MarkdownIt("commonmark", { html: false }).enable(["table", "strikethrough"]);
-const CHECKBOX = /^\[( |x|X)\][ \t]/;
+const CHECKBOX = /^\[( |x|X)\](?:[ \t]|$)/;
 const CONTAINERS = new Set(["blockquote_open", "bullet_list_open", "ordered_list_open"]);
 
 /**
@@ -98,6 +98,8 @@ export function markdownToBlocks(input: string): MarkdownBlock[] {
                 index += 1;
                 const inner = blocks("blockquote_close");
                 index += 1;
+                // A quote mark with nothing after it is a quote block nobody has typed into yet.
+                if (inner.length === 0) result.push({ type: "quote" });
                 for (const block of inner)
                     result.push(block.type === "paragraph" ? { ...block, type: "quote" } : block);
             } else if (token.type === "bullet_list_open" || token.type === "ordered_list_open") {
