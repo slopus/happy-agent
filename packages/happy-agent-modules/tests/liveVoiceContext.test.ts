@@ -239,14 +239,11 @@ describe("the first context", () => {
             recap: [
                 { at: 0, kind: "person", text: "Open it." },
                 { at: 0, kind: "assistant", text: "Okay, opening it. That's open." },
-                { at: 0, kind: "outcome", text: "Opened Lighthouse Ledger." },
             ],
             onScreen: undefined,
             rows: [],
         });
-        expect(text).toContain(
-            "- a minute ago, the person: Open it.\n- a minute ago, your backend reported: Opened Lighthouse Ledger.",
-        );
+        expect(text).toContain("- a minute ago, the person: Open it.");
         expect(text).not.toContain("That's open.");
     });
 

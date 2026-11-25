@@ -1952,7 +1952,7 @@ describe("what voice is told", () => {
         expect(quiet(f)).toHaveLength(6);
     });
 
-    it("recaps what the person said and what the backend did, never voice's own claims", async () => {
+    it("recaps only what the person said, never voice's claims or the backend's outcomes", async () => {
         const f = await fixture();
         f.turns["tell"] = [{ text: "Release notes finished a minute ago." }];
         const call = await activeCall(f);
@@ -1967,20 +1967,20 @@ describe("what voice is told", () => {
         await expect.poll(() => call.status()).toBe("closed");
         await expect
             .poll(async () => (await readCallHistory(f.db.context, "owner")).length)
-            .toBe(4);
+            .toBe(3);
         await activeCall(f, request("livetwo", "window-two"));
         const context = f.calls[1]!.initialContext!;
         expect(context).toContain(
             [
-                "Previous voice conversation (earlier calls, oldest first: what the person said and what your backend reported; none of it was done in this call):",
+                "Previous voice conversation (earlier calls, oldest first: only what the person said; nothing they asked for then is done in this call):",
                 "- just now, the person: Remember the word pineapple.",
                 "- just now, the person: How are the release notes?",
-                "- just now, your backend reported: Release notes finished a minute ago.",
                 "- just now: the person ended the call",
             ].join("\n"),
         );
-        // A later call once copied "That's open." from the recap and opened nothing.
+        // Later calls copied "That's open." and then "Opened …" from the recap and did nothing.
         expect(context).not.toContain("That's open.");
+        expect(context).not.toContain("Release notes finished a minute ago.");
         expect(context).not.toContain("Mm-hm.");
     });
 

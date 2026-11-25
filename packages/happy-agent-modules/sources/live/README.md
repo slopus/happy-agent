@@ -123,7 +123,7 @@ too and comes out of the same budget.
 Now: 2026-11-06T09:15+01:00 (the person's local time, Europe/Berlin)
 focusRevision: 3
 
-Previous voice conversation (earlier calls, oldest first: what the person said and what your backend reported; none of it was done in this call):
+Previous voice conversation (earlier calls, oldest first: only what the person said; nothing they asked for then is done in this call):
 - 3 minutes ago, the person: Remember the word pineapple.
 - 2 minutes ago: the person ended the call
 
@@ -144,8 +144,8 @@ Conversations in the app, in the sidebar's order:
 ```
 
 `Now` is when the call started, on AppState's `timeZone` or this machine's. The recap
-(`persistence/liveCallHistory.ts`) is the latest 30 lines across recent calls, what the person said
-and what the backend reported doing (never voice's own words, which a later call copied), each at
+(`persistence/liveCallHistory.ts`) is the latest 30 lines across recent calls, only what the person said
+(voice's words and the backend's outcomes are left out: later calls copied them as claims), each at
 most 1 KiB within 8 KiB, with how each call ended; a stopped daemon records the call as dropped.
 The conversation on screen comes with its last five turns (`impl/readVoiceTurns.ts`), the
 person's cut at 2 KiB and the agent's at 8 KiB after a whole word. The directory lists at most 100

@@ -97,15 +97,15 @@ export function renderVoiceCallContext(input: VoiceCallContextInput): {
 }
 
 function renderRecap(input: VoiceCallContextInput, bytes: number): string {
-    // Voice's own earlier words are left out, even where an older recap stored them: a later
-    // call copied its claims from them. What the backend reported doing stands in their place.
-    const slots = input.recap.filter((slot) => slot.kind !== "assistant");
+    // Only the person's words and how calls ended, even where an older recap stored more: a later
+    // call copied voice's earlier claims, and the backend's outcomes, and did nothing.
+    const slots = input.recap.filter((slot) => slot.kind === "person" || slot.kind === "ending");
     if (slots.length === 0) return "";
     const lines = slots.map((slot) =>
         cutLine(
             slot.kind === "ending"
                 ? `- ${voiceAgo(input.now - slot.at)}: ${slot.text}`
-                : `- ${voiceAgo(input.now - slot.at)}, ${slot.kind === "person" ? "the person" : "your backend reported"}: ${slot.text}`,
+                : `- ${voiceAgo(input.now - slot.at)}, the person: ${slot.text}`,
         ),
     );
     const kept: string[] = [];
@@ -116,7 +116,7 @@ function renderRecap(input: VoiceCallContextInput, bytes: number): string {
         size += Buffer.byteLength(line) + 1;
     }
     return [
-        "Previous voice conversation (earlier calls, oldest first: what the person said and what your backend reported; none of it was done in this call):",
+        "Previous voice conversation (earlier calls, oldest first: only what the person said; nothing they asked for then is done in this call):",
         ...(kept.length < lines.length ? ["Older lines aren't shown."] : []),
         ...kept,
     ].join("\n");
