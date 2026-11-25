@@ -122,9 +122,10 @@ export function markdownToBlocks(input: string): MarkdownBlock[] {
             const [first, ...rest] = blocks("list_item_close");
             index += 1;
             const checkbox = ordered ? null : CHECKBOX.exec(source);
-            const content = Array.isArray(first?.content) ? first.content : [];
-            const children =
-                first === undefined || first.type === "paragraph" ? rest : [first, ...rest];
+            // Only a paragraph is the item's own text; an item may start with a nested block.
+            const own = first?.type === "paragraph";
+            const content = own && Array.isArray(first.content) ? first.content : [];
+            const children = first === undefined || own ? rest : [first, ...rest];
             items.push(
                 checkbox === null
                     ? { type: ordered ? "numberedListItem" : "bulletListItem", content, children }
