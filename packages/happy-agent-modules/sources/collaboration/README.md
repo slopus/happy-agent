@@ -223,23 +223,29 @@ creation keeps the resolved model but never fabricates a successful child ID. Wo
 creation has no `create_agent` call to present and continues through its own operation.
 
 `max_collaborators` in `[settings]` controls how many collaborators created through `create_agent`
-one root agent tree retains across all branches and defaults to five. Collaborators are durable and
-reusable, so completed agents still count and accept later work through `send_agent_message`.
-A collaborator whose provider stopped working can be switched to a working model with a message, or
-archived: `archive_agent` lets its creator do that, and an archived collaborator no longer counts. The
-collaborators below it are not archived and still count.
-Parallel tool calls share one reservation path and cannot race past the configured limit.
+the nearest subtask or top-level bot or task retains across all branches and defaults to 10; each
+task, bot, and subtask has its own limit. Collaborators are durable, so completed agents still
+count until archived; `send_agent_message` continues one with its context intact. Its creator archives a collaborator with `archive_agent` once its work is done, or when its
+provider stopped working and switching its model with a message does not help. An archived
+collaborator no longer counts; the collaborators below it are not archived and still count.
+At the limit, `create_agent` fails with the same plain error in every permission mode. The error
+names the counted collaborators and the limit, points to `archive_agent` and `send_agent_message`,
+and tells the agent to ask the user to raise `max_collaborators` under `[settings]` in the user
+`happy.toml`, whose full path it gives. Parallel tool calls share one serialized check and cannot
+race past the configured limit.
 Workflows call the module operation directly instead of going through the tool and remain under the
 workflow system's separate call limit. Workflow metadata is an explicit tree boundary, so those
 agents do not consume their owning agent's tool budget; if a workflow agent itself calls
-`create_agent`, it receives a fresh tool budget rooted at that workflow agent. Subtasks are not
-a boundary: they stay in their bot's or task's tree, and collaborators created by any subtask draw
-on that tree's one budget. A subtask itself is not a collaborator and never counts, so a bot or
-task may have any number of subtasks. Subtask nesting is limited separately by the subtasks module.
+`create_agent`, it receives a fresh tool budget rooted at that workflow agent. A subtask is the
+same kind of boundary: the collaborators created under it draw on its own budget, never on its
+bot's, task's, or parent subtask's, and theirs never on its. A subtask itself is not a collaborator
+and never counts, so a bot or task may have any number of subtasks. Subtask nesting is limited
+separately by the subtasks module.
 
 `max_collaboration_depth` in `[settings]` controls `create_agent` ancestry and defaults to three
-agents including the root: root, child, and grandchild. Subtasks add no depth, so a
-second-level subtask's collaborator sits at the same depth as one created by the bot or task.
+agents including the root: root, child, and grandchild. A subtask is the root of its own
+collaborators, so a second-level subtask's collaborator sits at the same depth as one created by
+the bot or task.
 Direct workflow creation is excluded because workflows enforce their own limits.
 
 A collaborator inherits its creator's environment and module configuration, and the `title` the

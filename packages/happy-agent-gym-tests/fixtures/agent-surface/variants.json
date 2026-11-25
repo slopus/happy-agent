@@ -765,8 +765,8 @@
       ],
       "changed": [
         "create_task.6778bf8de36b",
-        "create_agent.93faf4188135",
-        "create_subtask.94c2d60821a5"
+        "create_agent.956386575463",
+        "create_subtask.7dcfbc362b69"
       ],
       "removed": []
     },
@@ -790,8 +790,8 @@
       ],
       "changed": [
         "create_task.6778bf8de36b",
-        "create_agent.93faf4188135",
-        "create_subtask.94c2d60821a5",
+        "create_agent.956386575463",
+        "create_subtask.7dcfbc362b69",
         "claude_web_search.9989aa9ab6a5",
         "codex_web_search.0f216625d177"
       ],

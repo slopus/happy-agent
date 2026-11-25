@@ -196,7 +196,7 @@ describe("ConfigModule", () => {
         expect(configuration.values.settings).toMatchObject({
             ethan: { enabled: false },
             maxCollaborationDepth: 3,
-            maxCollaborators: 5,
+            maxCollaborators: 10,
         });
     });
 
@@ -401,7 +401,7 @@ describe("ConfigModule", () => {
 
         const source = await readFile(module.configuration.paths.globalConfigPath, "utf8");
         expect(source).toContain("# [settings]");
-        expect(source).toContain("# max_collaborators = 5");
+        expect(source).toContain("# max_collaborators = 10");
         expect(source).toContain("# max_collaboration_depth = 3");
         expect(source).toContain("# cross_workspace = true");
         expect(source).toContain("# [feature.codemode]");
@@ -1169,7 +1169,7 @@ describe("ConfigModule", () => {
                 ethan: { enabled: false },
                 inferenceMaxRetries: 10,
                 maxCollaborationDepth: 3,
-                maxCollaborators: 5,
+                maxCollaborators: 10,
                 showUsage: true,
             });
             expect(configuration.values.workspace.setupCommands).toEqual(["pnpm install"]);

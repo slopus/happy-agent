@@ -992,7 +992,7 @@ export class CollaborationModule implements AgentModule {
         return (await this.#botSettings?.allowsCrossWorkspace(ctx, agentId)) ?? true;
     }
 
-    /** Enforce the model-facing tool's limits within its independently owned agent tree. */
+    /** Enforce the model-facing tool's limits within the nearest independently governed tree. */
     async #assertToolCreationCapacity(ctx: Context, actingAgentId: string): Promise<void> {
         const agents = this.#requireAgents();
         const { maxCollaborationDepth, maxCollaborators } =
@@ -1007,14 +1007,15 @@ export class CollaborationModule implements AgentModule {
             seenAncestors.add(rootAgentId);
             const config = await agents.config(ctx, rootAgentId);
             // A workflow-created agent owns any collaborators it asks for through its own tool.
-            // The workflow call that created it is governed separately by WorkflowsModule.
+            // The workflow call that created it is governed separately by WorkflowsModule. A
+            // subtask likewise has its own budget; only subtasks and a parentless bot or task sit
+            // above it, so counting it as the root keeps the depth a collaborator below it had.
             const parent =
-                config !== undefined && belongsToWorkflow(config.metadata)
+                config !== undefined &&
+                (belongsToWorkflow(config.metadata) || isSubtask(config.metadata))
                     ? null
                     : await agents.parentOf(ctx, rootAgentId);
-            // A subtask stays in its tree but adds no depth; subtask nesting is limited by the
-            // subtasks module. The root always counts.
-            if (parent === null || !isSubtask(config?.metadata)) depth += 1;
+            depth += 1;
             if (parent === null) break;
             if (depth >= maxCollaborationDepth) {
                 throw new Error(
@@ -1043,21 +1044,18 @@ export class CollaborationModule implements AgentModule {
                 if (config === undefined) {
                     throw new Error(`Collaborator "${current}" no longer exists.`);
                 }
-                // Direct workflow calls are separately governed roots. They and their branches do
-                // not consume the model-facing create_agent budget of the workflow owner.
-                if (belongsToWorkflow(config.metadata)) continue;
-                // A subtask is not a collaborator, but the collaborators below it are in this tree.
+                // Direct workflow calls and subtasks are separately governed roots. They and their
+                // branches do not consume the model-facing create_agent budget of this root.
+                if (belongsToWorkflow(config.metadata) || isSubtask(config.metadata)) continue;
                 // An archived collaborator gave its slot back; anything below it still counts.
-                if (!isSubtask(config.metadata) && !isArchived(config.metadata)) {
-                    toolCollaborators += 1;
-                    if (toolCollaborators >= maxCollaborators) {
-                        throw new Error(
-                            `Each root agent tree is limited to ${maxCollaborators} collaborators. Reuse an existing collaborator with send_agent_message, or free a place by archiving one that can no longer work with archive_agent.`,
-                        );
-                    }
-                }
+                if (!isArchived(config.metadata)) toolCollaborators += 1;
             }
             pending.push(...(await agents.childOf(ctx, current)));
+        }
+        if (toolCollaborators >= maxCollaborators) {
+            throw new Error(
+                `Collaborator limit reached: the nearest subtask or top-level agent at or above you already holds ${toolCollaborators} collaborators that are not archived, at its limit of ${maxCollaborators}. Archive finished ones with archive_agent, or continue a related one with send_agent_message. If the user wants more, ask them to raise max_collaborators under [settings] in ${this.#config.configuration.paths.globalConfigPath}.`,
+            );
         }
     }
 

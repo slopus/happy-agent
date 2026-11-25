@@ -24,7 +24,7 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 
 # [settings]
 # inference_max_retries = 10
-# max_collaborators = 5
+# max_collaborators = 10
 # max_collaboration_depth = 3
 # tool_result_retention_days = 7
 # compact_completed_turns = false

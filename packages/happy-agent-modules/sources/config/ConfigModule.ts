@@ -1681,7 +1681,7 @@ const DEFAULT_VALUES: HappyAgentConfigValues = {
         happyIntegration: true,
         inferenceMaxRetries: 10,
         maxCollaborationDepth: 3,
-        maxCollaborators: 5,
+        maxCollaborators: 10,
         menuBar: true,
         showReasoning: false,
         showUsage: false,

@@ -491,8 +491,8 @@ describe("user-interactive subtasks", () => {
             expect(instructions).toContain(
                 "If the user explicitly asks for a subtask, use create_subtask",
             );
-            expect(instructions).toContain("internal research");
             expect(instructions).toContain("archive_subtask");
+            expect(instructions).not.toContain("Use create_agent for internal research.");
         }
     }, 60_000);
 

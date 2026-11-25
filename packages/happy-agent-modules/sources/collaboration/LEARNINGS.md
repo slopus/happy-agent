@@ -23,17 +23,20 @@ or explicit subtask requests. Small steps stay inline; ordinary `create_agent` h
 internal work such as research. Second-level subtasks should usually be explicitly requested by
 the user. Eligibility and depth enforcement are unchanged.
 
-## Subtasks belong to the tree but consume no collaborator limits
+## Each subtask has its own collaborator budget
 
 Subtasks live in the same Agent Base parent graph as hidden collaborators, and the `create_agent`
-limits counted them as collaborators. A task with five subtasks could not create a collaborator,
-neither could any of its subtasks, and a second-level subtask failed on depth before creating
-anything. A bot or task may have any number of subtasks; their nesting is limited only by the
-subtasks module. Subtasks are not separate roots, unlike workflow agents: they stay in their bot's
-or task's tree, and the hidden collaborators any subtask creates share that tree's one budget. A
-subtask itself is never counted toward `max_collaborators` and adds no level toward
-`max_collaboration_depth`. The check reads a local schema of the `subtask` marker because the
-subtasks module depends on this one, not the other way round.
+limits once counted them as collaborators. A task with five subtasks could not create a
+collaborator, neither could any of its subtasks, and a second-level subtask failed on depth before
+creating anything. A subtask is now never counted itself. Sharing one tree budget across all
+subtasks also starved them, so Kirill cut the budget at the subtask: like a workflow agent, a
+subtask is the root of a separately governed tree. The collaborators under it count toward its own
+`max_collaborators`, not its bot's, task's, or parent subtask's, accepting that a task with many
+subtasks can hold far more collaborators in total. A subtask counts as one level, the root of its
+collaborators' depth. Only subtasks and a parentless bot or task can sit above a subtask, so a
+collaborator's depth is the same as when the whole tree shared one root. Subtask nesting is
+limited only by the subtasks module. The check reads a local schema of the `subtask` marker because
+the subtasks module depends on this one, not the other way round.
 
 ## Creators may switch a direct child's model on a message
 
@@ -61,6 +64,22 @@ preserves its history, and releases its machine after commit. Archived collabora
 count toward the limit, but anything below them still does. The limit error and the
 `create_agent` description point to `archive_agent`. Subtasks keep `archive_subtask`, and
 workflow agents remain owned by their workflow.
+
+## Finished collaborators are archived, not reused for unrelated work
+
+At the old default limit of five, an agent auditing several sites handed new, unrelated jobs to
+finished collaborators through `send_agent_message`, because the `create_agent` description and
+the limit error both led with "reuse one" and offered archiving only for a collaborator that could
+no longer work. Chats about one site filled up with work about others. The default is now 10 for
+each task, bot, and subtask separately. Following Claude Code's Agent tool, the description says
+`send_agent_message` continues a collaborator with its context intact, a new collaborator starts
+fresh, and a finished one is archived with `archive_agent`. The limit error leads with archiving
+finished collaborators, offers continuing a related one, and tells the agent to ask the user to
+raise `max_collaborators` under `[settings]` in the user `happy.toml`, naming that file's full path
+as other model-facing errors do. The agent asks rather than editing the file: the limit is the
+user's choice, and it is the same plain error in every permission mode. No sentence told the model
+to delegate only when asked, so the description now says, as Codex does, to create collaborators
+only when the user or project instructions ask for delegation or parallel agents.
 
 ## Spawn rows describe resolved execution, not task titles
 

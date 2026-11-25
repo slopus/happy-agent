@@ -294,6 +294,13 @@ const CREATOR = { provider: "codex", model: undefined } as const;
 
 const NO_CROSS_WORKSPACE_TOML = "[features]\ncross_workspace = false\n";
 
+/** A small explicit limit keeps the limit tests readable without seeding the default 10. */
+async function fiveCollaboratorConfig() {
+    return await temporaryTestConfig(
+        ["[providers]", "default_enable = true", "[settings]", "max_collaborators = 5"].join("\n"),
+    );
+}
+
 describe("collaboration", () => {
     it("inherits a tier only on the selected provider's supported route", async () => {
         const collection = new (class extends Collection {
@@ -590,10 +597,10 @@ describe("collaboration", () => {
         collection.seed("c3", "parent");
         collection.seed("c4", "c3");
         collection.seed("c5", "parent");
-        const { module, ctx } = await started(collection);
+        const { module, ctx } = await started(collection, await fiveCollaboratorConfig());
 
         await expect(module.createToolAgent(ctx, "parent", TASK, "c6")).rejects.toThrow(
-            "limited to 5 collaborators",
+            "at its limit of 5.",
         );
         expect(collection.created).toHaveLength(0);
         expect(collection.delivered).toHaveLength(0);
@@ -602,7 +609,7 @@ describe("collaboration", () => {
     it("allows only one of two concurrent creations to take the final tree slot", async () => {
         const collection = new Collection();
         for (const id of ["c1", "c2", "c3", "c4"]) collection.seed(id, "parent");
-        const { module, ctx } = await started(collection);
+        const { module, ctx } = await started(collection, await fiveCollaboratorConfig());
 
         const outcomes = await Promise.allSettled([
             module.createToolAgent(ctx, "parent", TASK, "c5"),
@@ -615,12 +622,34 @@ describe("collaboration", () => {
         expect(collection.delivered).toHaveLength(1);
     });
 
+    it("creates ten of eleven parallel collaborators from an empty scope under the default limit", async () => {
+        const collection = new Collection();
+        const { module, ctx } = await started(collection);
+
+        const outcomes = await Promise.allSettled(
+            Array.from({ length: 11 }, (_, index) =>
+                module.createToolAgent(ctx, "parent", TASK, `c${index + 1}`),
+            ),
+        );
+
+        expect(outcomes.filter(({ status }) => status === "fulfilled")).toHaveLength(10);
+        const rejected = outcomes.filter(
+            (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
+        );
+        expect(rejected).toHaveLength(1);
+        expect(String(rejected[0]?.reason)).toContain(
+            "already holds 10 collaborators that are not archived, at its limit of 10.",
+        );
+        expect(collection.created).toHaveLength(10);
+        expect(collection.delivered).toHaveLength(10);
+    });
+
     it("allows a durable retry after the tree has reached its collaborator limit", async () => {
         const collection = new Collection();
         for (const id of ["child", "c2", "c3", "c4", "c5"]) {
             collection.seed(id, "parent");
         }
-        const { module, ctx } = await started(collection);
+        const { module, ctx } = await started(collection, await fiveCollaboratorConfig());
 
         await expect(module.createToolAgent(ctx, "parent", TASK, "child")).resolves.toEqual({
             agentId: "child",
@@ -629,12 +658,12 @@ describe("collaboration", () => {
         expect(collection.delivered).toHaveLength(1);
     });
 
-    it("frees a collaborator slot when the creator archives a collaborator that cannot work", async () => {
+    it("frees a collaborator slot when the creator archives a finished collaborator", async () => {
         const collection = new Collection();
         for (const id of ["c1", "c2", "c3", "c4", "c5"]) collection.seed(id, "parent");
-        const { module, ctx } = await started(collection);
+        const { module, ctx } = await started(collection, await fiveCollaboratorConfig());
         await expect(module.createToolAgent(ctx, "parent", TASK, "c6")).rejects.toThrow(
-            "free a place by archiving one that can no longer work with archive_agent",
+            "Archive finished ones with archive_agent, or continue a related one with send_agent_message.",
         );
 
         await module.archiveAgent(ctx, "parent", "c1");
@@ -649,10 +678,10 @@ describe("collaboration", () => {
         const collection = new Collection();
         collection.seed("c1", "parent", { metadata: { archivedAt: 1 } });
         for (const id of ["c2", "c3", "c4", "c5", "c6"]) collection.seed(id, "c1");
-        const { module, ctx } = await started(collection);
+        const { module, ctx } = await started(collection, await fiveCollaboratorConfig());
 
         await expect(module.createToolAgent(ctx, "parent", TASK, "c7")).rejects.toThrow(
-            "limited to 5 collaborators",
+            "at its limit of 5.",
         );
     });
 
@@ -762,13 +791,17 @@ describe("collaboration", () => {
         } = await started(countCollection, config);
 
         await expect(countModule.createToolAgent(countCtx, "root", TASK, "c3")).rejects.toThrow(
-            "limited to 2 collaborators",
+            "at its limit of 2.",
         );
         const [create] = await countHooks.tools!(countCtx, {
             agent: { id: "root", provider: "codex" },
         } as never);
-        expect(create!.description).toContain("at most 2 ordinary collaborators");
-        expect(create!.description).toContain("maximum depth is 2 agents including the root");
+        expect(create!.description).toContain(
+            "At most 2 collaborators that are not archived, counting the ones they create, may sit under the nearest subtask or top-level agent at or above you; each subtask has its own limit.",
+        );
+        expect(create!.description).toContain(
+            "maximum depth is 2 agents including that subtask or top-level agent",
+        );
 
         const depthCollection = new Collection();
         depthCollection.seed("child", "root");
@@ -784,7 +817,7 @@ describe("collaboration", () => {
         for (const id of ["c1", "c2", "c3", "c4", "c5"]) {
             collection.seed(id, "root");
         }
-        const { module, ctx } = await started(collection);
+        const { module, ctx } = await started(collection, await fiveCollaboratorConfig());
 
         await module.createAgent(ctx, "root", TASK, "moduleowned");
 
@@ -800,7 +833,7 @@ describe("collaboration", () => {
             collection.seed(`${id}child`, id);
         }
         for (const id of ["c1", "c2", "c3", "c4"]) collection.seed(id, "root");
-        const { module, ctx } = await started(collection);
+        const { module, ctx } = await started(collection, await fiveCollaboratorConfig());
 
         await module.createToolAgent(ctx, "root", TASK, "c5");
 
@@ -835,17 +868,17 @@ describe("collaboration", () => {
         }
         collection.seed("s1s1", "s1", { metadata: { subtask: true } });
         for (const id of ["c1", "c2", "c3", "c4"]) collection.seed(id, "root");
-        const { module, ctx } = await started(collection);
+        const { module, ctx } = await started(collection, await fiveCollaboratorConfig());
 
         await module.createToolAgent(ctx, "root", TASK, "c5");
 
         expect(collection.created).toEqual([{ id: "c5", parent: "root" }]);
         await expect(module.createToolAgent(ctx, "root", TASK, "c6")).rejects.toThrow(
-            "limited to 5 collaborators",
+            "at its limit of 5.",
         );
     });
 
-    it("shares one tree budget between a task and the collaborators of its subtasks", async () => {
+    it("gives a task and each of its subtasks a separate collaborator budget", async () => {
         const config = await temporaryTestConfig(
             ["[providers]", "default_enable = true", "[settings]", "max_collaborators = 2"].join(
                 "\n",
@@ -854,42 +887,80 @@ describe("collaboration", () => {
         const collection = new Collection();
         collection.seed("task", null);
         collection.seed("c1", "task");
+        collection.seed("c2", "task");
         collection.seed("sub", "task", { metadata: { subtask: true } });
+        collection.seed("s1", "sub");
+        collection.seed("s1child", "s1");
         collection.seed("subsub", "sub", { metadata: { subtask: true } });
         const { module, ctx } = await started(collection, config);
 
-        await module.createToolAgent(ctx, "subsub", TASK, "s1");
+        // The task is full, but neither subtask draws on it, nor it on them.
+        await expect(module.createToolAgent(ctx, "task", TASK, "c3")).rejects.toThrow(
+            `Collaborator limit reached: the nearest subtask or top-level agent at or above you already holds 2 collaborators that are not archived, at its limit of 2. Archive finished ones with archive_agent, or continue a related one with send_agent_message. If the user wants more, ask them to raise max_collaborators under [settings] in ${config.configuration.paths.globalConfigPath}.`,
+        );
+        await module.createToolAgent(ctx, "subsub", TASK, "ss1");
+        await module.createToolAgent(ctx, "subsub", TASK, "ss2");
 
-        expect(collection.created).toEqual([{ id: "s1", parent: "subsub" }]);
+        expect(collection.created).toEqual([
+            { id: "ss1", parent: "subsub" },
+            { id: "ss2", parent: "subsub" },
+        ]);
+        // The subtask's own collaborator and the one it created fill its budget, for every
+        // creator inside it.
         for (const [actor, id] of [
-            ["task", "c2"],
             ["sub", "s2"],
-            ["subsub", "s3"],
+            ["s1", "s1child2"],
+            ["subsub", "ss3"],
         ] as const) {
             await expect(module.createToolAgent(ctx, actor, TASK, id)).rejects.toThrow(
-                "limited to 2 collaborators",
+                "at its limit of 2.",
             );
         }
-        expect(collection.created).toHaveLength(1);
+        expect(collection.created).toHaveLength(2);
     });
 
-    it("adds no collaborator depth for subtasks", async () => {
+    it("frees a subtask's budget when one of its collaborators is archived", async () => {
+        const config = await temporaryTestConfig(
+            ["[providers]", "default_enable = true", "[settings]", "max_collaborators = 2"].join(
+                "\n",
+            ),
+        );
+        const collection = new Collection();
+        collection.seed("task", null);
+        collection.seed("sub", "task", { metadata: { subtask: true } });
+        collection.seed("s1", "sub", { metadata: { archivedAt: 1 } });
+        collection.seed("s2", "sub");
+        const { module, ctx } = await started(collection, config);
+
+        await module.createToolAgent(ctx, "sub", TASK, "s3");
+
+        expect(collection.created).toEqual([{ id: "s3", parent: "sub" }]);
+        await expect(module.createToolAgent(ctx, "sub", TASK, "s4")).rejects.toThrow(
+            "at its limit of 2.",
+        );
+    });
+
+    it("gives collaborators under a subtask the same depth as under its task", async () => {
         const collection = new Collection();
         collection.seed("task", null);
         collection.seed("sub", "task", { metadata: { subtask: true } });
         collection.seed("subsub", "sub", { metadata: { subtask: true } });
         const { module, ctx } = await started(collection);
 
-        await module.createToolAgent(ctx, "subsub", TASK, "child");
-        await module.createToolAgent(ctx, "child", TASK, "grandchild");
+        for (const owner of ["task", "sub", "subsub"]) {
+            await module.createToolAgent(ctx, owner, TASK, `${owner}child`);
+            await module.createToolAgent(ctx, `${owner}child`, TASK, `${owner}grandchild`);
+            await expect(
+                module.createToolAgent(ctx, `${owner}grandchild`, TASK, `${owner}greatgrandchild`),
+            ).rejects.toThrow("maximum depth of 3 agents including the root");
+        }
 
-        expect(collection.created).toEqual([
-            { id: "child", parent: "subsub" },
-            { id: "grandchild", parent: "child" },
-        ]);
-        await expect(
-            module.createToolAgent(ctx, "grandchild", TASK, "greatgrandchild"),
-        ).rejects.toThrow("maximum depth of 3 agents including the root");
+        expect(collection.created).toEqual(
+            ["task", "sub", "subsub"].flatMap((owner) => [
+                { id: `${owner}child`, parent: owner },
+                { id: `${owner}grandchild`, parent: `${owner}child` },
+            ]),
+        );
     });
 
     it("does not treat an existing unrelated identity as a retry", async () => {
@@ -1902,10 +1973,13 @@ describe("collaboration", () => {
         );
         // The listing is whatever was frozen for the agent; the description never looks it up.
         expect(create.description).toContain("\n\nOPTIONS-LISTING\n\nCall agent_options");
-        expect(create.description).toContain("at most 5 ordinary collaborators");
-        expect(create.description).toContain("maximum depth is 3 agents including the root");
+        expect(create.description).toContain("At most 5 collaborators that are not archived");
         expect(create.description).toContain(
-            "Subtasks belong to the tree but count toward neither limit; collaborators they create do count.",
+            "maximum depth is 3 agents including that subtask or top-level agent",
+        );
+        expect(create.description).toContain("each subtask has its own limit");
+        expect(create.description).toContain(
+            "Create collaborators only when the user or project instructions ask for delegation or parallel agents.",
         );
         expect(create.description).toContain("substantial, distinct workstreams");
         expect(create.description).toContain("changes across projects");

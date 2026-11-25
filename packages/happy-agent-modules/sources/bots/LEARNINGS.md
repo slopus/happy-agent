@@ -35,10 +35,12 @@ subtasks for repository work, including small tasks. "Work in a project" means c
 in that project with its own workspace, not changing directories or sharing the bot's folder.
 Follow-up work can reuse a suitable existing workspace-bound subtask. For other work, small steps
 stay inline and subtasks are reserved for substantial, distinct workstreams. Explicit subtask
-requests are honored; hidden subagents handle internal research. Second-level subtasks should
+requests are honored. Second-level subtasks should
 usually be explicitly requested by the user. These are prompt defaults, not runtime restrictions,
 and do not change ordinary agent or subtask prompts. Bots coordinate through existing messages
-and archive direct subtasks with `archive_subtask`, without awaiting them.
+and archive direct subtasks with `archive_subtask`, without awaiting them. The bot prompt once also
+said to use `create_agent` for internal research; Kirill removed that so nothing nudges a bot
+toward collaborators nobody asked for.
 
 ## Delegated work stays with the subtask agent
 

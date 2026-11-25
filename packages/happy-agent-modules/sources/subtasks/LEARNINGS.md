@@ -63,9 +63,11 @@ ownership of the work.
 
 Broadly preferring interactive delegation encouraged unnecessary task splitting and nesting.
 Compact prompts now reserve subtasks for substantial, distinct workstreams, such as changes across
-projects, while small steps stay inline and hidden subagents handle internal research. Explicit
-subtask requests are honored within eligibility and depth limits. Second-level subtasks should
-usually be explicitly requested by the user. These are prompt defaults, not new runtime restrictions.
+projects, while small steps stay inline. Explicit subtask requests are honored within eligibility
+and depth limits. Second-level subtasks should usually be explicitly requested by the user. These
+are prompt defaults, not new runtime restrictions. The subtask prompt and `create_subtask` once
+also pointed at `create_agent` for internal research; Kirill removed that so nothing nudges a
+subtask or task toward collaborators nobody asked for.
 
 ## Coordinators can switch a subtask's model
 

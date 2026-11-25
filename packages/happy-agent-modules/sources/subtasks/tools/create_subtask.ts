@@ -27,7 +27,7 @@ export function createSubtaskTool(
         searchKeywords: ["subtask", "delegate work", "project subtask", "workspace subtask"],
         description: [
             "Create a user-visible subtask you coordinate. Only bots, tasks, and subtasks may create one; depth is limited to two levels below a bot or task, not two siblings.",
-            "Reserve subtasks for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. Honor explicit subtask requests; use create_agent for internal research.",
+            "Reserve subtasks for substantial, distinct workstreams, such as changes across projects; handle small steps inline. Usually create second-level subtasks only on explicit user request. Honor explicit subtask requests.",
             "Sidebar title: prefer 2–3 words; 4 at most, as a last resort. Put details in text.",
             "Omit workspace to share your filesystem, or supply workspace with projectId and a short name for a new workspace. Work starts after setup.",
             "The subtask runs in your current permission mode. Set read_only to run it in Read only. Set full_mode to run it in Full access, which is allowed only while you are in Full access yourself.",
