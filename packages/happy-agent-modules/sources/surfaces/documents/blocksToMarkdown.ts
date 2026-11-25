@@ -346,16 +346,23 @@ function mergeRuns(nodes: (Text | Link)[]): (Text | Link)[] {
 
 /**
  * Formatting on whitespace alone is invisible and cannot be written in Markdown, so a
- * whitespace-only run keeps just the emphasis both its neighbours have.
+ * whitespace-only run keeps just the emphasis the text on both sides of it has. Whitespace runs
+ * in a row count as one, whatever formatting each carried.
  */
 function sharedWhitespace(nodes: (Text | Link)[]): (Text | Link)[] {
+    const blank = (node: Text | Link | undefined): node is Text =>
+        node?.type === "text" && node.text.trim() === "" && node.styles?.["code"] !== true;
+    /** The formatting of the nearest text that shows, looking one way from a whitespace run. */
+    const beside = (index: number, step: 1 | -1) => {
+        let at = index + step;
+        while (blank(nodes[at])) at += step;
+        const other = nodes[at];
+        return other?.type === "text" ? (other.styles ?? {}) : {};
+    };
     return nodes.map((node, index) => {
-        if (node.type !== "text" || node.text.trim() !== "" || node.styles?.["code"] === true)
-            return node;
-        const styles = (other: Text | Link | undefined) =>
-            other?.type === "text" ? (other.styles ?? {}) : {};
-        const before = styles(nodes[index - 1]);
-        const after = styles(nodes[index + 1]);
+        if (!blank(node)) return node;
+        const before = beside(index, -1);
+        const after = beside(index, 1);
         const kept: Record<string, true> = {};
         for (const key of ["bold", "italic", "strike"])
             if (before[key] === true && after[key] === true) kept[key] = true;
