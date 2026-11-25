@@ -11786,10 +11786,12 @@ must appear exactly once unless `replace_all` is true; absent, repeated, empty, 
 text is refused without writing. It returns `{ seq, changed, replacements }` and not the
 document. `list_document_versions` lists log entries.
 Reading needs no review; updates and edits are durable and own ordinary shared-data Auto review
-with no filesystem elevation. Active admin bots additionally receive `create_document_surface`,
+with no filesystem elevation. Every agent additionally receives `create_document_surface`,
 accepting `name`, required explicit `creatorUserId`, optional initial Markdown `text`, and
-optional absolute `imagePath`. Its authority, attribution, creator join rules, image handling,
-and permission boundaries match `create_todo_surface`. Creation follows the catalog's default
+optional absolute `imagePath`. An agent that is not an active admin bot may only name the
+person it is working for, or `null` when it is working for nobody; an active admin bot may
+name anyone. Its attribution, creator join rules, image handling, and permission boundaries
+match `create_todo_surface`. Creation follows the catalog's default
 team membership policy; reading or editing document content never joins anyone.
 
 Active admin bots also receive `list_prompt_documents`, `mark_prompt_document`, and

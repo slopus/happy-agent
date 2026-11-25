@@ -19,7 +19,8 @@ HTTP / model tools -> SurfacesModule -> one composing database transaction
 The transaction lock serializes compare-version-and-write, fractional ordering, and membership
 changes across lists. History pagination selects only a bounded prefix range. Durable tools use
 Agent Base's transactional settlement; image creation retains a call-stable ID and image bytes.
-The admin tools check active admin authority at selection and execution. Images pass through
+The admin tools check active admin authority at selection and execution. Document creation checks
+its creator rule before reading an image and again inside the creating transaction. Images pass through
 Compute's filesystem boundary and bounded managed normalization, never an arbitrary served path.
 Anyone may rename a Surface or replace or remove its image afterwards; the edit, its image bytes,
 and `surface.updated` commit together, and equal values change nothing.
@@ -41,7 +42,8 @@ by an earlier daemon converts on first touch; its Markdown revisions stay readab
 Live changes and presence ride the API's existing event stream as unjournaled frames. The module
 keeps which streams follow which documents in memory and publishes a change only after its
 transaction commits; the API checks that a stream belongs to the caller before routing to it.
-Ordinary models can read, update, and list changes; only active admin bots create documents.
+Ordinary models can read, update, edit, and list changes, and create a document for the person
+they are working for; only an active admin bot creates one for someone else.
 
 Calendar Surfaces hold series records, never stored occurrences. `calendar/` owns them: each
 event's current record lives in its own table with conservative instant bounds of everything the

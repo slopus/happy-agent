@@ -35,6 +35,18 @@ Generic model creation hid differences between feature types. Active admin bots 
 `create_todo_surface`, with a name and optional image, and add/remove-user tools. Execution
 rechecks authority; ordinary todo use cannot grant membership administration or create lists.
 
+## Any agent can create a document for the person it works for
+
+Creation of every type was admin-only, so an ordinary agent asked for an editable document could
+only publish a static artifact. Kirill reported it as "we cant even create new editable docs -
+only static artefacts". `create_document_surface` now sits with the document tools every agent
+receives. An agent that is not an admin bot may only name the person it is working for as the
+creator, or null when it works for nobody, so it cannot make someone it is not working for the
+author of a document; the refusal says which value to pass. Who else sees the new document follows
+each teammate's own join setting, exactly as when the person creates it themselves. An active admin bot still names anyone. The rule is checked
+before the image is read and again inside the creating transaction. Creation of the other types and
+all membership changes stay with admin bots, and creation is still reviewed in Auto.
+
 ## Sections live inside a todo list, not in the sidebar
 
 A `separator` Surface type was built as a contentless sidebar section. That misread the request:
@@ -77,7 +89,8 @@ gets `503 not_initialized`, never a partial association. The chat's agent is ann
 initial slash-command discovery and before the `surface.updated` that names it, like bot and task
 agents. The Surface owns the chat's lifetime, so agent
 and workspace archive, reorder, rename, child creation, and attaching another agent all conflict.
-The agent works for each message's sender, holds no admin role, and never joins anyone.
+The agent works for each message's sender and holds no admin role. The only Surface it can create is
+a document for that sender, and it cannot change who has joined a Surface.
 
 ## A Surface chat works from the Surface's current state
 

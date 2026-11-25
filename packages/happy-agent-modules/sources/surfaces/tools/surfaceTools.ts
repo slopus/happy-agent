@@ -87,9 +87,17 @@ const imageAccess =
 export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, admin: boolean) {
     type ToolContext = Parameters<SurfacesModule["actor"]>[0];
     const actor = (ctx: ToolContext) => surfaces.actor(ctx, scope.agent.id, scope.kv);
-    /** Replays reuse the creation's first identity and image bytes rather than rereading the file. */
-    const creation = async (ctx: ToolContext, call: { kv: AgentKV }, path: string | undefined) => {
-        await surfaces.requireAdmin(ctx, scope.agent.id);
+    /**
+     * Replays reuse the creation's first identity and image bytes rather than rereading the file.
+     * Creation is for admin bots unless the tool brings its own authority check.
+     */
+    const creation = async (
+        ctx: ToolContext,
+        call: { kv: AgentKV },
+        path: string | undefined,
+        authorize = () => surfaces.requireAdmin(ctx, scope.agent.id),
+    ) => {
+        await authorize();
         const id = await call.kv.getOrCreate(ctx, "surfaceId", createId);
         if (path === undefined) return { id };
         const data = await call.kv.getOrCreate(ctx, "image", () =>
@@ -556,6 +564,54 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                 ),
             toLLM: textResult,
         }),
+        defineAgentTool({
+            name: "create_document_surface",
+            defer: true,
+            capabilities: ["Create a named shared Markdown document Surface."],
+            searchKeywords: [
+                "create document surface",
+                "new shared markdown",
+                "new editable document",
+                "document image",
+            ],
+            description:
+                "Create a document Surface that people and agents edit together, with optional initial Markdown, empty by default. Explicitly supply creatorUserId: the local Happy user ID of the person you are working for, or null when you are working for nobody; only null is allowed in standalone mode. Only an admin bot may name someone else. The creator is the immutable author and joins their sidebar; null joins nobody in team mode and the local person in standalone mode. Revision audit identity remains the actual caller. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
+            parameters: Type.Object(
+                {
+                    name: surfaceNameSchema,
+                    creatorUserId: surfaceMemberSchema.properties.userId,
+                    text: Type.Optional(surfaceDocumentTextSchema),
+                    imagePath,
+                },
+                { additionalProperties: false },
+            ),
+            returnType: surfaceSchema,
+            durable: true,
+            requiresAutoOrFullAccess: true,
+            shouldReviewInAutoMode: () => true,
+            shouldRunInFullAccessInAutoMode: (input, ctx) =>
+                surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath),
+            describeAutoPermissionAction: (input) =>
+                `creating a shared Markdown document Surface${fromImage(input.imagePath)}. ${imageAccess}`,
+            execute: async (ctx, input, call) => {
+                const creator = await actor(ctx);
+                return surfaces.createDocumentAsAgent(
+                    ctx,
+                    {
+                        // Refused before the image is read, and again inside the transaction.
+                        ...(await creation(ctx, call, input.imagePath, () =>
+                            surfaces.requireDocumentCreator(ctx, creator, input.creatorUserId),
+                        )),
+                        type: "document",
+                        name: input.name,
+                        ...(input.text === undefined ? {} : { text: input.text }),
+                    },
+                    input.creatorUserId,
+                    creator,
+                );
+            },
+            toLLM: textResult,
+        }),
     ];
     const administration = [
         defineAgentTool({
@@ -669,45 +725,6 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                     },
                     input.creatorUserId,
                     scope.agent.id,
-                ),
-            toLLM: textResult,
-        }),
-        defineAgentTool({
-            name: "create_document_surface",
-            defer: true,
-            capabilities: ["Create a named shared Markdown document Surface as an admin bot."],
-            searchKeywords: ["create document surface", "new shared markdown", "document image"],
-            description:
-                "Admin bots only: create a document Surface with optional initial Markdown, empty by default. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The creator is the immutable author and joins their sidebar; null joins nobody in team mode and the local person in standalone mode. Revision audit identity remains the actual caller. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
-            parameters: Type.Object(
-                {
-                    name: surfaceNameSchema,
-                    creatorUserId: surfaceMemberSchema.properties.userId,
-                    text: Type.Optional(surfaceDocumentTextSchema),
-                    imagePath,
-                },
-                { additionalProperties: false },
-            ),
-            returnType: surfaceSchema,
-            durable: true,
-            requiresAutoOrFullAccess: true,
-            shouldReviewInAutoMode: () => true,
-            shouldRunInFullAccessInAutoMode: (input, ctx) =>
-                surfaces.shouldElevateImage(ctx, scope.agent.id, input.imagePath),
-            describeAutoPermissionAction: (input) =>
-                `creating a shared Markdown document Surface${fromImage(input.imagePath)}. ${imageAccess}`,
-            execute: async (ctx, input, call) =>
-                surfaces.create(
-                    ctx,
-                    {
-                        ...(await creation(ctx, call, input.imagePath)),
-                        type: "document",
-                        name: input.name,
-                        ...(input.text === undefined ? {} : { text: input.text }),
-                    },
-                    input.creatorUserId,
-                    scope.agent.id,
-                    await actor(ctx),
                 ),
             toLLM: textResult,
         }),

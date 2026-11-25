@@ -1,9 +1,9 @@
 {
   "capabilities": [
-    "Create a named shared Markdown document Surface as an admin bot."
+    "Create a named shared Markdown document Surface."
   ],
   "defer": true,
-  "description": "Admin bots only: create a document Surface with optional initial Markdown, empty by default. Explicitly supply creatorUserId as a local Happy user ID or null; only null is allowed in standalone mode. The creator is the immutable author and joins their sidebar; null joins nobody in team mode and the local person in standalone mode. Revision audit identity remains the actual caller. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
+  "description": "Create a document Surface that people and agents edit together, with optional initial Markdown, empty by default. Explicitly supply creatorUserId: the local Happy user ID of the person you are working for, or null when you are working for nobody; only null is allowed in standalone mode. Only an admin bot may name someone else. The creator is the immutable author and joins their sidebar; null joins nobody in team mode and the local person in standalone mode. Revision audit identity remains the actual caller. Optionally supply an absolute PNG, JPEG, or WebP image path (8 MiB maximum).",
   "durable": true,
   "inputSchema": {
     "additionalProperties": false,
@@ -366,6 +366,7 @@
   "searchKeywords": [
     "create document surface",
     "new shared markdown",
+    "new editable document",
     "document image"
   ]
 }

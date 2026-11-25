@@ -133,6 +133,7 @@ Tool capabilities:
 - Edit a shared document's Markdown alongside the people editing it, keeping permanent history.
 - Change part of a shared document's Markdown by exact replacement, without rewriting it.
 - List a shared document's permanent changes and who made them.
+- Create a named shared Markdown document Surface.
 - Read the events of a shared calendar in a date range.
 - Add a one-off or recurring event to a shared calendar.
 - Change, move, or restore a calendar event, including its recurrence.

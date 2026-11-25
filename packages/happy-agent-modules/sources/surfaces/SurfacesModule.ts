@@ -419,6 +419,27 @@ export class SurfacesModule implements AgentModule {
             }
         });
     }
+    /**
+     * Refuse a document creator this agent may not name. An active admin bot may name anyone;
+     * any other agent only the person it works for, or nobody when it works for nobody. Without
+     * a team there is only the local person, which the ordinary creator check enforces.
+     */
+    async requireDocumentCreator(
+        ctx: Context,
+        actor: SurfaceActor,
+        creatorUserId: string | null,
+    ): Promise<void> {
+        if (!this.team.enabled || creatorUserId === actor.userId) return;
+        if (actor.agentId !== null && (await this.isAdmin(ctx, actor.agentId))) return;
+        throw new SurfaceError(
+            "forbidden",
+            `Only an admin bot can create a document for someone else. Pass creatorUserId ${
+                actor.userId === null
+                    ? "null, because you are working for nobody"
+                    : `${JSON.stringify(actor.userId)}, the person you are working for`
+            }.`,
+        );
+    }
     async create(
         ctx: Context,
         request: CreateSurfaceRequest,
@@ -426,12 +447,36 @@ export class SurfacesModule implements AgentModule {
         adminAgentId?: string,
         actor?: SurfaceActor,
     ): Promise<Surface> {
+        return this.#create(ctx, request, creatorUserId, adminAgentId, actor, async (tx) => {
+            if (adminAgentId !== undefined) await this.requireAdmin(tx, adminAgentId);
+        });
+    }
+    /** Create a document Surface for an agent, which need not be an admin bot. */
+    async createDocumentAsAgent(
+        ctx: Context,
+        request: CreateSurfaceRequest & { type: "document" },
+        creatorUserId: string | null,
+        actor: SurfaceActor,
+    ): Promise<Surface> {
+        return this.#create(ctx, request, creatorUserId, undefined, actor, (tx) =>
+            this.requireDocumentCreator(tx, actor, creatorUserId),
+        );
+    }
+    /** `authorize` runs first inside the creating transaction, so authority is current. */
+    async #create(
+        ctx: Context,
+        request: CreateSurfaceRequest,
+        creatorUserId: string | null,
+        adminAgentId: string | undefined,
+        actor: SurfaceActor | undefined,
+        authorize: (tx: Context) => Promise<void>,
+    ): Promise<Surface> {
         const input = checked(createSurfaceRequestSchema, request);
         const reference = referenceFor(input);
         if (reference !== undefined) checked(surfaceReferenceSchema, reference);
         const image = input.image === undefined ? null : await normalizedImage(input.image.data);
         return ctx.inTx(async (tx) => {
-            if (adminAgentId !== undefined) await this.requireAdmin(tx, adminAgentId);
+            await authorize(tx);
             await this.#validateUser(tx, creatorUserId);
             const id = input.id ?? createId();
             const old = await this.#kv.read(tx, `surface.${id}`);

@@ -156,6 +156,6 @@ export function formatSurfaceChatPrompt(surface: Pick<Surface, "id" | "type" | "
         "- Keep replies short and about this Surface. After a change, say what changed in a line instead of repeating the whole Surface.",
         "- Do not explore the repository, files, or shell, or take on unrelated work, unless someone explicitly asks. Your folder is scratch space for what this Surface needs, such as an image for its picture.",
         "- Anyone may ask you to rename this Surface or change its picture; use update_surface with this Surface ID.",
-        "- You cannot create Surfaces or change who has joined one, and nothing you do joins anyone to a Surface or a task.",
+        "- The only Surface you can create is a document, for the person who sent the current message and only when they ask for one. You cannot change who has joined a Surface, and nothing else you do joins anyone to a Surface or a task.",
     ].join("\n");
 }

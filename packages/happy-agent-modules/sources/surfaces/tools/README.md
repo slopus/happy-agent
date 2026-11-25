@@ -4,7 +4,8 @@ One fixed common array serves every model. Todo operations name their Surface in
 current-version guards. `update_surface` renames any Surface or replaces or removes its picture
 from an absolute image path; it is reviewed in Auto, elevates only for outside-workspace or
 symlink images, and settles its durable result in the edit's own transaction. A separate fixed
-admin array adds type-specific creation and user administration only for actual active admin bots. Every mutation owns its permission policy.
+admin array adds the other type-specific creation tools and user administration only for actual
+active admin bots. Every mutation owns its permission policy.
 
 Document tools read the Markdown projection at the latest or an earlier `seq`, write full
 replacement Markdown against the `seq` the model read, replace exact text in the latest version,
@@ -16,7 +17,12 @@ only the difference from that version, so people's concurrent edits survive, and
 with an explanation when the document holds content Markdown cannot represent. Blank lines are
 content: blocks are one blank line apart and every two more blank lines are an empty paragraph,
 so an agent removes or adds empty paragraphs by writing fewer or more of them. Reads skip review;
-writes require shared-data Auto review without filesystem elevation. Document creation has the
+writes require shared-data Auto review without filesystem elevation.
+
+`create_document_surface` is in the document array, so every agent can make a document. An agent
+names the person it is working for as the creator, or null when it works for nobody, and anything
+else is refused with the value to pass; an active admin bot may name anyone. Standalone mode has
+only the local person, so only null is accepted there. Creation is reviewed in Auto and has the
 same optional managed-image boundary as todo creation.
 
 Calendar tools live in their own fixed array merged into the common one. They read and write
