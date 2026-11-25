@@ -221,7 +221,7 @@ real HTTP/WebSockets with scripted provider inference. It can export Voice's san
 through the test-only `HAPPY_LIVE_CAPTURE_FILE` environment variable. A daemon started with the
 test-only `HAPPY_LIVE_CONTEXT_CAPTURE_FILE` appends each text pushed to the voice model (`context`,
 `directory`, `focus`, `status`, `reply`, `error`, `greeting` or `outcome`) as a JSON line `{at, kind, text, speakable}`, so a gym can prove an answer was in context
-before the question; the log's matching `context.pushed` record holds only kind, size and speakable. Bun transport smoke coverage lives in
+before the question; the log's matching `context.pushed` record holds only kind, size and speakable, and `context.built` times building the first context apart from allocating the provider call. Bun transport smoke coverage lives in
 the Agent package; targeted API gym scenarios live in `packages/happy-agent-gym-tests/tests/happy_api_live.test.ts`.
 These fixtures do not prove microphone/media negotiation or account entitlement against OpenAI.
 

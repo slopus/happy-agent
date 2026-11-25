@@ -1727,6 +1727,11 @@ describe("what voice is told", () => {
                 appendCount: 1,
                 bytes: Buffer.byteLength(quiet(f)[0]!.text),
             });
+            // Building the startup context is timed apart from allocating the provider call.
+            expect(f.records().find((record) => record.event === "context.built")).toMatchObject({
+                bytes: Buffer.byteLength(f.calls[0]!.initialContext!),
+                durationMs: expect.any(Number),
+            });
             expect(JSON.stringify(f.records())).not.toContain("Release notes");
             const lines = (await readFile(file, "utf8"))
                 .trim()

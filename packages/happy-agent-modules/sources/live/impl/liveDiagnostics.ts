@@ -126,6 +126,7 @@ const diagnosticSchema = Type.Object(
             "action.expired",
             "action.lateIgnored",
             "appState.accepted",
+            "context.built",
             "context.pushed",
             "focus.sent",
         ]),

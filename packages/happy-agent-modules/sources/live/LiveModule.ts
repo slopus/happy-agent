@@ -1261,7 +1261,14 @@ export class LiveModule implements AgentModule {
 
     async #start(call: Call): Promise<void> {
         try {
+            const building = Date.now();
             const context = await this.#firstContext(call);
+            // Separates building the startup context from allocating the provider call.
+            this.#diagnostic(call, {
+                event: "context.built",
+                bytes: Buffer.byteLength(context),
+                durationMs: Date.now() - building,
+            });
             call.transport = await createLiveProviderTransport({
                 credential: call.credential,
                 sdp: call.request.sdp,
