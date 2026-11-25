@@ -16,7 +16,8 @@ Voice is one long-running, unreported subtask of Happy per person, created throu
 archive it; the next call then creates a new one. Its opening task only confirms it is set up, on
 the voice settings' controller as new agents are offered it; each request runs on its call's frozen
 route. `happy_live_voice_agents` maps the
-person to Voice and holds the hash of the sidebar outline Voice was last given.
+person to Voice and, in its `outline_sent` column, holds the hash of the first context Voice was
+last given.
 
 Live's hooks make Voice one job: `VOICE_AGENT_INSTRUCTIONS` replace its instructions, and its tools
 are fixed arrays merged in order: the read-only sidebar tools in `impl/voiceSidebarTools.ts`
@@ -89,27 +90,91 @@ window's AppState lists is sent as that entry's own target, and any other is ref
 `end_call` (`impl/voiceCallTools.ts`) closes its call two seconds after the turn settles, without a
 spoken outcome, when the person asked to hang up.
 
-GPT-Live is told what the phones tell their voice agent (happy `docs/agent-voice-call.md`), from
-this daemon's own records. The first context (`impl/renderVoiceCallContext.ts`, at most 24 KiB as a
-developer message, because GPT-Live takes 8,192 tokens of startup input) holds the call's start on
-the person's clock, the recap of recent calls (`persistence/liveCallHistory.ts`, the latest 30
-slots), the conversation on screen with its last five timed turns (`impl/readVoiceTurns.ts`), and
-the directory (`impl/readVoiceDirectory.ts`: Happy, the other bots, the person's tasks, then each
-project's root and workspace conversations under heading lines, and subtasks at any depth; when
-more than 100 exist, the one on screen, the followed ones and the most recently active are kept)
-with order-key references (`impl/VoiceRefs.ts`), status, the pending
-question, a failed last run, and last activity. Once the call is active, one speakable cue
-(`LIVE_GREETING_CUE`) asks voice to say hello first, as the phones cue their agent.
-During the call, silent JSON lines follow: `directory` changes (`impl/voiceDirectoryUpdate.ts`,
-settled for a second), `focus` from desktop context revisions with turns voice has not seen, and
-`assistant_text` and `session_error` from the last four conversations on screen or sent to, and
-`status` when a conversation starts or stops working, needs the person or fails. Each piece goes
-once and nothing is replayed. GPT-Live has no silent channel, so lines wait, in order, for the
-person's next turn (they go only within eight seconds of the person speaking) and while a request
-lacks its delivered outcome, and their times are rendered as `{ago, at}` when they go. AppState is never pushed: it only resolves names and targets and validates models, and
+AppState is never pushed to voice: it only resolves names and targets and validates models, and
 `sessionUpdate` frames are validated and ignored. With `voiceFocus`, the daemon highlights a
 uniquely named target before Voice runs and before each targeted action, and clears it when the
 request ends.
+
+## Voice context
+
+GPT-Live is told what the phones tell their voice agent (happy `docs/agent-voice-call.md`), from
+this daemon's own records and never from the desktop's projection. Voice receives the same first
+context and every line voice was told since its previous request, so it starts from what voice
+already knows. API.md specifies only that this context exists; its format is the daemon's own.
+
+**The directory** (`impl/readVoiceDirectory.ts`) is the person's conversations in sidebar order:
+Happy, the other active bots, the person's active tasks, then each project's root conversations
+and its workspaces' conversations under project and workspace heading lines, and under any
+conversation its live subtasks at any depth. Workspaces a bot or task owns are not listed again,
+and the person's own Voice is the call itself. Search (`list_sidebar`) covers all of it, bounded
+only at 5,000 rows against runaway installations. Each conversation has a reference
+(`impl/VoiceRefs.ts`), `s` and a decimal order key: references compare as text in sidebar order
+(`s4` < `s49` < `s5`), the first directory gets the shortest keys its length allows, and a later
+conversation gets a key between its neighbours. A reference is its conversation's for the whole
+call and never handed to another. Voice holds only the references it was told: the listed
+conversations, the ones added during the call, and any it was introduced to by name.
+
+**The first context** (`impl/renderVoiceCallContext.ts`) is plain text, at most 24 KiB, a
+developer message in the session's startup input because GPT-Live takes 8,192 tokens of startup
+input and the native endpoint ignores `instructions`; there the voice prompt is a startup item
+too and comes out of the same budget.
+
+```text
+Now: 2026-11-06T09:15+01:00 (the person's local time, Europe/Berlin)
+focusRevision: 3
+
+Previous voice conversation (earlier calls, oldest first):
+- 3 minutes ago, the person: Remember the word pineapple.
+- 2 minutes ago: the person ended the call
+
+On screen: Fix cache race — subtask, ref s3, under Release notes
+Working: yes. Needs the person: no.
+Last turns, oldest first:
+1. The person (5 minutes ago): Why does the cache race?
+   Agent (3 minutes ago): Two writers share the lock …
+
+Conversations in the app, in the sidebar's order:
+- Happy — bot, ref s1, last active 2 minutes ago (09:13)
+- Release notes — task, ref s2, needs the person (asks: Which branch?), last active an hour ago (08:10)
+  - Fix cache race — subtask, ref s3, working, last active 3 minutes ago (09:12)
+- App — project
+  - Feature — workspace
+    - Feature chat — conversation, ref s5, failed (Rate limited.), last active 20 minutes ago (08:55)
+… and 27 more not listed; ask your backend to find one by name.
+```
+
+`Now` is when the call started, on AppState's `timeZone` or this machine's. The recap
+(`persistence/liveCallHistory.ts`) is the latest 30 lines said aloud across recent calls, each at
+most 1 KiB within 8 KiB, with how each call ended; a stopped daemon records the call as dropped.
+The conversation on screen comes with its last five turns (`impl/readVoiceTurns.ts`), the
+person's cut at 2 KiB and the agent's at 8 KiB after a whole word. The directory lists at most 100
+conversations within 12 KiB, heading lines included in the bytes: the one on screen and the
+followed ones, then the most recently active, each kept subtask with its parents, shown in sidebar
+order and the rest counted. When the whole is too big, the older turns give way first, then the
+directory's tail, then the recap's older lines, and the newest turn last. Every cut keeps whole
+characters.
+
+Once the call is active, one speakable cue (`LIVE_GREETING_CUE`, "Hi, Happy here.") makes Happy
+speak first; a line in the startup context alone did not reliably start speech.
+
+**Updates** are silent appends, one JSON line each with keys sorted. GPT-Live has no channel that
+guarantees silence, so they wait, in order, for the first words of the person's next turn (within
+1.5 seconds of the person speaking, when voice answers anyway) and while a request lacks its
+delivered outcome. Times in them are `{ago, at}`, rendered when they go.
+
+- `directory` (`impl/voiceDirectoryUpdate.ts`): `added`, `removed`, `renamed`, `moved` among the
+  conversations voice holds references for, settled for a second, at most 20 changes within 4 KiB
+  with the rest counted in `more`. An addition says `after` only when its reference does not sort
+  into place.
+- `focus`: the conversation in front, with turns voice has not been told, at most 16 KiB, or
+  `"title":null`.
+- `status`: conversations whose working, needs-the-person, question or failure changed, settled
+  for a second, at most 20 within 4 KiB. An unlisted conversation is told only once it works,
+  needs the person or fails, and then with its `kind`, which introduces it.
+- `assistant_text` and `session_error`: complete pieces of the four conversations most recently on
+  screen or sent to, newest first, each piece once; a piece over 8 KiB is cut with
+  `"truncated":true`, an error at 1 KiB. What a conversation held when first followed counts as
+  known, and nothing is ever replayed.
 
 ## Lifecycle
 
@@ -147,29 +212,19 @@ short status summaries are best-effort, and overlapping delegations never produc
 
 ## Verification
 
-`tests/liveModule.test.ts` drives Live's real hooks with a scripted Voice turn; outline, AppState
-helper, configuration and provider transport tests are targeted unit coverage.
+`tests/liveModule.test.ts` drives Live's real hooks with a scripted Voice turn;
+`tests/liveVoiceContext.test.ts` covers references, directory updates, times, cuts and the first
+context's budgets, and AppState helper, configuration and provider transport tests are targeted
+unit coverage.
 `tests/runtime/liveDesktopTransport.test.ts` uses the complete runtime, the real Voice agent and
 real HTTP/WebSockets with scripted provider inference. It can export Voice's sanitized requests
 through the test-only `HAPPY_LIVE_CAPTURE_FILE` environment variable. A daemon started with the
 test-only `HAPPY_LIVE_CONTEXT_CAPTURE_FILE` appends each text pushed to the voice model (`context`,
-`directory`, `focus`, `reply`, `error` or `outcome`) as a JSON line `{at, kind, text, speakable}`, so a gym can prove an answer was in context
+`directory`, `focus`, `status`, `reply`, `error`, `greeting` or `outcome`) as a JSON line `{at, kind, text, speakable}`, so a gym can prove an answer was in context
 before the question; the log's matching `context.pushed` record holds only kind, size and speakable. Bun transport smoke coverage lives in
 the Agent package; targeted API gym scenarios live in `packages/happy-agent-gym-tests/tests/happy_api_live.test.ts`.
 These fixtures do not prove microphone/media negotiation or account entitlement against OpenAI.
 
-A real native audio call, before voice v2, verified one Luna LOW provider session across two requests, text-only
-retained history, sequential navigation and staging, and exactly one submission after human Send.
-The same call failed both quiet navigation checks: channel-less snapshots produced unrequested
-speech. The complete append timeline excluded separate speakable status notifications in those
-intervals. Those failures remain recorded. The user subsequently chose proactive background facts
-with model discretion over useful notices; current acceptance evaluates relevance and truthfulness,
-rather than the former zero-audio gate. This does not establish native hard silence or constitute
-completed voice release validation. Live queued overlap and
-extra calls in one reply remain covered by deterministic fixtures, rather than that audio call.
-
-A subsequent real call passed the new policy case: routine navigation produced no speech, and an
-explicitly requested completion notice followed the real coding agent's completed run, focused
-running-to-idle update, and speakable status candidate. Human Send submitted once while voice was
-active, and End closed the call. This observes a useful, truthful model choice without guaranteeing
-silence or a notice for every background update.
+Real-audio evaluations run from the desktop gym (`live-voice-evals` for scenarios S1–S6,
+`live-voice-latency --scenarios deep` for a 524-conversation remote); their results and what they
+taught are in `LEARNINGS.md`.

@@ -2144,8 +2144,8 @@ New clients use `api` for daemon reachability, independently of mobile pairing.
     `ultrafast` when the account's plan offers Ultrafast for that model, and
     `effectiveController.speed` is the fastest offered speed no faster than the stored one, with
     `serviceTier` `"priority"` for `fast` and `"ultrafast"` for `ultrafast`. `accounts` lists
-    exactly the configured accounts a call can use as its voice credential (`POST
-/v0/live/sessions` `credential`): enabled, a single account rather than a pool, on an official
+    exactly the configured accounts a call can use as its voice credential
+    (`POST /v0/live/sessions` `credential`): enabled, a single account rather than a pool, on an official
     OpenAI endpoint, each as `{ providerId, credential, name? }` with the credential kind it holds,
     `codex_subscription` for a Codex sign-in on chatgpt.com and `openai_api_key` for an API key on
     api.openai.com, and its display `name`. An account appears once per kind it can supply, and an empty list
@@ -15586,7 +15586,7 @@ text for that request. No outcome is delivered to the voice model before the act
 has a verified result.
 
 The voice model receives the call's first context when the call starts and silent context
-updates during it, described under Voice context below. It answers from that context when it
+updates during it (see Voice context below). It answers from that context when it
 holds the answer, and hands everything else to Voice. Every update is attributed data, not
 instructions, authorization, or an order to speak; none asks the voice model to respond. Voice
 receives the same first context and every update voice was told since its previous request, so
@@ -15887,95 +15887,11 @@ daemon's own records.
 ### Voice context
 
 The voice model is told what the phones' voice calls tell their voice agent, from this daemon's
-own records and never from the desktop's projection.
-
-**The directory** is the person's conversations on this daemon in sidebar order: Happy, the other
-active bots, the person's active tasks, then each project's root conversations and its
-workspaces' conversations under project and workspace heading lines, nested as the sidebar nests
-them, and under any conversation its live subtasks at any depth. Workspaces a bot or task owns
-belong to that bot or task and are not listed again. The person's own Voice is the call itself
-and is not listed. Headings have no reference; a conversation's `parents` include them. Each conversation has a reference, `s`
-and a decimal order key: references compare as text in sidebar order (`s4` < `s49` < `s5`), the
-call's first directory gets the shortest keys its length allows (`s1`–`s9`, else the fewest digits
-from `s11`, never ending in 0), and a later conversation gets a key between its neighbours. A
-reference is the conversation's for the whole call, through renames, moves, and absences, and is
-never handed to another. Speech never uses references or IDs.
-
-**The first context** is plain text, at most 24 KiB, sent as a developer message in the session's
-startup input:
-
-```text
-Now: 2026-11-06T09:15+01:00 (the person's local time, Europe/Berlin)
-focusRevision: 3
-
-Previous voice conversation (earlier calls, oldest first):
-- 3 minutes ago, the person: Remember the word pineapple.
-- 3 minutes ago, you: Got it, pineapple.
-- 2 minutes ago: the person ended the call
-
-On screen: Fix cache race — subtask, ref s3, under Release notes
-Working: yes. Needs the person: no.
-Last message from the person: 5 minutes ago (2026-11-06T09:10+01:00)
-Last reply: 3 minutes ago (2026-11-06T09:12+01:00)
-Last turns, oldest first:
-1. The person (5 minutes ago): Why does the cache race?
-   Agent (3 minutes ago): Two writers share the lock …
-
-Conversations in the app, in the sidebar's order:
-- Happy — bot, ref s1, last active 2 minutes ago (09:13)
-- Release notes — task, ref s2, needs the person (asks: Which branch?), last active an hour ago (08:10)
-  - Fix cache race — subtask, ref s3, working, last active 3 minutes ago (09:12)
-- App — project
-  - Root chat — conversation, ref s4, last active yesterday (17:40)
-  - Feature — workspace
-    - Feature chat — conversation, ref s5, failed (Rate limited.), last active 20 minutes ago (08:55)
-```
-
-Once the call is active, the daemon appends the greeting, "Hi, Happy here.", as speakable text,
-so Happy speaks first; a line in the startup context alone did not reliably start speech, and
-speakable text is said rather than followed as an instruction.
-
-`Now` is when the call started, on the clock of AppState's `timeZone` or, without it, this
-machine's; it is not a live clock. `focusRevision` is the desktop context revision. The recap is
-what was said aloud in the person's recent calls, the latest 30 lines across calls, each line at
-most 1 KiB within 8 KiB, with how each call ended; a call that ended plainly with nothing said
-leaves nothing. The conversation on screen is the desktop context's `activeTarget` when it is one
-of this daemon's conversations, with its last five turns: each a message of the person's or
-another agent's and the agent's last words after it, the person's cut at 2 KiB and the agent's at
-8 KiB after a whole word. The directory lists at most 100 conversations within 12 KiB, in sidebar
-order, each with whether it is working, needs the person and what it asks, why its last run
-failed when it did since the daemon started, and when it was last active. When more exist it
-keeps the one on screen and the followed ones, then the most recently active, each kept subtask
-with the conversations it sits under, and counts the rest. When the whole is too big, the older
-turns give way first, then the lowest-priority directory lines, then the recap's older lines,
-and the newest turn last.
-
-**Updates** are silent context appends, one JSON line each with keys sorted, never a response
-request. GPT-Live has no channel that guarantees silence, so updates are held until the person
-starts speaking, when voice answers anyway, and while a voice request lacks its delivered outcome;
-then they are sent in order. Times in them are `{ago, at}`, rendered when the update is sent:
-
-- `{"event":"directory","added":[{"kind":"task","ref":"s6","title":"Draft the notes"}],"removed":["s5"],"renamed":[{"ref":"s3","title":"Fix the cache race"}],"moved":[{"after":"s39","parents":["Release notes"],"ref":"s3"}]}`
-  — what changed in the directory, settled for one second from the first change, at most 20
-  changes within 4 KiB with the rest counted in `more`. An addition says `after` only when its
-  reference does not sort into place. Status and activity alone send nothing.
-- `{"event":"focus","focusRevision":4,"ref":"s3","title":"Fix cache race","parents":["Release notes"],"working":true,"needsPerson":false,"turns":[…]}`
-  — the screen in front changed, or `"title":null` when no conversation is in front. `turns`,
-  each `{person|anotherAgent, agent}` with `text` and `at`, holds only turns voice has not been
-  told in this call.
-- `{"event":"status","changes":[{"ref":"s2","title":"Release notes","working":false,"needsPerson":true,"asks":"Which branch?"}]}`
-  — conversations whose state changed since voice was told: working, needing the person and what
-  they ask, or a failed last run (`failed`), settled for one second, at most 20 within 4 KiB.
-- `{"event":"assistant_text","title":…,"ref":…,"text":…,"at":…,"finishedTurn":true}` — a
-  complete piece of a followed conversation's words, once: words before a tool call when the call
-  comes, and its last words when its run settles (`finishedTurn`). A piece over 8 KiB is cut
-  after a whole word with `"truncated":true`.
-- `{"event":"session_error","title":…,"ref":…,"reason":…,"at":…}` — a followed conversation's
-  run ended in an error; `reason` is at most 1 KiB.
-
-The followed conversations are the last four on screen or sent to by voice during the call,
-newest first, the one on screen always among them. What a conversation already held when it was
-first followed counts as known, and nothing is ever replayed.
+own records and never from the desktop's projection: a first context, at most 24 KiB, in the
+session's startup input, and silent context updates during the call. Both are attributed data
+for the models, not part of this API; their format belongs to the daemon and may change. Once the
+call is active the daemon appends the greeting, "Hi, Happy here.", as speakable text, so Happy
+speaks first.
 
 ### `GET /v0/live/sessions/:id/control?windowId=...`
 
@@ -16056,7 +15972,7 @@ The action union is:
 | `sessionSend`         | `target: SessionRef`, `text`                              | Send exact text as the person's message without changing the screen; never answer a pending question. |
 | `sessionWatch`        | `target: SessionRef`, `enabled`                           | Retained for compatibility; current daemons never request it.                                         |
 | `composerDraftAppend` | `target: SessionRef`, `text`                              | Append text to that session's draft without replacing it or its attachments.                          |
-| `taskCreate`          | `connectionId`, optional `name`, `text`, optional `model` | Create a task, open it, and stage `text` as its unsent draft.                                         |
+| `taskCreate`          | `connectionId`, optional `name`, `text`, optional `model` | Create a task, open it, and send `text` as its first message.                                         |
 | `sessionModelChange`  | `target: SessionRef`, `providerId`, `modelId`             | Choose the model for that session's next message through its composer.                                |
 | `workspaceCreate`     | `project: ProjectRef`                                     | Retained for compatibility; current daemons never request it.                                         |
 | `sessionCreate`       | `group: GroupRef`, optional `prompt`                      | Retained for compatibility; current daemons never request it.                                         |
@@ -16070,8 +15986,8 @@ The action union is:
 creation, with `name` when supplied and the daemon's automatic naming otherwise. Optional
 `model` is `{ providerId, modelId }` from that server's AppState `models`; the desktop validates
 it before creating anything, refuses an unknown choice with `notFound`, and creates the task with
-that selection and the model's usual effort. The desktop then opens the task and stages `text` as
-its composer draft, never sending it; a person must review the draft and press Send. Success is
+that selection and the model's usual effort. The desktop then opens the task and sends `text` as
+its first message, the person's own, through its ordinary send path. Success is
 `{ type: "created", target: TaskTarget }`.
 
 `sessionModelChange` changes the model that the identified session's next message will use,

@@ -25,9 +25,10 @@ Voice lists the sidebar and reads any conversation's public user and assistant
 text on this machine, on demand. It reads the sidebar but never writes it.
 
 Voice can do everything the person does by clicking in the window of the
-active call: open and navigate, create tasks with drafts, send messages,
-append to drafts, and change models. Send really sends, like mobile, and the
-screen stays where it is.
+active call: open and navigate, create tasks with their first message, send
+messages, append to drafts, and change models. Send really sends, like mobile,
+and the screen stays where it is. Voice ends the call when the person asks to
+hang up.
 
 ## One queue, never busy
 
@@ -38,20 +39,23 @@ outstanding.
 
 ## Context
 
-Do what mobile does for most context management. GPT-Live's first context
-holds the time the call started on the person's clock, the recap of recent
-calls, the conversation on screen with its last turns and their times, and the
-directory of conversations with references, status and last activity. During
-the call it gets mobile's silent updates: directory changes, the focus with its
-unseen turns, and replies and errors from the last four conversations visited
+Do what mobile does for most context management, with mobile's caps. GPT-Live's
+first context holds the time the call started on the person's clock, the recap
+of recent calls, the conversation on screen with its last turns and their
+times, and the directory of conversations with references, status and last
+activity. The directory lists at most 100 conversations; the rest are found by
+a search Voice runs, and voice is told the list is partial, so it delegates a
+search instead of saying a conversation does not exist. During the call it gets
+mobile's silent updates: directory changes, the focus with its unseen turns,
+status changes, and replies and errors from the last four conversations visited
 or messaged, each piece once, never replayed, never prompting speech. Voice
 gets the same context, so it skips list and read steps.
 
-The voice model takes the cheapest path that answers: from its context
-directly, otherwise it says "One moment" at once and hands off to Voice.
-Tool calls and tool results never reach GPT-Live. Voice's own conversation
-keeps its history across calls, like any agent's, and ordinary compaction
-bounds it.
+The voice model answers from its context whenever it holds the answer and
+hands everything else to Voice. Thinking aloud gets silence or a single
+"Mm-hm." and no delegation. Tool calls and tool results never reach GPT-Live.
+Voice's own conversation keeps its history across calls, like any agent's, and
+ordinary compaction bounds it.
 
 ## The call
 
@@ -73,8 +77,6 @@ is set only on Voice.
 ## Not now
 
 - The Decisions API is not used.
-- An OpenAI API key will come later. Until then, voice uses the existing Codex
-  account and adds no new billing.
 - Resetting Voice's context on a schedule.
 
 ## Order and criteria

@@ -3,13 +3,13 @@
 ## Voice belongs to one desktop window
 
 Binding voice to a coding agent exposed the wrong tools and hid desktop navigation. A call acts only
-in the window that started it, through fixed tool arrays: read-only sidebar tools, five
-desktop actions, plus `taskCreate` and `sessionModelChange` only when the desktop negotiated them.
+in the window that started it, through fixed tool arrays: read-only sidebar tools, five desktop
+actions, plus `taskCreate` and `sessionModelChange` only when the desktop negotiated them.
 Workspace, conversation and bot creation were removed from the surface (they remain in the wire
-union for compatibility) because voice should open what exists, start work as a task with an unsent
-draft, and change models rather than build structure. `sessionWatch` went with the notices it fed.
-Voice acts only on this daemon's conversations; another server's connection is refused. No
-permission answers, private reasoning, or arbitrary execution enters Live.
+union for compatibility) because voice should open what exists, start work as a task whose first
+message is the person's words, and change models rather than build structure. `sessionWatch` went
+with the notices it fed. Voice acts only on this daemon's conversations; another server's
+connection is refused. No permission answers, private reasoning, or arbitrary execution enters Live.
 
 ## Voice is the person's long-running subtask
 
@@ -18,23 +18,24 @@ ended, could not read the sidebar or other conversations, and its work was invis
 one long-running, unreported subtask of Happy per person, created with their first call through
 `SubtasksModule.create`, the path every subtask takes. A conversation subtask without an opening
 task was considered and dropped: Kirill had already rejected that shape as not a true subtask.
-Voice's opening task only
-confirms it is set up, and runs on the voice settings' controller as new agents are offered it,
-because a pool's frozen member is hidden from new agents. Every later call hands
-requests to the same Voice until the person archives it; the next call creates a new one. Live
-supplies Voice's instructions and fixed tool arrays through its own hooks, sends each request as
-an agent-originated message on the call's frozen route, and watches Voice's turn through
+Voice's opening task only confirms it is set up, and runs on the voice settings' controller as new
+agents are offered it, because a pool's frozen member is hidden from new agents. Every later call
+hands requests to the same Voice until the person archives it; the next call creates a new one.
+Live supplies Voice's instructions and fixed tool arrays through its own hooks, sends each request
+as an agent-originated message on the call's frozen route, and watches Voice's turn through
 `messageAccepted`, `beforeInference`, `onEvent` and `afterAgentSettled`. A restart that would
 resume an interrupted Voice turn stops it instead: speech from a finished call must not act later.
 
 Voice keeps what it was told in its own conversation, including the speech it was handed; the
 person chose that over a hidden history. Each request carries only speech fragments Voice has not
-seen, the call's first context only when Voice has not seen that exact text, tracked by hash, and
-the context updates voice was told since Voice's last request.
+seen, the call's first context only when Voice has not seen that exact text (tracked by hash), the
+context updates voice was told since Voice's last request, and `personSaid`, every turn the person
+spoke since voice last sent something. Without `personSaid`, "send that" after two spoken thoughts
+sent only the last one, because the earlier thought had reached Voice in an earlier request.
 
 A request runs in its own named lifetime, detached from the provider event that queued it. The first
-version detached without carrying the agent database, so every request failed at its first read and
-voice heard only the generic failure; the request context now carries the database explicitly.
+version detached without carrying the agent database, so every request failed at its first read;
+the request context now carries the database explicitly.
 
 ## The controller route comes from voice settings
 
@@ -48,35 +49,28 @@ from `PATCH /v0/config` or the admin-bot tools live in generated `runtime.toml` 
 machine file; the built-in voice prompt is never stored, and a prompt identical to it removes the
 override. The route, effort, service tier and voice prompt are frozen when a call starts. A stored
 speed the route does not offer falls to the fastest one below it, and the notice says so. The
-explicitly selected voice credential stays separate.
+explicitly selected voice credential stays separate. Controller inference is the slowest part of a
+delegated request: earlier evals measured 3–10 s to the first tool on GPT-6.1 Sol low against about
+2 s on GPT-6 Luna, varying between runs, while desktop round trips took milliseconds.
 
 ## Default account pools resolve once, onto an account that works
 
 Rejecting every smart default prevented voice from starting when ordinary conversations used an
-account pool. Live now selects one enabled compatible account from that pool at startup and holds
-its concrete provider for the whole call. The regular provider registry and a call-local lifetime
-still enforce pool or account disablement and daemon shutdown. A missing credential or later
-failure never rotates accounts, and the explicitly selected voice credential stays separate.
-
-The first selection was random. On October 24, 2026 it froze a call onto a pool member whose Codex
-sign-in could no longer be renewed, while the other member was healthy and was even the call's
-voice credential; the first request failed in under a second at round 0, and ordinary agents had
-been surviving the same dead account only through router failover, which voice may not use.
-Choosing well at call start is allowed; switching later is not. The pool now freezes onto the
-voice credential's account when the pool includes it, since the call cannot start unless that
-account is signed in. Otherwise it prefers an account whose latest inference anywhere in the daemon
-did not end in a typed authentication or out-of-tokens failure within fifteen minutes, or whose
-construction found no credential; configuration observes this on every concrete provider run and
-clears it on the next completed response. Only when every enabled account has failed does it fall
-back to them, and the choice among equals stays random. Once frozen, the account is never rotated,
-a failed delegation is never retried, and credential kinds never cross.
+account pool. Live selects one enabled compatible account from that pool at startup and holds its
+concrete provider for the whole call; the provider registry and a call-local lifetime still enforce
+disablement and daemon shutdown. A random first choice once froze a call onto a pool member whose
+Codex sign-in could no longer be renewed while the other member was healthy. Choosing well at call
+start is allowed; switching later is not. The pool freezes onto the voice credential's own account
+when the pool includes it; otherwise it prefers an account whose latest inference did not end in a
+typed authentication or out-of-tokens failure within fifteen minutes, and only when every account
+has failed does it fall back to them. Once frozen, the account is never rotated, a failed
+delegation is never retried, and credential kinds never cross.
 
 When the frozen account's sign-in is rejected or its usage runs out, the failed request gets a
-fixed explanation naming that cause and what the person can do (sign in again, wait for usage, or
-choose another controller account and start a new call), instead of the generic failure they would
-only retry. `controller.failed` diagnostics record the provider error `type` beside its `kind`,
-because `kind` is `unknown` for authentication, rate limits and unclassified errors alike and the
-log of that call could not tell them apart.
+fixed explanation naming that cause and what the person can do, instead of a generic failure they
+would only retry. `controller.failed` diagnostics record the provider error `type` beside its
+`kind`, because `kind` alone could not tell authentication, rate limits and unclassified errors
+apart.
 
 ## Voice says why a call failed and which accounts can carry one
 
@@ -85,473 +79,262 @@ Codex subscription, so an API-key account was refused. With client 0.0.183 a fai
 carries a typed `reason` (sign-in, API key, usage, timeouts, lost connection or control, restart)
 to desktops that negotiate `failureReasons`, the session keeps it as `failureReason`, and
 `config.voice` reports `accounts`, each with the credential kind `liveCredential` accepts, beside
-the controller's `speed` and the `speeds` its route offers.
+the controller's `speed` and the `speeds` its route offers. A stopping daemon fails its calls with
+`restart` before closing their control sockets, so the desktop can say what happened.
 
 ## Setup errors identify which selection failed
 
 One generic controller-and-credential error hid an invalid voice credential after the controller
-was fixed. Live now reports controller setup separately from credential setup and explicitly
-explains a proven account-pool credential selection. Only that fixed configuration-owned error is
-forwarded; arbitrary provider diagnostics stay private. A pool can select the frozen controller,
-but voice still requires an explicitly selected individual OpenAI credential.
+was fixed. Live reports controller setup separately from credential setup and explicitly explains a
+proven account-pool credential selection. Only that fixed configuration-owned error is forwarded;
+arbitrary provider diagnostics stay private.
 
-## Voice is told what the phones tell their voice agent
+## The native endpoint ignores `instructions`; startup developer messages carry the prompt
 
-GPT-Live was first given Markdown AppState pushed on every navigation and streaming change, and
-treated some pushes as something to talk about. It was then cut to the sidebar as names alone,
-with the prompt saying status "is known only by delegating". Desktop gym evals on November 23,
-2026 showed the cost: every status, time or content question became a five-second delegation,
-answers had no times, a failed run and a pending question's text were invisible, and voice had no
-memory of the last call. Kirill decided to do what mobile does for most context management.
+For a week every voice prompt change (delegation, thinking aloud, greeting, hang-up) moved nothing,
+and a prompt saying there was no backend still delegated six of six status questions. A probe
+settled it: with the voice prompt replaced by "start every reply with Banana; your name is Pickle",
+the native Codex call never said either; with the same text as a startup developer message, every
+reply began "Banana". The native calls endpoint ignores `session.instructions` and follows startup
+developer messages, which OpenAI's prompting guide documents for startup guidance. Native calls give
+the voice prompt as the first startup item, before the first context, and it comes out of the same
+24 KiB startup budget; the public session keeps `instructions`. Results measured before this fix
+reflect the endpoint's own defaults, which tell the model to delegate everything; conclusions drawn
+from them about what the prompt can do are void.
 
-Voice now gets the phones' model, built from this daemon's own records rather than the desktop's
-projection: a first context with the call's start on the person's clock, the recap of recent
-calls, the conversation on screen with its last five timed turns, and the directory with order-key
-references, status, the pending question, a failed last run and last activity. The directory
-first left out project and workspace conversations, where most of a person's work lives; it now
-lists them under project and workspace headings as the phones do, and when more than 100
-conversations exist it keeps the one on screen, the followed ones and the most recently active
-rather than the sidebar's head; then silent JSON
-updates for directory changes, focus with turns voice has not seen, and replies and errors from
-the last four conversations on screen or sent to. Each piece is told once and nothing is replayed.
-Only GPT-Live's limits change the phones' numbers: startup input is 8,192 tokens, so the first
-context is 24 KiB instead of 32 KiB, and appends are split at 500 bytes. With no read tool on the
-voice model, status and last activity sit in the directory lines rather than behind a list tool,
-and Kirill's rule that an opened conversation's recent turns go into context at once adds turns to
-`focus`, which the phones do not send. Voice receives the same first context and every update since
-its last request, so it starts from what voice knows instead of listing and reading again.
-
-## Background context waits for the requested outcome
-
-Two-action requests spoke a generic "Done" before staging finished: a background push reached
-voice mid-request, and voice treated it as the outcome. Background context lines are now held, in
-order, while any accepted request lacks a delivered outcome, and appended after it. A request whose
-actions all succeed and end in a terminal action gets a fixed outcome composed from the verified
-results, such as "Opened Garden notes." or "Sent to Release notes.", delivered at Voice's next
-inference; nothing later from that turn is spoken. A request that read state or received a refusal
-is answered with Voice's own final text. All-success accounting covers the whole request, so a
-later successful action cannot turn a previous refusal into a claim of success. Outcome delivery
-and focus cleanup remain inside that request's turn. An agent target's name in a fixed outcome
-comes from the directory.
-
-## Drafts open their own conversation; sends do not
-
-Voice v2's first real-audio eval (October 13, 2026) asked voice to stage a message or a draft in a
-conversation that was not on screen. In 3 of 3 runs the controller's first response held only
-`desktopOpen`; the lone open's fixed outcome ended the request and nothing was staged, while voice
-told the person it was. The daemon therefore opened a named, unfocused target itself before
-`sessionSend` or `composerDraftAppend`. Since sends really send (below) and the screen must stay
-where it is, only `composerDraftAppend` is still opened first; a refused open is that action's
-result, and nothing is appended. The controller is told never to open before a send, and to open
-alone only when the request is just to open something. An omitted action stays unknown unless the
-controller confirms it was not started; a failure after a successful action never implies that
-nothing happened. Delegations preserve the operation, named target and dictated payload unchanged.
-Appending "Nothing else was done." to a lone open was tried and dropped: voice spoke it, which
-sounded odd right before the next request's result.
-
-## An outcome must not swallow a later request
-
-In that rerun, a transient Codex `internal_error` failed a request before any action, while the
-person had already made a second request. Voice said the first had not gone through, asked what to do
-next, and never handed off the second, so it was lost. Every failure explanation now tells voice to
-still hand off any later request the person already made, and the voice prompt says each request is
-delegated when made, queued behind earlier ones, and never cancelled by an earlier failure. The failed
-request itself is still never retried: the controller opens its provider session with no inference
-retries, and a provider retry is treated as a failure.
-
-A later real-audio run hit the same shape and confirmed the fix: after a round-0 failure, voice said
-nothing had started and handed off the later request 2.7 s afterwards. When that one also failed, voice
-re-delegated it on its own, which is harmless only because no action had started. Codex failed 3 of 7
-controller calls at round 0 in that session (`internal_error` twice, `unknown` once). Whether the
-controller should allow one provider retry before any action is an open decision. Diagnostics still
-record only the delegation text's length, so a re-phrasing that made the controller ask an unneeded
-clarifying question could not be inspected; logging that text would reverse the rule that voice
-diagnostics never contain spoken or authored text. A final regression without provider errors passed
-the off-screen send and the open-then-draft follow-up on GPT-6.1 Sol. In one GPT-6 Luna run, where the
-transcript blurred where the quoted text began, the controller read the conversation instead of
-staging, and voice truthfully said nothing was staged; the same request had passed on Luna before. The
-missing delegation text again kept it from showing whether voice or the controller misread the request.
-
-The final review's open-then-draft audio case exposed the same loss after a successful open. Transcript
-fragment IDs prove the later Garden notes draft request began after the first delegation and was never
-handed off; voice said it would put the text there but produced no second delegation. The initial fix
-added a reminder to every successful or failed requested outcome to delegate later requests not yet
-handed off. The reminder is added only at delivery and stays outside controller history. The voice
-prompt also requires delegating every request before promising work. Both instructions explicitly
-forbid handing off a request again, because an outcome may arrive while a later request is already
-queued. Neither the lone-open result nor uncertain-action retry policy changed, and transcript text
-creates no actions.
-
-The bounded final audio check on Agent `76f1f110` passed cases `c`, `hc`, and unquoted `hv`,
-but failed `g`: the Greenhouse open completed and the later Garden draft was never delegated.
-The one authorized `g` rerun on Agent `72750632` staged exactly `check the orchid humidity`
-once and sent nothing, but still failed strict acceptance: voice created three delegations for
-two requests. The third repeated the staging action and was refused because the draft already
-existed. Voice then gave an unnecessary correction about the existing draft. It never spoke the
-reminder, and the call, focus, isolated daemon and socket all cleaned up. This is one sample,
-not a verified fix for duplicate delegation.
-
-The rerun's controller durations were 3,272 ms for the open, 3,976 ms for staging, and 7,024 ms
-for the repeated request including its refusal response. First-tool delays were 3,257, 3,446,
-and 4,630 ms. Desktop round trips were 1 ms for the first open, 522 ms for the Garden open
-including its highlight hold, and 0 ms for both staging attempts. The controller used GPT-6.1
-Sol at low effort with Fast off. Production diagnostics retained metadata only; authored text
-was not logged. No inference retry, automatic send, alternate model, or extra audio rerun was used.
-
-The duplicate's input snapshot contained the first outcome's assistant fragments and no new user
-speech. Receipt time was not recorded: the last included fragment arrived 19,960 ms into the case,
-and the duplicate began running at 21,373 ms, just after the draft request finished at 21,334 ms.
-The blanket reminder and the prompt's unconditional "delegate first, then report" order may have
-encouraged another handoff of pending work. Outcomes now read
-the actual accepted-request count immediately before delivery: while later requests remain pending,
-voice is told they are in progress and each will receive its own outcome. Only the last outcome
-reminds voice about requests it has not handed off. The prompt follows that distinction while still
-delegating every new request immediately. Both notices stay outside controller history. Metadata-only
-diagnostics record delegation receipt and the pending count and hint chosen at outcome delivery;
-they contain no authored request or response text. No transcript or action-payload deduplication was added.
-
-The fresh, authorized `g` check on Agent `b61686db` passed all 15 strict assertions in one run:
-exactly two completed delegations, the exact Garden draft text once, no send, no early or false
-claim, no busy refusal or spoken internal notice, and complete call, focus and installation cleanup.
-All three Desktop actions succeeded. Receipt diagnostics show the second delegation arrived
-193 ms after the first outcome was delivered; both outcomes therefore used the later-request
-reminder with one request in flight. This call did not exercise the queued notice and cannot
-establish why the previous duplicate disappeared. The old-code-failing deterministic two-request
-regression covers that branch; the affected suite also verifies failure handling, history isolation
-and metadata privacy.
-The passing audio sample does not establish a general duplicate-delegation guarantee.
-
-That final call's controller durations were 4,057 and 4,018 ms, with first tools at 4,045 and
-3,490 ms. Controller completion to the first assistant transcript took 321 and 711 ms; these are
-transcript arrivals, not acoustic onset. Desktop round trips were 0 ms for the Greenhouse open,
-519 ms for the Garden open including its hold, and 0 ms for staging. The actual highlight paint
-preceded navigation by 4,037 and 511 ms. The executable was `0.4.90+voice.b61686db`, its hash
-was unchanged throughout the check, and the controller remained GPT-6.1 Sol low with Fast off.
-This call finished before the person's subsequent mute instruction; no later call was made.
-
-Voice evaluations must keep the isolated Desktop fixture's physical speaker muted while virtual
-microphone clips and voice transcript processing continue. This follows the person's testing
-preference; it does not change production playback or the computer's volume. Transcript arrival
-still measures model output, not when a person hears it.
-
-## GPT-6.1 Sol low is the slowest part of a request
-
-In the same eval, the controller's first inference took 7,634–10,122 ms on GPT-6.1 Sol at low
-effort (six requests) and 3,334 ms on GPT-6 Luna at low effort (one request). Because verified
-terminal actions skip a second inference, that first inference was the whole controller time.
-Desktop round trips took 0–39 ms, except 520 ms for an open that waited for its conversation to
-load. The controller's finish to the first spoken outcome took 563–799 ms, the person's end of
-speech to voice's first audio transcript took 0.9–1.5 s, and speech start to the delegation took
-2.1–4.3 s. The samples are small and not production percentiles, but Sol's first tool dominates
-every action. The rerun measured GPT-6.1 Sol low at 3,981–5,864 ms to its first tool (three requests) and GPT-6 Luna
-low at 1,891 ms (one request), below the first eval's numbers; provider latency varies between runs. The
-default stays GPT-6.1 Sol until the person decides otherwise.
-
-## Voice focus is decorative
-
-Voice talked about entities without the desktop showing which one. With the `voiceFocus`
-capability, the daemon highlights a target as soon as it is uniquely resolved: from a whole-word,
-case-insensitive name match against AppState before the controller runs (names along one sidebar path
-resolve to the deepest; anything else is ambiguous and sends nothing), and again before each targeted
-action, as `navigation` before `desktopOpen`. The highlight is cleared when the request ends. It never
-authorizes or opens anything.
-
-## Building the first context must not slow the call's start
-
-The first context is built before the call is allocated, because it is the session's startup
-input. Ranking the directory first read every conversation's latest message, up to 500 reads, and
-the realistic remote eval (524 conversations, 60 ms round trip) measured press-to-active growing by
-326 ms at the median and 1,349 ms at p90. Last activity now comes from one query over every
-conversation's latest run, pending questions are read only for the conversations that will be
-listed, and the directory reads each list's configurations and every conversation's subtasks
-together instead of one at a time. A regression test asserts that starting a call reads no
-conversation's history except the one on screen.
-
-## GPT-Live has no silent channel, so background context waits for the person's turn
-
-The native protocol appends context on three channels: none (thinking), `commentary` and
-`speakable`, and the public one on thinking, commentary and instructions. None guarantees silence.
-Evals heard pushed replies spoken right after the greeting and a focus update ("…is now in front of
-you") spoken after a hand click. Background lines are now held until the person starts speaking,
-when voice is about to answer anyway, and while a request lacks its outcome; their times are
-rendered as `{ago, at}` when they go, so "ago" is true at that moment. The rerun's quiet window
-heard only the greeting. Status changes (working, needs the person and what it asks, failed and
-why) now go as silent `status` lines, and focus carries the question and failure, so the context
-is current when a status question comes.
-
-## Held context goes with the first words of a turn, not during it
-
-Lines first went whenever the person had spoken in the last eight seconds. In S4 the gym clicked
-another task as "Go back to the cache task." ended; the focus update landed mid-request and voice
-did nothing. Held lines now go only with the first words of a person's turn (within 1.5 s of
-them), so a change made while they are still speaking waits for the next turn; the rerun opened the
-cache task. A longer "give every word" line in the voice prompt was restored to its earlier form
-once `personSaid` gave Voice the words; thinking aloud still delegated after the revert, so that
-line was not its cause.
-
-## A dropped call stays in the recap
-
-A daemon that stops mid-call now ends the call and waits for its recap, recorded as dropped, and a
-restart records that an unfinished call dropped, since a killed daemon writes nothing. In S6 the
-recap then said so, though voice still answered "you ended the call".
-
-## Speakable text is said, not followed
-
-The greeting cue was first an instruction on the speakable channel ("Say a short hello now…"); voice
-paraphrased it into "Hi, I'm here." and once "Hi, I'm ChatGPT." Speakable text is what voice says,
-which OpenAI documents as paraphrased, so the cue is now the words themselves, "Hi, Happy here.".
-Voice still paraphrases it ("Hey."), and when the person speaks within a second or two the hello
-merges into the first answer.
-
-## A fixed outcome must wait for the next inference's first output
-
-"Open release notes, then the cache task" opened one: Voice's first response held one open, and the
-fixed outcome was delivered as soon as its next inference began, ending the request before the
-second open. The outcome now waits for that inference's first output: a tool call means more
-actions, and text or a finished inference delivers it.
-
-## A send carries every turn the person built it from
-
-"Send that" after two spoken thoughts first sent a few words of GPT-Live's delegation text, then,
-told to use the transcripts, only the last thought: Voice sees each request's new speech, and the
-earlier thought had reached it in an earlier request. Each request now carries `personSaid`, every
-turn the person spoke since voice last sent something, and Voice joins those it was built from. The
-S2 rerun sent both thoughts verbatim.
-
-## Thinking aloud is a turn-taking problem the instructions own
-
-Voice answered the person thinking aloud with 26–57 words of news, and sometimes delegated it. The
-levers people reach for first do not exist here: `semantic_vad`, `eagerness`, `create_response`
-and `interrupt_response` belong to the `gpt-realtime` models, GPT-Live has no turn-detection
-setting and the server owns turn-taking (OpenAI's Live guides; meerkat PR 1308; lux-didi issue
-343), and the native Codex session takes only instructions, voice, delegation and startup items.
-Only standby (`wake_policy`, `idle_timeout_s`) touches when inference runs. The prompt had asked
-for "a few words at most" while the person thinks aloud, which voice read as its turn to answer.
-It now follows OpenAI's GPT-Live template ("keep listening while the user pauses to think", "save
-ideas until invited", "respond when the user asks or addresses you directly; otherwise keep
-listening") and meerkat's measured wording: a pause or a filler is not the end of a turn,
-thinking aloud is not a turn, and voice says nothing or one "Mm-hm.". Mobile gets the same effect
-from ElevenLabs' `skip_turn` tool, which GPT-Live has no equivalent of.
+Once the prompt was actually read, voice stopped delegating at all and claimed "Sent." for work it
+never handed off. The delegation section now follows OpenAI's GPT-Live template: the backend's tools,
+when to delegate, and when not to, and voice never says something was done until an outcome says so.
+Because every prompt token now costs startup budget, each rule is stated once.
 
 ## The native Codex endpoint chooses its model
 
 The native calls endpoint accepted `gpt-live-1-codex`, `gpt-live-1.1-codex` and a nonsense id alike,
 and `session.started` reports no model, so the served model is the endpoint's choice; Live keeps
-Codex 0.166.0's own `gpt-live-1-codex`. The public transport requests `gpt-live-1.1`, the API's
-latest GPT-Live model since November 19, 2026.
+Codex's own `gpt-live-1-codex`. The public transport requests `gpt-live-1.1`, the API's latest
+GPT-Live model since November 19, 2026.
 
-## The native endpoint ignores `instructions`; startup developer messages carry the prompt
+## Voice is told what the phones tell their voice agent
 
-Every voice prompt change for a week (delegation, thinking aloud, greeting, hang-up) moved nothing,
-and a diagnostic prompt saying there was no backend still delegated six of six status questions.
-A probe settled it: with the whole voice prompt replaced by "start every reply with Banana; your
-name is Pickle", the native Codex call never said either; with the same text as a startup developer
-message, every reply began "Banana" and voice called itself Pickle. The native calls endpoint
-ignores `session.instructions`, as sent in the same shape Codex itself sends, and follows startup
-developer messages, which OpenAI's prompting guide documents for startup guidance. Native calls now
-give the voice prompt as the first startup item, before the first context; the public session keeps
-`instructions`. Everything learned about prompts before this was measured against the endpoint's
-own defaults, not Live's prompt.
+GPT-Live was first given Markdown AppState pushed on every change, and treated some pushes as
+something to talk about. It was then cut to sidebar names alone, so every status, time or content
+question became a five-second delegation, a failed run or a pending question was invisible, and
+voice had no memory of the last call. Kirill decided to do what mobile does for most context
+management, with mobile's caps.
 
-## gpt-live-1-codex delegates questions its context answers
+Voice gets the phones' model, built from this daemon's own records rather than the desktop's
+projection: a first context with the call's start on the person's clock, the recap of recent calls,
+the conversation on screen with its last five timed turns, and the directory with order-key
+references, status, the pending question, a failed last run and last activity; then silent JSON
+updates for directory changes, focus with turns voice has not seen, status changes, and replies and
+errors from the last four conversations on screen or sent to. Each piece is told once and nothing is
+replayed. Only GPT-Live's limits change the phones' numbers: startup input is 8,192 tokens, so the
+first context is 24 KiB instead of 32 KiB, and appends are split at 500 bytes. Kirill's rule that an
+opened conversation's recent turns go into context at once adds turns to `focus`, which the phones
+do not send. Voice receives the same first context and updates, so it starts from what voice knows
+instead of listing and reading again. With that context, status, listing, time and content
+questions are answered without delegation (S1 21/21 in every after-run).
 
-Through four eval rounds, status and listing questions ("What's going on in this one?", "Does
-anything need me?", "What tasks do I have?") were delegated although the context held the answer
-and the prompt said, more firmly each time, never to delegate them; Voice then answered from the
-same context without a tool, in about two seconds instead of one. Codex's own prompt for this
-model tells it to delegate all requests to its backend, which matches the behaviour. Moving the
-first context into the voice prompt, as the phones do, changed nothing for status questions and made
-thinking aloud delegate too, so it stays a startup developer message. This is the
-model's choice, so it stays in the prompt, not in code; the public `gpt-live-1` may differ but needs
-an OpenAI API key.
+## The directory lists 100; search finds the rest
 
-## The first after-run eval fixed the prompt, not the code
+The directory first left out project and workspace conversations, where most of a person's work
+lives; it now nests them under project and workspace headings as the phones do. Kirill's cap is
+mobile's: at most 100 conversations within 12 KiB, never the whole sidebar. When more exist it keeps
+the one on screen, the followed ones and the most recently active, says how many more exist, and the
+prompt tells voice to delegate a search by name for one it cannot find rather than say it does not
+exist. Voice's `list_sidebar` searches every conversation, a page of 50 within 24 KiB at a time.
+The directory read once stopped at 500 rows, so on a 524-conversation remote the last project's
+conversations were invisible to search and every lookup returned nothing; the read is now bounded
+only at 5,000 rows, and a test puts the target past 600. Heading lines are not conversations: a
+context listing 100 conversations under 23 project headings has 124 lines.
 
-The November 23 after-run of the desktop evals (S1–S6) on the phones' context showed the context
-worked: the time, a failed run's reason, a pending question, an exact time, a followed reply and a
-remembered word were all answered from it. It also showed where voice and Voice still chose
-wrongly, and each fix is a prompt change. Status and "what tasks do I have" still went to Voice,
-so the prompt now names those questions as answered from the directory. "Send that to X" became an
-open plus a draft, so Voice is told a send is always `sessionSend`, never a draft or an open first,
-and voice names the operation plainly in the delegation. "When did it finish" got a clock time, so
-voice is told to say "ago" even though the context shows the clock. An answer to voice's own
-clarifying question was not acted on, so the prompt says to carry out the original request then.
-A pushed reply was blurted into the greeting, so the greeting says nothing else and updates are
-never raised unasked.
+Voice holds references only for what it was told. Updates once named conversations outside the 100
+by references voice never received; now directory changes cover only the conversations voice holds,
+and an unlisted conversation is told only once it starts work, needs the person or fails, when the
+line names it with its kind and voice holds its reference from then on.
 
-Two failures needed code. Voice, now given agent IDs through `refs`, named conversations by agent in
-a window without the `agentTargets` capability, and every such action was refused, so two
-consecutive opens did nothing; the daemon now sends the window's own target for an agent its AppState
-lists. The greeting line in the startup context started speech in some calls and not others, so
-the daemon cues one hello once the call is active, as the phones cue their agent. Asking to hang up
-got a goodbye and no end, because GPT-Live has no end-call tool; voice now delegates it and Voice's
-`end_call` closes the call after the goodbye.
+## Building the first context must not slow the call's start
 
-## Background updates never ask voice to speak
+The first context is built before the call is allocated, because it is the session's startup input.
+Ranking the directory first read every conversation's latest message, and the realistic remote eval
+(524 conversations, 60 ms round trip) measured press-to-active growing by 326 ms at the median. Last
+activity now comes from one query over every conversation's latest run, pending questions are read
+only for the conversations that will be listed, and the directory reads each list's configurations
+and every conversation's subtasks together. A regression test asserts that starting a call reads no
+conversation's history except the one on screen.
 
-A real audio call acknowledged a workspace switch after a channel-less native context append, and
-three real calls failed strict silence checks: neither the thinking channel nor a prompt guarantees
-silence. Spoken notices were tried and dropped because they made calls chatty. Context lines now
-carry replies and errors again, as the phones do, but every one is a silent append, the prompt says
-updates need no answer and never to speak because one arrived, and voice uses them only when the
-person asks or they bear on what it is saying. The November 23 baseline still caught voice speaking
-unasked during a quiet window after an outline change, so silence after pushes is something the
-evals must keep measuring. `sessionUpdate` frames are validated and ignored; the daemon follows its
-own agents instead.
+## GPT-Live has no silent channel, so background context waits for the person's turn
 
-## Send really sends
+The native protocol appends context on three channels (none, `commentary`, `speakable`) and the
+public one on thinking, commentary and instructions; none guarantees silence. Evals heard pushed
+replies spoken right after the greeting and a focus update spoken after a click, and spoken notices
+were tried and dropped because they made calls chatty. Background lines are silent appends, the
+prompt says they need no answer, and they are held until the first words of the person's next turn
+(within 1.5 s), when voice answers anyway, and while a request lacks its outcome. An earlier
+eight-second window let a click made while the person was still speaking land mid-request. Times
+are rendered as `{ago, at}` when the line goes, so "ago" is true then. `sessionUpdate` frames are
+validated and ignored; the daemon follows its own agents instead.
 
-`sessionSend` used to stage exact visible text for an independent human Send, and moved the screen
-to the conversation first. That broke the hands-free flow the phones have ("Sent. It'll dig into the
-cache race."). Kirill decided that a send really sends, like mobile, and leaves the screen where it
-is. The desktop now submits through its own send path and answers `ack`; a desktop that can only
-stage answers `staged`, and the outcome then says it was staged. Reporting the real send as the
-existing `ack` result needs no client release. The conversation sent to becomes a followed one, so
-its reply reaches voice. Pending questions still block a send, and voice never routes generated
-text through the question-answer shortcut.
+## Outcomes come from verified results
+
+Two-action requests spoke a generic "Done" before staging finished, because a background push
+reached voice mid-request. A request whose actions all succeed and end in a terminal action gets a
+fixed outcome composed from the verified results ("Opened Garden notes.", "Sent to Release notes."),
+and nothing later from that turn is spoken; a request that read state or was refused is answered with
+Voice's own final text. All-success accounting covers the whole request, so a later success cannot
+turn an earlier refusal into a claim of success. The fixed outcome waits for Voice's next
+inference's first output: delivered as soon as that inference began, "open release notes, then the
+cache task" ended after one open; a tool call means more actions, and text or a finished inference
+delivers it.
+
+## An outcome must not swallow a later request
+
+A transient provider error failed a request while the person had already made a second one; voice
+reported the failure and never handed off the second. A successful open later lost a following
+draft request the same way. Every outcome now reminds voice to delegate any later request it has not
+handed off, and the prompt says each request is delegated when made and never cancelled by an
+earlier failure. The reminder made voice re-delegate pending work once, so outcomes read the
+accepted-request count just before delivery: while later requests are pending voice is told they are
+in progress and will each get an outcome, and only the last outcome carries the reminder. Both
+notices stay outside Voice's history. The failed request itself is never retried. No transcript or
+action-payload deduplication was added; duplicate delegation is not ruled out by any eval.
+
+## Sends really send; drafts open their own conversation
+
+`sessionSend` used to stage text for an independent human Send and moved the screen first. That
+broke the hands-free flow the phones have ("Sent. It'll dig into the cache race."). Kirill decided
+that a send really sends, like mobile, and leaves the screen where it is: the desktop submits
+through its own send path and answers `ack`; a desktop that can only stage answers `staged`, and
+the outcome says so. The conversation sent to becomes a followed one, so its reply reaches voice.
+Pending questions still block a send. `taskCreate` likewise gives the new task the person's words
+as its first message. "Send that to X" once became an open plus a draft, so Voice is told a send is
+always `sessionSend` with the person's exact words, never a draft or an open first.
+
+An early eval asked for a draft in a conversation not on screen, and the controller's response held
+only `desktopOpen`, so the lone open's outcome ended the request with nothing drafted. The daemon
+therefore opens a named, unfocused target itself before `composerDraftAppend`, and a refused open is
+that action's result.
+
+## Thinking aloud is a turn-taking problem the instructions own
+
+Voice answered the person thinking aloud with 26–57 words of news, and sometimes delegated it.
+`semantic_vad`, `eagerness`, `create_response` and `interrupt_response` belong to the
+`gpt-realtime` models; GPT-Live has no turn-detection setting, the server owns turn-taking, and
+Kirill ruled out playback gating and microphone tricks. The prompt follows OpenAI's GPT-Live
+template ("keep listening while the user pauses to think", "save ideas until invited") and meerkat's
+wording: a pause or filler is not the end of a turn, thinking aloud is not a turn, and voice says
+nothing or one "Mm-hm.". The strict eval accepts nothing more; it now passes. Mobile gets the same
+effect from ElevenLabs' `skip_turn`, which GPT-Live has no equivalent of.
+
+## Speakable text is said, not followed; Happy greets first
+
+A greeting line in the startup context started speech in some calls and not others, so the daemon
+cues one hello once the call is active, as the phones cue their agent. The cue was first an
+instruction on the speakable channel ("Say a short hello now…"), which voice paraphrased into "Hi,
+I'm ChatGPT."; speakable text is what voice says, so the cue is the words themselves, "Hi, Happy
+here.". When the person speaks within a second or two, the hello can merge into the first answer.
+
+## Ending a call is Voice's tool
+
+Asking to hang up got a goodbye and no end, because GPT-Live has no end-call tool. Voice delegates
+"End the call." and Voice's `end_call` closes the call two seconds after the turn settles, so the
+goodbye is heard, without a spoken outcome. The timer belongs to the call and is cleared when the
+call ends first.
+
+## The recap survives a dropped call
+
+A daemon that stops mid-call ends the call and waits for its recap, recorded as dropped, and a
+restart records that an unfinished call dropped, since a killed daemon writes nothing. Recaps join
+whole native transcript items with a space, as `personSaid` does, so the next call does not read
+glued words. The recap carries across calls, so evals that rely on separate calls being independent
+must account for it.
+
+## Agent targets need the window's consent
+
+Voice, given agent IDs through `refs`, named conversations by agent in a window without the
+`agentTargets` capability, and every such action was refused. The daemon now sends the window's own
+target for an agent its AppState lists and refuses any other. "This machine" is the call's
+`localConnectionId`, accepted on its own, else AppState's local server, else the context's only
+connection; connection IDs are window-relative, so Voice gets the current one with every request.
+
+## Voice focus is decorative
+
+With the `voiceFocus` capability the daemon highlights a target as soon as it is uniquely resolved:
+from a whole-word, case-insensitive name match against AppState before Voice runs, and again before
+each targeted action, as `navigation` before `desktopOpen`. The highlight is cleared when the request
+ends. It never authorizes or opens anything.
 
 ## Native and public Live have different lifecycles
 
 HTTP success and connected media are not provider readiness. Native attachment follows Codex's
 passive existing-call path and waits for an actual started or updated event; public startup settings
-are immutable. Native transcript fragments may include provider timestamps; the adapter currently
-emits the supported untimed variant and ignores aggregate turn events to avoid duplicate text. Native orderly close
-does not prove usage finalization; public close requires its actual terminal event. Neither path
-retries allocation or silently switches credential, model, account, or transport.
-
-## Accepted desktop context is immutable for its revision
-
-Using changing message text under the same desktop revision made identical-revision checks reject
-ordinary streaming. Accepted desktop context remains immutable for its revision; a conflicting
-context under the same revision ends the call as invalid control data.
-
-## Routine conversation must not exhaust lifetime display limits
-
-Transcript deduplication now evicts old display-only keys rather than ending a call after a few
-hundred fragments. Follow-up delegations queue instead of refusing ordinary speech. Public
-fractional transcript times remain untimed rather than rounded into invented millisecond intervals.
-Invalid intervals still fail closed.
-
-## A failed controller request does not end voice
-
-Controller inference errors, invalid model actions, bounded-request limits, and uncertain desktop
-timeouts previously ended the entire call under one generic error. Each failed delegation now
-returns a fixed, sanitized explanation to that delegation's voice context without cancelling sibling
-requests. The explanation states when no action began and preserves uncertainty about earlier or still-running actions
-and never authorizes automatic replay. Timed-out action identities remain remembered, and their late
-results are ignored. Logs retain safe failure metadata, never raw provider errors or transcripts.
-Sending the result back is a separate operation: a delivery failure
-ends the broken transport without trying another append. Account disablement, connection loss,
-invalid desktop protocol data, and the lifetime action-capacity boundary still end the call.
-
-## A completed action must not make ordinary voice sound busy
-
-The call-wide controller guard refused a new native delegation even after a desktop action had
-completed, while the earlier controller was still composing its response. A real audio test
-reproduced the spoken busy warning with one request and a three-millisecond successful staging
-action. Requests now queue first-in, first-out per person, across all of their calls, and one runs
-at a time; Voice's turn settles before the next request reaches it, so two requests never share a
-turn. The desktop has at most one outstanding action, and Voice's actions run one at a time in the
-order it called them. Duplicate delegation identities are ignored and uncertain mutations are never
-replayed. A request has 120 seconds and eight inferences; past either, Voice's turn is stopped,
-voice gets a fixed explanation, and the stopped turn has ten seconds to settle before the next
-request reaches Voice. Queued requests expire after 120 seconds without starting an action. Short
-response-frame ordering is separate from inference; it never waits for playback or a desktop
-acknowledgement.
-
-## Voice needs a local diagnostic timeline
-
-The default daemon log had no voice context or action timeline, so a live call that described the
-wrong window could not be traced after the fact. Live now emits bounded metadata at the default
-info level into the existing rotating local log: call/window identities, accepted revisions and
-desktop IDs/counts, chosen controller route, transcript roles and lengths, selected snapshot counts,
-delegation/action/result identities, lifecycle, and fixed failure phases/categories. Names, titles,
-public text, drafts, audio, SDP, credentials, and raw errors never enter these records. Streaming
-diagnostics have both rate and lifetime limits; invalid records and failed writes are dropped
-without affecting voice. Arbitrary catalog samples and duplicated failure details made diagnostics
-larger without helping identify the active window. Logs retain active IDs and counts and one
-structured failure record instead. Desktop gym evals could not tell what the voice model had been told before a question, so each
-push now logs `context.pushed` with its kind, size and speakable flag, and only a daemon started
-with the test-only `HAPPY_LIVE_CONTEXT_CAPTURE_FILE` writes the pushed text itself. That is a
-separate variable from the runtime test's fixture export, so the two files never collide. The shared writer opens and tightens Unix files to owner-only permissions,
-so new metadata and rotated generations do not become readable to other local users.
-
-## Each desktop action uses the current accepted revision
-
-Capturing one revision for an entire delegation made navigation invalidate every later action.
-Each action now takes the latest accepted desktop revision; ordered context-before-result frames
-advance it before the controller continues. Transcript attribution remains fixed to the delegation.
-
-## Measure controller delay separately from speech and Desktop work
-
-The retained October 8–9, 2026 Desktop gym artifacts cover 26 isolated roots, 25 results and
-15 calls with a control hello. Six calls contain Live diagnostics for eight started delegations;
-four also contain provider observers for eleven Luna round windows. The other nine calls lack
-the instrumentation needed to reconstruct controller timings. The installed user's retained
-`~/.happy/agent/observation/agent.log`, its `.1` rotation, `daemon.log`, `reload.log` and
-`local-reload.log` contain no matching Live diagnostic records. They cannot establish user-call
-latency. This review used existing artifacts and made no new calls.
-
-Measured boundaries below are milliseconds. Case names identify the retained artifact directories;
-request numbers distinguish delegations within a call. Luna used low effort; the older Astra calls
-used medium effort. A controller finish can report a refused Desktop action; the failure row is
-explicitly marked. “Outcome text” means the first fragment that actually described staging,
-refusal or failure, rather than a generic acknowledgment. It does not measure audible playback.
-
-| Case / request                        | Model | Delegate → first tool | Controller duration | Desktop round trips | Controller end → outcome text |
-| ------------------------------------- | ----- | --------------------: | ------------------: | ------------------- | ----------------------------: |
-| persistent-luna-1791584477244 / 1     | Luna  |                 5,875 |               9,905 | 4                   |                         1,344 |
-| persistent-luna-1791584810348 / 1     | Luna  |                 2,824 |      4,697 (failed) | 4                   |                         1,610 |
-| persistent-luna-1791585162146 / 1     | Luna  |                 2,878 |               4,633 | 5                   |                         1,589 |
-| persistent-luna-1791585162146 / 2     | Luna  |                 1,913 |               5,667 | 9, 3                |                           534 |
-| voice-composer-1791496990699 / 1      | Astra |                 3,341 |               5,875 | 3                   |                         3,130 |
-| voice-composer-1791497794445 / 1      | Astra |                 2,918 |               5,038 | 4                   |                         1,214 |
-| voice-composer-1791497794445 / 2      | Astra |                 3,437 |               5,496 | 1 (refused)         |                         3,426 |
-| voice-notice-policy-1791586650322 / 1 | Luna  |                 1,824 |               2,792 | 4                   |                         1,862 |
-
-The completed Luna controller median was 5,150 ms across four requests; its first-tool median
-was 2,824 ms across five requests, including the failed controller. Astra's three completed
-requests had medians of 5,496 ms and 3,341 ms respectively. These small samples use different
-requests and builds and do not establish a model comparison or production percentiles. Desktop
-round trips took 1–9 ms. Where the native append was captured, it followed controller end in
-0–1 ms; the next assistant fragment arrived 182–766 ms later. The controller exchange therefore
-dominates the measured delegation path, while outcome generation adds further delay.
-
-There is no recorded input-turn-end/VAD event, exact inference-end timestamp, audio-onset boundary
-or service tier. Speech-start offsets include speaking time, and creation-to-delegation offsets
-include fixture pauses and navigation; neither measures delay after the person stops speaking.
-Observer round windows include tool work and SDK continuation overhead, so they are not pure
-inference durations. Missing service-tier metadata does not prove Fast was off. One historical
-Astra action lacks a delegation ID and was attributed only within its single active delegation.
-The two-action Luna request produced a generic “Done” before staging; only the later explicit
-outcome counts as completion. That premature “Done” is now prevented by holding background pushes
-during a request and answering verified terminal actions with a fixed outcome.
-
-The next diagnostic improvement should record supported provider turn-end events, request queue
-and provider-open/run boundaries, each round's first output and terminal event, the selected
-service tier, native append completion, and actual output-audio onset. Correlate them with stable
-call, delegation and round IDs and a monotonic clock; keep records bounded and free of authored
-text or audio. This is an identified measurement gap, not implemented instrumentation.
-
-## Unexpected control loss is not a deliberate End
-
-A failed WebSocket upgrade now ends its single-use claim immediately. Losing an attached desktop
-controller tears down provider media but settles failed, even if native transport closes normally.
-An already requested close remains deliberate, and final usage still requires actual provider proof.
+are immutable. Native transcript items are untimed, and aggregate turn events are ignored to avoid
+duplicate text. Native orderly close does not prove usage finalization; public close requires its
+actual terminal event. Neither path retries allocation or silently switches credential, model,
+account, or transport.
 
 ## GPT-Live refuses Realtime voices as an access error
 
 Sending the Realtime voice `marin` made every subscription call connect and then fail with
-`Voice session access denied.` (`forbidden`), which looked like a missing entitlement. Official
-Codex succeeded with the same account because it sends a GPT-Live voice (`cove`). GPT-Live voices
-are juniper, maple, spruce, ember, vale, breeze, arbor, sol and cove; Live sends `cove`.
+`Voice session access denied.` (`forbidden`), which looked like a missing entitlement. Codex sends a
+GPT-Live voice. GPT-Live voices are juniper, maple, spruce, ember, vale, breeze, arbor, sol and cove;
+Live sends `cove`.
+
+## Accepted desktop context is immutable for its revision
+
+Changing message text under the same desktop revision made identical-revision checks reject
+ordinary streaming. Accepted desktop context stays immutable for its revision; a conflicting context
+under the same revision ends the call as invalid control data. Each action takes the latest accepted
+revision; capturing one revision for a whole delegation made navigation invalidate every later
+action.
+
+## Ordinary conversation must not exhaust limits or sound busy
+
+Transcript deduplication evicts old display-only keys rather than ending a call after a few hundred
+fragments, and public fractional transcript times stay untimed rather than rounded into invented
+intervals. A call-wide controller guard once refused a new delegation while an earlier one was still
+composing, and voice spoke a busy warning. Requests now queue first-in, first-out per person across
+all of their calls, one at a time, and Voice's turn settles before the next request reaches it. A
+request has 120 seconds and eight inferences; past either, Voice's turn is stopped and voice gets a
+fixed explanation. Queued requests expire after 120 seconds without starting an action.
+
+## A failed controller request does not end voice
+
+Controller errors, invalid actions, bounded-request limits and uncertain desktop timeouts once ended
+the whole call under one generic error. Each failed delegation returns a fixed, sanitized
+explanation that states whether any action began and preserves uncertainty, and never authorizes
+replay. Timed-out action identities stay remembered and their late results are ignored. A delivery
+failure, account disablement, connection loss, invalid desktop data and the lifetime action limit
+still end the call.
+
+## Voice needs a local diagnostic timeline
+
+A live call that described the wrong window could not be traced, so Live emits bounded metadata at
+the default info level into the rotating local log: call and window identities, accepted revisions,
+the controller route, transcript roles and lengths, delegation, action and result identities,
+lifecycle, and fixed failure categories. Names, titles, text, drafts, audio, SDP, credentials and raw
+errors never enter it. Each push logs `context.pushed` with its kind, size and speakable flag; only a
+daemon started with the test-only `HAPPY_LIVE_CONTEXT_CAPTURE_FILE` writes the pushed text itself, so
+evals can prove an answer was in context before the question. Diagnostics still lack provider
+turn-end, output-audio onset and per-round boundaries; latency evals measure transcript arrival, not
+when a person hears it.
+
+## Unexpected control loss is not a deliberate End
+
+A failed WebSocket upgrade ends its single-use claim immediately. Losing an attached desktop
+controller tears down provider media and settles failed, even if native transport closes normally.
+An already requested close stays deliberate, and final usage still requires actual provider proof.
 
 ## Voice reads the classic sidebar on its own
 
-Voice's outline, `list_sidebar` and `read_conversations` came from the Spaces sidebar, along with
-a Voice row, `request_space_placement` and `request_sidebar_tidy`. When Spaces and stem cells were
-removed before a stable release, Live took over its own reads: the directory is the built-in bot, the
-other bots, the person's tasks and their subtasks, read straight from those modules (Surfaces are
-left out, as the phones leave them out), and
+Voice's outline and sidebar tools once came from the Spaces sidebar, with a Voice row and placement
+tools. When Spaces were removed, Live took over its own reads, straight from the bots, tasks,
+projects, workspaces and subtasks modules (Surfaces are left out, as the phones leave them out).
 `read_conversations` reads any live conversation on a standalone machine, or with a team only a
-sidebar row's conversation or a session under one. Voice no longer rearranges the sidebar.
+sidebar row's conversation or a session under one. Voice never rearranges the sidebar.
+
+## Evals keep the speakers muted
+
+Voice evaluations keep the isolated desktop fixture's physical speaker muted while virtual
+microphone clips and transcript processing continue, at the person's request. One lane runs at a
+time.
