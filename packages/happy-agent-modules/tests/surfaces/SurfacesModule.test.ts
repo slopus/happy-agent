@@ -272,6 +272,7 @@ describe("installation-owned Surface state", () => {
             "list_todo_versions",
             "read_document",
             "update_document",
+            "edit_document",
             "list_document_versions",
             "list_calendar_events",
             "create_calendar_event",

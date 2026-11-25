@@ -409,6 +409,89 @@ describe("collaborative documents merge live edits", () => {
         },
     );
 
+    it.each(["allow", "deny"] as const)(
+        "reviews an agent's exact replacement (%s) and applies it to what people typed since it read",
+        async (decision) => {
+            let agentId = "";
+            const reviews: string[] = [];
+            const calls: { name: string; arguments: unknown }[] = [];
+            const gym = await createAgentGym({
+                permissionMode: "auto",
+                inference(request) {
+                    if (request.sessionId.startsWith("naming:"))
+                        return { content: [{ type: "text", text: "<title>Document</title>" }] };
+                    if (request.sessionId !== agentId) {
+                        reviews.push(JSON.stringify(request.messages));
+                        return {
+                            content: [
+                                {
+                                    type: "text",
+                                    text: `<review><outcome>${decision}</outcome><risk>low</risk><user_authorization>high</user_authorization><rationale>Scripted permission decision.</rationale></review>`,
+                                },
+                            ],
+                        };
+                    }
+                    const call = calls.shift();
+                    if (call === undefined)
+                        return { content: [{ type: "text", text: "Finished." }] };
+                    return { content: [{ type: "tool_call", ...call }] };
+                },
+            });
+            running.push(gym);
+            agentId = gym.defaultSessionId;
+            const client = gym.client;
+            const surface = (
+                await client.createSurface({
+                    type: "document",
+                    name: "Plan",
+                    text: "# Plan\n\nShip on Monday.\n",
+                })
+            ).surface;
+            calls.push({ name: "read_document", arguments: { surfaceId: surface.id } });
+            await gym.send("Read the plan.", { permissionMode: "auto" });
+
+            // A person types into the heading after the agent read version 1.
+            const replica = await openReplica(client, surface.id);
+            await client.sendSurfaceDocumentUpdate(surface.id, {
+                update: type(replica, "end", " (started)"),
+                mutationId: "person",
+            });
+            const personal = (await client.getSurfaceDocument(surface.id)).document;
+
+            calls.push({
+                name: "edit_document",
+                arguments: { surfaceId: surface.id, old_string: "Monday", new_string: "Friday" },
+            });
+            await gym.send("Move the date to Friday.", { permissionMode: "auto" });
+            expect(reviews).toHaveLength(1);
+            expect(reviews[0]).toContain("Move the date to Friday.");
+            expect(reviews[0]).toContain("edit_document");
+            expect(reviews[0]).toContain("shared data write");
+            const current = (await client.getSurfaceDocument(surface.id)).document;
+            const log = (await client.listSurfaceDocumentUpdates(surface.id)).updates;
+            if (decision === "allow") {
+                expect(gym.inference.toolResults().at(-1)!.text).toBe(
+                    '{"seq":3,"changed":true,"replacements":1}',
+                );
+                expect(current).toMatchObject({
+                    text: "# Plan (started)\n\nShip on Friday.\n",
+                    seq: 3,
+                });
+                expect(log.at(-1)).toMatchObject({
+                    seq: 3,
+                    source: "tool",
+                    actor: { userId: null, agentId },
+                    mutationId: null,
+                });
+            } else {
+                expect(current).toEqual(personal);
+                expect(log).toHaveLength(2);
+            }
+            expect(gym.errors).toEqual([]);
+            expect(gym.inference.unscripted).toEqual([]);
+        },
+    );
+
     it("lets an agent write into a document nobody has edited", async () => {
         const calls: { name: string; arguments: unknown }[] = [];
         const gym = await createAgentGym({

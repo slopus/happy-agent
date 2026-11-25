@@ -111,6 +111,15 @@ async function desk() {
             ((await call("read_document", { surfaceId })) as Written).document,
         update: (surfaceId: string, seq: number, text: string) =>
             call("update_document", { surfaceId, seq, text }) as Promise<Written>,
+        edit: (surfaceId: string, old_string: string, new_string: string, replace_all?: boolean) =>
+            call("edit_document", {
+                surfaceId,
+                old_string,
+                new_string,
+                ...(replace_all === undefined ? {} : { replace_all }),
+            }),
+        tool: (name: string) => tools.find((tool) => tool.name === name)!,
+        ctx,
         /** Replace the document's blocks as a person's editor would, in one Yjs change. */
         type: (surfaceId: string, blocks: unknown[]) =>
             change(surfaceId, (fragment) => {
@@ -429,7 +438,191 @@ const TYPED: [name: string, blocks: unknown[], reads: string][] = [
     ],
 ];
 
+/**
+ * One exact replacement in a document: what it read as, the edit, and what it reads as after.
+ * A null result means the edit is refused with that message and the document stays as it was.
+ */
+const EDITED: [
+    name: string,
+    before: string,
+    edit: [old: string, fresh: string, all?: boolean],
+    after: string | { refused: string },
+    result?: { changed: boolean; replacements: number },
+][] = [
+    [
+        "one word",
+        "# Plan\n\nShip on Monday.\n",
+        ["Monday", "Friday"],
+        "# Plan\n\nShip on Friday.\n",
+    ],
+    [
+        "a new block after a line",
+        "# Plan\n\nFirst.\n",
+        ["First.\n", "First.\n\n- [ ] Second\n"],
+        "# Plan\n\nFirst.\n\n- [ ] Second\n",
+    ],
+    [
+        "a block removed with its blank line",
+        "one\n\ntwo\n\nthree\n",
+        ["two\n\n", ""],
+        "one\n\nthree\n",
+    ],
+    ["empty paragraphs removed", "one\n\n\n\n\n\ntwo\n", ["\n\n\n\n\n\n", "\n\n"], "one\n\ntwo\n"],
+    ["an empty paragraph added", "one\n\ntwo\n", ["one\n\n", "one\n\n\n\n"], "one\n\n\n\ntwo\n"],
+    [
+        "every occurrence",
+        "- a cat\n- a dog\n\nA cat and a dog.\n",
+        ["a ", "the ", true],
+        "- the cat\n- the dog\n\nA cat and the dog.\n",
+        { changed: true, replacements: 3 },
+    ],
+    [
+        "a table cell",
+        "| Name | Role |\n| --- | --- |\n| Ada | Dev |\n",
+        ["| Ada | Dev |", "| Ada | Lead |\n| Bo | Dev |"],
+        "| Name | Role |\n| --- | --- |\n| Ada | Lead |\n| Bo | Dev |\n",
+    ],
+    [
+        "text with replacement patterns kept literal",
+        "Price: X\n",
+        ["X", "$& and $1"],
+        "Price: $& and $1\n",
+    ],
+    [
+        "Markdown that reads back the same",
+        "one\n\ntwo\n",
+        ["one\n\ntwo", "one\n\n\ntwo"],
+        "one\n\ntwo\n",
+        { changed: false, replacements: 1 },
+    ],
+    [
+        "text that is not there",
+        "one\n",
+        ["two", "three"],
+        { refused: "This text does not appear in the document." },
+    ],
+    [
+        "text that appears twice",
+        "a cat, a dog\n",
+        ["a ", "the "],
+        {
+            refused:
+                "This text appears 2 times in the document. Add surrounding context to make it unique, or replace every occurrence.",
+        },
+    ],
+    [
+        "a replacement that is the same text",
+        "one\n",
+        ["one", "one"],
+        { refused: "The replacement is identical to the text it replaces." },
+    ],
+    [
+        "nothing to replace",
+        "one\n",
+        ["", "two"],
+        {
+            refused:
+                "old_string is empty; name the text to replace, or write the whole document with update_document.",
+        },
+    ],
+    [
+        "an empty document",
+        "",
+        ["one", "two"],
+        { refused: "This text does not appear in the document." },
+    ],
+];
+
 describe("document tools round-trip Markdown", () => {
+    it.each(EDITED)("agent edits %s", async (_name, before, [old, fresh, all], after, result) => {
+        const t = await desk();
+        const surfaceId = await t.create(before);
+        const seq = (await t.read(surfaceId)).seq;
+        if (typeof after !== "string") {
+            await expect(t.edit(surfaceId, old, fresh, all)).rejects.toMatchObject({
+                code: "invalid_request",
+                message: after.refused,
+            });
+            expect(await t.read(surfaceId)).toMatchObject({ text: before, seq });
+            return;
+        }
+        const expected = result ?? { changed: true, replacements: 1 };
+        expect(await t.edit(surfaceId, old, fresh, all)).toEqual({
+            ...expected,
+            seq: expected.changed ? seq + 1 : seq,
+        });
+        expect((await t.read(surfaceId)).text).toBe(after);
+    });
+
+    it("edits one block and leaves the others, and what Markdown cannot show, as they were", async () => {
+        const t = await desk();
+        const surfaceId = await t.create();
+        await t.type(surfaceId, [
+            block("heading", "Plan", { level: 1, textColor: "red" }),
+            p(),
+            { ...p(), content: [text("Ship on "), text("Monday", { underline: true }), text(".")] },
+            p("Parent", [p("Nested beneath a paragraph")]),
+        ]);
+        const before = await t.blocks(surfaceId);
+        expect(await t.edit(surfaceId, "Ship on", "We ship on")).toEqual({
+            seq: 2,
+            changed: true,
+            replacements: 1,
+        });
+        const after = await t.blocks(surfaceId);
+        expect(after[2]).toMatchObject({
+            id: before[2]!.id,
+            content: [
+                { text: "We ship on " },
+                { text: "Monday", styles: { underline: true } },
+                { text: "." },
+            ],
+        });
+        expect([after[0], after[1], after[3]]).toEqual([before[0], before[1], before[3]]);
+    });
+
+    it("refuses an edit to a document holding content outside the content model", async () => {
+        const t = await desk();
+        const surfaceId = await t.create("Kept\n");
+        await t.change(surfaceId, (fragment) => {
+            const container = new Y.XmlElement("blockContainer");
+            container.insert(0, [new Y.XmlElement("futureBlock")]);
+            (fragment.get(0) as Y.XmlElement).insert(1, [container]);
+        });
+        await expect(t.edit(surfaceId, "Kept", "Replaced")).rejects.toMatchObject({
+            code: "invalid_request",
+            message: expect.stringContaining("cannot represent"),
+        });
+        expect(await t.read(surfaceId)).toMatchObject({ text: "Kept\n", seq: 2 });
+    });
+
+    it("reviews an edit as a shared write that needs no filesystem access", async () => {
+        const t = await desk();
+        const edit = t.tool("edit_document");
+        expect(edit.defer).toBe(true);
+        expect(edit.durable).toBe(true);
+        expect(edit.transactional).toBe(true);
+        expect(edit.requiresAutoOrFullAccess).toBe(true);
+        expect(edit.shouldReviewInAutoMode!({}, t.ctx)).toBe(true);
+        expect(edit.shouldRunInFullAccessInAutoMode).toBeUndefined();
+        expect(edit.describeAutoPermissionAction!({ surfaceId: "s1" }, t.ctx)).toBe(
+            'editing the shared document in Surface "s1" while preserving history. Access: shared data write; no filesystem access',
+        );
+        expect(t.tool("update_document").description).toContain("use edit_document instead");
+    });
+
+    it("records an edit as the agent's change for the person it works for", async () => {
+        const t = await desk();
+        const surfaceId = await t.create("one\n");
+        await t.edit(surfaceId, "one", "two");
+        expect(await t.call("list_document_versions", { surfaceId })).toMatchObject({
+            updates: [
+                { seq: 1 },
+                { seq: 2, source: "tool", actor: { userId: "alice", agentId: "writer" } },
+            ],
+        });
+    });
+
     it("writes into a document nobody has edited", async () => {
         const t = await desk();
         const surfaceId = await t.create();
