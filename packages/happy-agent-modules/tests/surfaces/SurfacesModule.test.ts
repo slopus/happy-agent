@@ -274,6 +274,7 @@ describe("installation-owned Surface state", () => {
             "update_document",
             "edit_document",
             "list_document_versions",
+            "create_document_surface",
             "list_calendar_events",
             "create_calendar_event",
             "update_calendar_event",
@@ -290,8 +291,10 @@ describe("installation-owned Surface state", () => {
             ).toBe(false);
             expect(tool.requiresAutoOrFullAccess, tool.name).toBeUndefined();
         }
+        // Creation reads an optional image first, so it settles outside one transaction too.
+        const OWN_SETTLING = ["update_surface", "create_document_surface"];
         for (const tool of ordinary.filter(
-            (tool) => tool.name !== "update_surface" && !VAULT_TOOLS.includes(tool.name),
+            (tool) => !OWN_SETTLING.includes(tool.name) && !VAULT_TOOLS.includes(tool.name),
         )) {
             const read =
                 tool.name.startsWith("list_") ||
@@ -447,6 +450,118 @@ describe("installation-owned Surface state", () => {
         expect(
             (await f.surfaces.list(ctx)).find((item) => item.name === "Unattributed list"),
         ).toMatchObject({ creatorUserId: null, members: [] });
+    });
+
+    it("lets any agent create a document for the person it works for, and only an admin bot for someone else", async () => {
+        const f = await fixture();
+        const ctx = f.db.context;
+        const scope = async (agentId: string, owner: string | null) => {
+            const kv = f.kv.scoped(`${agentId}-${owner ?? "nobody"}`);
+            if (owner !== null) await kv.write(ctx, "owner", owner);
+            const tools = await f.hooks.tools!(ctx, {
+                agent: { id: agentId },
+                kv,
+            } as AgentModuleScope);
+            return tools.find((tool) => tool.name === "create_document_surface")!;
+        };
+        let calls = 0;
+        const call = () => ({ kv: f.kv.scoped(`call-${String((calls += 1))}`) }) as never;
+        const forAlice = await scope("ordinary", "alice");
+        expect(forAlice.shouldReviewInAutoMode!({}, ctx)).toBe(true);
+        expect(forAlice.requiresAutoOrFullAccess).toBe(true);
+        expect(await forAlice.shouldRunInFullAccessInAutoMode!({}, ctx)).toBe(false);
+        expect(forAlice.describeAutoPermissionAction!({}, ctx)).toBe(
+            "creating a shared Markdown document Surface. Access: shared data write and, when supplied, filesystem image read; outside-workspace and symlink targets require Full access",
+        );
+        expect(forAlice.description).not.toContain("Admin bots only");
+
+        const first = call();
+        const made = (await forAlice.execute(
+            ctx,
+            { name: "Notes", creatorUserId: "alice", text: "# Notes\n" },
+            first,
+        )) as { id: string };
+        expect(made).toMatchObject({
+            type: "document",
+            name: "Notes",
+            creatorUserId: "alice",
+            members: [{ userId: "alice" }],
+        });
+        expect((await f.surfaces.document(ctx, made.id)).document).toMatchObject({
+            text: "# Notes\n",
+            seq: 1,
+            authorUserId: "alice",
+        });
+        expect((await f.surfaces.documentChanges(ctx, made.id)).updates).toMatchObject([
+            { seq: 1, source: "tool", actor: { userId: "alice", agentId: "ordinary" } },
+        ]);
+        // The same call again is the same document, not a second one.
+        expect(
+            await forAlice.execute(
+                ctx,
+                { name: "Notes", creatorUserId: "alice", text: "# Notes\n" },
+                first,
+            ),
+        ).toMatchObject({ id: made.id });
+
+        for (const creatorUserId of ["bob", null])
+            await expect(
+                forAlice.execute(ctx, { name: "Not mine", creatorUserId }, call()),
+            ).rejects.toMatchObject({
+                code: "forbidden",
+                message:
+                    'Only an admin bot can create a document for someone else. Pass creatorUserId "alice", the person you are working for.',
+            });
+        const forNobody = await scope("ordinary", null);
+        await expect(
+            forNobody.execute(ctx, { name: "Not mine", creatorUserId: "alice" }, call()),
+        ).rejects.toMatchObject({
+            code: "forbidden",
+            message:
+                "Only an admin bot can create a document for someone else. Pass creatorUserId null, because you are working for nobody.",
+        });
+        expect(
+            await forNobody.execute(ctx, { name: "Unowned", creatorUserId: null }, call()),
+        ).toMatchObject({ creatorUserId: null, members: [] });
+        expect(
+            await (
+                await scope("admin", "alice")
+            ).execute(ctx, { name: "For Bob", creatorUserId: "bob" }, call()),
+        ).toMatchObject({ creatorUserId: "bob", members: [{ userId: "bob" }] });
+        expect((await f.surfaces.list(ctx)).map((surface) => surface.name).sort()).toEqual([
+            "For Bob",
+            "Notes",
+            "Unowned",
+        ]);
+
+        const ordinary = await f.hooks.tools!(ctx, {
+            agent: { id: "ordinary" },
+        } as AgentModuleScope);
+        expect(
+            ordinary
+                .map((tool) => tool.name)
+                .filter((name) => /^create_.*_surface$|_surface_user$/.test(name)),
+        ).toEqual(["create_document_surface"]);
+    });
+
+    it("creates a standalone agent's document for the local person", async () => {
+        const f = await fixture(false);
+        const ctx = f.db.context;
+        const tools = await f.hooks.tools!(ctx, {
+            agent: { id: "ordinary" },
+            kv: f.kv.scoped("ordinary"),
+        } as AgentModuleScope);
+        const create = tools.find((tool) => tool.name === "create_document_surface")!;
+        expect(
+            await create.execute(ctx, { name: "Local", creatorUserId: null }, {
+                kv: f.kv.scoped("local-call"),
+            } as never),
+        ).toMatchObject({ type: "document", creatorUserId: null, members: [{ userId: null }] });
+        await expect(
+            create.execute(ctx, { name: "Named", creatorUserId: "alice" }, {
+                kv: f.kv.scoped("named-call"),
+            } as never),
+        ).rejects.toMatchObject({ code: "invalid_request" });
     });
 
     it("requires explicit null attribution in standalone operations", async () => {

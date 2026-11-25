@@ -579,6 +579,152 @@ describe("collaborative documents merge live edits", () => {
         expect(gym.inference.unscripted).toEqual([]);
     });
 
+    it.each(["allow", "deny"] as const)(
+        "reviews an ordinary agent's new document (%s) and creates it for the local person",
+        async (decision) => {
+            let agentId = "";
+            const reviews: string[] = [];
+            const calls: { name: string; arguments: unknown }[] = [];
+            const gym = await createAgentGym({
+                permissionMode: "auto",
+                inference(request) {
+                    if (request.sessionId.startsWith("naming:"))
+                        return { content: [{ type: "text", text: "<title>Document</title>" }] };
+                    if (request.sessionId !== agentId) {
+                        reviews.push(JSON.stringify(request.messages));
+                        return {
+                            content: [
+                                {
+                                    type: "text",
+                                    text: `<review><outcome>${decision}</outcome><risk>low</risk><user_authorization>high</user_authorization><rationale>Scripted permission decision.</rationale></review>`,
+                                },
+                            ],
+                        };
+                    }
+                    const call = calls.shift();
+                    if (call === undefined)
+                        return { content: [{ type: "text", text: "Finished." }] };
+                    return { content: [{ type: "tool_call", ...call }] };
+                },
+            });
+            running.push(gym);
+            agentId = gym.defaultSessionId;
+            const client = gym.client;
+
+            calls.push({
+                name: "create_document_surface",
+                arguments: { name: "Plan", creatorUserId: null, text: "Ship on Monday.\n" },
+            });
+            await gym.send("Start a plan document.", { permissionMode: "auto" });
+            expect(reviews).toHaveLength(1);
+            expect(reviews[0]).toContain("Start a plan document.");
+            expect(reviews[0]).toContain("create_document_surface");
+            expect(reviews[0]).toContain("creating a shared Markdown document Surface");
+            const surfaces = (await client.listSurfaces()).surfaces;
+            if (decision === "allow") {
+                expect(surfaces).toMatchObject([
+                    {
+                        type: "document",
+                        name: "Plan",
+                        creatorUserId: null,
+                        members: [{ userId: null }],
+                    },
+                ]);
+                expect((await client.getSurfaceDocument(surfaces[0]!.id)).document).toMatchObject({
+                    text: "Ship on Monday.\n",
+                    seq: 1,
+                });
+                expect(
+                    (await client.listSurfaceDocumentUpdates(surfaces[0]!.id)).updates,
+                ).toMatchObject([{ seq: 1, source: "tool", actor: { userId: null, agentId } }]);
+            } else expect(surfaces).toEqual([]);
+            expect(gym.errors).toEqual([]);
+            expect(gym.inference.unscripted).toEqual([]);
+        },
+    );
+
+    it("lets a teammate's ordinary agent start a document for them and nobody else", async () => {
+        const calls: { name: string; arguments: unknown }[] = [];
+        const { gym, bob, aliceId, bobId } = await surfaceTeamClients({
+            permissionMode: "full_access",
+            inference(request) {
+                if (request.sessionId.startsWith("naming:"))
+                    return { content: [{ type: "text", text: "<title>Document</title>" }] };
+                const call = calls.shift();
+                if (call === undefined) return { content: [{ type: "text", text: "Finished." }] };
+                return { content: [{ type: "tool_call", ...call }] };
+            },
+        });
+        running.push(gym);
+        const agentId = (await bob.createTask({ name: "Notes" })).task.agent.id;
+        const mode = { ...gym.selection, permissionMode: "full_access" as const };
+        let asked = 0;
+        /** Bob asks, the agent makes one tool call, and its result comes back. */
+        const ask = async (text: string, call: { name: string; arguments: unknown }) => {
+            calls.push(call);
+            await bob.sendMessage(agentId, { text, mode });
+            asked += 1;
+            await gym.waitUntil(
+                async () => {
+                    const history = await bob.getMessages(agentId);
+                    return history.runs.length >= asked &&
+                        history.runs.every((run) => run.status === "completed")
+                        ? history
+                        : undefined;
+                },
+                `Bob's request ${String(asked)} to settle`,
+            );
+            return gym.inference.toolResults().at(-1)!.text;
+        };
+        const named = async (name: string) =>
+            (await bob.listSurfaces()).surfaces.find((surface) => surface.name === name);
+
+        await ask("Start a notes document for me.", {
+            name: "create_document_surface",
+            arguments: { name: "Meeting notes", creatorUserId: bobId, text: "# Meeting notes\n" },
+        });
+        const tools = gym.inference.lastTools();
+        expect(tools).toContain("create_document_surface");
+        expect(tools).not.toContain("create_todo_surface");
+        expect(tools).not.toContain("add_surface_user");
+        const surface = (await named("Meeting notes"))!;
+        expect(surface).toMatchObject({ type: "document", creatorUserId: bobId });
+        expect(surface.members.map((member) => member.userId)).toContain(bobId);
+
+        expect(
+            await ask("Add the agenda.", {
+                name: "edit_document",
+                arguments: {
+                    surfaceId: surface.id,
+                    old_string: "# Meeting notes\n",
+                    new_string: "# Meeting notes\n\nAgenda\n",
+                },
+            }),
+        ).toBe('{"seq":2,"changed":true,"replacements":1}');
+        expect((await bob.getSurfaceDocument(surface.id)).document).toMatchObject({
+            text: "# Meeting notes\n\nAgenda\n",
+            seq: 2,
+            authorUserId: bobId,
+        });
+        expect((await bob.listSurfaceDocumentUpdates(surface.id)).updates).toMatchObject([
+            { seq: 1, source: "tool", actor: { userId: bobId, agentId } },
+            { seq: 2, source: "tool", actor: { userId: bobId, agentId } },
+        ]);
+
+        for (const creatorUserId of [aliceId, null])
+            expect(
+                await ask("Make one for somebody else.", {
+                    name: "create_document_surface",
+                    arguments: { name: "Not mine", creatorUserId },
+                }),
+            ).toContain(
+                `Only an admin bot can create a document for someone else. Pass creatorUserId "${bobId}", the person you are working for.`,
+            );
+        expect(await named("Not mine")).toBeUndefined();
+        expect(gym.errors).toEqual([]);
+        expect(gym.inference.unscripted).toEqual([]);
+    });
+
     it("refuses an agent's Markdown write when the document holds content Happy cannot represent", async () => {
         const calls: { name: string; arguments: unknown }[] = [];
         const gym = await createAgentGym({

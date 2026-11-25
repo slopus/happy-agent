@@ -40,7 +40,8 @@ describe("Surface chat prompt", () => {
         expect(text).toContain("work for whoever sent the current message");
         expect(text).toContain("## Read the current state first");
         expect(text).toContain("## Stay focused");
-        expect(text).toContain("You cannot create Surfaces or change who has joined one");
+        expect(text).toContain("The only Surface you can create is a document");
+        expect(text).toContain("You cannot change who has joined a Surface");
     });
 
     it.each([
