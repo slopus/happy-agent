@@ -577,6 +577,10 @@ function escapeText(text: string, context: Context, inLink: boolean): string {
         const word = (c: string | undefined) => c !== undefined && WORD.test(c);
         let escape = false;
         switch (char) {
+            case "\r":
+                // Written as itself it would read back as a line end.
+                out += "&#13;";
+                return;
             case "\\":
                 escape = after === undefined || after === "\n" || PUNCTUATION.test(after);
                 break;
