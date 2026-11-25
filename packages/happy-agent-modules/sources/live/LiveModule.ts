@@ -2092,15 +2092,19 @@ export class LiveModule implements AgentModule {
     async #firstContext(call: Call): Promise<string> {
         const ctx = this.#context();
         const now = Date.now();
-        let directory: VoiceDirectory = { rows: [] };
-        let recap: VoiceCallSlot[] = [];
-        try {
-            directory = await this.voiceDirectory(ctx, call.ownerId);
-            call.directoryMs = Date.now() - now;
-            recap = await readCallHistory(ctx, call.ownerId);
-        } catch {
-            // The call still starts; voice is told what could be read.
-        }
+        // The call still starts on whatever could be read. Every conversation's last run is read
+        // once, here, beside the directory and the recap, and serves both the screen and ranking.
+        const [directory, recap, runs] = await Promise.all([
+            this.voiceDirectory(ctx, call.ownerId).then(
+                (read): VoiceDirectory => {
+                    call.directoryMs = Date.now() - now;
+                    return read;
+                },
+                (): VoiceDirectory => ({ rows: [] }),
+            ),
+            readCallHistory(ctx, call.ownerId).catch((): VoiceCallSlot[] => []),
+            this.#runActivity(),
+        ]);
         call.directory = directory;
         call.refs = VoiceRefs.start(directory.rows.map((row) => row.agentId));
         const onScreen = await this.#localAgent(call, call.context.activeTarget);
@@ -2113,17 +2117,15 @@ export class LiveModule implements AgentModule {
                 kind: "subtask" as const,
                 parents: [],
             };
-            const turns = await this.#turns(onScreen);
-            screen = {
-                row,
-                ref: call.refs.ref(onScreen),
-                state: await this.#rowState(onScreen),
-                turns,
-            };
+            const [turns, state] = await Promise.all([
+                this.#turns(onScreen),
+                this.#rowState(onScreen, runs),
+            ]);
+            screen = { row, ref: call.refs.ref(onScreen), state, turns };
             this.#told(call, onScreen, turns);
             await this.#follow(call, onScreen);
         }
-        const rows = await this.#rankedRows(call, directory);
+        const rows = await this.#rankedRows(call, directory, runs);
         for (const { row, state } of rows)
             if (state !== undefined) call.toldStatus.set(row.agentId, statusKey(state));
         if (screen !== undefined) call.toldStatus.set(screen.row.agentId, statusKey(screen.state));
@@ -2153,10 +2155,12 @@ export class LiveModule implements AgentModule {
      * so a kept subtask always sits under its own conversation. Only those that can be listed are
      * asked whether they need the person.
      */
-    async #rankedRows(call: Call, directory: VoiceDirectory) {
-        // One query gives every conversation's last run, so ranking reads no conversation; the
-        // create path waits on this before the call is allocated.
-        const runs = await this.#runActivity();
+    async #rankedRows(
+        call: Call,
+        directory: VoiceDirectory,
+        runs: ReadonlyMap<string, { readonly at: number }>,
+    ) {
+        // One query gives every conversation's last run, so ranking reads no conversation.
         const activity = directory.rows.map((row) => runs.get(row.agentId)?.at);
         const recency = directory.rows
             .map((_row, index) => index)

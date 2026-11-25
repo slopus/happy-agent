@@ -1493,6 +1493,34 @@ describe("what voice is told", () => {
         expect(f.calls[0]!.initialContext).toContain("- Bot 59 — bot, ref s");
     });
 
+    it("reads every conversation's last run once, beside the directory, with one on screen", async () => {
+        const f = await fixture();
+        f.conversations.set("happy-agent", [{ role: "user", text: "Hi.", at: Date.now() }]);
+        let directoryRead!: () => void;
+        const gate = new Promise<void>((resolve) => (directoryRead = resolve));
+        // The directory's first read waits until run activity has been asked for.
+        vi.mocked(f.history.runActivity).mockImplementation(async () => {
+            directoryRead();
+            return new Map();
+        });
+        const catalog = vi.mocked(f.projects.listCatalogPage).getMockImplementation()!;
+        vi.mocked(f.projects.listCatalogPage).mockImplementation(async (...args) => {
+            await gate;
+            return await catalog(...args);
+        });
+        const body = voiceRequest();
+        body.context.activeTarget = {
+            kind: "bot",
+            connectionId: "local",
+            groupId: "home",
+            sessionId: "happy-agent",
+            botId: "happy-bot",
+        };
+        await activeCall(f, body);
+        expect(f.calls[0]!.initialContext).toContain("On screen: Happy — bot, ref s1");
+        expect(f.history.runActivity).toHaveBeenCalledTimes(1);
+    });
+
     it("never hands a model the whole sidebar: 100 listed, the rest found by paged search", async () => {
         const f = await fixture();
         f.outline.rows = Array.from({ length: 130 }, (_, index) => ({
