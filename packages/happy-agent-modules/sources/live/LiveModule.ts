@@ -227,6 +227,8 @@ interface Call {
     /** Directory and status changes settle for a second from the first before they go. */
     directoryTimer?: ReturnType<typeof setTimeout>;
     statusTimer?: ReturnType<typeof setTimeout>;
+    /** How long the first context's directory read took, for diagnostics. */
+    directoryMs?: number;
     /** Ends the call after voice's goodbye, when the person asked to hang up. */
     endTimer?: ReturnType<typeof setTimeout>;
     /**
@@ -1268,6 +1270,8 @@ export class LiveModule implements AgentModule {
                 event: "context.built",
                 bytes: Buffer.byteLength(context),
                 durationMs: Date.now() - building,
+                rows: call.directory.rows.length,
+                ...(call.directoryMs === undefined ? {} : { directoryMs: call.directoryMs }),
             });
             call.transport = await createLiveProviderTransport({
                 credential: call.credential,
@@ -2092,6 +2096,7 @@ export class LiveModule implements AgentModule {
         let recap: VoiceCallSlot[] = [];
         try {
             directory = await this.voiceDirectory(ctx, call.ownerId);
+            call.directoryMs = Date.now() - now;
             recap = await readCallHistory(ctx, call.ownerId);
         } catch {
             // The call still starts; voice is told what could be read.

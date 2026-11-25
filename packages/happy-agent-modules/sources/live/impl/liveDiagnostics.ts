@@ -182,6 +182,9 @@ const diagnosticSchema = Type.Object(
         role: Type.Optional(choices(["user", "assistant"])),
         characters: Type.Optional(count),
         durationMs: Type.Optional(count),
+        /** For `context.built`: how long reading the directory took, and how many rows it held. */
+        directoryMs: Type.Optional(count),
+        rows: Type.Optional(count),
         fragmentCount: Type.Optional(count),
         snapshotCount: Type.Optional(count),
         actionCount: Type.Optional(count),
