@@ -343,6 +343,7 @@ import type {
     ProviderUsageRefreshRequest,
     ProviderUsageRefreshResponse,
 } from "./protocol/usage.js";
+import type { PutViewersRequest, PutViewersResponse } from "./protocol/viewers.js";
 import type {
     StopWorkspaceServiceRequest,
     WorkspaceServiceAccessTokenResponse,
@@ -2652,6 +2653,23 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: `v0/surfaces/document/${encodeURIComponent(surfaceId)}/presence`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * Says what the event stream named by its hello `streamId` views now, replacing what it viewed,
+     * and returns who else views each target. Team mode only; `404` elsewhere.
+     */
+    async putViewers(
+        streamId: string,
+        request: PutViewersRequest,
+        options: RequestOptions = {},
+    ): Promise<PutViewersResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: `v0/viewers/streams/${encodeURIComponent(streamId)}`,
             json: request,
             signal: options.signal,
         });

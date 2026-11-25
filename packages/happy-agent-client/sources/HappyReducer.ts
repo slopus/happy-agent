@@ -183,9 +183,10 @@ export class HappyReducer {
     }
 
     #apply(update: HappyAgentUpdate): void {
-        if (update.kind !== "document" && update.cursor !== undefined) this.#cursor = update.cursor;
-        if (update.kind === "document") {
-            // Live document frames change no reducer state; listeners that opened documents use them.
+        if (update.kind !== "document" && update.kind !== "viewers" && update.cursor !== undefined)
+            this.#cursor = update.cursor;
+        if (update.kind === "document" || update.kind === "viewers") {
+            // Live frames change no reducer state; listeners that opened documents or views use them.
         } else if (update.kind === "connected") {
             this.#agentSyncConnected = true;
             this.#setConnection("connected");

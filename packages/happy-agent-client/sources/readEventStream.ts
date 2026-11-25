@@ -3,6 +3,7 @@ import type {
     SurfaceDocumentPresenceFrame,
     SurfaceDocumentUpdateFrame,
 } from "./protocol/surfaces.js";
+import type { ViewersUpdatedFrame } from "./protocol/viewers.js";
 import { readSseFrames } from "./readSseFrames.js";
 
 /** The stream said something this client cannot read as the documented contract. */
@@ -47,6 +48,11 @@ export async function* readEventStream(
                 kind: "document",
                 frame: { type: "document.presence", data: data as SurfaceDocumentPresenceFrame },
             };
+            continue;
+        }
+        // Viewer frames reach only streams that said they view the target, and carry no cursor.
+        if (frame.name === "viewers.updated") {
+            yield { kind: "viewers", frame: data as ViewersUpdatedFrame };
             continue;
         }
         const event = data as HappyAgentEvent;

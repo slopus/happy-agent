@@ -15108,6 +15108,81 @@ Query `limit` is optional, 1–200, default 50: how many subjects to return.
 
 Response — `200`: `{ "cluster": { ... }, "entries": [ /* peek entries, newest cursor first */ ] }`.
 
+## Viewers
+
+Viewers say who is looking at an agent session or a Surface right now, and when each other person
+was last there. The name is `viewers` because presence already means Online and Away. Viewers
+exist only in team mode. In standalone mode, and on older daemons, every viewers route returns
+`404`; clients then hide viewers and stop calling until the event stream reconnects with a new
+`streamId`.
+
+**Targets.** A target is `{ "type": "agent", "id": "..." }` for an agent session, by its agent
+ID, or `{ "type": "surface", "id": "..." }` for a Surface of any type, by its Surface ID.
+
+**Viewers.** A viewer is `{ "userId": "...", "here": true, "lastSeenAt": 1755400000000 }`.
+`here` is true while at least one event stream of that person currently views the target.
+`lastSeenAt`, in epoch milliseconds, is the last moment the person was here; for a person here now
+it is the daemon's current time.
+
+**Storage.** Who is here is held in memory and ends with the daemon process. Each person's
+`lastSeenAt` for each target is durable: it is stored when they arrive, when they leave, and at
+most once a minute while they stay. Permanently deleting an agent deletes its stored viewers.
+
+### `PUT /v0/viewers/streams/:streamId`
+
+Says what one event stream is viewing now and returns who else views each of those targets.
+`streamId` is the one in the `hello` frame of `GET /v0/events/stream`. Only the person who opened
+that stream may use it; another person's, a closed, or an unknown stream returns
+`404 not_found`.
+
+Body: `{ "targets": [ { "type": "agent", "id": "..." } ] }`. It replaces everything this stream
+views. It holds 0 to 8 targets with no duplicates; more targets, a duplicate, a malformed ID, or
+an unsupported field returns `400 invalid_request`. `targets: []` means the window is hidden,
+unfocused, idle, or closed.
+
+A target the caller may not read, or that does not exist, is dropped silently and answered with
+an empty list, so a stale target never breaks a window's heartbeat. Access is checked again on
+every request, so a target the caller can no longer read stops counting them as here. An agent
+target is readable when the agent session is readable through `GET /v0/agents/:agentId`; a
+Surface target is readable when the Surface exists.
+
+Clients send the request again every 15 seconds while anything is viewed. A stream's view of a
+target ends when the stream sends no request naming it for 30 seconds, and at once when the
+stream closes.
+
+Response — `200`:
+
+```json
+{
+    "targets": [
+        {
+            "target": { "type": "agent", "id": "a1b2c3d4e5f6g7h8i9j0k1l2" },
+            "viewers": [
+                { "userId": "u1x2y3z4a5b6c7d8e9f0g1h2", "here": true, "lastSeenAt": 1755400000000 },
+                { "userId": "u9z8y7x6w5v4u3t2s1r0q9p8", "here": false, "lastSeenAt": 1755399000000 }
+            ]
+        }
+    ]
+}
+```
+
+`targets` follows the request's order, one entry per requested target. Each `viewers` list leaves
+out the caller, puts people who are here first, then the newest `lastSeenAt`, and holds at most 50
+people.
+
+### Live viewer frames
+
+`event: viewers.updated` with data `{ "target": { "type": "agent", "id": "..." }, "viewer":
+{ "userId": "...", "here": false, "lastSeenAt": 1755400000000 } }` is sent whenever a person
+starts or stops being here: their first stream arrives, or their last stream leaves, expires, or
+closes. It reaches every stream that currently views that target and belongs to another person. A
+stream never receives its own person's frames, so a second device of the same person sends
+nothing.
+
+Like `document.presence`, the frame has no SSE `id:` line and no cursor, never enters the event
+journal, and is never replayed. Clients apply frames in arrival order on top of the last `PUT`
+response; the next heartbeat's response repairs any race within 15 seconds.
+
 ## Live voice sessions
 
 GPT-Live controls the initiating desktop window through a fixed set of UI-equivalent actions.
@@ -16450,8 +16525,8 @@ data: {"cursor":"01991f3a-...","gap":false,"resumed":true,"connectedAt":17554000
   graceful shutdown begins. A client that connects mid-drain learns from it whether a replacement
   is coming.
 - `streamId` — a CUID2 naming this one stream connection, for subscribing it to collaborative
-  documents. A reconnect gets a new one. Additive; absent on daemons without collaborative
-  documents.
+  documents and for saying what it views (see Viewers). A reconnect gets a new one. Additive;
+  absent on daemons without collaborative documents.
 
 `daemonId`, `daemonStartedAt`, `draining`, and `drain` are additive and may be absent on older
 compatible protocol-22 daemons. `HappyAgentClient.updates()` emits `daemon_started` once for each
@@ -16461,9 +16536,10 @@ to pass the underlying journal event through normally.
 
 After `hello`, every event is one SSE frame: the SSE `id:` field carries the event's `cursor`
 (feeding `Last-Event-ID`), the `event:` field is the event's `type`, and `data:` is the
-envelope. The one exception is the live `document.update` and `document.presence` frames
-described under Document Surfaces: they carry no `id:` line and no cursor, are not journal
-events, and reach only a stream its client subscribed to a document.
+envelope. The exceptions are the live `document.update` and `document.presence` frames
+described under Document Surfaces, and the live `viewers.updated` frame described under Viewers:
+they carry no `id:` line and no cursor, are not journal events, and reach only a stream its
+client subscribed to a document or said views a target.
 In team mode, the same owner filtering applies to replay and live delivery. Hidden Happy
 integration events produce no event frame for another member; resuming after the last visible
 cursor must still deliver all subsequent visible events in journal order. The hello cursor and

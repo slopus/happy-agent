@@ -2,6 +2,7 @@ import type { Cuid2, EventCursor, Timestamp } from "./protocol/common.js";
 import type { DaemonDrain } from "./protocol/daemon.js";
 import type { EventStreamFrame, EventStreamOptions, HappyAgentEvent } from "./protocol/events.js";
 import type { SurfaceDocumentLiveFrame } from "./protocol/surfaces.js";
+import type { ViewersUpdatedFrame } from "./protocol/viewers.js";
 import { HappyAgentApiError } from "./HappyAgentApiError.js";
 import { EventStreamProtocolError } from "./readEventStream.js";
 
@@ -55,7 +56,9 @@ export type HappyAgentUpdate =
       }
     | { kind: "event"; event: HappyAgentEvent; cursor: EventCursor }
     /** A live frame for a document subscribed on the current connection; never replayed. */
-    | { kind: "document"; frame: SurfaceDocumentLiveFrame };
+    | { kind: "document"; frame: SurfaceDocumentLiveFrame }
+    /** Someone started or stopped viewing a target the current connection views; never replayed. */
+    | { kind: "viewers"; frame: ViewersUpdatedFrame };
 
 type OpenEventStream = (options: EventStreamOptions) => AsyncIterable<EventStreamFrame>;
 
@@ -155,6 +158,10 @@ export async function* reconnectingUpdates(
                 }
                 if (frame.kind === "document") {
                     yield { kind: "document", frame: frame.frame };
+                    continue;
+                }
+                if (frame.kind === "viewers") {
+                    yield { kind: "viewers", frame: frame.frame };
                     continue;
                 }
                 if (cursor !== undefined && frame.cursor <= cursor) continue;

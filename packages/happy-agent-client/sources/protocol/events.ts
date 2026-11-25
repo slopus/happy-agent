@@ -57,6 +57,7 @@ import {
     secretSchema,
 } from "./secrets.js";
 import { taskMembershipSchema, taskSchema } from "./tasks.js";
+import type { ViewersUpdatedFrame } from "./viewers.js";
 import {
     surfaceIdSchema,
     surfaceOrderKeySchema,
@@ -951,7 +952,9 @@ export type EventStreamFrame =
     | { kind: "hello"; hello: EventStreamHello }
     | { kind: "event"; event: HappyAgentEvent; cursor: EventCursor }
     /** A live frame for a document this stream was subscribed to: no cursor, never replayed. */
-    | { kind: "document"; frame: SurfaceDocumentLiveFrame };
+    | { kind: "document"; frame: SurfaceDocumentLiveFrame }
+    /** Someone started or stopped viewing a target this stream views: no cursor, never replayed. */
+    | { kind: "viewers"; frame: ViewersUpdatedFrame };
 
 /** `GET /v0/events/stream` options. */
 export interface EventStreamOptions {
