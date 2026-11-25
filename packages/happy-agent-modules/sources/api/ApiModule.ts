@@ -335,6 +335,7 @@ import {
 } from "./impl/apiMobileTransport.js";
 import { jsonResponseBody } from "./impl/jsonResponseBody.js";
 import { finishApiResponse } from "./impl/finishApiResponse.js";
+import { viewerTargetReadable } from "./impl/viewerTargetReadable.js";
 import {
     createNodeBinaryWebSocket,
     createSseWriter,
@@ -8142,12 +8143,15 @@ export class ApiModule implements AgentModule {
         if (viewers === undefined || !this.#team.enabled || match === null) return false;
         if (request.method !== "PUT") return false;
         const { targets } = await bodyAs(request, putViewersRequestSchema, "viewers request");
-        // Fields a newer client adds are ignored, and so is a type this daemon does not know.
+        // A target is its type and ID; fields a newer client adds are ignored, and so is a type this
+        // daemon does not know.
+        const named = new Set<string>();
         const known = new Map<string, ViewerTarget>();
         for (const target of targets) {
+            const key = JSON.stringify([target.type, target.id]);
+            if (named.has(key)) throw invalidRequest("The viewers request names a target twice.");
+            named.add(key);
             if (target.type !== "agent" && target.type !== "surface") continue;
-            const key = `${target.type}:${target.id}`;
-            if (known.has(key)) throw invalidRequest("The viewers request names a target twice.");
             known.set(
                 key,
                 target.type === "agent"
@@ -8169,12 +8173,12 @@ export class ApiModule implements AgentModule {
         );
         if (lists === undefined) throw notFound("The event stream was not found.");
         const byKey = new Map(
-            lists.map((list) => [`${list.target.type}:${list.target.id}`, list.viewers]),
+            lists.map((list) => [JSON.stringify([list.target.type, list.target.id]), list.viewers]),
         );
         sendJson(response, 200, {
             targets: targets.map((target) => ({
                 target,
-                viewers: byKey.get(`${target.type}:${target.id}`) ?? [],
+                viewers: byKey.get(JSON.stringify([target.type, target.id])) ?? [],
             })),
         });
         return true;
@@ -8184,13 +8188,10 @@ export class ApiModule implements AgentModule {
     async #canView(ctx: Context, target: ViewerTarget): Promise<boolean> {
         if (target.type === "surface")
             return (await this.#surfaces?.get(ctx, target.id)) !== undefined;
-        try {
-            await this.#requireAgent(ctx, target.id);
-            return true;
-        } catch (error: unknown) {
-            if (error instanceof ApiError && error.status === 404) return false;
-            throw error;
-        }
+        return await viewerTargetReadable(
+            async () => await this.#requireAgent(ctx, target.id),
+            async () => (await this.#agentSystem().config(ctx, target.id)) !== undefined,
+        );
     }
 
     /** Only the person who opened an event stream may route live document frames to it. */

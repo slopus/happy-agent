@@ -245,6 +245,7 @@ describe("viewers show who is here to other people", () => {
         const { gym, alice, bob, agent } = await team();
         const aliceWindow = await openStream(alice);
         const tagged = { ...agent, path: "x" };
+        const file = { type: "file", id: "readme", path: "README.md" };
         const nine = Array.from({ length: 9 }, (_, index) => ({
             type: "agent" as const,
             id: `a${String(index).padStart(23, "0")}`,
@@ -254,6 +255,10 @@ describe("viewers show who is here to other people", () => {
             alice.putViewers(aliceWindow.streamId, { targets: [agent, { ...agent }] }),
             // The same target twice, even with a field the daemon ignores.
             alice.putViewers(aliceWindow.streamId, { targets: [agent, tagged] }),
+            // Types the daemon does not know are duplicates by type and ID too.
+            alice.putViewers(aliceWindow.streamId, {
+                targets: [file, { ...file, path: "docs/README.md" }],
+            }),
             alice.putViewers(aliceWindow.streamId, { targets: [{ type: "agent", id: "a" }] }),
             alice.putViewers(aliceWindow.streamId, {
                 targets: [{ type: "file" } as unknown as ViewerTarget],
