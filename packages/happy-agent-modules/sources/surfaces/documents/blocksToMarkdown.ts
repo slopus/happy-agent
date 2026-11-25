@@ -210,18 +210,19 @@ function tableMarkdown(content: unknown, omitted: Set<OmittedContent>): string[]
 
 /**
  * Inline content as Markdown. Hard breaks become `\` line ends. When the result would not parse
- * back to the same text and styles, emphasis is dropped; if even that fails, links are too.
+ * back to the same text and styles, emphasis ends at the spaces beside each change of formatting;
+ * if that fails too, emphasis is dropped, and then links are.
  */
 function inlineMarkdown(content: unknown, context: Context): string {
     if (typeof content === "string")
         return escapeLines(escapeText(content, context, false), context);
     const nodes = normalizeInline(content, context);
-    for (const level of ["all", "noEmphasis", "plain"] as const) {
+    for (const level of ["all", "apart", "noEmphasis", "plain"] as const) {
         // Text is escaped by its neighbours, so runs only this level's formatting tells apart
         // render as one. Otherwise the result would not read back as the Markdown it is.
         const runs = mergeRuns(atLevel(nodes, level));
         const markdown = escapeLines(renderInline(runs, context, level), context);
-        if (level !== "all") context.omitted.add("some formatting");
+        if (level === "noEmphasis" || level === "plain") context.omitted.add("some formatting");
         // A table row gives up the `\` of every `\|` when it is cut into cells.
         const read = context.table ? markdown.replaceAll("\\|", "|") : markdown;
         if (sameInline(parseInlineMarkdown(read), expected(runs, level))) return markdown;
@@ -350,12 +351,27 @@ function sharedWhitespace(nodes: (Text | Link)[]): (Text | Link)[] {
     });
 }
 
-/** The runs as a formatting level writes them: without emphasis, or as plain text. */
-function atLevel(
-    nodes: readonly (Text | Link)[],
-    level: "all" | "noEmphasis" | "plain",
-): (Text | Link)[] {
+type Level = "all" | "apart" | "noEmphasis" | "plain";
+
+/**
+ * The runs as a formatting level writes them: as they are, with emphasis ending at every space
+ * beside a change of formatting, without emphasis, or as plain text. Emphasis on a space shows
+ * as nothing, so ending it there loses nothing a reader sees; it is how formatting that overlaps
+ * instead of nesting is written.
+ */
+function atLevel(nodes: readonly (Text | Link)[], level: Level): (Text | Link)[] {
     if (level === "all") return [...nodes];
+    if (level === "apart") {
+        const apart = (runs: readonly (Text | Link)[]) =>
+            splitEdges([...runs]).map((run) =>
+                run.type === "text" && run.text.trim() === ""
+                    ? { ...run, styles: run.styles?.["code"] === true ? run.styles : {} }
+                    : run,
+            );
+        return apart(nodes).map((node) =>
+            node.type === "link" ? { ...node, content: apart(node.content) as Text[] } : node,
+        );
+    }
     const text = (node: Text): Text => ({
         ...node,
         styles: level === "noEmphasis" && node.styles?.["code"] === true ? { code: true } : {},
@@ -367,16 +383,12 @@ function atLevel(
     });
 }
 
-function renderInline(
-    nodes: readonly (Text | Link)[],
-    context: Context,
-    level: "all" | "noEmphasis" | "plain",
-): string {
+function renderInline(nodes: readonly (Text | Link)[], context: Context, level: Level): string {
     let out = "";
     let open: string[] = [];
-    const emphasis = (styles: Record<string, unknown>) =>
-        level === "all"
-            ? (["bold", "italic", "strike"] as const).filter((key) => styles[key] === true)
+    const emphasis = (styles: Record<string, unknown> | undefined) =>
+        level === "all" || level === "apart"
+            ? (["bold", "italic", "strike"] as const).filter((key) => styles?.[key] === true)
             : [];
     const close = (keep: readonly string[]) => {
         // Close from the innermost delimiter until only a prefix that stays open remains.
@@ -385,61 +397,78 @@ function renderInline(
         for (const style of open.slice(shared).reverse()) out += DELIMITERS[style]!;
         open = open.slice(0, shared);
     };
-    const text = (node: Text, inLink: boolean) => {
-        const styles = emphasis(node.styles ?? {});
-        // Delimiters never sit next to whitespace, or they would not open or close.
-        const leading = /^\s*/.exec(node.text)![0];
-        const trailing = node.text.length > leading.length ? /\s*$/.exec(node.text)![0] : "";
-        const core = node.text.slice(leading.length, node.text.length - trailing.length);
-        if (core === "") {
+    /** Neighbouring text runs: formatting opens and closes within them, never across a link's edge. */
+    const text = (runs: readonly Text[], inLink: boolean) => {
+        // Whitespace that ends a run. Delimiters never sit next to whitespace, or they would not
+        // open or close, so it is written once the formatting that ends before it has closed.
+        let pending = "";
+        runs.forEach((node, index) => {
+            const styles = emphasis(node.styles);
             close(styles);
-            out += escapeText(node.text, context, inLink);
-            return;
-        }
-        close(styles);
-        out += escapeText(leading, context, inLink);
-        for (const style of styles)
-            if (!open.includes(style)) {
+            out += pending;
+            pending = "";
+            const leading = /^\s*/.exec(node.text)![0];
+            const trailing = node.text.length > leading.length ? /\s*$/.exec(node.text)![0] : "";
+            const core = node.text.slice(leading.length, node.text.length - trailing.length);
+            if (core === "") {
+                out += escapeText(node.text, context, inLink);
+                return;
+            }
+            out += escapeText(leading, context, inLink);
+            // Formatting that lasts longest opens first, so what ends sooner closes inside it.
+            const lasts = (style: string) => {
+                let until = index;
+                while (
+                    until < runs.length &&
+                    emphasis(runs[until]!.styles).includes(style as never)
+                )
+                    until += 1;
+                return until;
+            };
+            for (const style of styles
+                .filter((style) => !open.includes(style))
+                .sort((a, b) => lasts(b) - lasts(a))) {
                 out += DELIMITERS[style]!;
                 open.push(style);
             }
-        out +=
-            level !== "plain" && node.styles?.["code"] === true
-                ? // A table row is cut at every `|` before its cells are read, code or not.
-                  context.table
-                    ? codeSpan(core).replaceAll("|", "\\|")
-                    : codeSpan(core)
-                : escapeText(core, context, inLink);
-        if (trailing !== "") {
-            close([]);
-            out += escapeText(trailing, context, inLink);
-        }
+            out +=
+                level !== "plain" && node.styles?.["code"] === true
+                    ? // A table row is cut at every `|` before its cells are read, code or not.
+                      context.table
+                        ? codeSpan(core).replaceAll("|", "\\|")
+                        : codeSpan(core)
+                    : escapeText(core, context, inLink);
+            pending = escapeText(trailing, context, inLink);
+        });
+        close([]);
+        out += pending;
     };
-    for (const node of nodes) {
-        if (node.type === "link" && level !== "plain") {
-            close([]);
+    let runs: Text[] = [];
+    for (const node of [...nodes, undefined]) {
+        if (node?.type === "text") {
+            runs.push(node);
+            continue;
+        }
+        text(runs, false);
+        runs = [];
+        if (node === undefined) break;
+        if (level === "plain") text(node.content, false);
+        else {
             out += "[";
-            for (const child of node.content) text(child, true);
-            close([]);
+            text(node.content, true);
             out += `](${destination(node.href)})`;
-        } else if (node.type === "link") {
-            for (const child of node.content) text(child, false);
-        } else text(node, false);
+        }
     }
-    close([]);
     return out;
 }
 
 const DELIMITERS: Record<string, string> = { bold: "**", italic: "*", strike: "~~" };
 
 /** What parsing the rendered Markdown must give back, at the formatting level that was used. */
-function expected(
-    nodes: readonly (Text | Link)[],
-    level: "all" | "noEmphasis" | "plain",
-): MarkdownInline[] {
+function expected(nodes: readonly (Text | Link)[], level: Level): MarkdownInline[] {
     const styles = (node: Text) => {
         const kept: Record<string, true> = {};
-        for (const key of level === "all"
+        for (const key of level === "all" || level === "apart"
             ? ["bold", "italic", "strike", "code"]
             : level === "noEmphasis"
               ? ["code"]
