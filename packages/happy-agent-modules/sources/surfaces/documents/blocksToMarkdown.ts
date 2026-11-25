@@ -270,11 +270,17 @@ function normalizeInline(content: unknown, context: Context): (Text | Link)[] {
 /**
  * Formatting on the whitespace at a run's edges is invisible and cannot be written: a delimiter
  * next to a space does not open or close. Those edges become runs of their own, so the text
- * between them keeps its formatting instead of the whole block losing it.
+ * between them keeps its formatting instead of the whole block losing it. Code is the exception:
+ * its spaces show, and a code span holds them.
  */
 function splitEdges(nodes: (Text | Link)[]): (Text | Link)[] {
     return nodes.flatMap((node): (Text | Link)[] => {
-        if (node.type !== "text" || Object.keys(node.styles ?? {}).length === 0) return [node];
+        if (
+            node.type !== "text" ||
+            node.styles?.["code"] === true ||
+            Object.keys(node.styles ?? {}).length === 0
+        )
+            return [node];
         const leading = /^\s*/.exec(node.text)![0];
         const trailing = node.text.length > leading.length ? /\s*$/.exec(node.text)![0] : "";
         return [
@@ -344,7 +350,8 @@ function mergeRuns(nodes: (Text | Link)[]): (Text | Link)[] {
  */
 function sharedWhitespace(nodes: (Text | Link)[]): (Text | Link)[] {
     return nodes.map((node, index) => {
-        if (node.type !== "text" || node.text.trim() !== "") return node;
+        if (node.type !== "text" || node.text.trim() !== "" || node.styles?.["code"] === true)
+            return node;
         const styles = (other: Text | Link | undefined) =>
             other?.type === "text" ? (other.styles ?? {}) : {};
         const before = styles(nodes[index - 1]);
@@ -412,8 +419,11 @@ function renderInline(nodes: readonly (Text | Link)[], context: Context, level: 
             close(styles);
             out += pending;
             pending = "";
-            const leading = /^\s*/.exec(node.text)![0];
-            const trailing = node.text.length > leading.length ? /\s*$/.exec(node.text)![0] : "";
+            // A code span holds the spaces at its edges; every other delimiter must touch text.
+            const code = level !== "plain" && node.styles?.["code"] === true;
+            const leading = code ? "" : /^\s*/.exec(node.text)![0];
+            const trailing =
+                !code && node.text.length > leading.length ? /\s*$/.exec(node.text)![0] : "";
             const core = node.text.slice(leading.length, node.text.length - trailing.length);
             if (core === "") {
                 out += escapeText(node.text, context, inLink);
@@ -436,13 +446,12 @@ function renderInline(nodes: readonly (Text | Link)[], context: Context, level: 
                 out += DELIMITERS[style]!;
                 open.push(style);
             }
-            out +=
-                level !== "plain" && node.styles?.["code"] === true
-                    ? // A table row is cut at every `|` before its cells are read, code or not.
-                      context.table
-                        ? codeSpan(core).replaceAll("|", "\\|")
-                        : codeSpan(core)
-                    : escapeText(core, context, inLink);
+            out += code
+                ? // A table row is cut at every `|` before its cells are read, code or not.
+                  context.table
+                    ? codeSpan(core).replaceAll("|", "\\|")
+                    : codeSpan(core)
+                : escapeText(core, context, inLink);
             pending = escapeText(trailing, context, inLink);
         });
         close([]);
