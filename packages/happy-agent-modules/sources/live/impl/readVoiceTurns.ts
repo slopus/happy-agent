@@ -4,7 +4,7 @@ import type { HistoryModule } from "../../history/index.js";
 import { cutWords } from "./renderVoiceCallContext.js";
 
 /** The person's message and one of the agent's, as the phones bound them. */
-export const VOICE_USER_BYTES = 2 * 1024;
+const VOICE_USER_BYTES = 2 * 1024;
 export const VOICE_REPLY_BYTES = 8 * 1024;
 
 export interface VoiceSaid {

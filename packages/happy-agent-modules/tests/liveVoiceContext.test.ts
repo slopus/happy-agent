@@ -60,7 +60,7 @@ describe("conversation references", () => {
         // A reference is never handed to another conversation, even after its own went away.
         expect(refs.place(["a", "again", "b"])).toEqual(["again"]);
         expect(refs.ref("again")).toBe("s18");
-        expect(refs.agentFor("s19")).toBe("between");
+        expect(refs.ref("between")).toBe("s19");
     });
 });
 

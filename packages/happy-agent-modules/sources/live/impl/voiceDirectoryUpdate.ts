@@ -3,8 +3,8 @@ import { sortedJson } from "./renderVoiceCallContext.js";
 import type { VoiceRefs } from "./VoiceRefs.js";
 
 /** One update tells at most this many changes within this many bytes; the rest are counted. */
-export const VOICE_DIRECTORY_CHANGES = 20;
-export const VOICE_DIRECTORY_UPDATE_BYTES = 4 * 1024;
+const VOICE_DIRECTORY_CHANGES = 20;
+const VOICE_DIRECTORY_UPDATE_BYTES = 4 * 1024;
 
 /**
  * What changed in the directory since voice was last told, as the phones tell it: one silent

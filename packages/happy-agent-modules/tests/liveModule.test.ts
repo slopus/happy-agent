@@ -1949,43 +1949,6 @@ describe("what voice is told", () => {
         );
     });
 
-    it("holds background context for the person's next turn, and keeps status current then", async () => {
-        const f = await fixture();
-        f.outline.rows = [{ name: "Release notes", agentId: "release-agent" }];
-        f.conversations.set("release-agent", []);
-        const call = await activeCall(f);
-        f.working.add("release-agent");
-        await f.hooks.beforeAgentLoop?.(f.db.context, f.scope("release-agent"), {} as never);
-        f.outline.rows.push({ name: "Cache", agentId: "cache-agent" });
-        f.emitSidebar();
-        await new Promise((resolve) => setTimeout(resolve, 1300));
-        // Nothing goes while the person is quiet: any append may make voice speak.
-        expect(quietAppends(f)).toEqual([]);
-        call.speak("What's working?");
-        await expect.poll(() => quietAppends(f).length).toBe(2);
-        expect(quietAppends(f).map(({ text }) => JSON.parse(text))).toEqual([
-            {
-                added: [{ kind: "bot", ref: "s3", title: "Cache" }],
-                event: "directory",
-            },
-            {
-                changes: [
-                    {
-                        needsPerson: false,
-                        ref: "s2",
-                        title: "Release notes",
-                        working: true,
-                    },
-                ],
-                event: "status",
-            },
-        ]);
-        // An unchanged status tells nothing again.
-        await f.hooks.beforeAgentLoop?.(f.db.context, f.scope("release-agent"), {} as never);
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-        expect(quietAppends(f)).toHaveLength(2);
-    });
-
     it("never tells voice a reference it was not given, and introduces a conversation that starts work", async () => {
         const f = await fixture();
         f.outline.rows = Array.from({ length: 130 }, (_, index) => ({
@@ -2002,14 +1965,29 @@ describe("what voice is told", () => {
         call.speak("Anything new?");
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(quietAppends(f)).toEqual([]);
-        // One that starts work is named in full, and voice holds its reference from then on.
+        // A listed one that starts work is told by its reference; one that is not listed is named
+        // in full, and voice holds its reference from then on.
+        f.working.add("many-0");
         f.working.add("many-129");
+        await f.hooks.beforeAgentLoop?.(f.db.context, f.scope("many-0"), {} as never);
         await f.hooks.beforeAgentLoop?.(f.db.context, f.scope("many-129"), {} as never);
         await new Promise((resolve) => setTimeout(resolve, 1200));
         call.turn("What's working?");
         await expect.poll(() => quietAppends(f).length).toBe(1);
-        const [change] = JSON.parse(quietAppends(f)[0]!.text).changes;
+        const [listed, change] = JSON.parse(quietAppends(f)[0]!.text).changes;
+        expect(listed).toEqual({
+            needsPerson: false,
+            ref: /Bot 000 — bot, ref (s\d+)/u.exec(f.calls[0]!.initialContext!)![1],
+            title: "Bot 000",
+            working: true,
+        });
         expect(change).toMatchObject({ kind: "bot", title: "Bot renamed", working: true });
+        // An unchanged status tells nothing again.
+        await f.hooks.beforeAgentLoop?.(f.db.context, f.scope("many-0"), {} as never);
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        call.turn("Anything else?");
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(quietAppends(f)).toHaveLength(1);
         f.turns["which"] = [{ text: "Bot renamed is working." }];
         call.delegate("which", "which");
         await expect.poll(() => f.sends.length).toBe(1);

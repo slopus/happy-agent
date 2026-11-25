@@ -5,7 +5,7 @@ import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 
 /** What was said aloud in a person's recent calls, as the phones keep it: the latest 30 slots. */
-export const VOICE_CALL_SLOTS = 30;
+const VOICE_CALL_SLOTS = 30;
 const SLOT_TEXT = 1024;
 
 const slotSchema = Type.Object(

@@ -8,7 +8,7 @@ import { formatConversationTurns } from "./formatConversationTurns.js";
 import type { VoiceDirectory } from "./readVoiceDirectory.js";
 
 /** One conversation's share of a `read_conversations` answer. */
-export const VOICE_CONVERSATION_TEXT_LIMIT = 4_000;
+const VOICE_CONVERSATION_TEXT_LIMIT = 4_000;
 const VOICE_CONVERSATION_MESSAGE_LIMIT = 1_200;
 
 /**

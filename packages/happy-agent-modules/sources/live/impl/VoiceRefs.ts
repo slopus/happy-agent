@@ -22,12 +22,6 @@ export class VoiceRefs {
         return key === undefined ? undefined : `s${key}`;
     }
 
-    /** The agent a reference names, if this call handed it out. */
-    agentFor(ref: string): string | undefined {
-        for (const [agentId, key] of this.#keys) if (`s${key}` === ref) return agentId;
-        return undefined;
-    }
-
     /**
      * Give each conversation of the current directory without a reference one between the
      * references around it, in sidebar order. Returns the newly referenced agents.
