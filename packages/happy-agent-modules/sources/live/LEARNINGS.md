@@ -163,6 +163,14 @@ only for the conversations that will be listed, and the directory reads each lis
 and every conversation's subtasks together. A regression test asserts that starting a call reads no
 conversation's history except the one on screen.
 
+Timing the build then showed the reads were not the cost: on that remote the directory took 50 ms
+of a 459 ms build, and rendering took the rest. Over budget, the render gave way five rows at a
+time starting from all 527 rows although it lists at most 100, and re-measured every kept line for
+each candidate, so a large sidebar with a full recap took 17 seconds in a test. It now gives way
+from the cap and sizes the directory incrementally, with byte-identical output; the build is 67 ms.
+Run activity is read once, beside the directory and the recap, instead of twice in sequence.
+`context.built` logs the build's bytes, rows and times.
+
 ## GPT-Live has no silent channel, so background context waits for the person's turn
 
 The native protocol appends context on three channels (none, `commentary`, `speakable`) and the
