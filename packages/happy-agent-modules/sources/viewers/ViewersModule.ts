@@ -18,6 +18,11 @@ const EXPIRY_MS = 30_000;
 /** While a person stays, their last-seen moment is stored at most this often. */
 const STORE_INTERVAL_MS = 60_000;
 const MAX_VIEWERS = 50;
+/**
+ * How many erased agents are remembered, for requests that checked access before the erase and
+ * reach the lock after it. Far more than can be in flight at once.
+ */
+const MAX_ERASED = 1024;
 
 export type ViewersFrameListener = (streamId: string, frame: ViewersUpdatedFrame) => void;
 
@@ -33,11 +38,18 @@ interface Stream {
     readonly views: Map<string, View>;
 }
 
+/** A person here at a target, on any number of streams. */
+interface Person {
+    /** When their last-seen moment was last stored. */
+    stored: number;
+    /** The latest moment any of their streams was known to view the target. */
+    latest: number;
+}
+
 /** A last-seen moment to store, and whether the person starts or stops being here with it. */
 interface Visit {
     readonly key: string;
     readonly target: ViewerTarget;
-    readonly userId: string;
     readonly at: number;
     readonly here: boolean;
     readonly transition: boolean;
@@ -55,14 +67,18 @@ export class ViewersModule implements AgentModule {
     readonly name = "viewers";
     readonly migrations = viewersMigrations;
 
+    /** The person who opened each live event stream; only they may view through it. */
+    readonly #open = new Map<string, string>();
     readonly #streams = new Map<string, Stream>();
     /** The streams viewing each target. */
     readonly #watchers = new Map<string, Set<string>>();
-    /** When each here person's last-seen moment was last stored, by target and person. */
-    readonly #stored = new Map<string, number>();
+    /** Everyone here, by target and person. */
+    readonly #people = new Map<string, Person>();
+    readonly #erased = new Set<string>();
     readonly #listeners = new Set<ViewersFrameListener>();
     readonly #lock = asyncLock();
     #ctx: Context | undefined;
+    #closed = false;
 
     readonly beforeStart = (ctx: Context): AgentModuleHooks => {
         // Expiry and stream closing outlive the requests that started them.
@@ -72,10 +88,14 @@ export class ViewersModule implements AgentModule {
             agentErasedTransact: async (txCtx, _scope, agent) => {
                 const target: ViewerTarget = { type: "agent", id: agent.id };
                 await deleteViewerTarget(txCtx, target);
+                // Post-commit work runs before the database admits the next write, so a request
+                // that checked access before the erase sees this before it stores anything.
                 afterCommit(txCtx, () => {
-                    const ctx = this.#ctx;
-                    if (ctx !== undefined)
-                        void this.#lock.runInLock(ctx, async () => this.#forget(target));
+                    const key = targetKey(target);
+                    this.#erased.add(key);
+                    if (this.#erased.size > MAX_ERASED)
+                        this.#erased.delete(this.#erased.values().next().value!);
+                    this.#locked(async () => this.#forget(key));
                 });
             },
         };
@@ -88,51 +108,80 @@ export class ViewersModule implements AgentModule {
         };
     }
 
+    openStream(streamId: string, userId: string): void {
+        if (!this.#closed) this.#open.set(streamId, userId);
+    }
+
+    /**
+     * A closed stream stops viewing everything at once. It can no longer view from this moment,
+     * even through a request that already checked it.
+     */
+    closeStream(streamId: string): void {
+        this.#open.delete(streamId);
+        this.#locked(async (ctx) => {
+            const stream = this.#streams.get(streamId);
+            if (stream === undefined) return;
+            await this.#change(ctx, streamId, stream.userId, [...stream.views.keys()], Date.now());
+        });
+    }
+
     /**
      * Replace everything one stream views with `targets`, which the caller may read, and return who
-     * else views each of them, in order.
+     * else views each of them, in order. Undefined when the stream is not open for this person.
      */
     async view(
         ctx: Context,
         streamId: string,
         userId: string,
         targets: readonly ViewerTarget[],
-    ): Promise<TargetViewers[]> {
+    ): Promise<TargetViewers[] | undefined> {
         return await this.#lock.runInLock(ctx, async (ctx) => {
+            if (this.#closed || this.#open.get(streamId) !== userId) return undefined;
             const now = Date.now();
             const views = this.#streams.get(streamId)?.views;
-            const viewing = new Map(targets.map((target) => [targetKey(target), target] as const));
+            const viewing = new Map<string, ViewerTarget>();
+            for (const target of targets)
+                if (!this.#erased.has(targetKey(target))) viewing.set(targetKey(target), target);
             const leaving = [...(views?.keys() ?? [])].filter((key) => !viewing.has(key));
             await this.#change(ctx, streamId, userId, leaving, now, viewing, now);
             return await Promise.all(
-                targets.map(async (target) => await this.#viewers(ctx, target, userId, now)),
+                targets.map(async (target) =>
+                    viewing.has(targetKey(target))
+                        ? await this.#viewers(ctx, target, userId, now)
+                        : { target, viewers: [] },
+                ),
             );
         });
     }
 
-    /**
-     * A closed stream stops viewing everything at once. It queues behind a request already holding
-     * the lock, so a first view still in flight ends too.
-     */
-    closeStream(streamId: string): void {
+    /** Record everyone here as leaving now, before storage closes, and accept nothing after. */
+    async close(): Promise<void> {
+        this.#closed = true;
+        this.#open.clear();
         const ctx = this.#ctx;
         if (ctx === undefined) return;
-        void this.#lock.runInLock(ctx, async (ctx) => {
-            const stream = this.#streams.get(streamId);
-            if (stream === undefined) return;
+        await this.#lock.runInLock(ctx, async (ctx) => {
             const now = Date.now();
-            await this.#change(ctx, streamId, stream.userId, [...stream.views.keys()], now);
+            for (const [streamId, stream] of Array.from(this.#streams))
+                await this.#change(ctx, streamId, stream.userId, [...stream.views.keys()], now);
+        });
+    }
+
+    /** Background work on the module's own lifetime, dropped once the module has closed. */
+    #locked(work: (ctx: Context) => Promise<void>): void {
+        const ctx = this.#ctx;
+        if (ctx === undefined || this.#closed) return;
+        void this.#lock.runInLock(ctx, async (ctx) => {
+            if (!this.#closed) await work(ctx);
         });
     }
 
     /**
-     * A view nobody refreshed ends at its last refresh, the last moment it was known to be here. A
-     * refresh that won the lock first leaves it alone.
+     * A view nobody refreshed ends at its last refresh. A refresh that won the lock first leaves it
+     * alone.
      */
     #expire(streamId: string, key: string, refreshedAt: number): void {
-        const ctx = this.#ctx;
-        if (ctx === undefined) return;
-        void this.#lock.runInLock(ctx, async (ctx) => {
+        this.#locked(async (ctx) => {
             const stream = this.#streams.get(streamId);
             if (stream?.views.get(key)?.refreshedAt !== refreshedAt) return;
             await this.#change(ctx, streamId, stream.userId, [key], refreshedAt);
@@ -155,38 +204,56 @@ export class ViewersModule implements AgentModule {
         const views = this.#streams.get(streamId)?.views;
         const visits: Visit[] = [];
         for (const key of leaving) {
-            const target = views!.get(key)!.target;
-            const transition = !this.#hereElsewhere(key, userId, streamId);
-            if (transition)
-                visits.push({ key, target, userId, at: leftAt, here: false, transition });
+            if (this.#hereElsewhere(key, userId, streamId)) continue;
+            const latest = this.#people.get(`${key} ${userId}`)?.latest ?? leftAt;
+            visits.push({
+                key,
+                target: views!.get(key)!.target,
+                at: Math.max(leftAt, latest),
+                here: false,
+                transition: true,
+            });
         }
         for (const [key, target] of viewing) {
             const transition = !views?.has(key) && !this.#hereElsewhere(key, userId, streamId);
-            const due = now - (this.#stored.get(`${key} ${userId}`) ?? 0) >= STORE_INTERVAL_MS;
-            if (transition || due)
-                visits.push({ key, target, userId, at: now, here: true, transition });
+            const stored = this.#people.get(`${key} ${userId}`)?.stored;
+            if (transition || stored === undefined || now - stored >= STORE_INTERVAL_MS)
+                visits.push({ key, target, at: now, here: true, transition });
         }
-        const lastSeen: number[] = [];
+        // An agent erased while this waited for the database keeps no visit.
+        const lastSeen = new Map<Visit, number>();
         if (visits.length > 0)
             await ctx.inTx(async (tx) => {
                 for (const visit of visits)
-                    lastSeen.push(
-                        await saveViewerLastSeen(tx, visit.target, visit.userId, visit.at),
-                    );
+                    if (!this.#erased.has(visit.key))
+                        lastSeen.set(
+                            visit,
+                            await saveViewerLastSeen(tx, visit.target, userId, visit.at),
+                        );
             });
 
-        for (const key of leaving) this.#unview(streamId, key);
-        for (const [key, target] of viewing) this.#view(streamId, userId, key, target, now);
-        visits.forEach((visit, index) => {
-            const stored = `${visit.key} ${visit.userId}`;
-            if (visit.here) this.#stored.set(stored, visit.at);
-            else this.#stored.delete(stored);
-            if (!visit.transition) return;
-            this.#announce(visit.key, {
-                target: visit.target,
-                viewer: { userId: visit.userId, here: visit.here, lastSeenAt: lastSeen[index]! },
-            });
-        });
+        for (const key of leaving) {
+            this.#unview(streamId, key);
+            const person = this.#people.get(`${key} ${userId}`);
+            if (!this.#hereElsewhere(key, userId, streamId))
+                this.#people.delete(`${key} ${userId}`);
+            else if (person !== undefined) person.latest = Math.max(person.latest, leftAt);
+        }
+        for (const [key, target] of viewing) {
+            this.#view(streamId, userId, key, target, now);
+            const person = this.#people.get(`${key} ${userId}`);
+            if (person === undefined)
+                this.#people.set(`${key} ${userId}`, { stored: 0, latest: now });
+            else person.latest = Math.max(person.latest, now);
+        }
+        for (const [visit, at] of lastSeen) {
+            if (visit.here) this.#people.get(`${visit.key} ${userId}`)!.stored = visit.at;
+            if (visit.transition)
+                this.#announce(visit.key, {
+                    target: visit.target,
+                    viewer: { userId, here: visit.here, lastSeenAt: at },
+                });
+        }
     }
 
     #hereElsewhere(key: string, userId: string, streamId: string): boolean {
@@ -202,7 +269,11 @@ export class ViewersModule implements AgentModule {
             this.#streams.set(streamId, stream);
         }
         clearTimeout(stream.views.get(key)?.timer);
-        const timer = setTimeout(() => this.#expire(streamId, key, now), EXPIRY_MS);
+        // Counted from the refresh itself, not from when its storing finished.
+        const timer = setTimeout(
+            () => this.#expire(streamId, key, now),
+            Math.max(0, now + EXPIRY_MS - Date.now()),
+        );
         timer.unref();
         stream.views.set(key, { target, refreshedAt: now, timer });
         const watchers = this.#watchers.get(key) ?? new Set<string>();
@@ -234,12 +305,11 @@ export class ViewersModule implements AgentModule {
      * A deleted target's views end silently: its viewers are leaving it anyway. Ending a view edits
      * the watcher set, so copy it.
      */
-    #forget(target: ViewerTarget): void {
-        const key = targetKey(target);
+    #forget(key: string): void {
         for (const streamId of Array.from(this.#watchers.get(key) ?? [])) {
             const userId = this.#streams.get(streamId)?.userId;
             this.#unview(streamId, key);
-            if (userId !== undefined) this.#stored.delete(`${key} ${userId}`);
+            if (userId !== undefined) this.#people.delete(`${key} ${userId}`);
         }
     }
 

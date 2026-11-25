@@ -407,6 +407,7 @@ export async function startHappyAgentRuntime(
         registerShutdown("main-database", async (shutdownCtx) => {
             await system?.close(shutdownCtx);
             await settleRuntimeShutdownTasks(shutdownCtx, shutdownTasks, [
+                "viewers",
                 "files",
                 "global-skills",
                 "cloud",
@@ -802,6 +803,7 @@ export async function startHappyAgentRuntime(
         );
         const secretRequests = new SecretRequestsModule(artifacts, secrets);
         const viewers = new ViewersModule();
+        registerShutdown("viewers", async () => await viewers.close());
         const apiModule = new ApiModule(
             abort,
             config,
