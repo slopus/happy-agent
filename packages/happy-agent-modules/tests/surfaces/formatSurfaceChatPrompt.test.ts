@@ -58,6 +58,16 @@ describe("Surface chat prompt", () => {
         expect(text).toContain(rule);
     });
 
+    it("lets a document chat edit around comments and colors, which only stay hidden", () => {
+        const text = prompt("document");
+        expect(text).toContain(
+            "Content Markdown cannot show, such as comments or colors, stays in place when you edit the text around it.",
+        );
+        expect(text).toContain("content this version of Happy cannot represent");
+        expect(text).not.toContain("such as comments or colors, your writes are refused");
+        expect(text).toContain("call edit_document with the exact text to replace");
+    });
+
     it("names only tools that exist and never administration", () => {
         const names = new Set(
             surfaceTools({} as never, { agent: { id: "chat" } } as never, false).map(
