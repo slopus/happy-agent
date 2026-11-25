@@ -1309,6 +1309,25 @@ describe("Voice's targets", () => {
         expect(f.append.mock.calls.map(([input]) => input.text)).toEqual([LIVE_GREETING_CUE]);
     });
 
+    it("forgets a pending hang-up when the call ends first", async () => {
+        const f = await fixture();
+        f.turns["hang-up"] = [
+            { actions: [{ name: "end_call", args: {} }] },
+            { text: "Ending the call." },
+        ];
+        const call = await activeCall(f);
+        const close = vi.spyOn(f.live, "close");
+        call.delegate("bye", "hang-up");
+        await expect
+            .poll(() => f.records().some((record) => record.event === "delegation.delivered"))
+            .toBe(true);
+        await f.live.close(f.db.context, "owner", "liveone");
+        await expect.poll(() => call.status()).toBe("closed");
+        const closes = close.mock.calls.length;
+        await new Promise((resolve) => setTimeout(resolve, 2300));
+        expect(close.mock.calls.length).toBe(closes);
+    });
+
     it("refuses another server's conversation", async () => {
         const f = await fixture();
         f.turns["remote"] = [
@@ -1903,7 +1922,9 @@ describe("what voice is told", () => {
     it("carries what was said in the last call into the next call's recap", async () => {
         const f = await fixture();
         const call = await activeCall(f);
-        call.speak("Remember the word pineapple.");
+        // Whole native items carry no spacing of their own; the recap keeps the words apart.
+        call.speak("Remember the word");
+        call.speak("pineapple.");
         call.provider.onEvent({
             type: "transcript",
             role: "assistant",
@@ -1911,7 +1932,7 @@ describe("what voice is told", () => {
         });
         await expect
             .poll(() => call.frames.filter((frame) => frame.type === "transcript").length)
-            .toBe(2);
+            .toBe(3);
         await f.live.close(f.db.context, "owner", "liveone");
         await expect.poll(() => call.status()).toBe("closed");
         await expect
@@ -1963,6 +1984,36 @@ describe("what voice is told", () => {
         await f.hooks.beforeAgentLoop?.(f.db.context, f.scope("release-agent"), {} as never);
         await new Promise((resolve) => setTimeout(resolve, 1200));
         expect(quietAppends(f)).toHaveLength(2);
+    });
+
+    it("never tells voice a reference it was not given, and introduces a conversation that starts work", async () => {
+        const f = await fixture();
+        f.outline.rows = Array.from({ length: 130 }, (_, index) => ({
+            name: `Bot ${String(index).padStart(3, "0")}`,
+            agentId: `many-${String(index)}`,
+        }));
+        const call = await activeCall(f);
+        expect(f.calls[0]!.initialContext).not.toContain("Bot 129");
+        // An unlisted conversation renamed or settled tells voice nothing.
+        f.outline.rows[129]!.name = "Bot renamed";
+        f.emitSidebar();
+        await f.hooks.afterAgentSettled?.(f.db.context, f.scope("many-128"), {} as never);
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        call.speak("Anything new?");
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(quietAppends(f)).toEqual([]);
+        // One that starts work is named in full, and voice holds its reference from then on.
+        f.working.add("many-129");
+        await f.hooks.beforeAgentLoop?.(f.db.context, f.scope("many-129"), {} as never);
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        call.turn("What's working?");
+        await expect.poll(() => quietAppends(f).length).toBe(1);
+        const [change] = JSON.parse(quietAppends(f)[0]!.text).changes;
+        expect(change).toMatchObject({ kind: "bot", title: "Bot renamed", working: true });
+        f.turns["which"] = [{ text: "Bot renamed is working." }];
+        call.delegate("which", "which");
+        await expect.poll(() => f.sends.length).toBe(1);
+        expect(JSON.parse(f.sends[0]!.text).refs[change.ref]).toBe("many-129");
     });
 
     it("tells the desktop a stopping daemon ended the call, and remembers it as dropped", async () => {

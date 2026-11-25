@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { HistoryModule } from "../sources/history/index.js";
-import { cutWords } from "../sources/live/impl/cutWords.js";
 import { readVoiceTurns } from "../sources/live/impl/readVoiceTurns.js";
-import { renderVoiceCallContext } from "../sources/live/impl/renderVoiceCallContext.js";
-import type { VoiceDirectoryRow } from "../sources/live/impl/VoiceDirectory.js";
+import {
+    cutBytes,
+    cutWords,
+    renderVoiceCallContext,
+} from "../sources/live/impl/renderVoiceCallContext.js";
+import type { VoiceDirectoryRow } from "../sources/live/impl/readVoiceDirectory.js";
 import { voiceDirectoryUpdate } from "../sources/live/impl/voiceDirectoryUpdate.js";
 import { keyBetween, VoiceRefs } from "../sources/live/impl/VoiceRefs.js";
 import { voiceAgo, voiceClock } from "../sources/live/impl/voiceTimes.js";
@@ -144,6 +147,20 @@ describe("times and cuts", () => {
         expect(Buffer.byteLength(cut)).toBeLessThanOrEqual(100);
         expect(cut).toMatch(/^(word )+word … \(cut, \d+ more words\)$/);
     });
+
+    it("never cuts a character in half, however small the budget", () => {
+        const emoji = "😀".repeat(50);
+        for (const bytes of [0, 5, 31, 32, 33, 99, 101]) {
+            for (const cut of [cutBytes(emoji, bytes), cutWords(emoji, bytes)]) {
+                expect(cut).not.toContain("\uFFFD");
+                expect(Buffer.byteLength(cut)).toBeLessThanOrEqual(Math.max(bytes, 3));
+            }
+        }
+        expect(cutBytes("aé", 2)).toBe("a");
+        expect(cutWords("ééééé ".repeat(20), 64)).toMatch(
+            /^(ééééé )*ééééé … \(cut, \d+ more words\)$/,
+        );
+    });
 });
 
 describe("the first context", () => {
@@ -165,9 +182,8 @@ describe("the first context", () => {
                 state: undefined,
                 rank: index,
             })),
-            omitted: 0,
             bytes: 12 * 1024,
-        });
+        }).text;
         expect(Buffer.byteLength(context)).toBeLessThanOrEqual(12 * 1024);
         expect(context).toContain("Recap 29");
         expect(context).not.toContain("Recap 0 ");
@@ -190,8 +206,7 @@ describe("the first context", () => {
             recap: [],
             onScreen: undefined,
             rows,
-            omitted: 0,
-        });
+        }).text;
         expect(context).toContain("- Conversation 140 — task");
         expect(context).toContain("- Conversation 0 — task");
         expect(context).not.toContain("- Conversation 99 — task");
@@ -226,8 +241,7 @@ describe("the first context", () => {
                 state: undefined,
                 rank: index,
             })),
-            omitted: 0,
-        });
+        }).text;
         expect(Buffer.byteLength(context)).toBeLessThanOrEqual(24 * 1024);
         expect(context).toContain("Question 4");
         expect(context).not.toContain("Question 0");

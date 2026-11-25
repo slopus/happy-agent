@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { createId } from "@paralleldrive/cuid2";
 import { createHash } from "node:crypto";
 import {
@@ -95,17 +96,20 @@ import { liveFixedOutcome } from "./impl/liveOutcome.js";
 import { liveMentionedTarget } from "./impl/liveMentionedTarget.js";
 import { formatConversationReads } from "./impl/formatConversationReads.js";
 import { readVoiceConversation } from "./impl/readVoiceConversation.js";
-import { readVoiceDirectory } from "./impl/readVoiceDirectory.js";
+import {
+    readVoiceDirectory,
+    type VoiceDirectory,
+    type VoiceDirectoryRow,
+} from "./impl/readVoiceDirectory.js";
 import { readVoiceTurns, VOICE_REPLY_BYTES, type VoiceTurns } from "./impl/readVoiceTurns.js";
 import {
+    cutWords,
     renderVoiceCallContext,
+    sortedJson,
     VOICE_CONTEXT_BYTES,
     VOICE_DIRECTORY_ROWS,
     type VoiceRowState,
 } from "./impl/renderVoiceCallContext.js";
-import { cutWords } from "./impl/cutWords.js";
-import { sortedJson } from "./impl/sortedJson.js";
-import type { VoiceDirectory, VoiceDirectoryRow } from "./impl/VoiceDirectory.js";
 import { voiceDirectoryUpdate } from "./impl/voiceDirectoryUpdate.js";
 import { VoiceRefs } from "./impl/VoiceRefs.js";
 import { voiceAgo, voiceClock, voiceTimeZone } from "./impl/voiceTimes.js";
@@ -126,7 +130,6 @@ import {
     type LiveControllerDetail,
     type LiveDiagnostic,
 } from "./impl/liveDiagnostics.js";
-import { captureLiveContext } from "./impl/captureLiveContext.js";
 import {
     createLiveProviderTransport,
     LiveProviderError,
@@ -224,6 +227,8 @@ interface Call {
     /** Directory and status changes settle for a second from the first before they go. */
     directoryTimer?: ReturnType<typeof setTimeout>;
     statusTimer?: ReturnType<typeof setTimeout>;
+    /** Ends the call after voice's goodbye, when the person asked to hang up. */
+    endTimer?: ReturnType<typeof setTimeout>;
     /**
      * Background lines wait, in order, for the person's next turn and while a request lacks its
      * delivered outcome. Each is rendered when it goes, so its times are said as of then.
@@ -1395,7 +1400,7 @@ export class LiveModule implements AgentModule {
                 )
                 .finally(() => {
                     call.requests -= 1;
-                    if (call.requests === 0) this.#releaseBackground(call);
+                    if (call.requests === 0) void this.#flush(call);
                 });
         }
     }
@@ -1626,12 +1631,13 @@ export class LiveModule implements AgentModule {
         const call = request.call;
         if (request.endCall) {
             // Voice already said goodbye; give its audio a moment, then end as the person's End.
-            const timer = setTimeout(() => {
+            clearTimeout(call.endTimer);
+            call.endTimer = setTimeout(() => {
                 void this.close(this.#context(), call.ownerId, call.session.id).catch(
                     () => undefined,
                 );
             }, END_CALL_DELAY_MS);
-            timer.unref();
+            call.endTimer.unref();
             this.#diagnostic(call, {
                 event: "delegation.delivered",
                 delegationId: request.delegationId,
@@ -2053,6 +2059,7 @@ export class LiveModule implements AgentModule {
         clearTimeout(call.attachTimer);
         clearTimeout(call.directoryTimer);
         clearTimeout(call.statusTimer);
+        clearTimeout(call.endTimer);
         this.#cancelActions(call);
         call.abort.abort();
         // Stops Voice's turn for this call's request; Voice itself remains.
@@ -2083,7 +2090,6 @@ export class LiveModule implements AgentModule {
             // The call still starts; voice is told what could be read.
         }
         call.directory = directory;
-        call.toldRows = directory.rows;
         call.refs = VoiceRefs.start(directory.rows.map((row) => row.agentId));
         const onScreen = await this.#localAgent(call, call.context.activeTarget);
         call.onScreen = onScreen ?? null;
@@ -2109,21 +2115,13 @@ export class LiveModule implements AgentModule {
         for (const { row, state } of rows)
             if (state !== undefined) call.toldStatus.set(row.agentId, statusKey(state));
         if (screen !== undefined) call.toldStatus.set(screen.row.agentId, statusKey(screen.state));
-        // Voice is told the conversations voice can name; the rest are found by searching.
-        call.listed = new Set(
-            [...rows]
-                .sort((a, b) => a.rank - b.rank)
-                .slice(0, VOICE_DIRECTORY_ROWS)
-                .map(({ row }) => row.agentId),
-        );
-        const text = renderVoiceCallContext({
+        const { text, listed } = renderVoiceCallContext({
             now,
             timeZone: call.timeZone,
             focusRevision: call.session.contextRevision,
             recap,
             onScreen: screen,
             rows,
-            omitted: 0,
             // A native call's voice prompt is a startup item too, so it comes out of the budget.
             bytes:
                 VOICE_CONTEXT_BYTES -
@@ -2131,6 +2129,9 @@ export class LiveModule implements AgentModule {
                     ? Buffer.byteLength(call.voiceInstructions)
                     : 0),
         });
+        // Voice holds references only for what it was shown; the rest are found by searching.
+        call.listed = new Set(listed);
+        call.toldRows = directory.rows.filter((row) => call.listed.has(row.agentId));
         return text;
     }
 
@@ -2375,9 +2376,20 @@ export class LiveModule implements AgentModule {
     }
 
     /** A conversation's parents and reference, as updates name it. */
+    /**
+     * How a line names a conversation. One voice was never shown is introduced: told with its kind
+     * beside its title, then listed, so voice holds every reference it hears and the directory's
+     * later changes include it.
+     */
     #naming(call: Call, agentId: string, row: VoiceDirectoryRow | undefined) {
         const ref = call.refs.ref(agentId);
+        const introduced = row !== undefined && ref !== undefined && !call.listed.has(agentId);
+        if (introduced) {
+            call.listed.add(agentId);
+            call.toldRows = call.directory.rows.filter((item) => call.listed.has(item.agentId));
+        }
         return {
+            ...(introduced ? { kind: row.kind } : {}),
             ...(row === undefined || row.parents.length === 0 ? {} : { parents: row.parents }),
             ...(ref === undefined ? {} : { ref }),
         };
@@ -2452,11 +2464,15 @@ export class LiveModule implements AgentModule {
         if (call.session.status !== "active") return;
         try {
             const directory = await this.voiceDirectory(this.#context(), call.ownerId);
+            const known = new Set(call.directory.rows.map((row) => row.agentId));
             call.directory = directory;
-            const placed = call.refs.place(directory.rows.map((row) => row.agentId));
-            const update = voiceDirectoryUpdate(call.toldRows, directory.rows, call.refs);
-            for (const agentId of placed) call.listed.add(agentId);
-            call.toldRows = directory.rows;
+            // A conversation new since the last read is listed; one voice was never shown stays
+            // unlisted, so voice only ever hears of references it holds.
+            for (const agentId of call.refs.place(directory.rows.map((row) => row.agentId)))
+                if (!known.has(agentId)) call.listed.add(agentId);
+            const current = directory.rows.filter((row) => call.listed.has(row.agentId));
+            const update = voiceDirectoryUpdate(call.toldRows, current, call.refs);
+            call.toldRows = current;
             if (update !== undefined) this.#push(call, "directory", update);
         } catch {
             // The directory is background context; a failed read never fails the call.
@@ -2492,6 +2508,15 @@ export class LiveModule implements AgentModule {
             if (state === undefined) continue;
             const key = statusKey(state);
             if (call.toldStatus.get(agentId) === key) continue;
+            // An unlisted conversation is worth naming only once it works, needs the person, or
+            // fails; naming it introduces it.
+            if (
+                !call.listed.has(agentId) &&
+                !state.working &&
+                !state.needsPerson &&
+                state.failed === undefined
+            )
+                continue;
             call.toldStatus.set(agentId, key);
             changes.push({
                 ...this.#naming(call, agentId, row),
@@ -2554,18 +2579,12 @@ export class LiveModule implements AgentModule {
         }
     }
 
-    #releaseBackground(call: Call): void {
-        void this.#flush(call);
-    }
-
     /** What was said aloud, merged per speaker within the call, for the next call's recap. */
     #said(call: Call, role: "user" | "assistant", text: string): void {
         if (role === "user") {
             const last = call.personTurns.at(-1);
-            // Streamed fragments carry their own spacing; whole native items do not.
             if (call.lastSpeaker === "user" && last !== undefined)
-                call.personTurns[call.personTurns.length - 1] =
-                    /\s$/.test(last) || /^\s/.test(text) ? `${last}${text}` : `${last} ${text}`;
+                call.personTurns[call.personTurns.length - 1] = joinSpoken(last, text);
             else call.personTurns.push(text);
             while (
                 call.personTurns.length > 20 ||
@@ -2579,7 +2598,7 @@ export class LiveModule implements AgentModule {
         if (last?.kind === kind && last.text.length < 1024)
             call.slots[call.slots.length - 1] = {
                 ...last,
-                text: `${last.text}${text}`.slice(0, 1024),
+                text: joinSpoken(last.text, text).slice(0, 1024),
             };
         else call.slots.push({ at: Date.now(), kind, text: text.slice(0, 1024) });
         if (call.slots.length > 30) call.slots.shift();
@@ -2873,4 +2892,28 @@ function deferred<T>(): {
         reject = no;
     });
     return { promise, resolve, reject };
+}
+
+/** Streamed fragments carry their own spacing; whole native items do not, so they get a space. */
+function joinSpoken(before: string, text: string): string {
+    return /\s$/.test(before) || /^\s/.test(text) ? `${before}${text}` : `${before} ${text}`;
+}
+
+/**
+ * Test-only record of exactly what the voice model was told, so a gym can prove an answer was in
+ * context before the question. It runs only when `HAPPY_LIVE_CONTEXT_CAPTURE_FILE` names a file;
+ * production diagnostics never contain this text. A failed write never affects the call.
+ */
+function captureLiveContext(input: {
+    kind: "context" | "directory" | "focus" | "reply" | "error" | "outcome" | "greeting" | "status";
+    text: string;
+    speakable: boolean;
+}): void {
+    const file = process.env.HAPPY_LIVE_CONTEXT_CAPTURE_FILE;
+    if (file === undefined || file === "") return;
+    try {
+        appendFileSync(file, `${JSON.stringify({ at: Date.now(), ...input })}\n`, { mode: 0o600 });
+    } catch {
+        // Capture is optional test evidence.
+    }
 }

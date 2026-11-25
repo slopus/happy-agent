@@ -1,7 +1,7 @@
 import type { VoiceCallSlot } from "../persistence/liveCallHistory.js";
 import type { VoiceTurn, VoiceTurns } from "./readVoiceTurns.js";
 import { voiceAgo, voiceClock, voiceWhen } from "./voiceTimes.js";
-import type { VoiceDirectoryRow } from "./VoiceDirectory.js";
+import type { VoiceDirectoryRow } from "./readVoiceDirectory.js";
 
 /**
  * GPT-Live takes at most 8,192 tokens of startup input, so the startup items are 24 KB rather than
@@ -50,8 +50,6 @@ export interface VoiceCallContextInput {
         readonly state: VoiceRowState | undefined;
         readonly rank: number;
     }[];
-    /** Conversations past those listed. */
-    readonly omitted: number;
     /** The whole context's budget; the startup budget when omitted. */
     readonly bytes?: number;
 }
@@ -60,21 +58,29 @@ export interface VoiceCallContextInput {
  * The call's first context as plain text, in the phones' parts: the time and focus revision, the
  * recap of earlier calls, the conversation on screen with its last turns, then the directory with
  * references, status and last activity. When it is too big the older turns give way first, then
- * the directory's tail, then the recap's older lines, and the newest turn last.
+ * the directory's tail, then the recap's older lines, and the newest turn last. `listed` is the
+ * conversations the directory names: the only ones voice holds a reference to.
  */
-export function renderVoiceCallContext(input: VoiceCallContextInput): string {
+export function renderVoiceCallContext(input: VoiceCallContextInput): {
+    readonly text: string;
+    readonly listed: readonly string[];
+} {
     let turns = input.onScreen?.turns.turns.length ?? 0;
     let rows = input.rows.length;
     let recapBytes = RECAP_BYTES;
-    const render = () =>
-        [
+    let listed: readonly string[] = [];
+    const render = () => {
+        const directory = renderDirectory(input, rows);
+        listed = directory.listed;
+        return [
             `Now: ${voiceClock(input.now, input.timeZone)} (the person's local time, ${input.timeZone})\nfocusRevision: ${String(input.focusRevision)}`,
             renderRecap(input, recapBytes),
             renderOnScreen(input, turns),
-            renderDirectory(input, rows),
+            directory.text,
         ]
             .filter((part) => part !== "")
             .join("\n\n");
+    };
     let text = render();
     const budget = input.bytes ?? VOICE_CONTEXT_BYTES;
     while (Buffer.byteLength(text) > budget) {
@@ -86,9 +92,7 @@ export function renderVoiceCallContext(input: VoiceCallContextInput): string {
         else break;
         text = render();
     }
-    return Buffer.byteLength(text) > budget
-        ? Buffer.from(text).subarray(0, budget).toString("utf8")
-        : text;
+    return { text: cutBytes(text, budget), listed };
 }
 
 function renderRecap(input: VoiceCallContextInput, bytes: number): string {
@@ -163,7 +167,10 @@ function renderTurn(turn: VoiceTurn, number: number, input: VoiceCallContextInpu
     return `${String(number)}. ${parts.join("\n   ")}`;
 }
 
-function renderDirectory(input: VoiceCallContextInput, count: number): string {
+function renderDirectory(
+    input: VoiceCallContextInput,
+    count: number,
+): { text: string; listed: string[] } {
     const title = "Conversations in the app, in the sidebar's order:";
     const order = input.rows
         .map((entry, index) => ({ entry, index }))
@@ -176,11 +183,14 @@ function renderDirectory(input: VoiceCallContextInput, count: number): string {
             kept.delete(index);
     }
     const lines = [title, ...directoryLines(input, kept)];
-    const rest = input.rows.length - kept.size + input.omitted;
+    const rest = input.rows.length - kept.size;
     if (kept.size === 0 && rest === 0) lines.push("(none)");
     if (rest > 0)
         lines.push(`… and ${String(rest)} more not listed; ask your backend to find one by name.`);
-    return lines.join("\n");
+    return {
+        text: lines.join("\n"),
+        listed: input.rows.flatMap(({ row }, index) => (kept.has(index) ? [row.agentId] : [])),
+    };
 }
 
 /** The kept conversations in sidebar order, each preceded by the headings it newly enters. */
@@ -240,9 +250,48 @@ function short(text: string, characters: number): string {
 }
 
 function cutLine(line: string): string {
-    return Buffer.byteLength(line) <= LINE_BYTES
-        ? line
-        : `${Buffer.from(line)
-              .subarray(0, LINE_BYTES - 3)
-              .toString("utf8")}…`;
+    return Buffer.byteLength(line) <= LINE_BYTES ? line : `${cutBytes(line, LINE_BYTES - 3)}…`;
+}
+
+/** At most `bytes` of UTF-8, cut on a character boundary so nothing is ever half a character. */
+export function cutBytes(text: string, bytes: number): string {
+    const encoded = Buffer.from(text);
+    if (encoded.length <= bytes) return text;
+    let end = Math.max(0, bytes);
+    while (end > 0 && (encoded[end]! & 0xc0) === 0x80) end--;
+    return encoded.subarray(0, end).toString("utf8");
+}
+
+/**
+ * Text within `bytes` of UTF-8, cut after a whole word and ending `… (cut, N more words)`, as the
+ * phones cut what voice is told. Text that fits is returned unchanged.
+ */
+export function cutWords(text: string, bytes: number): string {
+    if (Buffer.byteLength(text) <= bytes) return text;
+    const room = bytes - 32;
+    if (room <= 0) return `${cutBytes(text, bytes - 3)}…`;
+    const words = text.split(/(\s+)/);
+    let kept = "";
+    let index = 0;
+    for (; index < words.length; index++) {
+        const next = kept + words[index]!;
+        if (Buffer.byteLength(next) > room) break;
+        kept = next;
+    }
+    if (kept.trim() === "") kept = cutBytes(text, room);
+    const left = words.slice(index).filter((word) => word.trim() !== "").length;
+    return `${kept.trimEnd()} … (cut, ${String(Math.max(1, left))} more words)`;
+}
+
+/** JSON on one line with every object's keys sorted, as the phones send their context lines. */
+export function sortedJson(value: unknown): string {
+    return JSON.stringify(value, (_key, item: unknown) =>
+        item !== null && typeof item === "object" && !Array.isArray(item)
+            ? Object.fromEntries(
+                  Object.entries(item as Record<string, unknown>).sort(([a], [b]) =>
+                      a < b ? -1 : a > b ? 1 : 0,
+                  ),
+              )
+            : item,
+    );
 }

@@ -1,7 +1,7 @@
 import type { Context } from "@steve.kite/stdlib";
 
 import type { HistoryModule } from "../../history/index.js";
-import { cutWords } from "./cutWords.js";
+import { cutWords } from "./renderVoiceCallContext.js";
 
 /** The person's message and one of the agent's, as the phones bound them. */
 export const VOICE_USER_BYTES = 2 * 1024;

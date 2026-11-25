@@ -5,7 +5,7 @@ import type { EventsModule } from "../../events/index.js";
 import type { HistoryModule } from "../../history/index.js";
 import type { TeamModule } from "../../team/index.js";
 import { formatConversationTurns } from "./formatConversationTurns.js";
-import type { VoiceDirectory } from "./VoiceDirectory.js";
+import type { VoiceDirectory } from "./readVoiceDirectory.js";
 
 /** One conversation's share of a `read_conversations` answer. */
 export const VOICE_CONVERSATION_TEXT_LIMIT = 4_000;

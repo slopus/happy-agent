@@ -1,5 +1,5 @@
-import { sortedJson } from "./sortedJson.js";
-import type { VoiceDirectoryRow } from "./VoiceDirectory.js";
+import type { VoiceDirectoryRow } from "./readVoiceDirectory.js";
+import { sortedJson } from "./renderVoiceCallContext.js";
 import type { VoiceRefs } from "./VoiceRefs.js";
 
 /** One update tells at most this many changes within this many bytes; the rest are counted. */
