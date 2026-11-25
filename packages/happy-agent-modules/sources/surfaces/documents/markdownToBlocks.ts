@@ -177,7 +177,11 @@ function inline(tokens: Token[] | null | undefined): MarkdownInline[] {
                 push(token.content);
                 break;
             case "code_inline":
-                push(token.content, { code: true });
+                // The editor's code text carries no other formatting and cannot be a link's
+                // text. Written together, a link stays a link and other code is code alone.
+                if (link === undefined)
+                    out.push({ type: "text", text: token.content, styles: { code: true } });
+                else push(token.content);
                 break;
             case "softbreak":
                 push(" ");
