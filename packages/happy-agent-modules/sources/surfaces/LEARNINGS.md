@@ -187,7 +187,27 @@ be removed by an agent that cannot see them.
 Escaping every punctuation character made `a_snake_name` read back as `a\_snake\_name`, which
 agents then copied into their writes. Escaping is now decided by context: intraword underscores,
 lone asterisks, and ordinary punctuation stay literal, and each formatted run is checked by
-parsing the result back, falling back to plainer output when the parse would differ.
+parsing the result back, falling back to plainer output when the parse would differ. A heading's
+text and a table cell cannot start a block, so `## 1. Setup` and a `#` header cell are written
+without backslashes.
+
+## Writing back what a document reads as changes nothing
+
+Kirill asked for the odd cases around document editing to be checked. Reading a document and
+writing the same Markdown back changed it in many of them, and some did real damage: a link
+whose text was code, or bold code, stored marks the editor forbids together and locked every
+agent out of the document; a paragraph ending in a line break gained a visible backslash; an
+empty check item became a bullet reading `[ ]`; an empty bullet took the text of the bullet
+nested beneath it; and a bold run ending in a space made its whole block read without
+formatting, which an agent edit then removed for good. The rule the module now holds is that
+the Markdown a document reads as parses back to the same blocks. Code is code alone and plain
+text inside a link. A line break that ends a block is left out and named in what the read
+omits. Formatted runs are joined before escaping and keep whitespace outside their delimiters.
+Empty quotes, check items, and nested list items read and write as themselves. A seeded
+property test generates editor documents, Markdown, and edits and holds all three directions
+to this; set `DOCUMENT_ROUND_TRIP_SEED` and `DOCUMENT_ROUND_TRIP_RUNS` to search further. One
+case CommonMark cannot write is left: a block that is not a list, nested beneath a list item
+with no text, reads as that item's next sibling and is stored that way after an agent write.
 
 ## Calendars expand recurrence on the daemon, from series records
 
