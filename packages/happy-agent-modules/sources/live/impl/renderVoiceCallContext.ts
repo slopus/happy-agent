@@ -66,7 +66,8 @@ export function renderVoiceCallContext(input: VoiceCallContextInput): {
     readonly listed: readonly string[];
 } {
     let turns = input.onScreen?.turns.turns.length ?? 0;
-    let rows = input.rows.length;
+    // The directory never lists more than its cap, so giving way starts there.
+    let rows = Math.min(input.rows.length, VOICE_DIRECTORY_ROWS);
     let recapBytes = RECAP_BYTES;
     let listed: readonly string[] = [];
     const render = () => {
@@ -175,65 +176,96 @@ function renderDirectory(
     const order = input.rows
         .map((entry, index) => ({ entry, index }))
         .sort((a, b) => a.entry.rank - b.entry.rank || a.index - b.index);
-    const kept = new Set<number>();
+    // Kept rows in sidebar order, and the bytes of their lines joined by newlines, kept current
+    // as each is added: a row adds its own line and the headings it enters, and may change the
+    // headings the row after it enters.
+    const kept: number[] = [];
+    const rowBytes = new Map<number, number>();
+    const piece = (index: number, before: number | undefined) => {
+        let bytes = rowBytes.get(index);
+        if (bytes === undefined) {
+            bytes = Buffer.byteLength(rowLine(input, index)) + 1;
+            rowBytes.set(index, bytes);
+        }
+        for (const line of headingLines(input, index, before)) bytes += Buffer.byteLength(line) + 1;
+        return bytes;
+    };
+    let size = 0;
     for (const { index } of order) {
-        if (kept.size >= Math.min(count, VOICE_DIRECTORY_ROWS)) break;
-        kept.add(index);
-        if (Buffer.byteLength(directoryLines(input, kept).join("\n")) > DIRECTORY_BYTES - 128)
-            kept.delete(index);
+        if (kept.length >= Math.min(count, VOICE_DIRECTORY_ROWS)) break;
+        let at = 0;
+        while (at < kept.length && kept[at]! < index) at++;
+        const before = kept[at - 1];
+        const after = kept[at];
+        const grown =
+            size +
+            piece(index, before) +
+            (after === undefined ? 0 : piece(after, index) - piece(after, before));
+        if (grown - 1 > DIRECTORY_BYTES - 128) continue;
+        kept.splice(at, 0, index);
+        size = grown;
     }
     const lines = [title, ...directoryLines(input, kept)];
-    const rest = input.rows.length - kept.size;
-    if (kept.size === 0 && rest === 0) lines.push("(none)");
+    const rest = input.rows.length - kept.length;
+    if (kept.length === 0 && rest === 0) lines.push("(none)");
     if (rest > 0)
         lines.push(`… and ${String(rest)} more not listed; ask your backend to find one by name.`);
-    return {
-        text: lines.join("\n"),
-        listed: input.rows.flatMap(({ row }, index) => (kept.has(index) ? [row.agentId] : [])),
-    };
+    return { text: lines.join("\n"), listed: kept.map((index) => input.rows[index]!.row.agentId) };
 }
 
 /** The kept conversations in sidebar order, each preceded by the headings it newly enters. */
-function directoryLines(input: VoiceCallContextInput, kept: ReadonlySet<number>): string[] {
-    const lines: string[] = [];
-    let open: readonly string[] = [];
-    input.rows.forEach(({ row, ref, state }, index) => {
-        if (!kept.has(index)) return;
-        const headings = row.headings ?? [];
-        const path = headings.map((heading) => `${heading.kind}:${heading.title}`);
-        let shared = 0;
-        while (shared < Math.min(path.length, open.length) && path[shared] === open[shared])
-            shared++;
-        for (let depth = shared; depth < headings.length; depth++)
-            lines.push(
-                cutLine(
-                    `${"  ".repeat(Math.min(depth, 8))}- ${oneLine(headings[depth]!.title)} — ${headings[depth]!.kind}`,
-                ),
-            );
-        open = path;
-        const details = [
-            ...(state?.working === true ? ["working"] : []),
-            ...(state?.needsPerson === true
-                ? [
-                      state.question === undefined
-                          ? "needs the person"
-                          : `needs the person (asks: ${short(state.question, 160)})`,
-                  ]
-                : []),
-            ...(state?.failed === undefined ? [] : [`failed (${short(state.failed, 160)})`]),
-            ...(state?.lastActivityAt === undefined
-                ? []
-                : [
-                      `last active ${voiceAgo(input.now - state.lastActivityAt)} (${voiceClock(state.lastActivityAt, input.timeZone).slice(11, 16)})`,
-                  ]),
-        ];
-        lines.push(
+function directoryLines(input: VoiceCallContextInput, kept: readonly number[]): string[] {
+    return kept.flatMap((index, position) => [
+        ...headingLines(input, index, kept[position - 1]),
+        rowLine(input, index),
+    ]);
+}
+
+/** The heading lines a row enters after the kept row before it. */
+function headingLines(
+    input: VoiceCallContextInput,
+    index: number,
+    before: number | undefined,
+): string[] {
+    const headings = input.rows[index]!.row.headings ?? [];
+    const open = before === undefined ? [] : (input.rows[before]!.row.headings ?? []);
+    let shared = 0;
+    while (
+        shared < Math.min(headings.length, open.length) &&
+        headings[shared]!.kind === open[shared]!.kind &&
+        headings[shared]!.title === open[shared]!.title
+    )
+        shared++;
+    return headings
+        .slice(shared)
+        .map((heading, offset) =>
             cutLine(
-                `${"  ".repeat(Math.min(row.parents.length, 8))}- ${describe(row, ref)}${details.length === 0 ? "" : `, ${details.join(", ")}`}`,
+                `${"  ".repeat(Math.min(shared + offset, 8))}- ${oneLine(heading.title)} — ${heading.kind}`,
             ),
         );
-    });
-    return lines;
+}
+
+function rowLine(input: VoiceCallContextInput, index: number): string {
+    const { row, ref, state } = input.rows[index]!;
+    const details = [
+        ...(state?.working === true ? ["working"] : []),
+        ...(state?.needsPerson === true
+            ? [
+                  state.question === undefined
+                      ? "needs the person"
+                      : `needs the person (asks: ${short(state.question, 160)})`,
+              ]
+            : []),
+        ...(state?.failed === undefined ? [] : [`failed (${short(state.failed, 160)})`]),
+        ...(state?.lastActivityAt === undefined
+            ? []
+            : [
+                  `last active ${voiceAgo(input.now - state.lastActivityAt)} (${voiceClock(state.lastActivityAt, input.timeZone).slice(11, 16)})`,
+              ]),
+    ];
+    return cutLine(
+        `${"  ".repeat(Math.min(row.parents.length, 8))}- ${describe(row, ref)}${details.length === 0 ? "" : `, ${details.join(", ")}`}`,
+    );
 }
 
 function describe(row: VoiceDirectoryRow, ref: string | undefined): string {

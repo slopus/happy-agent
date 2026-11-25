@@ -164,6 +164,46 @@ describe("times and cuts", () => {
 });
 
 describe("the first context", () => {
+    it("gives way in a large sidebar without rendering it over and over", () => {
+        const rows = Array.from({ length: 600 }, (_, index) => ({
+            row: {
+                agentId: `a${String(index)}`,
+                title: `Gym performance session ${String(index)}`,
+                kind: "conversation" as const,
+                parents: [`gym-project-${String(Math.floor(index / 33))}`],
+                headings: [
+                    {
+                        title: `gym-project-${String(Math.floor(index / 33))}`,
+                        kind: "project" as const,
+                    },
+                ],
+            },
+            ref: `s${String(index + 11)}`,
+            state: { working: false, needsPerson: false, lastActivityAt: 0 },
+            rank: index,
+        }));
+        const recap = Array.from({ length: 30 }, (_, index) => ({
+            at: index,
+            kind: "person" as const,
+            text: "r".repeat(900),
+        }));
+        const started = performance.now();
+        const { text, listed } = renderVoiceCallContext({
+            now: 3_600_000,
+            timeZone: "UTC",
+            focusRevision: 1,
+            recap,
+            onScreen: undefined,
+            rows,
+            bytes: 16 * 1024,
+        });
+        // A 524-conversation remote once spent 300 ms here, and this shape 17 seconds.
+        expect(performance.now() - started).toBeLessThan(2000);
+        expect(Buffer.byteLength(text)).toBeLessThanOrEqual(16 * 1024);
+        expect(listed.length).toBeGreaterThan(0);
+        expect(listed.length).toBeLessThanOrEqual(100);
+    });
+
     it("lets the recap's older lines give way after the directory, keeping its newest", () => {
         const recap = Array.from({ length: 30 }, (_, index) => ({
             at: index,
