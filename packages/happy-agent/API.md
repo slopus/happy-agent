@@ -15118,7 +15118,10 @@ exist only in team mode. In standalone mode, and on older daemons, every viewers
 
 **Targets.** A target is `{ "type": "agent", "id": "..." }` for an agent session, by its agent
 ID, or `{ "type": "surface", "id": "..." }` for a Surface of any type, by its Surface ID. An agent
-ID is 2 to 32 lowercase letters and digits starting with a letter.
+ID is 2 to 32 lowercase letters and digits starting with a letter. A target of any other `type` is
+an object with a string `type` and a string `id`; the daemon drops it silently and answers it with
+an empty list. Any other field of a target is ignored. A newer client viewing a type or sending a
+field this daemon does not know therefore never breaks its heartbeat.
 
 **Viewers.** A viewer is `{ "userId": "...", "here": true, "lastSeenAt": 1755400000000 }`.
 `here` is true while at least one event stream of that person currently views the target.
@@ -15138,9 +15141,11 @@ that stream may use it; another person's, a closed, or an unknown stream returns
 `404 not_found`.
 
 Body: `{ "targets": [ { "type": "agent", "id": "..." } ] }`. It replaces everything this stream
-views. It holds 0 to 8 targets with no duplicates; more targets, a duplicate, a malformed ID, or
-an unsupported field returns `400 invalid_request`. `targets: []` means the window is hidden,
-unfocused, idle, or closed.
+views. It holds 0 to 8 targets with no duplicates; two agent or Surface targets with the same
+`type` and `id` are duplicates. More targets, a duplicate, a target that is not an object with a
+string `type` and a string `id`, a malformed agent or Surface ID, or a body field other than
+`targets` returns `400 invalid_request`.
+`targets: []` means the window is hidden, unfocused, idle, or closed.
 
 A target the caller may not read, or that does not exist, is dropped silently and answered with
 an empty list, so a stale target never breaks a window's heartbeat. Access is checked again on
@@ -15168,7 +15173,8 @@ Response — `200`:
 }
 ```
 
-`targets` follows the request's order, one entry per requested target. Each `viewers` list leaves
+`targets` follows the request's order, one entry per requested target, each `target` exactly as
+it was sent. Each `viewers` list leaves
 out the caller, puts people who are here first, then the newest `lastSeenAt`, and holds at most 50
 people.
 

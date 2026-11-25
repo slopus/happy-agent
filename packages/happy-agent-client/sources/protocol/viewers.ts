@@ -11,22 +11,34 @@ import { userIdSchema } from "./userId.js";
 
 /**
  * An agent session by its agent ID, or a Surface of any type by its Surface ID. Agent IDs have
- * Agent Base's bounds: 2 to 32 lowercase letters and digits, opening with a letter.
+ * Agent Base's bounds: 2 to 32 lowercase letters and digits, opening with a letter. Other fields a
+ * newer client sends are ignored.
  */
 export const viewerTargetSchema = Type.Union([
-    Type.Object(
-        {
-            type: Type.Literal("agent"),
-            id: Type.String({ minLength: 2, maxLength: 32, pattern: "^[a-z][a-z0-9]*$" }),
-        },
-        { additionalProperties: false },
-    ),
-    Type.Object(
-        { type: Type.Literal("surface"), id: surfaceIdSchema },
-        { additionalProperties: false },
-    ),
+    Type.Object({
+        type: Type.Literal("agent"),
+        id: Type.String({ minLength: 2, maxLength: 32, pattern: "^[a-z][a-z0-9]*$" }),
+    }),
+    Type.Object({ type: Type.Literal("surface"), id: surfaceIdSchema }),
 ]);
 export type ViewerTarget = Static<typeof viewerTargetSchema>;
+
+/**
+ * A target of a type this daemon may not know, such as one a newer client views. Any object with a
+ * string `type` other than the known ones and a string `id`; other fields are ignored.
+ */
+export const otherViewerTargetSchema = Type.Object({
+    type: Type.Intersect([
+        Type.String(),
+        Type.Not(Type.Union([Type.Literal("agent"), Type.Literal("surface")])),
+    ]),
+    id: Type.String(),
+});
+export type OtherViewerTarget = Static<typeof otherViewerTargetSchema>;
+
+/** What a request may name: a known target, or another that is answered with no viewers. */
+export const viewerRequestTargetSchema = Type.Union([viewerTargetSchema, otherViewerTargetSchema]);
+export type ViewerRequestTarget = Static<typeof viewerRequestTargetSchema>;
 
 /**
  * One other person and a target. `here` while any of their event streams views it; `lastSeenAt` is
@@ -39,16 +51,23 @@ export const viewerSchema = Type.Object({
 });
 export type Viewer = Static<typeof viewerSchema>;
 
-/** Replaces everything one event stream views. `[]` means hidden, unfocused, idle, or closed. */
+/**
+ * Replaces everything one event stream views. `[]` means hidden, unfocused, idle, or closed. The
+ * daemon also refuses two agent or Surface targets with the same type and ID that differ only in
+ * ignored fields.
+ */
 export const putViewersRequestSchema = Type.Object(
-    { targets: Type.Array(viewerTargetSchema, { maxItems: 8, uniqueItems: true }) },
+    { targets: Type.Array(viewerRequestTargetSchema, { maxItems: 8, uniqueItems: true }) },
     { additionalProperties: false },
 );
 export type PutViewersRequest = Static<typeof putViewersRequestSchema>;
 
-/** Here first, then newest `lastSeenAt`; the caller left out; at most 50 people. */
+/**
+ * One requested target as it was sent, with here first, then newest `lastSeenAt`; the caller left
+ * out; at most 50 people. A target of another type always has none.
+ */
 export const targetViewersSchema = Type.Object({
-    target: viewerTargetSchema,
+    target: viewerRequestTargetSchema,
     viewers: Type.Array(viewerSchema, { maxItems: 50 }),
 });
 export type TargetViewers = Static<typeof targetViewersSchema>;

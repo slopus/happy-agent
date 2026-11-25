@@ -43,15 +43,9 @@ describe("viewers protocol", () => {
         expect(Value.Check(putViewersRequestSchema, { targets: [agent, { ...agent }] })).toBe(
             false,
         );
-        expect(Value.Check(putViewersRequestSchema, { targets: [{ type: "file", id: "x" }] })).toBe(
-            false,
-        );
         expect(
             Value.Check(putViewersRequestSchema, { targets: [{ ...surface, id: "short" }] }),
         ).toBe(false);
-        expect(Value.Check(putViewersRequestSchema, { targets: [{ ...agent, extra: 1 }] })).toBe(
-            false,
-        );
         expect(Value.Check(putViewersRequestSchema, { targets: [], extra: 1 })).toBe(false);
         // Agent IDs follow Agent Base: 2 to 32 characters.
         for (const [id, valid] of [
@@ -65,6 +59,36 @@ describe("viewers protocol", () => {
                 valid,
             );
         expect(Value.Check(putViewersRequestSchema, {})).toBe(false);
+    });
+
+    it("accepts targets of other types and fields for an older daemon to ignore", () => {
+        const file = { type: "file", id: "x", path: "README.md" };
+        const valid = (targets: unknown[]): boolean =>
+            Value.Check(putViewersRequestSchema, { targets });
+        expect(valid([file, agent, { type: "artifact", id: "" }])).toBe(true);
+        expect(valid([file, { ...file }])).toBe(false);
+        expect(valid(["file"])).toBe(false);
+        expect(valid([{ type: "file" }])).toBe(false);
+        expect(valid([{ id: "x" }])).toBe(false);
+        expect(valid([{ type: 1, id: "x" }])).toBe(false);
+        expect(valid([{ type: "file", id: 1 }])).toBe(false);
+        // Fields a newer client adds are ignored on every type; the known IDs keep their bounds.
+        expect(
+            valid([
+                { ...agent, path: "x" },
+                { ...surface, extra: 1 },
+            ]),
+        ).toBe(true);
+        expect(valid([{ type: "agent", id: "a", path: "x" }])).toBe(false);
+        expect(
+            Value.Check(putViewersResponseSchema, { targets: [{ target: file, viewers: [] }] }),
+        ).toBe(true);
+        expect(
+            Value.Check(viewersUpdatedFrameSchema, {
+                target: file,
+                viewer: { userId: "bob", here: true, lastSeenAt: 1 },
+            }),
+        ).toBe(false);
     });
 
     it("describes the response lists and the live frame", () => {
