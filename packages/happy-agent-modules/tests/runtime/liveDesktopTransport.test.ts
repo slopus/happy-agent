@@ -531,6 +531,11 @@ it.each([
                 result: { status: "succeeded", output: { type: "staged" } },
             }),
         );
+        // Each confirmed result is said on the delegation as it is confirmed; Voice's own words
+        // then go quietly, as OpenAI's client delegation sends progress on the thinking channel.
+        const staged = expect.stringMatching(
+            /^Staged the message in .+\. It has not been sent; the person must review it and press Send\.$/u,
+        );
         await expect
             .poll(() => providerFrames)
             .toContainEqual(
@@ -540,19 +545,32 @@ it.each([
                               type: "delegation.context.append",
                               delegation_item_id: "delegation_fixture",
                               channel: "speakable",
-                              content: [
-                                  {
-                                      type: "input_text",
-                                      text: `The exact message is staged. Review it and press Send.\n\n${LIVE_QUEUED_REQUEST_INSTRUCTIONS}`,
-                                  },
-                              ],
+                              content: [{ type: "input_text", text: staged }],
                           }
                         : {
                               type: "session.commentary.append",
                               delegation_id: "delegation_fixture",
-                              content: `The exact message is staged. Review it and press Send.\n\n${LIVE_LATER_REQUEST_INSTRUCTIONS}`,
+                              content: staged,
                           },
                 ),
+            );
+        const voiceWords = `The exact message is staged. Review it and press Send.\n\n${
+            native ? LIVE_QUEUED_REQUEST_INSTRUCTIONS : LIVE_LATER_REQUEST_INSTRUCTIONS
+        }`;
+        await expect
+            .poll(() => providerFrames)
+            .toContainEqual(
+                native
+                    ? {
+                          type: "delegation.context.append",
+                          delegation_item_id: "delegation_fixture",
+                          content: [{ type: "input_text", text: voiceWords }],
+                      }
+                    : expect.objectContaining({
+                          type: "session.thinking.append",
+                          delegation_id: "delegation_fixture",
+                          content: voiceWords,
+                      }),
             );
         if (native) {
             const delivery = (delegation: string) =>
@@ -1016,12 +1034,13 @@ it("queues a follow-up voice request behind the active desktop action and keeps 
         .poll(() => providerFrames)
         .toEqual(
             expect.arrayContaining([
-                // The name is resolved when the outcome is spoken, from the desktop's newest context.
-                delivered(
-                    "first_request",
-                    "Opened Fresh session title.",
-                    LIVE_QUEUED_REQUEST_INSTRUCTIONS,
-                ),
+                // The open is said as soon as it is confirmed, named from the newest context.
+                expect.objectContaining({
+                    type: "delegation.context.append",
+                    delegation_item_id: "first_request",
+                    channel: "speakable",
+                    content: [{ type: "input_text", text: "Opened Fresh session title." }],
+                }),
                 delivered("second_request", "Second outcome.", LIVE_LATER_REQUEST_INSTRUCTIONS),
             ]),
         );

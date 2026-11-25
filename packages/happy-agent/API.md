@@ -15577,13 +15577,14 @@ stops Voice's active turn; Voice itself remains. Already-started desktop mutatio
 existing uncertainty and deduplication rules. When the frozen account's sign-in is rejected or its
 usage runs out, the explanation says so and what the person can do.
 
-A request whose actions all succeed and end in a terminal action — `desktopOpen`, `sessionSend`,
-`composerDraftAppend`, `sessionModelChange`, or `taskCreate` — receives a fixed,
-truthful outcome composed by the daemon from the verified results, delivered as soon as Voice's
-next inference shows it calls no further action. Voice's turn may continue to completion, but nothing more from that turn is
-spoken. Requests that read state or receive a refusal or failure are answered with Voice's final
-text for that request. No outcome is delivered to the voice model before the action it describes
-has a verified result.
+Each terminal action — `desktopOpen`, `sessionSend`, `composerDraftAppend`,
+`sessionModelChange`, or `taskCreate` — is reported to the voice model on the request's delegation
+as soon as the desktop confirms it, with a fixed, truthful sentence composed by the daemon from
+the verified result, so a request of several actions reports each in turn. When Voice's turn ends,
+a request whose actions all succeeded after at least one was reported adds Voice's final text only
+as silent context; any other request is answered aloud with Voice's final text or a fixed
+explanation. No result is reported to the voice model before the action it describes has a
+verified result.
 
 The voice model receives the call's first context when the call starts and silent context
 updates during it (see Voice context below). It answers from that context when it

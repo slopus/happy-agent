@@ -78,10 +78,11 @@ at a time across all of their calls, and Voice's turn settles before the next re
 `composerDraftAppend` names its conversation; when it is not focused, the daemon first requests
 `desktopOpen` for it and appends only after that open succeeds. Actions run one at a
 time in the order Voice called them, each on the latest accepted revision, and a batch stops at the
-first that does not succeed. When every action succeeded and all were terminal (open, send, draft
-append, model change, task creation), voice receives a fixed outcome from `impl/liveOutcome.ts` at
-Voice's next inference, and nothing later from that turn is spoken. Otherwise voice hears Voice's
-final text, or a fixed explanation. Voice acts only on this daemon's conversations: another
+first that does not succeed. Following OpenAI's client delegation, each confirmed terminal action
+(open, send, draft append, model change, task creation) is said at once on the request's
+delegation, from `impl/liveOutcome.ts`, so "open A, then B" says each. When Voice's turn ends and
+everything succeeded after something was said, Voice's final text and the later-request reminder
+go quietly (`thinking`); otherwise voice hears Voice's final text, or a fixed explanation. Voice acts only on this daemon's conversations: another
 server's connection is refused. "This machine" is the call's `localConnectionId`, accepted on its
 own, else AppState's local server, else the context's only connection; Voice gets it with every
 request because connection IDs are window-relative. An agent target (`{ kind: "agent" }`) needs the

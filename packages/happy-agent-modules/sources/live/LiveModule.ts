@@ -295,10 +295,10 @@ interface Request {
         type?: SessionProviderError["type"];
     };
     failure?: LiveControllerError;
-    /** The outcome already spoken; nothing more from this turn is. */
+    /** The request's last word was given; nothing more from this turn is. */
     delivered: boolean;
-    /** A verified outcome waiting on whether Voice's current inference calls more actions. */
-    pendingFixed?: string;
+    /** A verified action result was already spoken, as soon as the desktop confirmed it. */
+    announced: boolean;
     /** Voice ended the call because the person asked; its outcome is not spoken. */
     endCall?: true;
     startedAt: number;
@@ -474,11 +474,6 @@ export class LiveModule implements AgentModule {
                 if (request === undefined || !request.accepted) return;
                 request.inferenceText = "";
                 if (request.delivered || request.failure !== undefined) return;
-                // Actions that all succeeded and ended in a terminal one are the outcome, unless
-                // this inference goes on to more actions: its first output decides.
-                const fixed = this.#fixedOutcome(request);
-                if (fixed === undefined) delete request.pendingFixed;
-                else request.pendingFixed = fixed;
                 if (++request.rounds > REQUEST_ROUNDS) {
                     request.failure = new LiveControllerError("limit", {
                         phase: "desktopAction",
@@ -494,19 +489,6 @@ export class LiveModule implements AgentModule {
                 this.#followedEvent(scope.agent.id, event);
                 const request = this.#requests.get(scope.agent.id);
                 if (request === undefined || !request.accepted) return;
-                if (request.pendingFixed !== undefined) {
-                    if (
-                        event.type === "toolcall_start" ||
-                        (event.type === "done" && event.state === "tool_call")
-                    )
-                        delete request.pendingFixed;
-                    else if (
-                        event.type === "text_start" ||
-                        event.type === "text_delta" ||
-                        event.type === "done"
-                    )
-                        void this.#deliver(request, request.pendingFixed, "fixed");
-                }
                 if (event.type === "text_delta") {
                     if (request.inferenceText.length < OUTCOME_CHARACTERS)
                         request.inferenceText += event.delta;
@@ -1126,7 +1108,13 @@ export class LiveModule implements AgentModule {
                 }
             }
         }
-        request.executed.push({ action, result, round: request.rounds });
+        const entry = { action, result, round: request.rounds };
+        request.executed.push(entry);
+        // A confirmed terminal action is said at once, on the request's delegation, as OpenAI's
+        // client delegation sends each result as soon as it stands on its own.
+        const announcement =
+            result.status === "succeeded" ? this.#announcement(request, entry) : undefined;
+        if (announcement !== undefined) void this.#announce(request, announcement);
         if (
             action.type === "desktopState" &&
             result.status === "succeeded" &&
@@ -1442,6 +1430,7 @@ export class LiveModule implements AgentModule {
             inferenceText: "",
             text: "",
             delivered: false,
+            announced: false,
             startedAt: Date.now(),
             settled: deferred<string | undefined>(),
         };
@@ -1559,19 +1548,24 @@ export class LiveModule implements AgentModule {
                 await this.#deliver(request, request.failure.voiceContext, "controller");
                 return;
             }
-            if (request.pendingFixed !== undefined)
-                await this.#deliver(request, request.pendingFixed, "fixed");
             this.#diagnostic(call, {
                 event: "controller.finished",
                 delegationId,
                 durationMs: Date.now() - request.startedAt,
                 characters: request.text.length,
-                outcome: request.delivered ? "fixed" : "controller",
+                outcome: request.announced ? "fixed" : "controller",
             });
+            // Results already said as they were confirmed, with nothing failed or refused: Voice's
+            // own words go quietly, as context voice may use, so nothing is said twice. Otherwise
+            // they answer aloud.
+            const quiet =
+                request.announced &&
+                request.executed.every((entry) => entry.result.status === "succeeded");
             await this.#deliver(
                 request,
-                request.text || "The desktop request has completed.",
-                "controller",
+                request.text || (quiet ? "" : "The desktop request has completed."),
+                quiet ? "fixed" : "controller",
+                !quiet,
             );
         } catch {
             const failure = new LiveControllerError("inference", {
@@ -1635,8 +1629,17 @@ export class LiveModule implements AgentModule {
         return JSON.stringify({ status: "succeeded", output: { type: "ack" } });
     }
 
-    /** The one spoken outcome of a request; nothing later from the same request is spoken. */
-    async #deliver(request: Request, text: string, outcome: "fixed" | "controller"): Promise<void> {
+    /**
+     * A request's last word: Voice's text or a fixed explanation with the reminder about later
+     * requests, spoken, or quiet when its results were already spoken. Nothing later from the
+     * same request is said.
+     */
+    async #deliver(
+        request: Request,
+        text: string,
+        outcome: "fixed" | "controller",
+        speak = true,
+    ): Promise<void> {
         if (request.delivered) return;
         request.delivered = true;
         const call = request.call;
@@ -1667,52 +1670,80 @@ export class LiveModule implements AgentModule {
                 outcomeHint === "queued"
                     ? LIVE_QUEUED_REQUEST_INSTRUCTIONS
                     : LIVE_LATER_REQUEST_INSTRUCTIONS;
-            const outcomeText = `${text}\n\n${instructions}`;
+            const outcomeText = text === "" ? instructions : `${text}\n\n${instructions}`;
             await call.transport.append({
                 delegationId: request.delegationId,
                 text: outcomeText,
-                speakable: true,
+                speakable: speak,
             });
-            this.#contextPushed(call, "outcome", [outcomeText], true);
-            this.#diagnostic(call, {
-                event: "delegation.delivered",
-                delegationId: request.delegationId,
-                inFlight,
-                outcomeHint,
-                outcome,
-                durationMs: Date.now() - request.startedAt,
-            });
+            this.#contextPushed(call, "outcome", [outcomeText], speak);
+            if (!request.announced)
+                this.#diagnostic(call, {
+                    event: "delegation.delivered",
+                    delegationId: request.delegationId,
+                    inFlight,
+                    outcomeHint,
+                    outcome,
+                    durationMs: Date.now() - request.startedAt,
+                });
         } catch {
-            this.#diagnostic(call, {
-                event: "delivery.failed",
-                delegationId: request.delegationId,
-                reason: "responseDelivery",
-                durationMs: Date.now() - request.startedAt,
-            });
-            if (call.session.status === "active")
-                await this.#fail(
-                    call,
-                    "Voice could not deliver the desktop controller's response. Its outcome was not retried.",
-                );
+            await this.#deliveryFailed(request);
         }
     }
 
-    /** Verified terminal actions answer the request themselves, without Voice's words. */
-    #fixedOutcome(request: Request): string | undefined {
-        if (
-            request.executed.length === 0 ||
-            request.executed.some(({ result }) => result.status !== "succeeded")
-        )
-            return undefined;
+    /** One confirmed result, said at once; the request goes on, and may say more. */
+    async #announce(request: Request, text: string): Promise<void> {
+        const call = request.call;
+        if (request.delivered || terminal(call.session) || call.session.status !== "active") return;
+        const first = !request.announced;
+        request.announced = true;
+        try {
+            if (call.transport === undefined)
+                throw new Error("The voice transport is unavailable.");
+            await call.transport.append({
+                delegationId: request.delegationId,
+                text,
+                speakable: true,
+            });
+            this.#contextPushed(call, "outcome", [text], true);
+            if (first)
+                this.#diagnostic(call, {
+                    event: "delegation.delivered",
+                    delegationId: request.delegationId,
+                    inFlight: call.requests,
+                    outcome: "fixed",
+                    durationMs: Date.now() - request.startedAt,
+                });
+        } catch {
+            await this.#deliveryFailed(request);
+        }
+    }
+
+    /** A failed append ends the broken transport; the outcome is never retried. */
+    async #deliveryFailed(request: Request): Promise<void> {
+        const call = request.call;
+        this.#diagnostic(call, {
+            event: "delivery.failed",
+            delegationId: request.delegationId,
+            reason: "responseDelivery",
+            durationMs: Date.now() - request.startedAt,
+        });
+        if (call.session.status === "active")
+            await this.#fail(
+                call,
+                "Voice could not deliver the desktop controller's response. Its outcome was not retried.",
+            );
+    }
+
+    /** What a confirmed terminal action says it did; undefined for reads and anything else. */
+    #announcement(
+        request: Request,
+        entry: { action: LiveDesktopAction; result: LiveDesktopActionResult },
+    ): string | undefined {
         const names = new Map<string, string>();
         for (const row of request.call.directory.rows)
             if (!names.has(row.agentId)) names.set(row.agentId, row.title);
-        return liveFixedOutcome(
-            request.executed,
-            this.#view(request.call),
-            request.call.context,
-            names,
-        );
+        return liveFixedOutcome([entry], this.#view(request.call), request.call.context, names);
     }
 
     async #message(call: Call, message: LiveControlClientMessage): Promise<void> {

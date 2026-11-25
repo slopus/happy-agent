@@ -186,14 +186,15 @@ validated and ignored; the daemon follows its own agents instead.
 ## Outcomes come from verified results
 
 Two-action requests spoke a generic "Done" before staging finished, because a background push
-reached voice mid-request. A request whose actions all succeed and end in a terminal action gets a
-fixed outcome composed from the verified results ("Opened Garden notes.", "Sent to Release notes."),
-and nothing later from that turn is spoken; a request that read state or was refused is answered with
-Voice's own final text. All-success accounting covers the whole request, so a later success cannot
-turn an earlier refusal into a claim of success. The fixed outcome waits for Voice's next
-inference's first output: delivered as soon as that inference began, "open release notes, then the
-cache task" ended after one open; a tool call means more actions, and text or a finished inference
-delivers it.
+reached voice mid-request. Results now come only from the desktop's confirmation, as fixed
+sentences composed from it ("Opened Garden notes.", "Sent to Release notes."). One combined outcome
+first went out once Voice's next inference began, which ended "open release notes, then the cache
+task" after one open; then it waited for that inference's first output, which cost about a second
+per request. Kirill chose OpenAI's client delegation pattern instead: each confirmed result is sent
+on the delegation as soon as it stands on its own, several per delegation, so nothing waits and no
+second open is cut off. When Voice's turn ends, a request whose actions all succeeded adds Voice's
+own words only quietly, so nothing is said twice; a refusal, a failure, or a request with nothing
+said is answered aloud with Voice's words or a fixed explanation.
 
 ## An outcome must not swallow a later request
 

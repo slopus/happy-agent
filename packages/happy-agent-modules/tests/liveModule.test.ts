@@ -803,7 +803,7 @@ describe("the person's Voice", () => {
         ]);
     });
 
-    it("speaks verified terminal actions as the fixed outcome and nothing more from that turn", async () => {
+    it("says a verified terminal action as soon as it is confirmed, and Voice's words only quietly", async () => {
         const f = await fixture();
         f.turns["open-release"] = [
             { actions: [open({ kind: "session", ...releaseNotes })] },
@@ -813,10 +813,24 @@ describe("the person's Voice", () => {
         call.delegate("open", "open-release");
         await expect.poll(() => f.toolResults.length).toBe(1);
         await expect.poll(() => spoken(f).length).toBe(1);
-        expect(spoken(f)[0]!.text).toBe(later("Opened Release notes."));
+        expect(spoken(f)[0]).toEqual({
+            delegationId: "open",
+            text: "Opened Release notes.",
+            speakable: true,
+        });
         await expect
             .poll(() => f.records().filter((record) => record.event === "controller.finished"))
             .toMatchObject([{ outcome: "fixed" }]);
+        // Voice's own words, and the reminder about later requests, go quietly on the delegation.
+        await expect
+            .poll(() => quietAppends(f).filter((input) => input.delegationId === "open"))
+            .toEqual([
+                {
+                    delegationId: "open",
+                    text: later("I opened it. Anything else?"),
+                    speakable: false,
+                },
+            ]);
         expect(spoken(f)).toHaveLength(1);
         await expect
             .poll(() =>
@@ -830,7 +844,7 @@ describe("the person's Voice", () => {
             ]);
     });
 
-    it("runs actions Voice calls across inferences before the fixed outcome", async () => {
+    it("says each of several actions on the same delegation as each is confirmed", async () => {
         const f = await fixture();
         f.turns["two-opens"] = [
             { actions: [open({ kind: "session", ...releaseNotes })] },
@@ -839,12 +853,16 @@ describe("the person's Voice", () => {
         ];
         const call = await activeCall(f, voiceRequest(), succeeded);
         call.delegate("opens", "two-opens");
-        await expect.poll(() => spoken(f).length).toBe(1);
+        await expect.poll(() => spoken(f).length).toBe(2);
         expect(call.actions().map((frame) => frame.action.type)).toEqual([
             "desktopOpen",
             "desktopOpen",
         ]);
-        expect(spoken(f)[0]!.text).toBe(later("Opened Release notes. Opened Garden notes."));
+        // The second open is never cut off by the first one's result.
+        expect(spoken(f)).toEqual([
+            { delegationId: "opens", text: "Opened Release notes.", speakable: true },
+            { delegationId: "opens", text: "Opened Garden notes.", speakable: true },
+        ]);
     });
 
     it("sends to a named conversation without changing the screen and says it was sent", async () => {
@@ -873,7 +891,7 @@ describe("the person's Voice", () => {
         expect(call.actions().map((frame) => frame.action)).toEqual([
             { type: "sessionSend", target: releaseNotes, text: "Ship it." },
         ]);
-        expect(spoken(f)[0]!.text).toBe(later("Sent to Release notes."));
+        expect(spoken(f)[0]!.text).toBe("Sent to Release notes.");
         staging = true;
         call.delegate("garden", "send-garden");
         await expect.poll(() => spoken(f).length).toBe(2);
@@ -882,9 +900,7 @@ describe("the person's Voice", () => {
             "sessionSend",
         ]);
         expect(spoken(f)[1]!.text).toBe(
-            later(
-                "Staged the message in Garden notes. It has not been sent; the person must review it and press Send.",
-            ),
+            "Staged the message in Garden notes. It has not been sent; the person must review it and press Send.",
         );
     });
 
@@ -953,7 +969,7 @@ describe("the person's Voice", () => {
             "composerDraftAppend",
         ]);
         expect(spoken(f)[0]!.text).toBe(
-            later("Added the text to the draft in Release notes. Nothing was sent."),
+            "Added the text to the draft in Release notes. Nothing was sent.",
         );
         refuse = true;
         call.delegate("again", "draft-release");
@@ -1131,8 +1147,10 @@ describe("the person's Voice", () => {
         ];
         const call = await activeCall(f, voiceRequest(), succeeded);
         call.delegate("partial", "partial");
-        await expect.poll(() => spoken(f).length).toBe(1);
-        const outcome = spoken(f)[0]!.text;
+        // The confirmed send is said at once; the failure that follows is explained after it.
+        await expect.poll(() => spoken(f).length).toBe(2);
+        expect(spoken(f)[0]!.text).toMatch(/^Staged the message in Garden notes\./u);
+        const outcome = spoken(f)[1]!.text;
         expect(outcome).toContain("Some actions may already have completed");
         expect(outcome).not.toContain("No action was started");
         expect(outcome).not.toContain("Private detail");
@@ -1280,14 +1298,17 @@ describe("Voice's targets", () => {
                 : succeeded(frame),
         );
         call.delegate("listed", "open-listed");
-        await expect.poll(() => spoken(f).length).toBe(1);
+        await expect.poll(() => spoken(f).length).toBe(2);
         expect(call.actions().map((frame) => frame.action)).toEqual([
             { type: "desktopOpen", target: { kind: "session", ...gardenNotes } },
             { type: "sessionSend", target: gardenNotes, text: "Ship it." },
         ]);
-        expect(spoken(f)[0]!.text).toBe(later("Opened Garden notes. Sent to Garden notes."));
+        expect(spoken(f).map(({ text }) => text)).toEqual([
+            "Opened Garden notes.",
+            "Sent to Garden notes.",
+        ]);
         call.delegate("unlisted", "open-unlisted");
-        await expect.poll(() => spoken(f).length).toBe(2);
+        await expect.poll(() => spoken(f).length).toBe(3);
         expect(call.actions()).toHaveLength(2);
         expect(JSON.parse(f.toolResults.at(-1)!.text)).toMatchObject({
             status: "refused",
@@ -1395,8 +1416,12 @@ describe("Voice's targets", () => {
             { type: "desktopState" },
             { type: "sessionSend", target: agentTarget, text: "Ship it." },
         ]);
-        // The desktop's state read keeps the fixed outcome from applying, so Voice answers.
-        expect(spoken(f)[0]!.text).toBe(later("Sent to Release notes."));
+        // The confirmed result is said once; Voice's words after a read go quietly, never twice.
+        expect(spoken(f)[0]!.text).toMatch(/^Staged the message in Release notes\./u);
+        await expect
+            .poll(() => quietAppends(f).filter((input) => input.delegationId === "agent"))
+            .toHaveLength(1);
+        expect(spoken(f)).toHaveLength(1);
     });
 
     it("speaks an agent target's sidebar name in the fixed outcome", async () => {
@@ -1410,7 +1435,7 @@ describe("Voice's targets", () => {
         );
         call.delegate("agent", "open-agent");
         await expect.poll(() => spoken(f).length).toBe(1);
-        expect(spoken(f)[0]!.text).toBe(later("Opened Release notes."));
+        expect(spoken(f)[0]!.text).toBe("Opened Release notes.");
         // Focus names desktop entities only; the desktop resolves an agent itself.
         expect(call.frames.filter((frame) => frame.type === "voiceFocus")).toEqual([]);
     });
