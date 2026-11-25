@@ -222,7 +222,9 @@ function inlineMarkdown(content: unknown, context: Context): string {
         const runs = mergeRuns(atLevel(nodes, level));
         const markdown = escapeLines(renderInline(runs, context, level), context);
         if (level !== "all") context.omitted.add("some formatting");
-        if (sameInline(parseInlineMarkdown(markdown), expected(runs, level))) return markdown;
+        // A table row gives up the `\` of every `\|` when it is cut into cells.
+        const read = context.table ? markdown.replaceAll("\\|", "|") : markdown;
+        if (sameInline(parseInlineMarkdown(read), expected(runs, level))) return markdown;
     }
     return escapeLines(escapeText(plainText(content), context, false), context);
 }
@@ -403,7 +405,10 @@ function renderInline(
             }
         out +=
             level !== "plain" && node.styles?.["code"] === true
-                ? codeSpan(core)
+                ? // A table row is cut at every `|` before its cells are read, code or not.
+                  context.table
+                    ? codeSpan(core).replaceAll("|", "\\|")
+                    : codeSpan(core)
                 : escapeText(core, context, inLink);
         if (trailing !== "") {
             close([]);
@@ -587,8 +592,8 @@ function escapeLine(line: string): string {
     if (
         /^#{1,6}(\s|$)/.test(rest) ||
         rest.startsWith(">") ||
-        /^[-+](\s|$)/.test(rest) ||
-        /^[-=]+\s*$/.test(rest) ||
+        /^[-+*](\s|$)/.test(rest) ||
+        /^(?:=+[ \t]*|-[- \t]*)$/.test(rest) ||
         rest.startsWith("~~~")
     )
         rest = `\\${rest}`;
