@@ -647,3 +647,70 @@ function readHeader(error: unknown, name: string, seen: Set<object>): string | u
         ? readHeader((error as { cause?: unknown }).cause, name, seen)
         : undefined;
 }
+
+/**
+ * OAuth error codes are short identifiers. Anything else in a token-endpoint body may be free text
+ * or echo a credential, so it is never kept.
+ */
+const CODEX_REFRESH_ERROR_CODE = /^[a-z0-9_]{1,64}$/u;
+
+/** The refresh-token rejections the Codex CLI treats as needing a new sign-in. */
+const PERMANENT_REFRESH_ERROR_CODES = new Set([
+    "refresh_token_expired",
+    "refresh_token_reused",
+    "refresh_token_invalidated",
+]);
+
+const codexRefreshErrorBodySchema = Type.Object(
+    {
+        error: Type.Optional(
+            Type.Union([
+                Type.String(),
+                Type.Object({ code: Type.Optional(Type.String()) }, { additionalProperties: true }),
+            ]),
+        ),
+        code: Type.Optional(Type.String()),
+    },
+    { additionalProperties: true },
+);
+
+/** The token endpoint refused to renew a ChatGPT login. Carries no vendor free text. */
+export class CodexCredentialRefreshError extends Error {
+    readonly status: number;
+    readonly code: string | undefined;
+    /** The refresh token itself was rejected, so only a new sign-in can restore the login. */
+    readonly permanent: boolean;
+
+    constructor(status: number, code: string | undefined) {
+        super(
+            `Codex access token could not be refreshed (HTTP ${status}${code === undefined ? "" : `, ${code}`}).`,
+        );
+        this.name = "CodexCredentialRefreshError";
+        this.status = status;
+        this.code = code;
+        this.permanent =
+            status === 401 ||
+            (code !== undefined && PERMANENT_REFRESH_ERROR_CODES.has(code)) ||
+            (status === 400 && code === "invalid_grant");
+    }
+}
+
+/**
+ * Classifies a failed token exchange the way the Codex CLI does. The CLI reads `error.code`, then
+ * `error` as a string, then a top-level `code`; every other status or code is transient.
+ */
+export function readCodexCredentialRefreshError(
+    status: number,
+    body: unknown,
+): CodexCredentialRefreshError {
+    let code: string | undefined;
+    if (Value.Check(codexRefreshErrorBodySchema, body)) {
+        const candidate =
+            typeof body.error === "string" ? body.error : (body.error?.code ?? body.code);
+        const normalized = candidate?.toLowerCase();
+        if (normalized !== undefined && CODEX_REFRESH_ERROR_CODE.test(normalized)) {
+            code = normalized;
+        }
+    }
+    return new CodexCredentialRefreshError(status, code);
+}

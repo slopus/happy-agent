@@ -8,6 +8,7 @@ import {
     readCredentialRefreshJson,
 } from "@/core/impl/credentialRefresh.js";
 
+import { readCodexCredentialRefreshError } from "@/vendors/codex/errors/codexErrors.js";
 import { readCodexQuotaAuth, type CodexQuotaAuth } from "@/vendors/codex/impl/auth.js";
 
 const authSchema = Type.Object(
@@ -34,6 +35,49 @@ const responseSchema = Type.Object(
     { additionalProperties: true },
 );
 
+const jwtClaimsSchema = Type.Object({ exp: Type.Number() }, { additionalProperties: true });
+
+/**
+ * Background maintenance has no check before each request like the Codex CLI's five-minute one,
+ * so it renews a token that would otherwise lapse before a pass hours away comes round again.
+ */
+const MAINTENANCE_EXPIRY_WINDOW_MS = 4 * 60 * 60 * 1_000;
+/** The Codex CLI's `TOKEN_REFRESH_INTERVAL`: a login not renewed for eight days is renewed. */
+const MAINTENANCE_REFRESH_INTERVAL_MS = 8 * 24 * 60 * 60 * 1_000;
+
+/**
+ * Whether background maintenance should spend the refresh token now. ChatGPT refresh tokens are
+ * single-use, so renewing a healthy login only invalidates every other holder of the file. A login
+ * whose expiry or last renewal cannot be read is renewed.
+ */
+export function isCodexAuthRefreshDue(contents: string, now: number): boolean {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(contents);
+    } catch {
+        return true;
+    }
+    if (!Value.Check(authSchema, parsed)) return true;
+    const lastRefresh =
+        typeof parsed.last_refresh === "string" ? Date.parse(parsed.last_refresh) : Number.NaN;
+    if (!Number.isFinite(lastRefresh) || now - lastRefresh >= MAINTENANCE_REFRESH_INTERVAL_MS) {
+        return true;
+    }
+    const expiresAt = readJwtExpiry(parsed.tokens.access_token);
+    return expiresAt === undefined || expiresAt - now <= MAINTENANCE_EXPIRY_WINDOW_MS;
+}
+
+function readJwtExpiry(token: string | undefined): number | undefined {
+    const payload = token?.split(".")[1];
+    if (payload === undefined) return undefined;
+    try {
+        const claims: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+        return Value.Check(jwtClaimsSchema, claims) ? claims.exp * 1_000 : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 export async function refreshCodexAuthFile(options: {
     authFile: string;
     clientId: string;
@@ -56,8 +100,9 @@ export async function refreshCodexAuthFile(options: {
             }),
         });
         if (!response.ok) {
-            await response.body?.cancel();
-            throw new Error(`Codex access token could not be refreshed (HTTP ${response.status}).`);
+            // Keep only the OAuth error code; the body is bounded like a successful one.
+            const failure = await readCredentialRefreshJson(response).catch(() => undefined);
+            throw readCodexCredentialRefreshError(response.status, failure);
         }
         const body = await readCredentialRefreshJson(response);
         if (!Value.Check(responseSchema, body)) {

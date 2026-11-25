@@ -80,6 +80,7 @@ import {
     foreignAgentRoutes,
     foreignAgentStart,
 } from "./impl/createForeignAgentProvider.js";
+import { describeCredentialRefreshFailure } from "./impl/describeCredentialRefreshFailure.js";
 import { refreshForeignAgentModels } from "./impl/foreignAgentModels.js";
 import { refreshOpenAICompatibleMetadata } from "./impl/openAICompatibleModels.js";
 import { readAntigravityUsage, type HarnessUsageWindow } from "./impl/harnessUsage.js";
@@ -3705,12 +3706,13 @@ export class ConfigModule implements AgentModule {
                             `Could not refresh the sign-in for provider "${id}" in the background.`,
                         );
                     }
-                } catch {
-                    // Vendor diagnostics and credential-file parse failures can contain secrets.
+                } catch (error) {
+                    // Vendor diagnostics and credential-file parse failures can contain secrets, so
+                    // only a refresh failure's status and vetted OAuth code reach the log.
                     // Maintenance is advisory: never disable an account or fail an agent turn here.
                     if (!ctx.lifetime?.aborted && !this.#providerLifetime.signal.aborted) {
                         ctx.log.warn(
-                            `Could not refresh the sign-in for provider "${id}" in the background.`,
+                            `Could not refresh the sign-in for provider "${id}" in the background${describeCredentialRefreshFailure(error)}`,
                         );
                     }
                 }

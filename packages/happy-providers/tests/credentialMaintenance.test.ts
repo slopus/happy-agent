@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CodexSessionCredential } from "@/vendors/codex/CodexSessionCredential.js";
+import { CodexCredentialRefreshError } from "@/vendors/codex/errors/codexErrors.js";
 import { GrokSessionCredential } from "@/vendors/grok/GrokSessionCredential.js";
 import { GROK_OAUTH_SCOPE } from "@/vendors/grok/impl/auth.js";
 
@@ -136,6 +137,200 @@ describe("credential maintenance without inference", () => {
         );
     }
 });
+
+const HOUR = 60 * 60 * 1_000;
+const DAY = 24 * HOUR;
+
+describe("Codex maintenance policy", () => {
+    it.each([
+        { case: "a healthy login", expiresIn: 10 * DAY, lastRefresh: -DAY, requests: 0 },
+        {
+            case: "a token expiring before the next pass",
+            expiresIn: HOUR,
+            lastRefresh: -DAY,
+            requests: 1,
+        },
+        {
+            case: "a login renewed over eight days ago",
+            expiresIn: 10 * DAY,
+            lastRefresh: -9 * DAY,
+            requests: 1,
+        },
+        {
+            case: "a login with no renewal time",
+            expiresIn: 10 * DAY,
+            lastRefresh: undefined,
+            requests: 1,
+        },
+    ])("renews $case only when it is due", async ({ expiresIn, lastRefresh, requests }) => {
+        const fixture = await codexFixture(() => tokenResponse());
+        await fixture.write({ expiresIn, lastRefresh });
+        const before = await readFile(fixture.authFile, "utf8");
+        const credential = await fixture.load();
+        expect(await credential.refreshForMaintenance()).toBeTruthy();
+        expect(fixture.requests()).toBe(requests);
+        if (requests === 0) expect(await readFile(fixture.authFile, "utf8")).toBe(before);
+        else expect(await readFile(fixture.authFile, "utf8")).toContain("fresh-refresh");
+    });
+
+    it("still renews a healthy login on demand after an unauthorized response", async () => {
+        const fixture = await codexFixture(() => tokenResponse());
+        await fixture.write({ expiresIn: 10 * DAY, lastRefresh: -DAY });
+        const credential = await fixture.load();
+        expect(await credential.refreshForUnauthorized()).toBeTruthy();
+        expect(fixture.requests()).toBe(1);
+    });
+
+    it.each([
+        {
+            status: 401,
+            body: { error: { code: "refresh_token_reused", message: "secret-free-text" } },
+            code: "refresh_token_reused",
+            permanent: true,
+        },
+        {
+            status: 400,
+            body: { error: "invalid_grant", error_description: "secret-free-text" },
+            code: "invalid_grant",
+            permanent: true,
+        },
+        {
+            status: 400,
+            body: { error: { code: "refresh_token_expired" } },
+            code: "refresh_token_expired",
+            permanent: true,
+        },
+        { status: 401, body: { error: { message: "secret-free-text" } }, permanent: true },
+        {
+            status: 503,
+            body: { code: "server_is_overloaded" },
+            code: "server_is_overloaded",
+            permanent: false,
+        },
+        { status: 400, body: { error: "secret free text, not a code" }, permanent: false },
+        { status: 502, body: "<html>secret-free-text</html>", permanent: false },
+    ])(
+        "keeps HTTP $status and only a safe OAuth code from a failed refresh",
+        async ({ status, body, code, permanent }) => {
+            const fixture = await codexFixture(() =>
+                typeof body === "string"
+                    ? new Response(body, { status })
+                    : Response.json(body, { status }),
+            );
+            await fixture.write({});
+            const credential = await fixture.load();
+            const failure = await credential
+                .refreshForMaintenance()
+                .catch((error: unknown) => error);
+            expect(failure).toBeInstanceOf(CodexCredentialRefreshError);
+            expect(failure).toMatchObject({ status, code, permanent });
+            expect(JSON.stringify(failure)).not.toContain("secret");
+            expect(String(failure)).not.toContain("secret");
+            expect(String(failure)).toContain(`HTTP ${status}`);
+        },
+    );
+
+    it("stops renewing a rejected login until its auth file changes", async () => {
+        const fixture = await codexFixture(() =>
+            Response.json({ error: { code: "refresh_token_reused" } }, { status: 401 }),
+        );
+        await fixture.write({});
+        const credential = await fixture.load();
+        await expect(credential.refreshForMaintenance()).rejects.toMatchObject({ permanent: true });
+        await expect(credential.refreshForMaintenance()).rejects.toMatchObject({
+            code: "refresh_token_reused",
+        });
+        expect(fixture.requests()).toBe(1);
+        // Recovery after a 401 is on demand and still asks.
+        await expect(credential.refreshForUnauthorized()).rejects.toMatchObject({
+            permanent: true,
+        });
+        expect(fixture.requests()).toBe(2);
+        // A new sign-in writes a new file, which maintenance tries again.
+        await fixture.write({ refreshToken: "signed-in-again" });
+        await expect(credential.refreshForMaintenance()).rejects.toMatchObject({ permanent: true });
+        expect(fixture.requests()).toBe(3);
+    });
+
+    it("keeps retrying a transient failure on every pass", async () => {
+        const fixture = await codexFixture(() =>
+            Response.json({ error: { code: "server_error" } }, { status: 500 }),
+        );
+        await fixture.write({});
+        const credential = await fixture.load();
+        await expect(credential.refreshForMaintenance()).rejects.toMatchObject({
+            permanent: false,
+        });
+        await expect(credential.refreshForMaintenance()).rejects.toMatchObject({
+            permanent: false,
+        });
+        expect(fixture.requests()).toBe(2);
+    });
+});
+
+function tokenResponse() {
+    return Response.json({ access_token: "fresh-access", refresh_token: "fresh-refresh" });
+}
+
+async function codexFixture(respond: () => Response) {
+    const directory = await mkdtemp(join(tmpdir(), "happy-codex-maintenance-"));
+    cleanups.push(() => rm(directory, { recursive: true, force: true }));
+    const authFile = join(directory, "auth.json");
+    let requests = 0;
+    const server = createServer(async (request, reply) => {
+        for await (const _chunk of request) {
+            /* Drain the real token request. */
+        }
+        requests++;
+        const response = respond();
+        reply.writeHead(response.status, Object.fromEntries(response.headers));
+        reply.end(Buffer.from(await response.arrayBuffer()));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    cleanups.push(async () => {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Missing test port.");
+    const tokenUrl = `http://127.0.0.1:${address.port}/token`;
+    return {
+        authFile,
+        requests: () => requests,
+        write: async (options: {
+            expiresIn?: number;
+            lastRefresh?: number | undefined;
+            refreshToken?: string;
+        }) => {
+            const now = Date.now();
+            const claims = { exp: Math.floor((now + (options.expiresIn ?? 10 * DAY)) / 1_000) };
+            const accessToken = [{ alg: "none" }, claims, "signature"]
+                .map((part) => Buffer.from(JSON.stringify(part)).toString("base64url"))
+                .join(".");
+            await writeFile(
+                authFile,
+                JSON.stringify({
+                    tokens: {
+                        access_token: accessToken,
+                        refresh_token: options.refreshToken ?? "stale-refresh",
+                        account_id: "account",
+                    },
+                    ...(options.lastRefresh === undefined
+                        ? {}
+                        : { last_refresh: new Date(now + options.lastRefresh).toISOString() }),
+                }),
+            );
+        },
+        load: async () => {
+            const credential = await CodexSessionCredential.tryLoad({
+                authFile,
+                env: { CODEX_REFRESH_TOKEN_URL_OVERRIDE: tokenUrl },
+            });
+            if (credential === null) throw new Error("Missing fixture credential.");
+            return credential;
+        },
+    };
+}
 
 async function setup(vendor: "codex" | "grok", options: { body?: string } = {}) {
     const directory = await mkdtemp(join(tmpdir(), "happy-credential-maintenance-"));

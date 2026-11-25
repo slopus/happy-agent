@@ -241,6 +241,7 @@ export {
     type CodexApiKeyCredentialLoadOptions,
     type CodexApiKeyCredentialValue,
 } from "@/vendors/codex/CodexApiKeyCredential.js";
+export { CodexCredentialRefreshError } from "@/vendors/codex/errors/codexErrors.js";
 export {
     CodexSessionCredential,
     type CodexSessionCredentialLoadOptions,

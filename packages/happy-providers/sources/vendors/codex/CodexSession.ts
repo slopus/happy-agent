@@ -27,6 +27,7 @@ import { isBedrockCredential, type CodexProviderCredential } from "@/vendors/Ven
 import {
     classifyCodexError,
     classifyCodexProviderError,
+    CodexCredentialRefreshError,
     codexErrorMessage,
 } from "@/vendors/codex/errors/codexErrors.js";
 import { codexModelsShareConfiguration } from "@/vendors/codex/impl/codexModelsShareConfiguration.js";
@@ -789,15 +790,21 @@ export class CodexSession extends BaseSession {
                             this.credential,
                             unauthorizedRecoveryStep,
                         );
-                    } catch {
+                    } catch (refreshError) {
                         if (signal?.aborted) {
                             yield { type: "done", state: "cancelled" };
                         } else {
-                            const diagnostics = classifyCodexProviderError(
+                            const classified = classifyCodexProviderError(
                                 error,
                                 message,
                                 reportedAttempt + 1,
                             ).diagnostics;
+                            // The OAuth code says why renewal failed; the status stays the 401.
+                            const diagnostics =
+                                refreshError instanceof CodexCredentialRefreshError &&
+                                refreshError.code !== undefined
+                                    ? { ...classified, code: refreshError.code }
+                                    : classified;
                             yield {
                                 type: "done",
                                 state: "error",
