@@ -88,10 +88,15 @@ stays focused on it, and that it acts differently per type. The context now name
 requires a fresh read with that type's exact calls in every turn that depends on its contents,
 keeps replies short and away from the repository, and gives every chat-enabled type its own
 rules: todos are acted on and completed rather than deleted, documents get minimal co-author
-edits against the read `seq`, calendars confirm ambiguous times and whole-series edits, chat
-Surfaces are read but never posted to, System Monitors are read-only, and references inspect
-their live target. A unit test checks that every tool the context names exists and none is an
-admin tool.
+edits, by exact replacement or against the read `seq`, calendars confirm ambiguous times and
+whole-series edits, chat Surfaces are read but never posted to, System Monitors are read-only,
+and references inspect their live target. A unit test checks that every tool the context names
+exists and none is an admin tool.
+
+The document rules first said writes are refused whenever a read reports content Markdown
+cannot show, such as comments or colors. That was wrong and kept Surface chats from editing
+commented documents: hidden content stays in place, and only content outside the content model
+refuses a write. The rules now say so.
 
 ## Attribution is explicit and remains separate from audit actors
 
