@@ -188,25 +188,79 @@ export const clusterSecretRolesInputSchema = Type.Record(
 );
 export type ClusterSecretRolesInput = Static<typeof clusterSecretRolesInputSchema>;
 
-/** What the caller may do with a secret. */
+/** What the caller may do with a secret. Clusters from before scopes omit `delete`. */
 export const clusterSecretAccessSchema = Type.Object({
     attach: Type.Boolean(),
+    /** Present on an agent secret too, which a person may only delete. */
+    delete: Type.Optional(Type.Boolean()),
     manage: Type.Boolean(),
     use: Type.Boolean(),
 });
 export type ClusterSecretAccess = Static<typeof clusterSecretAccessSchema>;
 
+/**
+ * `global` is the catalog secret, the team's or a member's own, delivered through grants. `agent`
+ * belongs to one agent and reaches it and the subagents it shared it with.
+ */
+export const clusterSecretScopeSchema = Type.Union([Type.Literal("global"), Type.Literal("agent")]);
+export type ClusterSecretScope = Static<typeof clusterSecretScopeSchema>;
+
+/** `agent` exactly for an agent secret; people create only `me` or `team`. */
+export const clusterSecretOwnerSchema = Type.Union([
+    Type.Literal("me"),
+    Type.Literal("team"),
+    Type.Literal("agent"),
+]);
+export type ClusterSecretOwner = Static<typeof clusterSecretOwnerSchema>;
+
+/** How an agent holds a secret: a grant, owning it, or its owner sharing it. */
+export const clusterSecretReachViaSchema = Type.Union([
+    Type.Literal("grant"),
+    Type.Literal("owner"),
+    Type.Literal("share"),
+]);
+export type ClusterSecretReachVia = Static<typeof clusterSecretReachViaSchema>;
+
+/** Who has a secret, as the caller may see it. Targets in hidden Surfaces are only counted. */
+export const clusterSecretReachSchema = Type.Object({
+    /** A global secret's agent grants, or an agent secret's owner and then its shares. */
+    agents: Type.Array(
+        Type.Object({
+            id: cuid2Schema,
+            /** The agent's title; `null` for a subagent or an untitled agent. */
+            name: Nullable(Type.String()),
+            via: clusterSecretReachViaSchema,
+        }),
+    ),
+    hidden: Type.Integer({ minimum: 0 }),
+    /** Workspace grants, named after their chat; recorded but not yet delivered. */
+    workspaces: Type.Array(Type.Object({ id: cuid2Schema, name: Nullable(Type.String()) })),
+});
+export type ClusterSecretReach = Static<typeof clusterSecretReachSchema>;
+
 const clusterSecretFields = {
     access: clusterSecretAccessSchema,
     createdAt: timestampSchema,
     description: clusterSecretDescriptionSchema,
+    /** When the cluster deletes it; `null` never. Clusters from before scopes omit it. */
+    expiresAt: Type.Optional(Nullable(timestampSchema)),
     id: cuid2Schema,
     /** Values are write-only; forbidden even though responses tolerate future metadata fields. */
     material: Type.Optional(Type.Never()),
+    /** The latest an expiring agent secret may be extended to; otherwise `null`. */
+    maxExpiresAt: Type.Optional(Nullable(timestampSchema)),
     name: clusterSecretNameSchema,
-    owner: Type.Union([Type.Literal("me"), Type.Literal("team")]),
+    owner: clusterSecretOwnerSchema,
+    /** An agent secret's agent; otherwise `null`. */
+    ownerAgentId: Type.Optional(Nullable(cuid2Schema)),
+    /** Absent from a `409`'s `secret`; read the secret again for it. */
+    reach: Type.Optional(clusterSecretReachSchema),
     /** Present only on a team secret the caller manages. */
     roles: Type.Optional(Type.Record(clusterSecretRoleIdSchema, clusterSecretRoleRuleSchema)),
+    /** Clusters from before scopes omit it; their secrets are all `global`. */
+    scope: Type.Optional(clusterSecretScopeSchema),
+    /** The subagents an agent secret is shared with; otherwise empty. */
+    sharedWithAgentIds: Type.Optional(Type.Array(cuid2Schema)),
     updatedAt: timestampSchema,
     version: resourceVersionSchema,
 };
@@ -277,13 +331,21 @@ export const clusterGitTokenMaterialSchema = Type.Object(
 );
 export type ClusterGitTokenMaterial = Static<typeof clusterGitTokenMaterialSchema>;
 
+/** Seconds from when the cluster stores the change; it must end at least a minute ahead. */
+const expiresInSchema = Type.Integer({ minimum: 60 });
+
 const createFields = {
     description: Type.Optional(clusterSecretDescriptionSchema),
+    /** When it ends; the cluster rejects sending both this and `expiresIn`. */
+    expiresAt: Type.Optional(timestampSchema),
+    expiresIn: Type.Optional(expiresInSchema),
     mutationId: Type.Optional(mutationIdSchema),
     name: clusterSecretNameSchema,
     /** `me` for the caller's own secret, which takes no `roles`; the team's by default. */
     owner: Type.Optional(Type.Union([Type.Literal("me"), Type.Literal("team")])),
     roles: Type.Optional(clusterSecretRolesInputSchema),
+    /** Only agents make `agent` secrets, so people create `global` ones, the default. */
+    scope: Type.Optional(Type.Literal("global")),
 };
 
 function createGitCredential<Method extends TSchema, Material extends TSchema>(
@@ -368,6 +430,9 @@ export type ClusterSecretMaterial = Static<typeof clusterSecretMaterialSchema>;
 
 const updateOptionalFields = {
     description: Type.Optional(clusterSecretDescriptionSchema),
+    /** `null` never ends it; the cluster rejects sending both this and `expiresIn`. */
+    expiresAt: Type.Optional(Nullable(timestampSchema)),
+    expiresIn: Type.Optional(expiresInSchema),
     mutationId: Type.Optional(mutationIdSchema),
     name: Type.Optional(clusterSecretNameSchema),
     roles: Type.Optional(clusterSecretRolesInputSchema),
@@ -375,7 +440,7 @@ const updateOptionalFields = {
 };
 
 /**
- * `PATCH /v0/cluster/secrets/:secretId`; at least one field changes. `public` replaces the whole
+ * `PATCH /v0/cluster/secrets/:secretId`; at least one field changes, never the scope. `public` replaces the whole
  * metadata and is accepted only with `material`, so a value is entered again wherever it goes.
  */
 export const updateClusterSecretRequestSchema = Type.Union([
@@ -393,6 +458,14 @@ export const updateClusterSecretRequestSchema = Type.Union([
     ),
     Type.Object(
         { ...updateOptionalFields, roles: clusterSecretRolesInputSchema },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        { ...updateOptionalFields, expiresAt: Nullable(timestampSchema) },
+        { additionalProperties: false },
+    ),
+    Type.Object(
+        { ...updateOptionalFields, expiresIn: expiresInSchema },
         { additionalProperties: false },
     ),
     Type.Object(
@@ -424,15 +497,22 @@ export const clusterSecretListQuerySchema = Type.Object(
 );
 export type ClusterSecretListQuery = Static<typeof clusterSecretListQuerySchema>;
 
+/** The cluster's clock beside a list or read, for countdowns to `expiresAt`. */
+const serverTimeSchema = Type.Optional(timestampSchema);
+
 /** `GET /v0/cluster/secrets` */
 export const clusterSecretListResponseSchema = Type.Object({
     nextCursor: Nullable(Type.String()),
     secrets: Type.Array(clusterSecretSchema, { maxItems: 100 }),
+    serverTime: serverTimeSchema,
 });
 export type ClusterSecretListResponse = Static<typeof clusterSecretListResponseSchema>;
 
-/** `GET`, `POST`, and `PATCH` of one cluster secret. */
-export const clusterSecretResponseSchema = Type.Object({ secret: clusterSecretSchema });
+/** `GET`, `POST`, and `PATCH` of one cluster secret; only `GET` carries `serverTime`. */
+export const clusterSecretResponseSchema = Type.Object({
+    secret: clusterSecretSchema,
+    serverTime: serverTimeSchema,
+});
 export type ClusterSecretResponse = Static<typeof clusterSecretResponseSchema>;
 
 /** `DELETE /v0/cluster/secrets/:secretId` */

@@ -243,11 +243,13 @@ export type ClusterSecretDetachedPayload = Static<typeof clusterSecretDetachedPa
 export const clusterSecretRemovedPayloadSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
     previousVersion: resourceVersionSchema,
+    /** `expired` when the cluster removed an expired secret; clusters from before expiry omit it. */
+    reason: Type.Optional(Type.Literal("expired")),
     secretId: cuid2Schema,
 });
 export type ClusterSecretRemovedPayload = Static<typeof clusterSecretRemovedPayloadSchema>;
 
-/** Some team secret changed. It names no secret, so a hidden one never leaks; read the list again. */
+/** A team or agent secret changed. It names no secret, so a hidden one never leaks; read again. */
 export const clusterSecretsChangedPayloadSchema = Type.Object({
     mutationId: Type.Optional(mutationIdSchema),
 });

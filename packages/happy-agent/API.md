@@ -5522,7 +5522,17 @@ cannot open the secret may still see.
     },
     "uses": ["egress"],
     "owner": "team",
-    "access": { "use": true, "manage": true, "attach": true },
+    "scope": "global",
+    "ownerAgentId": null,
+    "sharedWithAgentIds": [],
+    "expiresAt": null,
+    "maxExpiresAt": null,
+    "access": { "use": true, "manage": true, "attach": true, "delete": true },
+    "reach": {
+        "agents": [{ "id": "a1g2e3n4t5", "name": "Billing bot", "via": "grant" }],
+        "workspaces": [],
+        "hidden": 0
+    },
     "roles": { "member": { "level": "use", "hidden": false } },
     "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
     "createdAt": 1755400000000,
@@ -5540,9 +5550,30 @@ cannot open the secret may still see.
   `egress` and `mcp`, an `ssh_key` allows `ssh`, a `git_credential` allows `git`, and an
   `environment` allows `environment` and `mcp`.
 - `owner` — `"me"` for the caller's own secret, which no one else sees or uses; `"team"` for the
-  organization's.
+  organization's; `"agent"` for an agent secret.
+- `scope` — `"global"` for a team secret or a member's own, seen as its role rules or its owner
+  allow and delivered only to the agents it is granted to. `"agent"` for a secret that belongs to
+  one agent: it reaches that agent and the subagents it shared it with, and `owner` is `"agent"`.
+  Only agents create agent secrets, and the scope never changes.
+- `ownerAgentId` — an agent secret's agent; otherwise `null`.
+- `sharedWithAgentIds` — the subagents an agent secret is shared with; otherwise `[]`.
+- `expiresAt` — when the secret ends, or `null` when it never does. An expired secret leaves every
+  read at that moment, before any event announces its removal, so a client counts down to it and
+  drops the secret itself.
+- `maxExpiresAt` — the latest an expiring agent secret may be extended to, 30 days after it was
+  made; otherwise `null`.
 - `access` — what the caller may do. `use`: runs acting for the caller may receive it. `manage`:
-  the caller may change, delete, and grant it. `attach`: the caller may grant it.
+  the caller may change, delete, and grant it. `attach`: the caller may grant it. `delete`: the
+  caller may delete it. On an agent secret, only `delete` can be true: the person who made it and
+  holders of `secrets.manage` may delete it, and no one uses, changes, or grants it through these
+  routes.
+- `reach` — who has the secret, as the caller may see it:
+  `{ "agents": [{ "id", "name", "via" }], "workspaces": [{ "id", "name" }], "hidden" }`. `agents`
+  are a global secret's agent grants (`via: "grant"`), or an agent secret's agent
+  (`via: "owner"`) and the subagents it is shared with (`via: "share"`). `workspaces` are the
+  workspaces it is granted to, named after their chat. `name` is `null` for a subagent or an agent
+  without a title. A target in a Surface hidden from the caller is not listed and counts in
+  `hidden`. A `409` conflict's `secret` has no `reach`.
 - `roles` — present only on a team secret the caller manages. It maps a role ID to that role's
   rule, `{ "level": "none" | "use" | "manage", "hidden": boolean }`. Roles without a rule hold
   `level: "none"` and `hidden: false`.
@@ -5550,6 +5581,10 @@ cannot open the secret may still see.
   advances it.
 - `createdAt`, `updatedAt` — timestamps. Replacing `material` changes `updatedAt` even when no
   metadata changes.
+
+A cluster from before scopes omits `scope`, `ownerAgentId`, `sharedWithAgentIds`, `expiresAt`,
+`maxExpiresAt`, `access.delete`, and `reach`, and every secret it lists is `global` and never
+expires. Clients treat each of these fields as optional.
 
 #### Public metadata by type
 
@@ -5629,16 +5664,19 @@ Response — `200`:
     "secrets": [
         /* cluster secret objects; never values */
     ],
-    "nextCursor": null
+    "nextCursor": null,
+    "serverTime": 1755400000000
 }
 ```
 
 `nextCursor` is an opaque string when another page exists, otherwise `null`. A cursor stays valid
-when the secret it ended on is deleted.
+when the secret it ended on is deleted. `serverTime` is the cluster's clock, for countdowns to
+`expiresAt`; a cluster from before scopes omits it.
 
 ### `GET /v0/cluster/secrets/:secretId`
 
-Response — `200`: `{ "secret": { ... } }`.
+Response — `200`: `{ "secret": { ... }, "serverTime": 1755400000000 }`, with `serverTime` as in
+the list.
 
 ### `POST /v0/cluster/secrets`
 
@@ -5669,7 +5707,9 @@ Request:
 `type`, `name`, `uses`, and `material` are required; `public` is required for every type except
 `environment`. `description` defaults to `""`. `owner` is `"me"` or `"team"` and defaults to
 `"team"`. `roles` is optional and names at most 64 existing roles; in each rule, `level` defaults
-to `"none"` and `hidden` to `false`. The caller's own secret takes no `roles`. Unknown fields are
+to `"none"` and `hidden` to `false`. The caller's own secret takes no `roles`. `scope` is optional
+and only `"global"`, the default; `"agent"` is `400`. `expiresAt` (a timestamp) or `expiresIn`
+(seconds) ends the secret at least a minute ahead; sending both is `400`. Unknown fields are
 `400`.
 
 Response — `201`: `{ "secret": { ... } }`, with the new `id`.
@@ -5678,7 +5718,8 @@ Response — `201`: `{ "secret": { ... } }`, with the new `id`.
 
 Changes a secret the caller manages. Requires `If-Match` with the secret's version.
 
-Request — at least one of `name`, `description`, `public`, `uses`, `roles`, and `material`:
+Request — at least one of `name`, `description`, `public`, `uses`, `roles`, `material`,
+`expiresAt`, and `expiresIn`:
 
 ```json
 {
@@ -5698,7 +5739,10 @@ Request — at least one of `name`, `description`, `public`, `uses`, `roles`, an
 Omitted fields stay unchanged. `public` replaces the whole metadata and must come with `material`,
 so a value is entered again wherever it goes. `material` alone replaces the value and keeps
 `public`, deriving its derived fields again. `uses` must suit the resulting `public`. `roles`
-replaces every rule. Unknown fields, including `type`, are `400`.
+replaces every rule. `expiresAt` sets when the secret ends, or `null` to never end it; `expiresIn`
+ends it that many seconds from now. Either must be at least a minute ahead, and sending both is
+`400`. Agent secrets are never changed here. Unknown fields, including `type` and `scope`, are
+`400`.
 
 Response — `200`: `{ "secret": { ... } }`.
 
@@ -5708,7 +5752,9 @@ Deletes a secret with its rules and grants. The optional JSON body is `{ "mutati
 empty body is equivalent to `{}`.
 
 A manager of the secret sends `If-Match` with its version. A caller holding `secrets.manage` may
-also delete another member's own secret, which it cannot see, without `If-Match`.
+also delete another member's own secret, which it cannot see, without `If-Match`. An agent secret
+is deleted by the person who made it or a holder of `secrets.manage` (`access.delete`), without
+`If-Match`.
 
 Response — `200`:
 
@@ -5780,7 +5826,8 @@ carries the request's `mutationId` when one was sent. No event carries a name, `
 `material`, so clients read the secret or the list again for metadata. The daemon's `secret.*`
 events are unrelated and unchanged.
 
-A change to a team secret publishes only `cluster_secrets.changed`, with the payload
+A change to a team or agent secret, a grant or share included, publishes only
+`cluster_secrets.changed`, with the payload
 `{ "mutationId"?: "..." }`. It names no secret, so a secret hidden from a role, or the catalog
 hidden from a member without `secrets.view`, is never revealed by an event. Clients read
 `GET /v0/cluster/secrets` again.
@@ -5793,7 +5840,8 @@ when a manager deletes it:
 - `cluster_secret.attached`, `cluster_secret.detached` — `{ "secretId", "previousVersion",
 "version", "target": { "type", "id" } }`. A grant or revoke that changes nothing publishes
   nothing.
-- `cluster_secret.removed` — `{ "secretId", "previousVersion" }`.
+- `cluster_secret.removed` — `{ "secretId", "previousVersion", "reason"? }`. `reason` is
+  `"expired"` when the cluster removed an expired secret.
 
 ## Projects and workspaces
 
