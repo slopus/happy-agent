@@ -1,6 +1,7 @@
 import { execFileHidden } from "@/core/hiddenChildProcess.js";
 
 import type { SessionReasoningEffort } from "@/core/SessionRunRequest.js";
+import type { AcpConnect } from "@/protocol/acp/AcpConnection.js";
 import type { AcpAgentLaunch } from "@/protocol/acp/AcpProvider.js";
 import type { AcpSelectValue } from "@/protocol/acp/impl/acpConfigOptions.js";
 import { antigravityHappyOnly } from "@/vendors/foreignAgents/antigravityHappyOnly.js";
@@ -31,6 +32,7 @@ const models: readonly ForeignAgentModel[] = [
     model("gemini-4-carbon", "Gemini 4 Carbon", THREE, "medium"),
     model("gemini-4-argon", "Gemini 4 Argon", THREE, "medium"),
     model("gemini-3.8-flash", "Gemini 3.8 Flash", THREE, "high"),
+    model("gemini-4-hydrogen", "Gemini 4 Hydrogen", [...THREE, "xhigh"], "medium"),
     model("claude-opus-5-5", "Claude Opus 5.5 (Antigravity)", THREE, "medium"),
     model("claude-sonnet-5-5", "Claude Sonnet 5.5 (Antigravity)", THREE, "medium"),
     model("gpt-oss-120b", "GPT-OSS 120B (Antigravity)", ["medium"], "medium"),
@@ -54,27 +56,16 @@ export const antigravityAgent: ForeignAgent = {
         // A configured command may be any adapter, run as it is; only Happy's own launch is known
         // to take a custom agent, and only it is version-checked, until it passes once.
         if (start.command !== undefined) return acpSpawnConnect(launch);
-        const connect = antigravityHappyOnly(launch);
-        let checked: Promise<void> | undefined;
-        return async (cwd, client) => {
-            checked ??= requireAgyVersion(launch).catch((error: unknown) => {
-                checked = undefined;
-                throw error;
-            });
-            await checked;
-            const connection = await connect(cwd, client);
-            const capabilities = connection.init.agentCapabilities;
-            return {
-                ...connection,
-                init: {
-                    ...connection.init,
-                    agentCapabilities: {
-                        ...capabilities,
-                        mcpCapabilities: { ...capabilities?.mcpCapabilities, http: true },
-                    },
-                },
-            };
-        };
+        return happyAgyConnect(launch, false);
+    },
+    connectReadOnly: (start) => {
+        // A configured command runs as it is, with whatever tools it brings.
+        if (start.command !== undefined) {
+            throw new Error(
+                "A configured Antigravity command cannot be started without its own tools.",
+            );
+        }
+        return happyAgyConnect(foreignAgentLaunch(start, { command: "agy", args: ["acp"] }), true);
     },
     models,
     modelsFromSelector,
@@ -106,6 +97,31 @@ export const antigravityAgent: ForeignAgent = {
     credentialEnvironment: (credentials) =>
         credentials.apiKey === undefined ? {} : { GEMINI_API_KEY: credentials.apiKey },
 };
+
+/** Happy's own agy launch, version-checked until it passes once, as Happy's custom agent. */
+function happyAgyConnect(launch: AcpAgentLaunch, readOnly: boolean): AcpConnect {
+    const connect = antigravityHappyOnly(launch, { readOnly });
+    let checked: Promise<void> | undefined;
+    return async (cwd, client) => {
+        checked ??= requireAgyVersion(launch).catch((error: unknown) => {
+            checked = undefined;
+            throw error;
+        });
+        await checked;
+        const connection = await connect(cwd, client);
+        const capabilities = connection.init.agentCapabilities;
+        return {
+            ...connection,
+            init: {
+                ...connection.init,
+                agentCapabilities: {
+                    ...capabilities,
+                    mcpCapabilities: { ...capabilities?.mcpCapabilities, http: true },
+                },
+            },
+        };
+    };
+}
 
 /**
  * agy lists most models by name and takes their effort as a separate thinking level, and names a

@@ -763,6 +763,25 @@ describe("AcpSession", () => {
         ).toEqual(["default", "default", "default", "default"]);
     }, 30_000);
 
+    it("starts a read-only Antigravity with none of agy's tools, not even web search", async () => {
+        const h = harness({
+            profile: antigravityAgent.profile,
+            connect: (launch) => antigravityHappyOnly(launch, { readOnly: true }),
+        });
+        const session = await h.session();
+        h.user("hello");
+        expect(text(await h.run(session))).toContain("echo:");
+
+        const file = h.log().find((entry) => entry.method === "agentFile")?.text as string;
+        expect(file).toContain("tools: []\n");
+        expect(file).not.toContain("search_web");
+        expect(file).toContain("you must not change anything");
+        expect(file).toMatch(/serverUrl: "http:\/\/127\.0\.0\.1:\d+\/[^"]+\/mcp"/u);
+        expect(() => antigravityAgent.connectReadOnly!({ command: "agy", env: {} })).toThrow(
+            "cannot be started without its own tools",
+        );
+    }, 30_000);
+
     it("stops an Antigravity session whose agent file agy did not load", async () => {
         const h = harness({
             profile: antigravityAgent.profile,

@@ -10,6 +10,7 @@ import type {
     SessionDoneState,
     SessionEvent,
     SessionOutputBlock,
+    SessionProviderError,
     SessionUsage,
 } from "@slopus/happy-providers";
 import type { Context } from "@steve.kite/stdlib";
@@ -56,6 +57,8 @@ export interface AutoReviewCapture {
     readonly errorMessage?: string;
     /** Set before sending inference, after provider/session construction has succeeded. */
     readonly inferenceStarted?: boolean;
+    /** How the provider classified a failed run, such as a refused login. */
+    readonly providerError?: SessionProviderError["type"];
 }
 
 interface ReviewerState {
@@ -66,6 +69,7 @@ interface ReviewerState {
     doneState: SessionDoneState | undefined;
     errorMessage?: string;
     inferenceStarted?: boolean;
+    providerError?: SessionProviderError["type"];
 }
 
 const EMPTY_USAGE: SessionUsage = {
@@ -125,6 +129,7 @@ export class AutoReviewRuntimeModule implements AgentModule {
             ...(state.inferenceStarted === undefined
                 ? {}
                 : { inferenceStarted: state.inferenceStarted }),
+            ...(state.providerError === undefined ? {} : { providerError: state.providerError }),
         };
         // Fresh containers, so the capture just returned is never mutated behind its holder.
         state.entries = [];
@@ -132,6 +137,7 @@ export class AutoReviewRuntimeModule implements AgentModule {
         state.inferred = false;
         state.doneState = undefined;
         delete state.errorMessage;
+        delete state.providerError;
         delete state.inferenceStarted;
         return capture;
     }
@@ -163,6 +169,7 @@ export class AutoReviewRuntimeModule implements AgentModule {
             if (state === undefined) return;
             state.inferenceStarted = true;
             state.doneState = undefined;
+            delete state.providerError;
             delete state.errorMessage;
         },
 
@@ -215,8 +222,11 @@ export class AutoReviewRuntimeModule implements AgentModule {
                 state.inferred = true;
             } else if (event.type === "done") {
                 state.doneState = event.state;
-                if (event.state === "error") state.errorMessage = event.message;
-                else delete state.errorMessage;
+                if (event.state === "error") {
+                    state.errorMessage = event.message;
+                    if (event.providerError !== undefined)
+                        state.providerError = event.providerError.type;
+                } else delete state.errorMessage;
             }
         },
 

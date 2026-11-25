@@ -5,6 +5,7 @@ import { agentModuleConfig, agentPermissionMode } from "@slopus/happy-agent-base
 import {
     AcpProvider,
     foreignAgent,
+    type AcpProviderOptions,
     type AcpPermissionQuestion,
     type AcpTurnEnvironment,
     type ForeignAgent,
@@ -146,6 +147,35 @@ export function createForeignAgentProvider(
                   }),
         }),
         profile: route.agent.profile,
+    });
+}
+
+/**
+ * The foreign agent behind one route, started with none of its own tools, so it reads only
+ * through the Happy tools its session is given and changes nothing: Happy's permission reviewer
+ * on that route. Every turn runs read-only, whatever mode its caller is in, and nothing it asks
+ * about is put to anyone. Throws when the route's agent cannot be started this way.
+ */
+export function createReadOnlyForeignAgentProvider(
+    route: ForeignAgentRoute,
+    agentHome: string,
+): AcpProvider {
+    // happy-providers 0.0.67 and earlier have no read-only start for any agent.
+    const agent = route.agent as ForeignAgent & {
+        connectReadOnly?: (start: ForeignAgentStart) => NonNullable<AcpProviderOptions["connect"]>;
+    };
+    if (agent.connectReadOnly === undefined) {
+        throw new Error(`${agent.label} cannot be started without its own tools.`);
+    }
+    const directory = join(foreignAgentDirectory(agentHome, route), "read-only");
+    return new AcpProvider({
+        connect: agent.connectReadOnly(foreignAgentStart(route)),
+        stateDirectory: directory,
+        environment: (ctx) => ({
+            ...foreignAgentTurnEnvironment(ctx, directory),
+            permissionMode: "read_only",
+        }),
+        profile: agent.profile,
     });
 }
 

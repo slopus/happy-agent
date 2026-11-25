@@ -162,10 +162,13 @@ the reviewer decides nothing — every reviewer model unavailable, or no answer 
 does the ask go to the person, as it would in Workspace write; a sub-agent then waits for an
 answer. An ask too long for the reviewer to read in full also goes to the person.
 
-The reviewer never runs on the harness itself. It uses the account's own reviewer model when it
-has one (Sonnet on a Claude account, Codex Auto Review or GPT-5.4 on a Codex account), then the
-reviewer models of Happy's default model, trying each until one is available. An Antigravity
-agent is therefore reviewed on Happy's default model.
+The reviewer runs on a harness only as a last resort. It uses the account's own reviewer model
+when it has one (Sonnet on a Claude account, Codex Auto Review or GPT-5.4 on a Codex account),
+then the reviewer models of Happy's default model, then every other signed-in Claude, Codex or
+Grok account in turn, and last Gemini 4 Hydrogen on Antigravity. It moves on only when a model is
+unavailable (signed out, an expired or refused login, no quota, or a missing model), never after
+a verdict. An Antigravity agent is therefore reviewed on Happy's default model when that account
+works, and on Antigravity only when no other account does.
 
 Happy's own tools reach the agent as MCP tools. The agent's ask about one is always approved, and
 Happy decides the call when it runs, exactly as it decides its own loop's calls under the
@@ -252,12 +255,15 @@ to default` and continue with all of its own tools. Happy reads agy's log after 
 
 A `command` configured for Antigravity runs as it is, with agy's own tools and permissions.
 
-Antigravity alone does not give Auto a reviewer. Happy's reviewer never runs on a foreign harness,
-and Happy cannot call Gemini directly, so with only Antigravity signed in there is no model to
-review on. Work inside the sandbox still runs. A Happy tool call that needs review is refused, and
-the agent is told that no reviewer model is configured and to have the person sign in to a Claude,
-Codex, or Grok account; a harness's own ask goes to the person, and a sub-agent with nobody to
-answer cannot go further. This is intended.
+With only Antigravity signed in, Auto reviews on Antigravity. Happy cannot call Gemini directly, so
+the reviewer runs as its own agy session on `gemini-4-hydrogen` at low effort, started with
+`tools: []` (none of agy's tools, not even web search) and always in Read only, with the same
+reviewer prompt, transcript, `SECURITY.md` and verdict as on any other model. Over MCP it gets
+only the reviewer's read-only tools: Bash, Read, Glob, Grep and BashInput under Read only,
+`read_agent_history`, and `ask_parent` for a sub-agent. Live, it allowed a user-authorized write
+outside the project in about 4 seconds and refused a force push in 11–15. If even it cannot run,
+the action is refused and the agent is told that no reviewer could run, or, with no Antigravity
+account either, that no reviewer model is configured.
 
 Live in Happy Auto, `agy` 1.5.15: a Happy bot on Sonnet 5.5 started an Antigravity sub-agent on
 Gemini 4 Carbon (medium) with each request; nobody answered questions, and Happy's reviewer ran on

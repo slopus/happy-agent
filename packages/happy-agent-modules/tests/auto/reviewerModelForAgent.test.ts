@@ -209,14 +209,71 @@ describe("reviewerModelForAgent", () => {
             ).toEqual(["openai/codex-auto-review", "openai/gpt-5.6-sol"]);
         });
 
-        it("fails when nothing Happy runs can review it", () => {
+        it("fails when nothing can review it", () => {
             expect(() =>
                 reviewerModelsForAgent({
                     models,
                     active: active("antigravity", "antigravity/gemini-4-carbon", "high"),
                     fallbacks: [fallbacks[0]!],
                 }),
-            ).toThrow("runs on a foreign harness");
+            ).toThrow("No reviewer model route");
+        });
+    });
+
+    describe("when the agent's own account cannot review", () => {
+        const flash = model(
+            "antigravity",
+            "antigravity/gemini-4-hydrogen",
+            ["low", "high"],
+            "high",
+        );
+        const models = [
+            model("claude", "anthropic/opus-5", ["low", "medium"], "medium"),
+            model("claude", "anthropic/sonnet-5", ["low", "medium"], "medium"),
+            model("codex", "openai/gpt-5.6-sol", ["low", "medium"], "medium"),
+            model("codex", "openai/codex-auto-review", ["low", "medium"], "low"),
+            model("grok", "xai/grok-4.5", ["low", "medium"], "medium"),
+            model("grok_work", "xai/grok-4.5", ["low", "medium"], "medium"),
+            model("antigravity", "antigravity/gemini-4-carbon", ["low", "high"], "high"),
+            flash,
+        ];
+
+        it("tries the default model's account, then every other account, then Antigravity", () => {
+            expect(
+                reviewerModelsForAgent({
+                    models,
+                    active: active("grok", "xai/grok-4.5", "low"),
+                    // Enabled models, default first; grok_work's account is off.
+                    fallbacks: [models[0]!, models[6]!, models[4]!, models[2]!, models[1]!, flash],
+                }),
+            ).toEqual([
+                { providerId: "grok", modelId: "xai/grok-4.5", effort: "low" },
+                { providerId: "claude", modelId: "anthropic/sonnet-5", effort: "medium" },
+                { providerId: "claude", modelId: "anthropic/opus-5", effort: "medium" },
+                { providerId: "codex", modelId: "openai/codex-auto-review", effort: "low" },
+                { providerId: "codex", modelId: "openai/gpt-5.6-sol", effort: "medium" },
+                {
+                    providerId: "antigravity",
+                    modelId: "antigravity/gemini-4-hydrogen",
+                    effort: "low",
+                },
+            ]);
+        });
+
+        it("reviews a Gemini-only installation on Antigravity alone", () => {
+            expect(
+                reviewerModelsForAgent({
+                    models: [models[6]!, flash],
+                    active: active("antigravity", "antigravity/gemini-4-carbon", "high"),
+                    fallbacks: [models[6]!, flash],
+                }),
+            ).toEqual([
+                {
+                    providerId: "antigravity",
+                    modelId: "antigravity/gemini-4-hydrogen",
+                    effort: "low",
+                },
+            ]);
         });
     });
 });

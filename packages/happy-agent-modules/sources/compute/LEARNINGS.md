@@ -23,8 +23,10 @@ now runs Antigravity with none of its own file, terminal or sub-agent tools, so 
 model gets its own vendor surface instead: Bash with BashOutput, BashInput and BashStop, Read,
 Write, Edit, Glob and Grep, built from the Claude definitions as GLM's is, plus Claude's compute
 instructions. Gemini has no harness surface of its own to match, and Claude's names are the most
-widely known. Claude Code, Codex CLI, OpenCode and generic ACP agents keep `[]`. The reviewer
-never runs on a harness, so neither foreign vendor has a reviewer array.
+widely known. Claude Code, Codex CLI, OpenCode and generic ACP agents keep `[]`. When no account
+Happy runs itself can review, the Auto reviewer runs on Antigravity as a last resort, so an
+`antigravity/` reviewer gets Claude's read-only reviewer array (Bash, Read, Glob, Grep, BashInput),
+the names its agents already use; other foreign harnesses never review and have none.
 
 ## Bounded mutation reads stay bounded through the write
 

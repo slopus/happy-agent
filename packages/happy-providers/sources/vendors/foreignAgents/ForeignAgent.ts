@@ -62,6 +62,13 @@ export interface ForeignAgent {
      * steering mid-turn, or an ACP adapter process. `start` carries the configured overrides.
      */
     connect(start: ForeignAgentStart): AcpConnect;
+    /**
+     * How to reach the agent with none of its own tools, so it can only read through the Happy
+     * tools its session is given, for work that must change nothing, such as reviewing another
+     * agent's action. Only an agent that can be started this way has it; it throws when `start`
+     * names a command Happy cannot hold to that.
+     */
+    connectReadOnly?(start: ForeignAgentStart): AcpConnect;
     /** The models assumed until the agent has been asked which it serves. */
     readonly models: readonly ForeignAgentModel[];
     /** Turn the values of the agent's own model selector into Happy models. */

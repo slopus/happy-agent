@@ -103,6 +103,14 @@ The agent loop prepares a tool's permission before executing it:
    `SECURITY.md` and the project's `AGENTS_SECURITY.md` if present — reviews
    the action against the durable conversation transcript. It may make read-only tool calls while deciding.
    Its own permission mode is never Auto, so a review cannot recurse.
+   It runs on the agent's own account's reviewer model, then Happy's default
+   model's, then each other signed-in Claude, Codex, or Grok account's, and
+   last on Gemini 4 Hydrogen through Antigravity, started with none of agy's
+   own tools so it reaches only the reviewer's read-only tools over MCP. It
+   moves to the next model only when one is unavailable (signed out, a refused
+   or expired login, no quota, or a missing model), never after a verdict.
+   When none can run, the action is refused as unproven, saying no reviewer
+   could run.
 5. The verdict is `allow` or `deny`. There is no third outcome and no prompt to
    the user.
 

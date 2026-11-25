@@ -124,10 +124,10 @@ export function unprovenRefusal(
         return boundRefusal(
             [
                 `The automatic permission review could not run because no reviewer model is configured, so ${action} was not performed.`,
-                "Happy reviews actions only on a Claude, Codex, or Grok account, and none is signed in.",
+                "Happy reviews actions on a Claude, Codex, Grok, or Antigravity account, and none is signed in.",
                 "No judgement was made about the action itself. Tell the user to sign in to a Claude, Codex,",
-                "or Grok account so Auto can review actions like this, and continue with work that does not",
-                "need this permission.",
+                "Grok, or Antigravity account so Auto can review actions like this, and continue with work",
+                "that does not need this permission.",
             ].join(" "),
         );
     }

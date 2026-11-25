@@ -62,18 +62,32 @@
   answer remains a rejected denial, as explicitly requested. Full reviewer transcripts cannot be
   exposed in the recorded review without a human-approved API specification addition.
 - A preferred reviewer route is not guaranteed to instantiate just because it appears in a
-  curated catalog. Construction failures and explicit missing-model errors now advance once
-  through the same provider's reviewer precedence, ending with the active model. Each failed
-  route is discarded and the next gets complete evidence, within the original review deadline
-  and cancellation signal. Denials, malformed normal answers, and ordinary inference failures
-  never trigger fallback. No failed-route blacklist survives the review; a route change rebuilds
-  the private conversation rather than continuing another model's review history.
-- An agent on a foreign harness (Antigravity, Claude Code, Codex CLI) now has its asks reviewed
-  too, and its own model is a harness model: reviewing on it would start another foreign agent,
-  and Antigravity's account serves nothing else. Its routes are the account's hidden reviewer
-  routes (Sonnet on a Claude account, Codex Auto Review or GPT-5.4 on a Codex account), then the
-  routes of Happy's default model (`config.models`, default first), with the same fall-through on
-  an unavailable route; a harness model is never a reviewer route.
+  curated catalog, and an account may be signed out, expired or out of quota. Such a route is
+  unavailable, never a verdict: a provider that cannot be built (checked before the reviewer is
+  rebuilt for a new route), an inference that never started, an explicit missing-model error, or
+  a provider error classified `authentication` or `out_of_tokens`. The last two mean the account
+  itself refused, so its other models are skipped for the rest of that review. Each failed route
+  is discarded and the next gets complete evidence, within the original review deadline and
+  cancellation signal. Denials, malformed normal answers, and ordinary inference failures never
+  trigger fallback. No failed-route blacklist survives the review; a route change rebuilds the
+  private conversation rather than continuing another model's review history.
+- Routes used to stop at the agent's own account and then Happy's default model, so a signed-out
+  default account left no reviewer while other accounts were logged in, and with only Antigravity
+  signed in Auto had none at all: Happy cannot call Gemini directly and the reviewer never ran on
+  a harness. By the user's decision the order is now: the agent's own account (its v1 precedence,
+  or for a harness model the account's hidden Sonnet, Codex Auto Review or GPT-5.4 routes), then
+  Happy's default model's routes, then every other enabled account in `config.models` order on its
+  first model, and last `antigravity/gemini-4-hydrogen` at `low` on an enabled Antigravity
+  account. Only that last route runs on a harness, and only Antigravity can: Happy starts agy with
+  `tools: []` (none of its own tools, not even web search, through
+  `ConfigModule.readOnlyHarnessProvider`) and its turns always `read_only`, so it reaches only
+  Claude's reviewer array plus the reviewer's History and `ask_parent` tools over MCP, with the same
+  Guardian prompt, transcript, `SECURITY.md` and verdict tags. Live, Hydrogen low allowed a
+  user-authorized outside write in about 4 s every time and decided a force push in 11–15 s: denied
+  3 times, and allowed once when the person's own message spelled out that exact push for the
+  sub-agent. Gemini 3.8 Flash denied all four but took 6–56 s, so Hydrogen is the reviewer. With
+  no route at all the review fails with `NoReviewerModelError`, and with every route unavailable
+  it fails saying no reviewer could run.
 - The `messageOrigin` stamp must be the metadata's own property. Reading it through the prototype
   chain lets a shared or polluted prototype authorize every message that omits the marker, which is
   the forgery the positive-marker rule exists to prevent.

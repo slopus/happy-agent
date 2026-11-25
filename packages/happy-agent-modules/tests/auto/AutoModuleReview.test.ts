@@ -349,6 +349,28 @@ describe("AutoModule reviewer", () => {
         },
     );
 
+    it.each(["authentication", "out_of_tokens"] as const)(
+        "moves past the whole account when it refuses the request (%s)",
+        async (type) => {
+            const refused: SessionEvent[] = [
+                {
+                    type: "done",
+                    state: "error",
+                    kind: "unknown",
+                    message: "The account cannot serve this request.",
+                    providerError: { type },
+                },
+            ];
+            const { world, review } = await reviewWorld([refused, allow], {
+                models: fallbackModels,
+            });
+            worlds.push(world);
+            // Every route here is on that one account, so none is left and no verdict is made.
+            await expect(review()).rejects.toThrow("No reviewer could run");
+            expect(world.provider.sessions.flatMap((session) => session.requests)).toHaveLength(1);
+        },
+    );
+
     it("ends at the active model and fails closed once every route is unavailable", async () => {
         const { world, review } = await reviewWorld([missingTurn, missingTurn, missingTurn], {
             models: fallbackModels,

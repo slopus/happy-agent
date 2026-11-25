@@ -37,8 +37,10 @@ export function assembleReviewerTools(
             return assembleKimiReviewerTools(compute, reads);
         case "glm":
             return assembleGlmReviewerTools(compute, reads);
-        // A reviewer never runs on a harness; neither array is ever chosen.
+        // The last-resort reviewer on Antigravity reads with the same Claude-shaped names its
+        // agents work with, reached over MCP. Other harnesses never review.
         case "antigravity":
+            return assembleClaudeReviewerTools(compute, reads);
         case "foreign":
             return [];
     }

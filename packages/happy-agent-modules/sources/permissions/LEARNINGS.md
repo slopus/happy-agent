@@ -63,15 +63,17 @@ the call when it runs, and anything else it asks about is refused unasked. Descr
 own checks only from evidence: its model decisions vary on the same action, and an ask carries
 the command without its reason.
 
-## With only Antigravity signed in, Auto has no reviewer, and that is accepted
+## With only Antigravity signed in, Auto reviews on Antigravity
 
-Kirill noted that Gemini alone will not work. Happy's reviewer never runs on a foreign harness and
-Happy cannot call Gemini directly, so an installation signed in to nothing but Antigravity has no
-model to review on. Work inside the sandbox still runs. A Happy tool call that needs review is
-refused as unavailable, and that refusal says plainly that no reviewer model is configured so the
-agent tells the user to sign in to a Claude, Codex, or Grok account; a harness's own ask goes to the
-person, and a sub-agent with nobody to answer cannot escalate. This is the intended limit, not a
-bug: do not add a Gemini reviewer path or let unreviewed actions through to work around it.
+Kirill first noted that Gemini alone would not work: Happy cannot call Gemini directly and the
+reviewer never ran on a harness, so an installation signed in to nothing but Antigravity refused
+every reviewed action as unavailable, sent harness asks to the person, and left sub-agents unable
+to escalate. He then asked for the reviewer to run on Antigravity itself. It is now the last
+reviewer route, after every Claude, Codex and Grok account Happy runs: agy started with none of
+its own tools, its turns read-only, and the same reviewer prompt and read-only tools over MCP. When no route exists at all the refusal still says plainly that no
+reviewer model is configured and asks for a Claude, Codex, Grok or Antigravity sign-in; when every
+route is unavailable it says no reviewer could run. Never let an action through unreviewed because
+no reviewer answered.
 
 ## A foreign harness's Happy tool calls are reviewed like Happy's own
 

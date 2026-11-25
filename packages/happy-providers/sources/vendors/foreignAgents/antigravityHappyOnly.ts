@@ -31,6 +31,19 @@ Search the web with search_web.
 Text wrapped in <system-reminder> comes from Happy, not from the person. <agent-message> is a message from another agent, and <happy-tool-result> is the late result of a Happy tool call.
 `;
 
+/**
+ * The read-only agent's system prompt: no tool of agy's own, not even web search, and only the
+ * Happy tools the session was given, which read and never change anything.
+ */
+const READ_ONLY_PROMPT = `# Happy
+
+You are working inside Happy, which owns this conversation and its tools.
+
+You have no tools of your own, and you must not change anything. The only tools you have are those of the MCP server named "${ACP_BRIDGE_NAME}", and they only read. Call one with call_mcp_tool, ServerName "${ACP_BRIDGE_NAME}", ToolName the tool's name and Arguments its arguments; one listed among your functions as mcp_${ACP_BRIDGE_NAME}_<name> may be called by that name instead. <happy-tools> at the end of these instructions describes them. Never read MCP tool schema files.
+
+Text wrapped in <system-reminder> comes from Happy, not from the person.
+`;
+
 /** What agy logs when the agent it was started with cannot be loaded, before using its own. */
 const fallbackLine = (name: string): string => `Agent "${name}" not found`;
 
@@ -45,8 +58,16 @@ const fallbackLine = (name: string): string => `Agent "${name}" not found`;
  * variables there. An agent file agy cannot load makes it log that and fall back to its default
  * agent, with every tool of its own, so the session fails instead. Anything agy still asks about
  * other than a Happy tool call is refused without asking anyone.
+ *
+ * `readOnly` keeps not even web search, and tells the model it only reads, for an agent that
+ * must change nothing, such as Happy's permission reviewer; what it can reach is then exactly the
+ * Happy tools its session was given.
  */
-export function antigravityHappyOnly(launch: AcpAgentLaunch): AcpConnect {
+export function antigravityHappyOnly(
+    launch: AcpAgentLaunch,
+    options: { readonly readOnly?: boolean } = {},
+): AcpConnect {
+    const readOnly = options.readOnly === true;
     return async (cwd, client) => {
         const directory = mkdtempSync(join(tmpdir(), "happy-agy-"));
         const name = `happy-${randomBytes(6).toString("hex")}`;
@@ -87,7 +108,9 @@ export function antigravityHappyOnly(launch: AcpAgentLaunch): AcpConnect {
             request: () => Promise<T>,
         ): Promise<T> => {
             mkdirSync(join(agentFile, ".."), { recursive: true, mode: 0o700 });
-            writeFileSync(agentFile, agentMarkdown(name, params.mcpServers), { mode: 0o600 });
+            writeFileSync(agentFile, agentMarkdown(name, params.mcpServers, readOnly), {
+                mode: 0o600,
+            });
             const response = await request();
             let log: string;
             try {
@@ -120,8 +143,15 @@ export function antigravityHappyOnly(launch: AcpAgentLaunch): AcpConnect {
     };
 }
 
-/** The custom agent file: agy's tools reduced to web search, and Happy's MCP server allowed. */
-export function agentMarkdown(name: string, servers: readonly acp.McpServer[]): string {
+/**
+ * The custom agent file: agy's tools reduced to web search, or to none for a read-only agent, and
+ * Happy's MCP server allowed.
+ */
+export function agentMarkdown(
+    name: string,
+    servers: readonly acp.McpServer[],
+    readOnly = false,
+): string {
     const happy = servers.find(
         (server): server is acp.McpServerHttp & { type: "http" } =>
             "type" in server && server.type === "http" && server.name === ACP_BRIDGE_NAME,
@@ -141,9 +171,9 @@ export function agentMarkdown(name: string, servers: readonly acp.McpServer[]): 
                   `    serverUrl: ${JSON.stringify(happy.url)}`,
                   `    headers: ${JSON.stringify(Object.fromEntries(happy.headers.map((header) => [header.name, header.value])))}`,
               ]),
-        `tools: [${AGY_TOOLS.join(", ")}]`,
+        `tools: [${readOnly ? "" : AGY_TOOLS.join(", ")}]`,
         "---",
-        AGENT_PROMPT,
+        readOnly ? READ_ONLY_PROMPT : AGENT_PROMPT,
     ];
     return lines.join("\n");
 }

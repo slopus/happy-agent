@@ -41,7 +41,9 @@ log `Agent "<name>" not found, falling back to default` and continue with all of
 so after every open the log is read and such a session is stopped. Anything agy asks about other
 than a Happy tool call is refused without asking anyone. The file, which holds the token, is
 deleted when the process exits; the log stays. A configured `command` runs as it is, with agy's
-own tools.
+own tools. `connectReadOnly` starts the same agent with `tools: []`, not even web search, and a
+prompt saying it only reads, for Happy's permission reviewer; it refuses a configured `command`,
+which Happy cannot hold to that.
 
 agy 1.5.15 loads MCP tools lazily: its model sees only their names under `<mcp_servers>` and is
 told to read schema files with tools it no longer has, and every call goes through agy's own

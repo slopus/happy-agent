@@ -25,6 +25,7 @@ import {
     GrokProvider,
     GrokSessionCredential,
     type AcpPermissionQuestion,
+    type AcpProvider,
     type AnthropicBedrockTransport,
     type BaseProvider,
     type SessionReasoningEffort,
@@ -74,6 +75,7 @@ import {
     validateHarnesses,
 } from "./impl/harnesses.js";
 import {
+    createReadOnlyForeignAgentProvider,
     foreignAgentRouteForModel,
     foreignAgentRoutes,
     foreignAgentStart,
@@ -3017,6 +3019,19 @@ export class ConfigModule implements AgentModule {
         return (
             foreignAgentRouteForModel(this.configuration, providerId, modelId)?.harnessId ?? "happy"
         );
+    }
+
+    /**
+     * The harness running `modelId` on `providerId`, started with none of its own tools so it only
+     * reads through the Happy tools its session is given: how a permission reviewer runs on a
+     * harness. Throws when no harness serves the model or it cannot be started that way.
+     */
+    readOnlyHarnessProvider(providerId: string, modelId: string): AcpProvider {
+        const route = foreignAgentRouteForModel(this.configuration, providerId, modelId);
+        if (route === undefined) {
+            throw new Error(`No harness serves "${modelId}" on "${providerId}".`);
+        }
+        return createReadOnlyForeignAgentProvider(route, this.configuration.paths.agentHome);
     }
 
     /** What a harness is called: its table's `name`, the built-in name, or its ID. */

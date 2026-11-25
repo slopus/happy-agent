@@ -161,6 +161,8 @@ export class AutoModule implements AgentModule {
     #system: AgentSystemLocal | undefined;
     /** The private catalog the reviewer resolves its model from. */
     #catalog: readonly AgentModel[] = [];
+    /** The private registry the review system resolves its providers from. */
+    #providers: AgentProviders | undefined;
     /** Live private reviewer agents this process has built, keyed by the main agent they review. */
     readonly #reviewers = new Map<string, Agent>();
     /** A route change must rebuild the private conversation and resend the complete evidence. */
@@ -230,10 +232,14 @@ export class AutoModule implements AgentModule {
             const type = main.typeOf(id);
             if (type === null) continue;
             // A private, read-only resolving copy. A resolution failure is an unavailable review,
-            // never silent permission to use another provider.
+            // never silent permission to use another provider. A harness model is reviewed on
+            // that harness started with none of its own tools, never the agents' own harness.
             privateProviders.add(
                 id,
                 async ({ model }) => {
+                    if (model !== undefined && this.#config.harnessOf(id, model) !== "happy") {
+                        return this.#config.readOnlyHarnessProvider(id, model);
+                    }
                     const resolved = await main.resolve(id, model);
                     if (resolved === null) {
                         throw new Error(`The reviewer provider "${id}" could not be resolved.`);
@@ -257,6 +263,7 @@ export class AutoModule implements AgentModule {
             models,
             typeOf: (id) => privateProviders.typeOf(id),
         });
+        this.#providers = privateProviders;
         this.#system = await AgentSystemLocal.create(lifetime, this.#storage, {
             models: this.#catalog,
             modules: [
@@ -459,8 +466,12 @@ export class AutoModule implements AgentModule {
             fallbacks: this.#config.models,
         });
         const failures: string[] = [];
+        // Accounts that refused a login or are out of quota; their other models would refuse too.
+        const refusedAccounts = new Set<string>();
         for (const route of routes) {
+            if (refusedAccounts.has(route.providerId)) continue;
             try {
+                await this.#requireRouteAvailable(request.agentId, route);
                 return await this.#runReviewOnRoute(ctx, request, route);
             } catch (error) {
                 // Only route unavailability permits another model. Never seek a second judgement,
@@ -468,11 +479,34 @@ export class AutoModule implements AgentModule {
                 if (!(error instanceof ReviewerRouteUnavailableError) || request.signal.aborted)
                     throw error;
                 failures.push(`${route.modelId}: ${error.message.slice(0, 240)}`);
+                if (error.accountRefused) refusedAccounts.add(route.providerId);
+                ctx.log.info("A reviewer model was unavailable; trying the next one.", {
+                    provider: route.providerId,
+                    model: route.modelId,
+                    reason: error.message.slice(0, 240),
+                });
             }
         }
         throw new Error(
-            `No automatic permission reviewer route was available. ${failures.join("; ")}`,
+            `No reviewer could run: every reviewer model was unavailable. ${failures.join("; ")}`,
         );
+    }
+
+    /**
+     * Before a review moves to a route other than the one its reviewer is on, make sure the route's
+     * provider can be built at all. A signed-out account then fails here, without discarding a
+     * reviewer still warm on a later route, such as an Antigravity session kept between reviews.
+     */
+    async #requireRouteAvailable(mainAgentId: string, route: AutoReviewerRoute): Promise<void> {
+        const current = this.#reviewerRoutes.get(mainAgentId);
+        if (current?.providerId === route.providerId && current.modelId === route.modelId) return;
+        try {
+            const provider = await this.#providers?.resolve(route.providerId, route.modelId);
+            if (provider === null) throw new Error(`"${route.providerId}" is not registered.`);
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : String(error);
+            throw new ReviewerRouteUnavailableError(`The reviewer could not start: ${message}`);
+        }
     }
 
     async #runReviewOnRoute(
@@ -639,6 +673,13 @@ export class AutoModule implements AgentModule {
             // and retains the error in the public reason, without inventing a risk judgement.
             await this.#discardReviewer(system, mainAgentId, reviewerId, generation);
             const reason = `Automatic permission review did not complete: ${capture.errorMessage ?? unfinishedReviewReason(capture.doneState)}.`;
+            if (
+                capture.doneState === "error" &&
+                (capture.providerError === "authentication" ||
+                    capture.providerError === "out_of_tokens")
+            ) {
+                throw new ReviewerRouteUnavailableError(reason, true);
+            }
             if (
                 capture.doneState === "error" &&
                 (capture.inferenceStarted !== true || reviewerModelNotFound(capture.errorMessage))
@@ -1153,8 +1194,19 @@ interface AskParentLink {
     readonly asked: { count: number };
 }
 
-/** A construction failure or model-not-found is route unavailability, never a verdict. */
-class ReviewerRouteUnavailableError extends Error {}
+/**
+ * A construction failure, a missing model, a refused login, or an exhausted quota is route
+ * unavailability, never a verdict: the reviewer's model never judged anything.
+ */
+class ReviewerRouteUnavailableError extends Error {
+    constructor(
+        message: string,
+        /** The account itself refused, so none of its other models is tried in this review. */
+        readonly accountRefused = false,
+    ) {
+        super(message);
+    }
+}
 
 function reviewerModelNotFound(message: string | undefined): boolean {
     // Require a missing-model diagnostic, not just an HTTP 404 (which may name another resource).
