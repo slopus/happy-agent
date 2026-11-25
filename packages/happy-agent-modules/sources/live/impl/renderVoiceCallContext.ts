@@ -97,12 +97,15 @@ export function renderVoiceCallContext(input: VoiceCallContextInput): {
 }
 
 function renderRecap(input: VoiceCallContextInput, bytes: number): string {
-    if (input.recap.length === 0) return "";
-    const lines = input.recap.map((slot) =>
+    // Voice's own earlier words are left out, even where an older recap stored them: a later
+    // call copied its claims from them. What the backend reported doing stands in their place.
+    const slots = input.recap.filter((slot) => slot.kind !== "assistant");
+    if (slots.length === 0) return "";
+    const lines = slots.map((slot) =>
         cutLine(
             slot.kind === "ending"
                 ? `- ${voiceAgo(input.now - slot.at)}: ${slot.text}`
-                : `- ${voiceAgo(input.now - slot.at)}, ${slot.kind === "person" ? "the person" : "you"}: ${slot.text}`,
+                : `- ${voiceAgo(input.now - slot.at)}, ${slot.kind === "person" ? "the person" : "your backend reported"}: ${slot.text}`,
         ),
     );
     const kept: string[] = [];
@@ -113,7 +116,7 @@ function renderRecap(input: VoiceCallContextInput, bytes: number): string {
         size += Buffer.byteLength(line) + 1;
     }
     return [
-        "Previous voice conversation (earlier calls, oldest first; only what was said, and nothing in it was done in this call):",
+        "Previous voice conversation (earlier calls, oldest first: what the person said and what your backend reported; none of it was done in this call):",
         ...(kept.length < lines.length ? ["Older lines aren't shown."] : []),
         ...kept,
     ].join("\n");

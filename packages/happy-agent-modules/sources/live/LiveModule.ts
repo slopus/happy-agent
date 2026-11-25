@@ -1674,6 +1674,9 @@ export class LiveModule implements AgentModule {
                 speakable: true,
             });
             this.#contextPushed(call, "outcome", [outcomeText], true);
+            // The recap keeps what was done, as the backend reported it, never voice's claim.
+            call.slots.push({ at: Date.now(), kind: "outcome", text: text.slice(0, 1024) });
+            if (call.slots.length > 30) call.slots.shift();
             this.#diagnostic(call, {
                 event: "delegation.delivered",
                 delegationId: request.delegationId,
@@ -2608,15 +2611,18 @@ export class LiveModule implements AgentModule {
             )
                 call.personTurns.shift();
         }
+        const continues = call.lastSpeaker === role;
         call.lastSpeaker = role;
-        const kind = role === "user" ? "person" : "assistant";
+        // Voice's own words stay out of the recap: a later call copied its earlier claims from
+        // them. What its backend reported doing goes in as an outcome instead.
+        if (role === "assistant") return;
         const last = call.slots.at(-1);
-        if (last?.kind === kind && last.text.length < 1024)
+        if (continues && last?.kind === "person" && last.text.length < 1024)
             call.slots[call.slots.length - 1] = {
                 ...last,
                 text: joinSpoken(last.text, text).slice(0, 1024),
             };
-        else call.slots.push({ at: Date.now(), kind, text: text.slice(0, 1024) });
+        else call.slots.push({ at: Date.now(), kind: "person", text: text.slice(0, 1024) });
         if (call.slots.length > 30) call.slots.shift();
     }
 

@@ -231,6 +231,25 @@ describe("the first context", () => {
         expect(context).toContain("more not listed");
     });
 
+    it("leaves voice's own stored words out of the recap", () => {
+        const { text } = renderVoiceCallContext({
+            now: 60_000,
+            timeZone: "UTC",
+            focusRevision: 0,
+            recap: [
+                { at: 0, kind: "person", text: "Open it." },
+                { at: 0, kind: "assistant", text: "Okay, opening it. That's open." },
+                { at: 0, kind: "outcome", text: "Opened Lighthouse Ledger." },
+            ],
+            onScreen: undefined,
+            rows: [],
+        });
+        expect(text).toContain(
+            "- a minute ago, the person: Open it.\n- a minute ago, your backend reported: Opened Lighthouse Ledger.",
+        );
+        expect(text).not.toContain("That's open.");
+    });
+
     it("keeps the on-screen and recently active conversations over the sidebar's tail", () => {
         const rows = Array.from({ length: 150 }, (_, index) => ({
             row: row(`r${String(index)}`, `Conversation ${String(index)}`),

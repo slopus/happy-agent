@@ -249,16 +249,16 @@ Asking to hang up got a goodbye and no end, because GPT-Live has no end-call too
 goodbye is heard, without a spoken outcome. The timer belongs to the call and is cleared when the
 call ends first.
 
-## The recap is what was said, never what was done
+## The recap holds what the person said and what was done, never voice's words
 
-On a remote where the same "open Lighthouse Ledger" call had run several times, a later call's
-voice answered "Open it." with "Okay, opening it. On it. That's open." and no delegation: nothing
-opened. The recap held earlier calls saying "That's open.", and the deduped prompt's only rule left
-was "say something happened only if your context or an outcome said so", which the recap, being
-context, satisfied. The prompt again says only the backend makes anything happen and nothing is
-done until this request's outcome says so, that the recap shows what was said and never what was
-done, and that a repeated request is delegated again; the recap's heading says nothing in it was
-done in this call.
+On a remote where the same "open Lighthouse Ledger" call had run several times, later calls'
+voice answered "Open it." with "Okay, opening it. On it. That's open." and, in 2 of 5 calls, no
+delegation: nothing opened. The recap held voice's own earlier "That's open." lines, and voice
+copied them. Restoring the prompt rule the dedupe had dropped (only the backend makes anything
+happen; nothing is done until this request's outcome says so) and saying the recap is never an
+outcome did not stop it. The recap now leaves voice's own words out, even where an older recap
+stored them, and records each delivered outcome as what the backend reported; its heading says
+none of it was done in this call. The person's words stay, so "remember pineapple" carries over.
 
 ## The recap survives a dropped call
 

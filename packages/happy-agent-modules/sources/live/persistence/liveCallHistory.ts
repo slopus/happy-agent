@@ -4,7 +4,11 @@ import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 import { sql } from "drizzle-orm";
 
-/** What was said aloud in a person's recent calls, as the phones keep it: the latest 30 slots. */
+/**
+ * A person's recent calls, the latest 30 slots: what they said, what voice's backend reported doing,
+ * and how each call ended. `assistant` slots, voice's own words, are no longer written: voice
+ * copied its own earlier claims from them.
+ */
 const VOICE_CALL_SLOTS = 30;
 const SLOT_TEXT = 1024;
 
@@ -14,6 +18,7 @@ const slotSchema = Type.Object(
         kind: Type.Union([
             Type.Literal("person"),
             Type.Literal("assistant"),
+            Type.Literal("outcome"),
             Type.Literal("ending"),
         ]),
         text: Type.String({ maxLength: SLOT_TEXT }),
