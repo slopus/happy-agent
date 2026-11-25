@@ -105,6 +105,34 @@ const deployEnvironment: ClusterSecret = {
     version,
 };
 
+/** An agent's generated secret, shaped like the `generate_secret` reads in happy-cluster `crates/hc-api/tests/secrets.rs`. */
+const generated: ClusterSecret = {
+    access: { attach: false, delete: true, manage: false, use: false },
+    createdAt,
+    description: "",
+    expiresAt: createdAt + 3_600_000,
+    id: "a5k6s7e8c9r0e1t2i3d4a5b6",
+    maxExpiresAt: createdAt + 30 * 86_400_000,
+    name: "Webhook signing key",
+    owner: "agent",
+    ownerAgentId: "agentone",
+    public: { variables: ["WEBHOOK_SECRET"] },
+    reach: {
+        agents: [
+            { id: "agentone", name: "Helper", via: "owner" },
+            { id: "agentkid", name: null, via: "share" },
+        ],
+        hidden: 0,
+        workspaces: [],
+    },
+    scope: "agent",
+    sharedWithAgentIds: ["agentkid"],
+    type: "environment",
+    updatedAt: createdAt,
+    uses: ["environment"],
+    version,
+};
+
 const grant: ClusterSecretGrant = {
     createdAt,
     grantedBy: "userone",
@@ -139,6 +167,67 @@ describe("cluster secrets protocol", () => {
             false,
         );
         expect(Value.Check(clusterSecretSchema, { ...gitlab, owner: "organization" })).toBe(false);
+    });
+
+    it("accepts scopes, expiry, and reach, which clusters from before scopes omit", () => {
+        const scopedStripe: ClusterSecret = {
+            ...stripe,
+            access: { ...stripe.access, delete: true },
+            expiresAt: null,
+            maxExpiresAt: null,
+            ownerAgentId: null,
+            reach: {
+                agents: [{ id: "agentone", name: "Deploy bot", via: "grant" }],
+                hidden: 2,
+                workspaces: [{ id: "workspaceone", name: null }],
+            },
+            scope: "global",
+            sharedWithAgentIds: [],
+        };
+        expect(Value.Check(clusterSecretSchema, generated)).toBe(true);
+        expect(Value.Check(clusterSecretSchema, scopedStripe)).toBe(true);
+        expect(
+            Value.Check(clusterSecretListResponseSchema, {
+                nextCursor: null,
+                secrets: [scopedStripe, generated, deployKey],
+                serverTime: createdAt + 5,
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(clusterSecretResponseSchema, {
+                secret: generated,
+                serverTime: createdAt + 5,
+            }),
+        ).toBe(true);
+        const { reach: _reach, ...conflictSecret } = generated;
+        expect(Value.Check(clusterSecretSchema, conflictSecret)).toBe(true);
+
+        expect(Value.Check(clusterSecretSchema, { ...generated, scope: "workspace" })).toBe(false);
+        expect(
+            Value.Check(clusterSecretSchema, {
+                ...generated,
+                reach: { ...generated.reach, agents: [{ id: "agentone", name: null, via: "x" }] },
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(clusterSecretSchema, {
+                ...generated,
+                reach: { ...generated.reach, hidden: -1 },
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(clusterSecretSchema, {
+                ...generated,
+                access: { ...generated.access, delete: "yes" },
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(clusterSecretListResponseSchema, {
+                nextCursor: null,
+                secrets: [],
+                serverTime: "now",
+            }),
+        ).toBe(false);
     });
 
     it("couples create material to the type and a git credential's method", () => {
@@ -189,6 +278,53 @@ describe("cluster secrets protocol", () => {
             }),
         ).toBe(true);
 
+        expect(
+            Value.Check(createClusterSecretRequestSchema, {
+                expiresIn: 3_600,
+                material: { DEPLOY_API_TOKEN: "raw-value" },
+                name: "Deploy environment",
+                scope: "global",
+                type: "environment",
+                uses: ["environment"],
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(createClusterSecretRequestSchema, {
+                expiresAt: createdAt + 3_600_000,
+                material: { DEPLOY_API_TOKEN: "raw-value" },
+                name: "Deploy environment",
+                type: "environment",
+                uses: ["environment"],
+            }),
+        ).toBe(true);
+
+        expect(
+            Value.Check(createClusterSecretRequestSchema, {
+                material: { DEPLOY_API_TOKEN: "raw-value" },
+                name: "Deploy environment",
+                scope: "agent",
+                type: "environment",
+                uses: ["environment"],
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(createClusterSecretRequestSchema, {
+                expiresIn: 10,
+                material: { DEPLOY_API_TOKEN: "raw-value" },
+                name: "Deploy environment",
+                type: "environment",
+                uses: ["environment"],
+            }),
+        ).toBe(false);
+        expect(
+            Value.Check(createClusterSecretRequestSchema, {
+                material: { DEPLOY_API_TOKEN: "raw-value" },
+                name: "Deploy environment",
+                owner: "agent",
+                type: "environment",
+                uses: ["environment"],
+            }),
+        ).toBe(false);
         expect(
             Value.Check(createClusterSecretRequestSchema, {
                 material: { privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----" },
@@ -251,6 +387,16 @@ describe("cluster secrets protocol", () => {
                 name: "Stripe live",
                 public: stripe.public,
             }),
+        ).toBe(false);
+        expect(Value.Check(updateClusterSecretRequestSchema, { expiresAt: null })).toBe(true);
+        expect(
+            Value.Check(updateClusterSecretRequestSchema, { expiresAt: createdAt + 120_000 }),
+        ).toBe(true);
+        expect(Value.Check(updateClusterSecretRequestSchema, { expiresIn: 120 })).toBe(true);
+        expect(Value.Check(updateClusterSecretRequestSchema, { expiresIn: 10 })).toBe(false);
+        expect(Value.Check(updateClusterSecretRequestSchema, { scope: "agent" })).toBe(false);
+        expect(
+            Value.Check(updateClusterSecretRequestSchema, { name: "Stripe", scope: "global" }),
         ).toBe(false);
         expect(Value.Check(updateClusterSecretRequestSchema, { mutationId: "update-1" })).toBe(
             false,
@@ -350,6 +496,20 @@ describe("cluster secrets protocol", () => {
         expect(Value.Check(clusterSecretRemovedPayloadSchema, events[4]!.payload)).toBe(true);
         expect(Value.Check(clusterSecretsChangedPayloadSchema, events[5]!.payload)).toBe(true);
         expect(Value.Check(clusterSecretsChangedPayloadSchema, {})).toBe(true);
+        expect(
+            Value.Check(clusterSecretRemovedPayloadSchema, {
+                previousVersion: version,
+                reason: "expired",
+                secretId: deployKey.id,
+            }),
+        ).toBe(true);
+        expect(
+            Value.Check(clusterSecretRemovedPayloadSchema, {
+                previousVersion: version,
+                reason: "archived",
+                secretId: deployKey.id,
+            }),
+        ).toBe(false);
         expect(
             Value.Check(clusterSecretAttachedPayloadSchema, {
                 ...(events[2]!.payload as object),
