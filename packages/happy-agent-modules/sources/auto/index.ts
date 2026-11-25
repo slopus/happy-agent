@@ -27,7 +27,11 @@ export type {
     AutoReviewerCursor,
 } from "./AutoReviewTranscript.js";
 
-export { autoReviewerRouteSchema, reviewerModelForAgent } from "./impl/reviewerModelForAgent.js";
+export {
+    autoReviewerRouteSchema,
+    NoReviewerModelError,
+    reviewerModelForAgent,
+} from "./impl/reviewerModelForAgent.js";
 export type { AutoReviewerRoute } from "./impl/reviewerModelForAgent.js";
 
 export { reviewerAgentId } from "./impl/reviewerAgentId.js";

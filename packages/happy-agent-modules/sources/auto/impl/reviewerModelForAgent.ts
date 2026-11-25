@@ -38,6 +38,12 @@ export const autoReviewerRouteSchema = Type.Object(
 
 export type AutoReviewerRoute = Static<typeof autoReviewerRouteSchema>;
 
+/**
+ * No configured model can review this agent. Happy reviews on Claude, Codex, and Grok accounts
+ * only, so an installation signed in to nothing but a foreign harness such as Antigravity has none.
+ */
+export class NoReviewerModelError extends Error {}
+
 export function reviewerModelForAgent(options: {
     /** The private review catalog: one entry per enabled provider/model route. */
     models: readonly AgentModel[];
@@ -82,7 +88,7 @@ export function reviewerModelsForAgent(options: {
 
     if (routes.length > 0) return routes;
 
-    throw new Error(
+    throw new NoReviewerModelError(
         `No reviewer model route could be resolved for ${active.modelId} on provider ` +
             `${active.providerId}.`,
     );
@@ -128,7 +134,7 @@ function foreignReviewerRoutes(options: {
         }
     }
     if (routes.length > 0) return routes;
-    throw new Error(
+    throw new NoReviewerModelError(
         `No reviewer model route could be resolved for ${active.modelId}: it runs on a foreign ` +
             "harness, and no Happy model is configured to review it.",
     );

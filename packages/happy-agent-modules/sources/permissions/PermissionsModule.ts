@@ -15,7 +15,7 @@ import type {
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
-import type { AutoModule } from "../auto/index.js";
+import { NoReviewerModelError, type AutoModule } from "../auto/index.js";
 import type { ComputeModule } from "../compute/index.js";
 import type {
     ConfigModule,
@@ -82,6 +82,8 @@ type ReviewOutcome =
           readonly outcome: "unproven";
           readonly kind: PermissionUnprovenKind;
           readonly reason: string;
+          /** No configured model can review at all, which the user has to fix by signing in. */
+          readonly noReviewerModel?: true;
       };
 /**
  * The wall-clock budget for one review: 120 seconds, up from Happy Agent v1's 90 because reading
@@ -578,7 +580,11 @@ export class PermissionsModule implements AgentModule {
                 kind: decision.kind,
                 reason: decision.reason,
             });
-            return await this.#refuseReview(ctx, agentId, unprovenRefusal(action, decision.kind));
+            return await this.#refuseReview(
+                ctx,
+                agentId,
+                unprovenRefusal(action, decision.kind, decision.noReviewerModel === true),
+            );
         }
         if (!shouldAllowAutoPermissionReview(decision)) {
             const reason = autoPermissionPolicyDenialReason(decision);
@@ -804,6 +810,9 @@ export class PermissionsModule implements AgentModule {
                 outcome: "unproven",
                 kind: "unavailable",
                 reason: `The reviewer failed: ${safeErrorMessage(error)}`,
+                ...(error instanceof NoReviewerModelError
+                    ? { noReviewerModel: true as const }
+                    : {}),
             };
         } finally {
             if (timer !== undefined) clearTimeout(timer);

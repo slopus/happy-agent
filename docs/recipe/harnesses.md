@@ -252,6 +252,13 @@ to default` and continue with all of its own tools. Happy reads agy's log after 
 
 A `command` configured for Antigravity runs as it is, with agy's own tools and permissions.
 
+Antigravity alone does not give Auto a reviewer. Happy's reviewer never runs on a foreign harness,
+and Happy cannot call Gemini directly, so with only Antigravity signed in there is no model to
+review on. Work inside the sandbox still runs. A Happy tool call that needs review is refused, and
+the agent is told that no reviewer model is configured and to have the person sign in to a Claude,
+Codex, or Grok account; a harness's own ask goes to the person, and a sub-agent with nobody to
+answer cannot go further. This is intended.
+
 Live in Happy Auto, `agy` 1.5.15: a Happy bot on Sonnet 5.5 started an Antigravity sub-agent on
 Gemini 4 Carbon (medium) with each request; nobody answered questions, and Happy's reviewer ran on
 Sonnet 5.5. Each row is the sub-agent's tool calls as Happy recorded them.

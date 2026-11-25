@@ -54,13 +54,6 @@ export const ACP_APPROVED_TOOLS_META = "happy/approvedTools";
 export const ACP_BRIDGED_CALL_META = "happy/bridgedCall";
 
 /**
- * `_meta` key on a permission request's `toolCall`, set `true` by a driver when the agent will
- * run the action inside its own sandbox. Happy allows those in Workspace write and Auto without
- * review, as it runs its own sandboxed commands.
- */
-export const ACP_SANDBOXED_META = "happy/sandboxed";
-
-/**
  * `_meta` key on a permission response that refuses: why, in words addressed to the agent, for a
  * driver that can pass a reason on to its model.
  */

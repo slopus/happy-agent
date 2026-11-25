@@ -43,9 +43,7 @@ Agent Base ── run(context) ──▶ AcpSession ── ACP over stdio ──
   `happy/refusalReason` metadata for a first-party driver to tell its model. Stopping the turn
   withdraws the question and answers the agent `cancelled`. New sessions carry the never-reviewed
   Happy tool names in `happy/approvedTools` metadata so a first-party driver can approve them in
-  advance. An ask whose tool call carries `happy/sandboxed: true`, set by a driver that knows the
-  agent will run the action inside its own sandbox, is allowed in Workspace write and Auto without
-  asking anyone, as Happy runs its own sandboxed commands.
+  advance.
 - **System prompt.** An agent that takes system-prompt text in a session's `_meta` sets
   `systemPromptMeta` in its profile. Happy's instructions and `acpToolGuide`'s guide to its tools
   (tools not marked `defer` in full with their parameters, deferred ones as one line each) are

@@ -20,7 +20,6 @@ import {
     ACP_APPROVED_TOOLS_META,
     ACP_BRIDGED_CALL_META,
     ACP_REFUSAL_REASON_META,
-    ACP_SANDBOXED_META,
     type AcpConnection,
 } from "@/protocol/acp/AcpConnection.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
@@ -806,10 +805,9 @@ export class AcpSession extends BaseSession {
      * The agent's own permission system asks before acting. A call of a bridged Happy tool goes
      * ahead in every mode: Happy runs it under the conversation's own permission mode, sandbox and
      * reviewer when it arrives, as it runs its own loop's calls, so asking first would only ask
-     * twice. Otherwise Read only refuses and Full access allows without asking anyone. In
-     * Workspace write and Auto, an action the driver says stays in the agent's own sandbox goes
-     * ahead, as Happy's own sandboxed commands do, and everything else goes to `askPermission`:
-     * in Auto, Happy's own reviewer first, and otherwise the person.
+     * twice. Otherwise Read only refuses and Full access allows without asking anyone, and in
+     * Workspace write and Auto the ask goes to `askPermission`: in Auto, Happy's own reviewer
+     * first, and otherwise the person.
      */
     async #answerPermission(
         params: acp.RequestPermissionRequest,
@@ -822,12 +820,6 @@ export class AcpSession extends BaseSession {
             // Once when it can, else for the session: Full access never refuses for want of it.
             const once = params.options.some((option) => option.kind === "allow_once");
             return pick(params, once ? "allow_once" : "allow_for_session");
-        }
-        if (
-            (mode === "workspace_write" || mode === "auto") &&
-            params.toolCall._meta?.[ACP_SANDBOXED_META] === true
-        ) {
-            return pick(params, "allow_once");
         }
         const ask = environment?.askPermission;
         if (ask === undefined) return pick(params, "deny");

@@ -63,15 +63,15 @@ the call when it runs, and anything else it asks about is refused unasked. Descr
 own checks only from evidence: its model decisions vary on the same action, and an ask carries
 the command without its reason.
 
-## Antigravity's own sub-agents fail closed, so `invoke_subagent` stays
+## With only Antigravity signed in, Auto has no reviewer, and that is accepted
 
-Kirill asked whether agy's `invoke_subagent` lets a sub-agent escape Happy's review, and to block
-it in Auto if it did. Live, its sub-agents run in the same agy process with the parent's tools,
-sandbox, and `accept-edits`, but agy never forwards their asks over ACP: each waits 60 seconds and
-fails as timed out, so an outside write, an `rm`, and even a sandboxed `ls` changed nothing. That
-is slow but not an escape, so Happy does not block the tool; `create_agent` is the sub-agent whose
-asks Happy reviews. Recheck this when agy is upgraded: a release that answers sub-agent asks
-itself would be an escape.
+Kirill noted that Gemini alone will not work. Happy's reviewer never runs on a foreign harness and
+Happy cannot call Gemini directly, so an installation signed in to nothing but Antigravity has no
+model to review on. Work inside the sandbox still runs. A Happy tool call that needs review is
+refused as unavailable, and that refusal says plainly that no reviewer model is configured so the
+agent tells the user to sign in to a Claude, Codex, or Grok account; a harness's own ask goes to the
+person, and a sub-agent with nobody to answer cannot escalate. This is the intended limit, not a
+bug: do not add a Gemini reviewer path or let unreviewed actions through to work around it.
 
 ## A foreign harness's Happy tool calls are reviewed like Happy's own
 

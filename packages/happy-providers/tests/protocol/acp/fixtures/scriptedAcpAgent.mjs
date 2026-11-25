@@ -10,8 +10,8 @@
 // "over quota" fails with a 429 that names a weekly limit; "stubborn" never ends its first prompt;
 // "needs permission" asks the client before a command, and "needs permission for happy" before a
 // bridged happy_secret call (with "only always", offering no one-time allow), then replies with
-// the option it got; "needs agy command" asks before a command as Antigravity does, leaving its
-// sandbox with "bypass"; "needs agy mcp permission" asks before calling happy_secret through
+// the option it got; "needs agy command" asks before one of Antigravity's own commands;
+// "needs agy mcp permission" asks before calling happy_secret through
 // call_mcp_tool, as Antigravity 1.5.15 does; anything else is echoed back.
 //
 // Started as Antigravity is, with --agent, --add-dir and --log-file, it logs the agent file it
@@ -90,22 +90,6 @@ class ScriptedAgent {
                         },
                     ],
                 },
-                // SCRIPTED_ACP_MODES offers a mode selector with those comma-separated values.
-                ...(process.env.SCRIPTED_ACP_MODES === undefined
-                    ? []
-                    : [
-                          {
-                              id: "mode",
-                              name: "Mode",
-                              category: "mode",
-                              type: "select",
-                              currentValue: "default",
-                              options: process.env.SCRIPTED_ACP_MODES.split(",").map((value) => ({
-                                  value,
-                                  name: value,
-                              })),
-                          },
-                      ]),
             ],
         };
     }
@@ -255,7 +239,7 @@ class ScriptedAgent {
             await this.#say(params.sessionId, `permission=${chosen}`);
             return { stopReason: "end_turn" };
         }
-        // Antigravity asks before each command in `accept-edits`, saying whether it leaves the sandbox.
+        // Antigravity asks before running one of its own commands.
         if (text.includes("needs agy command")) {
             const answer = await this.#conn.requestPermission({
                 sessionId: params.sessionId,
@@ -266,7 +250,6 @@ class ScriptedAgent {
                     title: "ls -la",
                     rawInput: {
                         CommandLine: "ls -la",
-                        ...(text.includes("bypass") ? { BypassSandbox: true } : {}),
                         WaitMsBeforeAsync: 5000,
                         toolSummary: "List files",
                     },

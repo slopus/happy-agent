@@ -12,7 +12,7 @@ import { Value } from "@sinclair/typebox/value";
 import { createRootContext, type Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AutoModule } from "../../sources/auto/index.js";
+import { NoReviewerModelError, type AutoModule } from "../../sources/auto/index.js";
 import type { ComputeModule } from "../../sources/compute/index.js";
 import {
     MAX_PERMISSION_ACTION,
@@ -655,6 +655,26 @@ describe("permissions boundary contracts", () => {
             expect(event.reason.length).toBeLessThanOrEqual("The reviewer failed: ".length + 1_024);
             expect(event.reason).toMatch(/x{1024}$/u);
         }
+    });
+
+    it("tells the agent to have the user sign in when no model can review", async () => {
+        const reviewer: PermissionReviewer = {
+            review: () => Promise.reject(new NoReviewerModelError("No reviewer model route.")),
+        };
+        const { hooks } = await resolvedHooks({ reviewer });
+        const tool = testTool("unreviewable", {
+            shouldReviewInAutoMode: () => true,
+            describeAutoPermissionAction: () => "Call with no reviewer model.",
+        });
+
+        const decision = await hooks.beforeToolCall?.(
+            ctx,
+            scope("lonely-agent", "auto"),
+            call(tool),
+        );
+        expect(decision?.type).toBe("answer");
+        expect(JSON.stringify(decision)).toContain("no reviewer model is configured");
+        expect(JSON.stringify(decision)).toContain("sign in to a Claude, Codex,");
     });
 
     it("accepts 32,768-character write content for review without truncating it", () => {

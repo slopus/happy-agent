@@ -109,6 +109,7 @@ function untrustedDestinationRemedy(globalSecurityPath?: string): string {
 export function unprovenRefusal(
     action: string,
     kind: PermissionUnprovenKind = "unavailable",
+    noReviewerModel = false,
 ): string {
     if (kind === "timed_out") {
         return boundRefusal(
@@ -116,6 +117,17 @@ export function unprovenRefusal(
                 `The automatic permission review did not finish in time, so ${action} was not performed.`,
                 "The action is unproven rather than unsafe, so do not treat the timeout by itself as a",
                 "verdict. You may try once more, or ask the user how to proceed.",
+            ].join(" "),
+        );
+    }
+    if (noReviewerModel) {
+        return boundRefusal(
+            [
+                `The automatic permission review could not run because no reviewer model is configured, so ${action} was not performed.`,
+                "Happy reviews actions only on a Claude, Codex, or Grok account, and none is signed in.",
+                "No judgement was made about the action itself. Tell the user to sign in to a Claude, Codex,",
+                "or Grok account so Auto can review actions like this, and continue with work that does not",
+                "need this permission.",
             ].join(" "),
         );
     }
