@@ -7,9 +7,17 @@ import type { TargetViewers, ViewerTarget, ViewersUpdatedFrame } from "@slopus/h
 import { afterCommit, asyncLock, detach, withLifetime, type Context } from "@steve.kite/stdlib";
 
 import {
+    latestViewerErasure,
+    pruneViewerErasures,
+    recordViewerErasure,
+    viewerErasedSince,
+} from "./persistence/viewerErasures.js";
+import {
     deleteViewerTarget,
+    hasViewerLastSeen,
     queryViewerLastSeen,
     saveViewerLastSeen,
+    touchViewerLastSeen,
 } from "./persistence/viewerLastSeen.js";
 import { viewersMigrations } from "./persistence/viewersMigrations.js";
 
@@ -18,11 +26,6 @@ const EXPIRY_MS = 30_000;
 /** While a person stays, their last-seen moment is stored at most this often. */
 const STORE_INTERVAL_MS = 60_000;
 const MAX_VIEWERS = 50;
-/**
- * How many erased agents are remembered, for requests that checked access before the erase and
- * reach the lock after it. Far more than can be in flight at once.
- */
-const MAX_ERASED = 1024;
 
 export type ViewersFrameListener = (streamId: string, frame: ViewersUpdatedFrame) => void;
 
@@ -46,6 +49,14 @@ interface Person {
     latest: number;
 }
 
+/**
+ * A request checking access to its targets: the latest erasure it read before checking, unknown
+ * until read. An agent erased after that may have been checked before its erase.
+ */
+interface Check {
+    seen: number | undefined;
+}
+
 /** A last-seen moment to store, and whether the person starts or stops being here with it. */
 interface Visit {
     readonly key: string;
@@ -61,7 +72,7 @@ function targetKey(target: ViewerTarget): string {
 
 /**
  * Who views which agent session or Surface. Who is here lives in memory for as long as their event
- * streams do; when each person was last here is stored. Callers check access before naming a target.
+ * streams do; when each person was last here is stored. Each request says how to check its access.
  */
 export class ViewersModule implements AgentModule {
     readonly name = "viewers";
@@ -74,7 +85,8 @@ export class ViewersModule implements AgentModule {
     readonly #watchers = new Map<string, Set<string>>();
     /** Everyone here, by target and person. */
     readonly #people = new Map<string, Person>();
-    readonly #erased = new Set<string>();
+    /** Requests between reading the erasures and installing their views. */
+    readonly #checking = new Set<Check>();
     readonly #listeners = new Set<ViewersFrameListener>();
     readonly #lock = asyncLock();
     #ctx: Context | undefined;
@@ -88,14 +100,12 @@ export class ViewersModule implements AgentModule {
             agentErasedTransact: async (txCtx, _scope, agent) => {
                 const target: ViewerTarget = { type: "agent", id: agent.id };
                 await deleteViewerTarget(txCtx, target);
-                // Post-commit work runs before the database admits the next write, so a request
-                // that checked access before the erase sees this before it stores anything.
+                // Requests that checked access before this commits refuse the agent when they write.
+                const prunable = this.#prunableErasures(undefined);
+                if (prunable !== undefined) await pruneViewerErasures(txCtx, prunable);
+                await recordViewerErasure(txCtx, target);
                 afterCommit(txCtx, () => {
-                    const key = targetKey(target);
-                    this.#erased.add(key);
-                    if (this.#erased.size > MAX_ERASED)
-                        this.#erased.delete(this.#erased.values().next().value!);
-                    this.#locked(async () => this.#forget(key));
+                    this.#locked(async () => this.#forget(targetKey(target)));
                 });
             },
         };
@@ -126,32 +136,45 @@ export class ViewersModule implements AgentModule {
     }
 
     /**
-     * Replace everything one stream views with `targets`, which the caller may read, and return who
-     * else views each of them, in order. Undefined when the stream is not open for this person.
+     * Replace everything one stream views with those of `targets` that `canView` allows, and return
+     * who else views each target, in order. Undefined when the stream is not open for this person.
      */
     async view(
         ctx: Context,
         streamId: string,
         userId: string,
         targets: readonly ViewerTarget[],
+        canView: (target: ViewerTarget) => Promise<boolean>,
     ): Promise<TargetViewers[] | undefined> {
-        return await this.#lock.runInLock(ctx, async (ctx) => {
-            if (this.#closed || this.#open.get(streamId) !== userId) return undefined;
-            const now = Date.now();
-            const views = this.#streams.get(streamId)?.views;
-            const viewing = new Map<string, ViewerTarget>();
-            for (const target of targets)
-                if (!this.#erased.has(targetKey(target))) viewing.set(targetKey(target), target);
-            const leaving = [...(views?.keys() ?? [])].filter((key) => !viewing.has(key));
-            await this.#change(ctx, streamId, userId, leaving, now, viewing, now);
-            return await Promise.all(
-                targets.map(async (target) =>
-                    viewing.has(targetKey(target))
-                        ? await this.#viewers(ctx, target, userId, now)
-                        : { target, viewers: [] },
-                ),
-            );
-        });
+        const check: Check = { seen: undefined };
+        this.#checking.add(check);
+        try {
+            check.seen = await latestViewerErasure(ctx);
+            const readable = await Promise.all(targets.map(canView));
+            return await this.#lock.runInLock(ctx, async (ctx) => {
+                if (this.#closed || this.#open.get(streamId) !== userId) return undefined;
+                const now = Date.now();
+                const views = this.#streams.get(streamId)?.views;
+                const wanted = new Map<string, ViewerTarget>();
+                targets.forEach((target, index) => {
+                    if (readable[index] === true) wanted.set(targetKey(target), target);
+                });
+                const leaving = [...(views?.keys() ?? [])].filter((key) => !wanted.has(key));
+                const viewing = await this.#change(ctx, streamId, userId, leaving, now, {
+                    wanted,
+                    check,
+                });
+                return await Promise.all(
+                    targets.map(async (target) =>
+                        viewing.has(targetKey(target))
+                            ? await this.#viewers(ctx, target, userId, now)
+                            : { target, viewers: [] },
+                    ),
+                );
+            });
+        } finally {
+            this.#checking.delete(check);
+        }
     }
 
     /** Record everyone here as leaving now, before storage closes, and accept nothing after. */
@@ -189,71 +212,97 @@ export class ViewersModule implements AgentModule {
     }
 
     /**
-     * End `leaving` at `leftAt` and view or refresh `viewing` at `now`, storing last-seen moments
-     * before memory changes and announcing whoever starts or stops being here after that.
+     * End `leaving` at `at`, and view or refresh at `at` whichever `wanted` targets still
+     * exist, then return those. Last-seen moments are stored before memory changes, and whoever
+     * starts or stops being here is announced after that.
      */
     async #change(
         ctx: Context,
         streamId: string,
         userId: string,
         leaving: readonly string[],
-        leftAt: number,
-        viewing: ReadonlyMap<string, ViewerTarget> = new Map(),
-        now = leftAt,
-    ): Promise<void> {
+        at: number,
+        request?: { readonly wanted: ReadonlyMap<string, ViewerTarget>; readonly check: Check },
+    ): Promise<ReadonlyMap<string, ViewerTarget>> {
         const views = this.#streams.get(streamId)?.views;
-        const visits: Visit[] = [];
-        for (const key of leaving) {
-            if (this.#hereElsewhere(key, userId, streamId)) continue;
-            const latest = this.#people.get(`${key} ${userId}`)?.latest ?? leftAt;
-            visits.push({
-                key,
-                target: views!.get(key)!.target,
-                at: Math.max(leftAt, latest),
-                here: false,
-                transition: true,
-            });
-        }
-        for (const [key, target] of viewing) {
-            const transition = !views?.has(key) && !this.#hereElsewhere(key, userId, streamId);
-            const stored = this.#people.get(`${key} ${userId}`)?.stored;
-            if (transition || stored === undefined || now - stored >= STORE_INTERVAL_MS)
-                visits.push({ key, target, at: now, here: true, transition });
-        }
-        // An agent erased while this waited for the database keeps no visit.
+        const viewing = new Map<string, ViewerTarget>();
+        const dropped: string[] = [];
         const lastSeen = new Map<Visit, number>();
-        if (visits.length > 0)
-            await ctx.inTx(async (tx) => {
-                for (const visit of visits)
-                    if (!this.#erased.has(visit.key))
-                        lastSeen.set(
-                            visit,
-                            await saveViewerLastSeen(tx, visit.target, userId, visit.at),
-                        );
-            });
+        if (leaving.length === 0 && request === undefined) return viewing;
+        // Admission, storing, and the erase that deletes a target's rows are serialized by the
+        // database, so a target erased while this waited is neither stored nor viewed.
+        await ctx.inTx(async (tx) => {
+            for (const [key, target] of request?.wanted ?? []) {
+                // A view stands while its stored visit does; a new one, unless erased since its
+                // access was checked.
+                const exists =
+                    views?.has(key) === true
+                        ? await hasViewerLastSeen(tx, target, userId)
+                        : !(await viewerErasedSince(tx, target, request!.check.seen!));
+                if (exists) viewing.set(key, target);
+                else if (views?.has(key) === true) dropped.push(key);
+            }
+            const prunable = this.#prunableErasures(request?.check);
+            if (prunable !== undefined) await pruneViewerErasures(tx, prunable);
 
-        for (const key of leaving) {
+            for (const key of leaving) {
+                if (this.#hereElsewhere(key, userId, streamId)) continue;
+                const latest = this.#people.get(`${key} ${userId}`)?.latest ?? at;
+                const target = views!.get(key)!.target;
+                const stored = await touchViewerLastSeen(tx, target, userId, Math.max(at, latest));
+                if (stored !== undefined)
+                    lastSeen.set(
+                        { key, target, at: stored, here: false, transition: true },
+                        stored,
+                    );
+            }
+            for (const [key, target] of viewing) {
+                const transition = !views?.has(key) && !this.#hereElsewhere(key, userId, streamId);
+                const stored = this.#people.get(`${key} ${userId}`)?.stored;
+                if (transition || stored === undefined || at - stored >= STORE_INTERVAL_MS) {
+                    const visit = { key, target, at, here: true, transition };
+                    lastSeen.set(visit, await saveViewerLastSeen(tx, target, userId, at));
+                }
+            }
+        });
+
+        for (const key of [...leaving, ...dropped]) {
             this.#unview(streamId, key);
             const person = this.#people.get(`${key} ${userId}`);
             if (!this.#hereElsewhere(key, userId, streamId))
                 this.#people.delete(`${key} ${userId}`);
-            else if (person !== undefined) person.latest = Math.max(person.latest, leftAt);
+            else if (person !== undefined) person.latest = Math.max(person.latest, at);
         }
         for (const [key, target] of viewing) {
-            this.#view(streamId, userId, key, target, now);
+            this.#view(streamId, userId, key, target, at);
             const person = this.#people.get(`${key} ${userId}`);
             if (person === undefined)
-                this.#people.set(`${key} ${userId}`, { stored: 0, latest: now });
-            else person.latest = Math.max(person.latest, now);
+                this.#people.set(`${key} ${userId}`, { stored: 0, latest: at });
+            else person.latest = Math.max(person.latest, at);
         }
-        for (const [visit, at] of lastSeen) {
+        for (const [visit, stored] of lastSeen) {
             if (visit.here) this.#people.get(`${visit.key} ${userId}`)!.stored = visit.at;
             if (visit.transition)
                 this.#announce(visit.key, {
                     target: visit.target,
-                    viewer: { userId, here: visit.here, lastSeenAt: at },
+                    viewer: { userId, here: visit.here, lastSeenAt: stored },
                 });
         }
+        return viewing;
+    }
+
+    /**
+     * The erasures no request other than `own` can still need: those it read before checking. None
+     * while a request has yet to read them, every one while no request is checking.
+     */
+    #prunableErasures(own: Check | undefined): number | undefined {
+        let through = Number.MAX_SAFE_INTEGER;
+        for (const check of this.#checking) {
+            if (check === own) continue;
+            if (check.seen === undefined) return undefined;
+            through = Math.min(through, check.seen);
+        }
+        return through;
     }
 
     #hereElsewhere(key: string, userId: string, streamId: string): boolean {

@@ -8142,26 +8142,40 @@ export class ApiModule implements AgentModule {
         if (viewers === undefined || !this.#team.enabled || match === null) return false;
         if (request.method !== "PUT") return false;
         const { targets } = await bodyAs(request, putViewersRequestSchema, "viewers request");
+        // Fields a newer client adds are ignored, and so is a type this daemon does not know.
+        const known = new Map<string, ViewerTarget>();
+        for (const target of targets) {
+            if (target.type !== "agent" && target.type !== "surface") continue;
+            const key = `${target.type}:${target.id}`;
+            if (known.has(key)) throw invalidRequest("The viewers request names a target twice.");
+            known.set(
+                key,
+                target.type === "agent"
+                    ? { type: "agent", id: target.id }
+                    : { type: "surface", id: target.id },
+            );
+        }
         const streamId = match[1]!;
         this.#requireOwnEventStream(ctx, streamId);
         const userId = teamUser(ctx)?.id;
         if (userId === undefined) throw notFound("The event stream was not found.");
-        const readable = await Promise.all(
-            targets.map(async (target) => await this.#canView(ctx, target)),
-        );
-        // The stream may have closed while its targets were checked.
+        // The stream may close and an agent may be erased while its targets are checked.
         const lists = await viewers.view(
             ctx,
             streamId,
             userId,
-            targets.filter((_, index) => readable[index]),
+            [...known.values()],
+            async (target) => await this.#canView(ctx, target),
         );
         if (lists === undefined) throw notFound("The event stream was not found.");
-        let next = 0;
+        const byKey = new Map(
+            lists.map((list) => [`${list.target.type}:${list.target.id}`, list.viewers]),
+        );
         sendJson(response, 200, {
-            targets: targets.map((target, index) =>
-                readable[index] ? lists[next++]! : { target, viewers: [] },
-            ),
+            targets: targets.map((target) => ({
+                target,
+                viewers: byKey.get(`${target.type}:${target.id}`) ?? [],
+            })),
         });
         return true;
     }

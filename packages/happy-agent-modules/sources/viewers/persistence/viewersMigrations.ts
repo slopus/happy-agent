@@ -13,4 +13,15 @@ export const viewersMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    [
+        "002-viewer-erasures",
+        async (_ctx, db) => {
+            await agentDatabaseRun(
+                db,
+                sql`CREATE TABLE happy_agent_viewer_erasures (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT, target_type TEXT NOT NULL,
+                    target_id TEXT NOT NULL)`,
+            );
+        },
+    ],
 ];

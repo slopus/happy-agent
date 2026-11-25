@@ -1,6 +1,7 @@
 import type {
     HappyAgentClient,
     PutViewersResponse,
+    ViewerRequestTarget,
     ViewerTarget,
     ViewersUpdatedFrame,
 } from "@slopus/happy-agent-client";
@@ -58,7 +59,7 @@ async function openRawStream(httpUrl: string, token: string) {
     return { streamId: hello![1]!, until };
 }
 
-async function view(window: Window, targets: ViewerTarget[]): Promise<PutViewersResponse> {
+async function view(window: Window, targets: ViewerRequestTarget[]): Promise<PutViewersResponse> {
     return await window.client.putViewers(window.streamId, { targets });
 }
 
@@ -243,6 +244,7 @@ describe("viewers show who is here to other people", () => {
     it("refuses oversized, duplicated, and malformed requests and other people's streams", async () => {
         const { gym, alice, bob, agent } = await team();
         const aliceWindow = await openStream(alice);
+        const tagged = { ...agent, path: "x" };
         const nine = Array.from({ length: 9 }, (_, index) => ({
             type: "agent" as const,
             id: `a${String(index).padStart(23, "0")}`,
@@ -250,8 +252,14 @@ describe("viewers show who is here to other people", () => {
         const refusals = [
             alice.putViewers(aliceWindow.streamId, { targets: nine }),
             alice.putViewers(aliceWindow.streamId, { targets: [agent, { ...agent }] }),
+            // The same target twice, even with a field the daemon ignores.
+            alice.putViewers(aliceWindow.streamId, { targets: [agent, tagged] }),
+            alice.putViewers(aliceWindow.streamId, { targets: [{ type: "agent", id: "a" }] }),
             alice.putViewers(aliceWindow.streamId, {
-                targets: [{ type: "file", id: "readme" } as unknown as ViewerTarget],
+                targets: [{ type: "file" } as unknown as ViewerTarget],
+            }),
+            alice.putViewers(aliceWindow.streamId, {
+                targets: [{ type: 7, id: "readme" } as unknown as ViewerTarget],
             }),
         ];
         for (const refusal of refusals)
@@ -274,6 +282,27 @@ describe("viewers show who is here to other people", () => {
                 return (error as { status?: number }).status === 404 ? true : undefined;
             }
         }, "the closed stream to be refused");
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("answers target types and fields it does not know as a newer client sends them", async () => {
+        const { gym, alice, bob, bobId, agent } = await team();
+        const aliceWindow = await openStream(alice);
+        const bobWindow = await openStream(bob);
+        await view(bobWindow, [agent]);
+        const file = { type: "file", id: "readme", path: "README.md" };
+        const tagged = { ...agent, path: "README.md" };
+        const answer = await view(aliceWindow, [file, tagged]);
+        expect(answer.targets).toEqual([
+            { target: file, viewers: [] },
+            {
+                target: tagged,
+                viewers: [{ userId: bobId, here: true, lastSeenAt: expect.any(Number) }],
+            },
+        ]);
+        // Bob hears Alice arrive at the agent itself, without the field the daemon ignored.
+        const [arrival] = await framesReach(bobWindow, 1);
+        expect(arrival!.target).toEqual(agent);
         expect(gym.errors).toEqual([]);
     });
 
