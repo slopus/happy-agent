@@ -43,6 +43,7 @@ import {
     providerRouteUseRequestSchema,
 } from "../providerRoutes/index.js";
 import { FeedError, FeedModule } from "../feed/index.js";
+import { ViewersModule } from "../viewers/index.js";
 import { NodeSearchModule } from "../nodeSearch/index.js";
 import {
     closeWorkspaceBridgeRequestSchema,
@@ -57,6 +58,8 @@ import {
     sendSurfaceDocumentUpdateRequestSchema,
     surfaceDocumentSubscriptionRequestSchema,
     sendSurfaceDocumentPresenceRequestSchema,
+    putViewersRequestSchema,
+    type ViewerTarget,
     reorderTodoRequestSchema,
     todoMutationRequestSchema,
     todoListScopeSchema,
@@ -715,6 +718,7 @@ export class ApiModule implements AgentModule {
     readonly #providerRoutes: ProviderRoutesModule | undefined;
     readonly #feed: FeedModule | undefined;
     readonly #nodeSearch: NodeSearchModule | undefined;
+    readonly #viewers: ViewersModule | undefined;
     readonly #teammates: TeammatesModule | undefined;
     /** The revocation signals each mobile connection already closes on. */
     readonly #mobileConnections = new WeakMap<MobileConnection, Set<AbortSignal>>();
@@ -900,7 +904,9 @@ export class ApiModule implements AgentModule {
         userEnvironment?: UserEnvironmentModule,
         secretRequests?: SecretRequestsModule,
         attachments?: AttachmentsModule,
+        viewers?: ViewersModule,
     ) {
+        this.#viewers = viewers;
         this.#secretRequests = secretRequests;
         this.#teammates = teammates;
         this.#userEnvironment = userEnvironment;
@@ -2126,6 +2132,7 @@ export class ApiModule implements AgentModule {
             if (await this.#handleBotRoute(ctx, request, response, url)) return;
             if (await this.#handleTaskRoute(ctx, request, response, url)) return;
             if (await this.#handleFeedRoute(ctx, request, response, url)) return;
+            if (await this.#handleViewersRoute(ctx, request, response, url)) return;
             if (await this.#handleSurfaceRoute(ctx, request, response, url)) return;
             if (await this.#handleVaultUploadRoute(ctx, request, response, url)) return;
             if (await this.#handleSearchRoute(ctx, request, url, response)) return;
@@ -3409,6 +3416,17 @@ export class ApiModule implements AgentModule {
                         .get(streamId)
                         ?.writer.write(
                             `event: ${frame.type}\ndata: ${JSON.stringify(frame.data)}\n\n`,
+                        );
+                }),
+            );
+        if (this.#viewers !== undefined)
+            this.#unsubscribe.push(
+                // Viewer frames bypass the journal the same way.
+                this.#viewers.onFrame((streamId, frame) => {
+                    this.#eventStreams
+                        .get(streamId)
+                        ?.writer.write(
+                            `event: viewers.updated\ndata: ${JSON.stringify(frame)}\n\n`,
                         );
                 }),
             );
@@ -6695,6 +6713,7 @@ export class ApiModule implements AgentModule {
             if (streamId !== undefined) {
                 this.#eventStreams.delete(streamId);
                 this.#surfaces?.closeDocumentStream(streamId);
+                this.#viewers?.closeStream(streamId);
             }
         });
         unsubscribe = this.#journal.subscribe((event) => {
@@ -8103,6 +8122,56 @@ export class ApiModule implements AgentModule {
         } else return false;
         sendJson(response, 200, { event });
         return true;
+    }
+
+    /**
+     * `PUT /v0/viewers/streams/:streamId`, team mode only. Targets the caller cannot read are
+     * answered with no viewers and stop counting the caller as here.
+     */
+    async #handleViewersRoute(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        url: URL,
+    ): Promise<boolean> {
+        const viewers = this.#viewers;
+        const match = /^\/v0\/viewers\/streams\/([a-z][a-z0-9]*)$/.exec(url.pathname);
+        if (viewers === undefined || !this.#team.enabled || match === null) return false;
+        if (request.method !== "PUT") return false;
+        const { targets } = await bodyAs(request, putViewersRequestSchema, "viewers request");
+        const streamId = match[1]!;
+        this.#requireOwnEventStream(ctx, streamId);
+        const userId = teamUser(ctx)?.id;
+        if (userId === undefined) throw notFound("The event stream was not found.");
+        const readable = await Promise.all(
+            targets.map(async (target) => await this.#canView(ctx, target)),
+        );
+        const lists = await viewers.view(
+            ctx,
+            streamId,
+            userId,
+            targets.filter((_, index) => readable[index]),
+        );
+        let next = 0;
+        sendJson(response, 200, {
+            targets: targets.map((target, index) =>
+                readable[index] ? lists[next++]! : { target, viewers: [] },
+            ),
+        });
+        return true;
+    }
+
+    /** The same read checks as `GET /v0/agents/:agentId` and the Surface routes. */
+    async #canView(ctx: Context, target: ViewerTarget): Promise<boolean> {
+        if (target.type === "surface")
+            return (await this.#surfaces?.get(ctx, target.id)) !== undefined;
+        try {
+            await this.#requireAgent(ctx, target.id);
+            return true;
+        } catch (error: unknown) {
+            if (error instanceof ApiError && error.status === 404) return false;
+            throw error;
+        }
     }
 
     /** Only the person who opened an event stream may route live document frames to it. */

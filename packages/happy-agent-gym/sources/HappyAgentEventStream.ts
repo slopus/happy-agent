@@ -147,6 +147,14 @@ function toSseFrame(frame: EventStreamFrame): GymSseFrame {
             raw: JSON.stringify(frame.frame.data),
         };
     }
+    if (frame.kind === "viewers") {
+        return {
+            data: frame.frame,
+            event: "viewers.updated",
+            id: undefined,
+            raw: JSON.stringify(frame.frame),
+        };
+    }
     return {
         data: frame.event,
         event: frame.event.type,
@@ -155,7 +163,7 @@ function toSseFrame(frame: EventStreamFrame): GymSseFrame {
     };
 }
 
-/** Extract the typed public event from a recorded SSE frame; hello and document frames have none. */
+/** Extract the typed public event from a recorded SSE frame; hello and live frames have none. */
 export function frameEvent(frame: GymSseFrame): HappyAgentEvent | undefined {
     if (frame.event === "hello" || frame.id === undefined) return undefined;
     const data = frame.data;
