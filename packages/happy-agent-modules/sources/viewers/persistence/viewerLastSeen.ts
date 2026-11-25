@@ -24,6 +24,38 @@ export async function saveViewerLastSeen(
     return Number(rows[0]!.last_seen_at);
 }
 
+/**
+ * Move a stored last-seen moment later, keeping a later one, and return the moment now stored.
+ * Undefined when nothing is stored, because the target was deleted.
+ */
+export async function touchViewerLastSeen(
+    ctx: Context,
+    target: ViewerTarget,
+    userId: string,
+    at: number,
+): Promise<number | undefined> {
+    const rows = await agentDatabaseRows<{ last_seen_at: number }>(
+        ctx.db,
+        sql`UPDATE happy_agent_viewers SET last_seen_at = MAX(last_seen_at, ${at})
+            WHERE target_type = ${target.type} AND target_id = ${target.id} AND user_id = ${userId}
+            RETURNING last_seen_at`,
+    );
+    return rows[0] === undefined ? undefined : Number(rows[0].last_seen_at);
+}
+
+export async function hasViewerLastSeen(
+    ctx: Context,
+    target: ViewerTarget,
+    userId: string,
+): Promise<boolean> {
+    const rows = await agentDatabaseRows<{ found: number }>(
+        ctx.db,
+        sql`SELECT 1 AS found FROM happy_agent_viewers
+            WHERE target_type = ${target.type} AND target_id = ${target.id} AND user_id = ${userId}`,
+    );
+    return rows.length > 0;
+}
+
 /** Everyone ever seen at a target, newest first, at most `limit`. */
 export async function queryViewerLastSeen(
     ctx: Context,
