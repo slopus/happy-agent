@@ -291,6 +291,14 @@ Refresh failures are advisory and never change account enablement; the shared pr
 owns rotation coordination and network bounds so background work cannot spend the same refresh
 token concurrently with another session in this process.
 
+The pass used to rotate every Codex login on each daemon start and every three hours. ChatGPT
+refresh tokens are single-use, so that invalidated every other holder of the file, and three
+production logins lost on one day were then retried every three hours for weeks behind a warning
+that named no reason. The provider library now renews a Codex login only when it is due, keeps
+the HTTP status and a vetted OAuth error code on a refused refresh, and stops spending a rejected
+refresh token until the auth file changes. The pass logs only that status and code, plus a
+sign-in hint for a permanent rejection; vendor free text and credential contents stay out.
+
 ## Git authentication belongs to Git
 
 Configuration no longer discovers GitHub CLI logins or interprets GitHub token environment

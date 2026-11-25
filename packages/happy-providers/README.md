@@ -179,6 +179,17 @@ CLI processes are not locked. Codex returns the replacement credential (or `unde
 Grok updates its credential and returns a success boolean. Static API keys and Claude credentials
 are not part of this maintenance surface.
 
+ChatGPT refresh tokens are single-use, so Codex maintenance renews a login only when it is due,
+the way the Codex CLI does: its access token expires within four hours, its `last_refresh` is
+eight or more days old, or either cannot be read. Otherwise it returns the stored credential
+without a request. A refused exchange throws `CodexCredentialRefreshError` with the HTTP status,
+the OAuth error code when it is a short identifier (never vendor free text), and `permanent`
+when the refresh token itself was rejected (HTTP 401, `refresh_token_expired`,
+`refresh_token_reused`, `refresh_token_invalidated`, or HTTP 400 `invalid_grant`). After a
+permanent rejection, maintenance throws the same error without a request until the auth file
+changes, for example after a new sign-in. Unauthorized recovery during inference still refreshes
+on demand.
+
 Refresh HTTP work has a 30-second deadline and a 256 KiB response limit. Cancelling a maintenance
 caller stops its wait, but an exchange already in progress completes within that deadline so a
 rotated refresh token can still be saved and another session is not cancelled. Changed or removed

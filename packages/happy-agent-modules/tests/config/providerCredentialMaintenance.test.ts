@@ -9,7 +9,7 @@ import {
     GrokProvider,
     GrokSessionCredential,
 } from "@slopus/happy-providers";
-import { createRootContext } from "@steve.kite/stdlib";
+import { createRootContext, withLogger, type Context } from "@steve.kite/stdlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigModule } from "../../sources/config/index.js";
 
@@ -209,6 +209,33 @@ describe("configuration-owned credential maintenance", () => {
         expect(refresh).toHaveBeenCalledTimes(2);
     });
 
+    it("logs only the status and vetted OAuth code of a failed background refresh", async () => {
+        const config = await fixture("[providers.codex]\nenabled = true");
+        const credential = CodexSessionCredential.fromAuth(
+            { accessToken: "fixture" },
+            { authFile: "/not-used" },
+        );
+        vi.spyOn(config, "resolveProviderUnchecked").mockResolvedValue(
+            new CodexProvider({ credential }),
+        );
+        // The provider library's refresh failure: a status, an OAuth code, and its classification.
+        const failure = (code: string, status: number, permanent: boolean) =>
+            Object.assign(new Error("DO_NOT_LOG_THIS_SECRET"), { status, code, permanent });
+        vi.spyOn(credential, "refreshForMaintenance")
+            .mockRejectedValueOnce(failure("refresh_token_reused", 401, true))
+            .mockRejectedValueOnce(failure("server_error", 503, false))
+            .mockRejectedValueOnce(failure("DO_NOT_LOG free text", 400, false))
+            .mockRejectedValueOnce(new Error("DO_NOT_LOG_THIS_SECRET"));
+        const [logged, warnings] = capturingContext(ctx);
+        for (let pass = 0; pass < 4; pass++) await config.refreshProviderCredentials(logged);
+        expect(warnings).toEqual([
+            'Could not refresh the sign-in for provider "codex" in the background (HTTP 401, refresh_token_reused). Sign in to this account again.',
+            'Could not refresh the sign-in for provider "codex" in the background (HTTP 503, server_error).',
+            'Could not refresh the sign-in for provider "codex" in the background.',
+            'Could not refresh the sign-in for provider "codex" in the background.',
+        ]);
+    });
+
     it("does not mistake an environment API key for a refreshable session", async () => {
         const config = await fixture("[providers.codex]\nenabled = true");
         const credential = await CodexApiKeyCredential.tryLoad({ apiKey: "fixture" });
@@ -249,6 +276,21 @@ describe("configuration-owned credential maintenance", () => {
         expect(resolve).toHaveBeenCalledOnce();
     });
 });
+
+function capturingContext(context: Context): [Context, string[]] {
+    const warnings: string[] = [];
+    const logged = withLogger(context, {
+        trace: () => {},
+        debug: () => {},
+        info: () => {},
+        warn: (_logContext, ...args) => {
+            warnings.push(args.map(String).join(" "));
+        },
+        error: () => {},
+        fatal: () => {},
+    });
+    return [logged, warnings];
+}
 
 async function fixture(extra = "") {
     const root = await mkdtemp(join(tmpdir(), "happy-credential-maintenance-module-"));

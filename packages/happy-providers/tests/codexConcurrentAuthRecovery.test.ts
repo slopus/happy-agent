@@ -252,6 +252,26 @@ describe("Codex terminal credential-recovery failures", () => {
         },
     );
 
+    it("names the OAuth code that refused renewal without its free text", async () => {
+        const { authFile } = await fixture();
+        const recovery = await recoverySession(authFile, async () =>
+            Response.json(
+                { error: { code: "refresh_token_reused", message: "secret-free-text" } },
+                { status: 401 },
+            ),
+        );
+        try {
+            const events = await collectSessionEvents(recovery.session.run(testContext, request));
+            expectSafeRecoveryTerminal(events, authFile);
+            expect(events.at(-1)).toMatchObject({
+                providerError: { diagnostics: { status: 401, code: "refresh_token_reused" } },
+            });
+            expect(JSON.stringify(events.at(-1))).not.toContain("secret-free-text");
+        } finally {
+            await recovery.close();
+        }
+    });
+
     it("retracts partial output and emits one terminal after a refresh failure", async () => {
         const { authFile } = await fixture();
         const before = await readFile(authFile, "utf8");
