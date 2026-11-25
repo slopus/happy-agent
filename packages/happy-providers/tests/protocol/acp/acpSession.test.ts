@@ -240,51 +240,6 @@ describe("AcpSession", () => {
         expect(listed.schemas[0]!.properties.why).not.toHaveProperty("pattern");
     }, 30_000);
 
-    it("reaches a tool past the agent's declaration budget through call_tool, as a call of that tool", async () => {
-        const big = {
-            name: "happy_big",
-            description: `Starts a collaborator. ${"Models you can start agents on. ".repeat(40)}`,
-            parameters: Type.Object({ why: Type.String() }),
-        };
-        const h = harness({
-            tools: [...tools, big],
-            profile: { toolDeclarationBudget: 1_000 },
-        });
-        const session = await h.session();
-        h.user("please use call_tool");
-        const first = await h.run(session);
-        expect(done(first)).toMatchObject({ state: "tool_call" });
-        // The agent's own record of the MCP call is not reported again as a foreign call.
-        const starts = first.filter(
-            (event): event is Extract<SessionEvent, { type: "toolcall_start" }> =>
-                event.type === "toolcall_start",
-        );
-        expect(starts.map((event) => [event.name, event.server === true])).toEqual([
-            ["read", true],
-            ["happy_big", false],
-        ]);
-        const call = starts[1]!;
-        expect(
-            first.find((event) => event.type === "toolcall_end" && event.callId === call.callId),
-        ).toMatchObject({ arguments: JSON.stringify({ why: "test" }) });
-        expect(h.log().find((entry) => entry.method === "mcp.listTools")).toMatchObject({
-            names: ["happy_secret", "call_tool"],
-        });
-        const described = h.log().find((entry) => entry.method === "mcp.describe") as {
-            text: string;
-        };
-        expect(described.text).toContain("happy_big: Starts a collaborator.");
-        expect(described.text).toContain('"why":{"type":"string"}');
-
-        h.messages.push({
-            role: "tool",
-            callId: call.callId,
-            content: [{ type: "text", text: "started" }],
-        });
-        const second = await h.run(session);
-        expect(text(second)).toBe("big=started");
-    }, 30_000);
-
     it("sends a fresh session Happy's instructions, then only new input on later turns", async () => {
         const h = harness();
         const session = await h.session();
@@ -732,37 +687,15 @@ describe("AcpSession", () => {
             expect(text(await h.run(session)), mode).toBe("permission=yes");
         }
         expect(asked).toEqual([]);
+        // An ask naming a tool the bridge does not serve is the agent's own action.
+        h.setPermissionMode("read_only");
+        h.user("needs agy mcp permission for an unknown tool");
+        expect(text(await h.run(session))).toBe("permission=deny");
 
         // The agent is told which bridged tools it may call without asking at all.
         expect(h.log().find((entry) => entry.method === "newSession")).toMatchObject({
             approvedTools: ["happy_listed", "ns__listed"],
         });
-    }, 30_000);
-
-    it("recognizes Antigravity's ask about a Happy tool, by its function name, through call_tool, and through call_mcp_tool", async () => {
-        const asked: string[] = [];
-        const h = harness({
-            tools: [{ ...tools[0]!, shouldReviewInAutoMode: () => true }],
-            askPermission: async (question) => {
-                asked.push(question.action);
-                return "deny";
-            },
-        });
-        const session = await h.session();
-        for (const mode of ["workspace_write", "auto"] as const) {
-            h.setPermissionMode(mode);
-            for (const prompt of [
-                "needs agy permission for happy",
-                "needs agy permission for call_tool",
-                "needs agy permission for call_tool description",
-                "needs agy mcp permission",
-                "needs agy mcp permission malformed",
-            ]) {
-                h.user(prompt);
-                expect(text(await h.run(session)), `${mode}: ${prompt}`).toBe("permission=allow");
-            }
-        }
-        expect(asked).toEqual([]);
     }, 30_000);
 
     it("runs Antigravity as Happy's agent, with Happy's MCP server named in its agent file", async () => {

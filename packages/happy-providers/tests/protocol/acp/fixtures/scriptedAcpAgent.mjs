@@ -3,8 +3,6 @@
 // JSON-lines file named by SCRIPTED_ACP_LOG so a test can assert what was sent.
 //
 // Prompt directives: "use happy" calls the bridged happy_secret tool and replies with its answer;
-// "use call_tool" describes and then runs happy_big through the bridge's call_tool, as
-// Antigravity does with a tool its declaration budget left out;
 // "wait" holds the prompt open until cancelled or steered; "throttled" is refused as too many
 // requests the first time it is sent, and "throttled late" only after reporting a tool call;
 // "over quota" fails with a 429 that names a weekly limit; "stubborn" never ends its first prompt;
@@ -12,7 +10,8 @@
 // bridged happy_secret call (with "only always", offering no one-time allow), then replies with
 // the option it got; "needs agy command" asks before one of Antigravity's own commands;
 // "needs agy mcp permission" asks before calling happy_secret through
-// call_mcp_tool, as Antigravity 1.5.15 does; anything else is echoed back.
+// call_mcp_tool, as Antigravity 1.5.15 does ("unknown tool" names a tool Happy does not serve);
+// anything else is echoed back.
 //
 // Started as Antigravity is, with --agent, --add-dir and --log-file, it logs the agent file it
 // finds when a session opens and writes a log, where SCRIPTED_AGY_FALLBACK makes it report that
@@ -173,86 +172,25 @@ class ScriptedAgent {
             writeFileSync(stubbornFile, "");
             await new Promise(() => undefined);
         }
-        // Antigravity 1.5.10 asks before each MCP call, naming the function and sending its input.
-        if (text.includes("needs agy permission")) {
-            const direct = text.includes("for happy");
-            const fn = direct ? "mcp_happy_happy_secret" : "mcp_happy_call_tool";
-            const rawInput = direct
-                ? { why: "test", toolSummary: "Read the secret" }
-                : text.includes("description")
-                  ? { name: "happy_secret", toolSummary: "Read happy_secret's schema" }
-                  : {
-                        name: "happy_secret",
-                        arguments: { why: "test" },
-                        toolSummary: "Read the secret",
-                    };
-            const answer = await this.#conn.requestPermission({
-                sessionId: params.sessionId,
-                toolCall: {
-                    toolCallId: `call_${Date.now()}`,
-                    kind: "other",
-                    status: "pending",
-                    title: `Run ${fn}`,
-                    name: fn,
-                    rawInput,
-                },
-                options: [
-                    { optionId: "allow", name: "Allow", kind: "allow_once" },
-                    { optionId: "deny", name: "Deny", kind: "reject_once" },
-                ],
-            });
-            const chosen =
-                answer.outcome.outcome === "selected" ? answer.outcome.optionId : "cancelled";
-            await this.#say(params.sessionId, `permission=${chosen}`);
-            return { stopReason: "end_turn" };
-        }
-        // Antigravity 1.5.15 loads MCP tools lazily and asks before its own call_mcp_tool.
-        if (text.includes("needs agy mcp permission")) {
+        // Antigravity 1.5.15 asks before its own call_mcp_tool, and before any command of its own.
+        if (text.includes("needs agy")) {
+            const mcp = text.includes("needs agy mcp permission");
             const answer = await this.#conn.requestPermission({
                 sessionId: params.sessionId,
                 toolCall: {
                     toolCallId: `call_${Date.now()}`,
                     kind: "execute",
                     status: "pending",
-                    title: "MCP Tool happy_secret",
-                    // "malformed" names the tool inside call_tool's arguments the wrong way, as
-                    // Gemini once did; the bridge answers that with the names it knows.
-                    rawInput: text.includes("malformed")
+                    title: mcp ? "MCP Tool happy_secret" : "ls -la",
+                    rawInput: mcp
                         ? {
                               ServerName: "happy",
-                              ToolName: "call_tool",
-                              Arguments: { ToolName: "happy_secret" },
-                          }
-                        : {
-                              ServerName: "happy",
-                              ToolName: "happy_secret",
+                              ToolName: text.includes("unknown tool")
+                                  ? "not_a_tool"
+                                  : "happy_secret",
                               Arguments: { why: "test" },
-                          },
-                },
-                options: [
-                    { optionId: "allow", name: "Allow", kind: "allow_once" },
-                    { optionId: "deny", name: "Deny", kind: "reject_once" },
-                ],
-            });
-            const chosen =
-                answer.outcome.outcome === "selected" ? answer.outcome.optionId : "cancelled";
-            await this.#say(params.sessionId, `permission=${chosen}`);
-            return { stopReason: "end_turn" };
-        }
-        // Antigravity asks before running one of its own commands.
-        if (text.includes("needs agy command")) {
-            const answer = await this.#conn.requestPermission({
-                sessionId: params.sessionId,
-                toolCall: {
-                    toolCallId: `call_${Date.now()}`,
-                    kind: "execute",
-                    status: "pending",
-                    title: "ls -la",
-                    rawInput: {
-                        CommandLine: "ls -la",
-                        WaitMsBeforeAsync: 5000,
-                        toolSummary: "List files",
-                    },
+                          }
+                        : { CommandLine: "ls -la", toolSummary: "List files" },
                 },
                 options: [
                     { optionId: "allow", name: "Allow", kind: "allow_once" },
@@ -306,35 +244,6 @@ class ScriptedAgent {
             await this.#say(params.sessionId, `steered:${steered}`);
             return { stopReason: "end_turn" };
         }
-        if (text.includes("use call_tool")) {
-            const client = await this.#mcp(params.sessionId);
-            const tools = await client.listTools();
-            log({ method: "mcp.listTools", names: tools.tools.map((tool) => tool.name) });
-            const described = await client.callTool({
-                name: "call_tool",
-                arguments: { name: "happy_big" },
-            });
-            log({ method: "mcp.describe", text: described.content[0].text });
-            // Antigravity reports its own record of every MCP call it makes.
-            await this.#conn.sessionUpdate({
-                sessionId: params.sessionId,
-                update: {
-                    sessionUpdate: "tool_call",
-                    toolCallId: `agy-${Date.now()}`,
-                    title: "Run mcp_happy_call_tool",
-                    kind: "other",
-                    status: "in_progress",
-                    rawInput: { name: "happy_big", arguments: { why: "test" } },
-                },
-            });
-            const result = await client.callTool({
-                name: "call_tool",
-                arguments: { name: "happy_big", arguments: { why: "test" } },
-            });
-            await client.close();
-            await this.#say(params.sessionId, `big=${result.content[0].text}`);
-            return { stopReason: "end_turn" };
-        }
         if (text.includes("use happy")) {
             const server = this.#servers.get(params.sessionId)?.[0];
             const client = new Client({ name: "scripted", version: "1" });
@@ -369,19 +278,6 @@ class ScriptedAgent {
     async cancel(params) {
         log({ method: "cancel", sessionId: params.sessionId });
         this.#cancelled.get(params.sessionId)?.();
-    }
-
-    async #mcp(sessionId) {
-        const server = this.#servers.get(sessionId)?.[0];
-        const client = new Client({ name: "scripted", version: "1" });
-        await client.connect(
-            new StreamableHTTPClientTransport(new URL(server.url), {
-                requestInit: {
-                    headers: Object.fromEntries(server.headers.map((h) => [h.name, h.value])),
-                },
-            }),
-        );
-        return client;
     }
 
     async #say(sessionId, text) {

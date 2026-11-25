@@ -41,6 +41,7 @@ import {
     type AcpSessionRecord,
 } from "@/protocol/acp/impl/acpSessionStore.js";
 import {
+    ACP_BRIDGE_CALL_TOOL,
     acpBridgeResult,
     AcpToolBridgeServer,
     type AcpBridgeCall,
@@ -849,11 +850,19 @@ export class AcpSession extends BaseSession {
      * Whether the ask is about a call to Happy's bridge. A call naming a tool the bridge does not
      * serve runs nothing there; it is answered with an error that lists the tools it does.
      */
+    /**
+     * Whether the ask is about a call of one of the bridged tools, whose run Happy decides. The
+     * name must be one the bridge serves exactly, so an ask the agent merely titled like a Happy
+     * call, such as a command that starts with `Run mcp_happy_`, is answered as its own action.
+     */
     #isHappyToolCall(params: acp.RequestPermissionRequest): boolean {
-        return (
-            acpBridgedCallOfAsk(params.toolCall, params.toolCall._meta?.[ACP_BRIDGED_CALL_META]) !==
-            undefined
+        const call = acpBridgedCallOfAsk(
+            params.toolCall,
+            params.toolCall._meta?.[ACP_BRIDGED_CALL_META],
         );
+        if (call === undefined) return false;
+        if (call === "description" || call.name === ACP_BRIDGE_CALL_TOOL) return true;
+        return this.#bridgedTools.some((tool) => AcpToolBridgeServer.toolName(tool) === call.name);
     }
 
     #usage(response: acp.PromptResponse | undefined, outputCharacters: number): SessionUsage {

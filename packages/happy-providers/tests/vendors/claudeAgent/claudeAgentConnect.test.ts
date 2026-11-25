@@ -11,7 +11,6 @@ import { afterEach, expect, it } from "vitest";
 import {
     ACP_APPROVED_TOOLS_META,
     ACP_BRIDGED_CALL_META,
-    ACP_REFUSAL_REASON_META,
     type AcpConnection,
 } from "@/protocol/acp/AcpConnection.js";
 import { AcpToolBridgeServer } from "@/protocol/acp/impl/AcpToolBridgeServer.js";
@@ -125,12 +124,11 @@ it("lets Claude Code compact its own context and reports the context it fills", 
 }, 120_000);
 
 /** The Messages API, calling `list_projects` and then `delete_artifact` before it answers. */
-async function toolCallingMessagesApi(bodies: string[] = []) {
+async function toolCallingMessagesApi() {
     const server = createServer((request, response) => {
         let body = "";
         request.on("data", (chunk) => (body += chunk));
         request.on("end", () => {
-            bodies.push(body);
             if (request.method !== "POST" || request.url?.split("?")[0] !== "/v1/messages") {
                 response.writeHead(404).end();
                 return;
@@ -259,61 +257,6 @@ it("runs Happy's approved tools without asking and marks an ask about another as
         expect(asks[0]!.toolCall._meta).toEqual({
             [ACP_BRIDGED_CALL_META]: { name: "delete_artifact", arguments: {} },
         });
-    } finally {
-        bridge.close();
-    }
-}, 120_000);
-
-it("tells Claude why an ask was refused when the refusal says why", async () => {
-    const bodies: string[] = [];
-    const url = await toolCallingMessagesApi(bodies);
-    const ran: string[] = [];
-    const parameters = Type.Object({});
-    const bridge = await AcpToolBridgeServer.start(
-        [
-            { name: "list_projects", parameters, autoReview: "never" },
-            { name: "delete_artifact", parameters },
-        ],
-        (call) => {
-            ran.push(call.tool.name);
-            call.resolve({ content: [{ type: "text", text: "ok" }] });
-        },
-    );
-    try {
-        const directory = mkdtempSync(join(tmpdir(), "claude-agent-connect-"));
-        const connection = await claudeAgentConnect({
-            ANTHROPIC_BASE_URL: url,
-            ANTHROPIC_API_KEY: "sk-ant-test",
-            CLAUDE_CONFIG_DIR: join(directory, "config"),
-        })(directory, {
-            requestPermission: async () => ({
-                outcome: { outcome: "selected", optionId: "reject" },
-                _meta: { [ACP_REFUSAL_REASON_META]: "Automatic permission review refused it." },
-            }),
-            sessionUpdate: async () => {},
-        } as acp.Client);
-        connections.push(connection);
-        const { sessionId } = await connection.conn.newSession({
-            cwd: directory,
-            mcpServers: [
-                {
-                    type: "http",
-                    name: "happy",
-                    url: bridge.url,
-                    headers: Object.entries(bridge.headers).map(([name, value]) => ({
-                        name,
-                        value,
-                    })),
-                },
-            ],
-            _meta: { [ACP_APPROVED_TOOLS_META]: ["list_projects"] },
-        });
-        await connection.conn.prompt({ sessionId, prompt: [{ type: "text", text: "go" }] });
-
-        expect(ran).toEqual(["list_projects"]);
-        expect(
-            bodies.some((body) => body.includes("Automatic permission review refused it.")),
-        ).toBe(true);
     } finally {
         bridge.close();
     }

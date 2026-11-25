@@ -290,6 +290,12 @@ export class PermissionsModule implements AgentModule {
         const stopped = this.#terminalRefusal(agentId);
         if (stopped !== undefined) return { outcome: "denied", reason: refusalText(stopped) };
         const action = harnessAction(ask);
+        // A cut-short action would let the reviewer allow only the part it saw, while the harness
+        // runs all of it, so an ask too long to review in full goes to the person instead.
+        if (action.length > MAX_PERMISSION_ACTION) {
+            ctx.log.info(`${ask.harnessName}'s ask is too long to review in full.`, { agentId });
+            return { outcome: "escalate" };
+        }
         const reviewAbortController = new AbortController();
         const onAbort = (): void => reviewAbortController.abort();
         signal.addEventListener("abort", onAbort, { once: true });
@@ -886,9 +892,8 @@ function refusalText(decision: AgentBaseToolCallDecision): string {
 }
 
 /**
- * A harness's ask as an action for the reviewer. The harness's own words come last, so a long ask
- * is cut short there and the reviewer still learns who asks and that the harness acts outside
- * Happy's sandbox.
+ * A harness's ask as an action for the reviewer: who asks, that the harness acts outside Happy's
+ * sandbox, then the harness's own words.
  */
 function harnessAction(ask: HarnessPermissionAsk): string {
     const preface =
@@ -896,7 +901,7 @@ function harnessAction(ask: HarnessPermissionAsk): string {
         "following action because its own permission system would not allow it alone, typically " +
         "because it reaches outside the project folder or the harness's sandbox. It runs the " +
         "action itself, outside Happy's sandbox. Judge it as the same action by this agent:\n\n";
-    return `${preface}${ask.action}`.slice(0, MAX_PERMISSION_ACTION);
+    return `${preface}${ask.action}`;
 }
 
 /**

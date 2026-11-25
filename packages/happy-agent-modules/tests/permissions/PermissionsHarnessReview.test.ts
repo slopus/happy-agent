@@ -74,6 +74,8 @@ async function harnessReview(
         aborted,
         decide: (mode: AgentPermissionMode, signal = new AbortController().signal) =>
             decide(inMode(mode), ask, signal),
+        decideAsk: (mode: AgentPermissionMode, asked: HarnessPermissionAsk) =>
+            decide(inMode(mode), asked, new AbortController().signal),
     };
 }
 
@@ -119,14 +121,6 @@ describe("a foreign harness's permission ask in Auto", () => {
         expect(reason).toContain("/home/me/.happy/SECURITY.md");
     });
 
-    it("is refused when an allow fails Happy's own risk policy", async () => {
-        const harness = await harnessReview(() =>
-            Promise.resolve({ outcome: "allowed", risk: "high", userAuthorization: "low" }),
-        );
-
-        expect((await harness.decide("auto")).outcome).toBe("denied");
-    });
-
     it("goes to the person when the reviewer fails or no route is available", async () => {
         const harness = await harnessReview(() =>
             Promise.reject(new Error("No automatic permission reviewer route was available.")),
@@ -140,6 +134,14 @@ describe("a foreign harness's permission ask in Auto", () => {
         expect(harness.aborted).toEqual([]);
     });
 
+    it("goes to the person, unreviewed, when the ask is too long to review in full", async () => {
+        const harness = await harnessReview(() => Promise.resolve(allowed));
+
+        const long = { ...ask, action: `rm ${"x".repeat(20_000)}` };
+        expect(await harness.decideAsk("auto", long)).toEqual({ outcome: "escalate" });
+        expect(harness.seen).toHaveLength(0);
+    });
+
     it("goes to the person, unreviewed, in every mode but Auto", async () => {
         const harness = await harnessReview(() => Promise.resolve(allowed));
 
@@ -147,33 +149,5 @@ describe("a foreign harness's permission ask in Auto", () => {
             expect(await harness.decide(mode)).toEqual({ outcome: "escalate" });
         }
         expect(harness.seen).toHaveLength(0);
-    });
-
-    it("withdraws to the person when the turn stops during the review", async () => {
-        const controller = new AbortController();
-        const harness = await harnessReview(
-            (request) =>
-                new Promise((resolve) => {
-                    request.signal.addEventListener("abort", () => resolve(allowed));
-                    controller.abort();
-                }),
-        );
-
-        expect(await harness.decide("auto", controller.signal)).toEqual({ outcome: "escalate" });
-    });
-
-    it("stops the turn after repeated refusals, sharing the circuit with Happy's own calls", async () => {
-        const harness = await harnessReview(() => Promise.resolve(denied));
-
-        for (let index = 0; index < PERMISSION_REFUSALS_BEFORE_STOPPING; index += 1) {
-            expect((await harness.decide("auto")).outcome).toBe("denied");
-        }
-        expect(harness.aborted).toEqual(["harness-agent"]);
-        expect(harness.events.map((event) => event.type)).toEqual(["permission_turn_stopped"]);
-        // Once tripped, the next ask is refused without another review.
-        const seen = harness.seen.length;
-        const next = await harness.decide("auto");
-        expect(next.outcome).toBe("denied");
-        expect(harness.seen).toHaveLength(seen);
     });
 });

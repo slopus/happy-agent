@@ -80,8 +80,8 @@ export function antigravityHappyOnly(launch: AcpAgentLaunch): AcpConnect {
             rmSync(directory, { recursive: true, force: true });
             throw error;
         }
-        // The file holds the bridge's token; agy's log stays for whoever looks into a session.
-        void connection.exited.then(() => rmSync(agentFile, { force: true }));
+        // The agent file holds the bridge's token, so the whole private folder goes with agy.
+        void connection.exited.then(() => rmSync(directory, { recursive: true, force: true }));
         const open = async <T>(
             params: { readonly mcpServers: readonly acp.McpServer[] },
             request: () => Promise<T>,

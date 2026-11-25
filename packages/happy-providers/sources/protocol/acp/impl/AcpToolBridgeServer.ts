@@ -5,6 +5,8 @@ import type { AddressInfo } from "node:net";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 import {
     CallToolRequestSchema,
     ListToolsRequestSchema,
@@ -286,13 +288,21 @@ function callToolDeclaration(names: readonly string[]): BridgeDeclaration {
     };
 }
 
+/** What `call_tool` takes: a tool's name, and its arguments to run it. */
+const callToolInputSchema = Type.Object({
+    name: Type.String(),
+    arguments: Type.Optional(Type.Unknown()),
+});
+
 /** The tool and arguments one `call_tool` call names, or its answer when it runs nothing. */
 function callToolTarget(
     input: unknown,
     all: ReadonlyMap<string, BridgeDeclaration>,
 ): { readonly name: string; readonly args: unknown } | { readonly result: CallToolResult } {
-    const { name, arguments: args } = (input ?? {}) as { name?: unknown; arguments?: unknown };
-    const declaration = typeof name === "string" ? all.get(name) : undefined;
+    const valid = Value.Check(callToolInputSchema, input) ? input : undefined;
+    const name = valid?.name;
+    const args = valid?.arguments;
+    const declaration = valid === undefined ? undefined : all.get(valid.name);
     if (declaration === undefined) {
         return {
             result: {

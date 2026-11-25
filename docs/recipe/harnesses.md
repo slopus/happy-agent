@@ -160,7 +160,7 @@ Codex carries no reason over its protocol and only learns the action was refused
 toward the same limit as Happy's own (3 in a row, or 10 of the last 50, stop the turn). Only when
 the reviewer decides nothing — every reviewer model unavailable, or no answer in 120 seconds —
 does the ask go to the person, as it would in Workspace write; a sub-agent then waits for an
-answer.
+answer. An ask too long for the reviewer to read in full also goes to the person.
 
 The reviewer never runs on the harness itself. It uses the account's own reviewer model when it
 has one (Sonnet on a Claude account, Codex Auto Review or GPT-5.4 on a Codex account), then the

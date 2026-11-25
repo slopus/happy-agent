@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 /**
  * Every harness starts agents on every other one, with real inference: a bot on one harness
  * creates a subtask (`create_subtask`) or a hidden collaborator (`create_agent`) on another, the
- * child answers, and its report reaches the bot, whose own model repeats it. Opt in with
+ * child answers, and its report reaches the bot, whose own model repeats it. Everything runs in
+ * Auto, with Happy's reviewer on Sonnet 5.5 through the Claude account. Opt in with
  * HAPPY_ACP_LIVE=agents. Claude runs on HAPPY_ACP_CLAUDE_OAUTH_TOKEN, Codex on
  * HAPPY_ACP_CODEX_AUTH_FILE (a Codex `auth.json`, used in place), Happy's own loop on Grok with
  * HAPPY_ACP_XAI_API_KEY, and Antigravity on its own login. HAPPY_ACP_ANTIGRAVITY_MODEL picks another
@@ -133,11 +134,18 @@ describe.skipIf(!live.includes("agents"))("agents across harnesses, live", () =>
             const gym = await createAgentGym({
                 config: CONFIG,
                 liveProviders: ["live_claude", "live_codex", "live_grok", "antigravity"],
-                permissionMode: "full_access",
+                permissionMode: "auto",
                 timeoutMs: TURN_MS,
             });
             let childId: string | undefined;
             try {
+                await gym.client.patchConfig({
+                    defaults: {
+                        providerId: "live_claude",
+                        modelId: "anthropic/sonnet-5-5",
+                        effort: "low",
+                    },
+                });
                 const bot = (await gym.client.createBot({ name: `Bot on ${parentHarness}` })).bot;
                 await gym.send(
                     `Call the Happy tool ${tool} with model "${child.modelId}", effort ` +
@@ -145,7 +153,7 @@ describe.skipIf(!live.includes("agents"))("agents across harnesses, live", () =>
                         `"${child.providerId}", title "Plum probe", and text "Reply with only the ` +
                         `word ${word}." Do nothing else now and reply with only WAITING. Later, ` +
                         "when it reports back, reply with only the word it reported.",
-                    { ...parent, sessionId: bot.agent.id, permissionMode: "full_access" },
+                    { ...parent, sessionId: bot.agent.id, permissionMode: "auto" },
                 );
                 childId = await gym.waitUntil(
                     () => childOf(gym, bot.agent.id, tool),

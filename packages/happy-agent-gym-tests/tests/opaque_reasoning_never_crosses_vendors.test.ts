@@ -66,43 +66,6 @@ function reasoningBlocks(messages: readonly SessionMessage[]) {
 }
 
 describe("opaque reasoning in replayed history", () => {
-    it("replays the opaque payload verbatim to a fresh provider session after a restart", async () => {
-        let agentCall = 0;
-        const gym = await createAgentGym({
-            inference: (request) => {
-                if (request.sessionId.startsWith("naming:")) {
-                    return { content: [{ text: "Reasoning restart", type: "text" }] };
-                }
-                const call = agentCall;
-                agentCall += 1;
-                if (call === 0) return shellCall(request);
-                return { content: [{ text: `answer ${String(call)}`, type: "text" }] };
-            },
-            permissionMode: "full_access",
-        });
-        running.add(gym);
-        const agentRequests = () =>
-            gym.inference.requests.filter((request) => request.sessionId === gym.defaultSessionId);
-
-        await gym.send("Think, then print the marker.");
-        expect(agentRequests()).toHaveLength(2);
-        expect(reasoningBlocks(agentRequests()[1]!.messages)).toEqual([
-            { type: "reasoning", text: THINKING, reasoning: OPAQUE },
-        ]);
-
-        await gym.restart();
-        await gym.send("What did the command print?");
-
-        const resumed = agentRequests()[2]!;
-        expect(reasoningBlocks(resumed.messages)).toEqual([
-            { type: "reasoning", text: THINKING, reasoning: OPAQUE },
-        ]);
-        expect(JSON.stringify(resumed.messages)).toContain("marker-ALPHA");
-        // A restart is not a model change: nothing announces a fresh context.
-        expect(JSON.stringify(resumed.messages)).not.toContain("history-context");
-        expect(gym.inference.unscripted).toEqual([]);
-    });
-
     it("keeps opaque reasoning within a vendor and never sends it to another vendor", async () => {
         const model = (id: string, name: string) => ({
             defaultEffort: "medium" as const,

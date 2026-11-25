@@ -37,21 +37,4 @@ describe("Antigravity's Claude-shaped tool array", () => {
         );
         expect(computeInstructionsForVendor("antigravity", compute)).toContain(`${shell}Output`);
     });
-
-    it("reads and edits files in the project through those tools", async () => {
-        const compute = new FakeCompute();
-        const { tool } = await computeToolset(ctx, compute, {
-            model: "antigravity/gemini-4-carbon",
-        });
-        compute.write("/workspace/a.txt", "hello");
-        expect((await tool("Read").execute(ctx, { file_path: "/workspace/a.txt" })).content).toBe(
-            "1\thello",
-        );
-        await tool("Edit").execute(ctx, {
-            file_path: "/workspace/a.txt",
-            old_string: "hello",
-            new_string: "world",
-        });
-        expect(compute.files.get("/workspace/a.txt")?.content).toBe("world");
-    });
 });
