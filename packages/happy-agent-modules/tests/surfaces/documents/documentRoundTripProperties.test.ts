@@ -47,6 +47,7 @@ const STYLES = [
     { strike: true },
     { code: true },
     { bold: true, italic: true },
+    { bold: true, strike: true },
     { underline: true },
 ];
 const LIST_TYPES = ["bulletListItem", "numberedListItem", "checkListItem", "toggleListItem"];
@@ -175,6 +176,10 @@ const LINES = [
         "[`c`](u)",
         "**`c`** x",
         "*a `c` b*",
+        "**a *b* c**",
+        "*a **b** c* d",
+        "***a** b*",
+        "**a ~~b~~**",
     ],
 ];
 const markdown = (lineEnd = "\n") =>
@@ -194,8 +199,17 @@ function write(state: Uint8Array, text: string): { state: Uint8Array; changed: b
     return { state: Y.encodeStateAsUpdate(doc), changed: change !== undefined };
 }
 const created = (text: string) => readDocument(markdownToUpdate(text) ?? EMPTY).text;
-/** Lines of spaces alone are blank lines, whichever nesting an empty paragraph has. */
-const unindented = (text: string) => text.replace(/^[ \t]+$/gm, "");
+/** Whether a line outside a code block ends in a space or a tab, which nobody reading it sees. */
+function trailing(text: string): boolean {
+    let fence: string | undefined;
+    return text.split("\n").some((line) => {
+        const mark = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+        if (fence === undefined && mark !== undefined) fence = mark;
+        else if (mark !== undefined && mark.startsWith(fence!) && line.trim() === mark)
+            fence = undefined;
+        return fence === undefined && /[ \t]$/.test(line);
+    });
+}
 const smallest = (failures: string[]) => failures.sort((a, b) => a.length - b.length).slice(0, 5);
 
 describe("document Markdown round trips", () => {
@@ -212,7 +226,7 @@ describe("document Markdown round trips", () => {
             const state = Y.encodeStateAsUpdate(doc);
             const { text, outsideModel } = readDocument(state);
             const again = write(state, text);
-            if (outsideModel || again.changed)
+            if (outsideModel || again.changed || trailing(text))
                 failures.push(
                     `${JSON.stringify(blocks)} read ${JSON.stringify(text)}, then ${JSON.stringify(readDocument(again.state).text)}`,
                 );
@@ -229,7 +243,10 @@ describe("document Markdown round trips", () => {
             if (
                 read.outsideModel ||
                 read.text !== created(text) ||
-                write(written.state, read.text).changed
+                write(written.state, read.text).changed ||
+                trailing(read.text) ||
+                // Formatting an agent wrote as Markdown can always be shown as Markdown.
+                read.omitted.includes("some formatting")
             )
                 failures.push(
                     `${JSON.stringify(text)} read ${JSON.stringify(read.text)}, new ${JSON.stringify(created(text))}`,
@@ -251,7 +268,7 @@ describe("document Markdown round trips", () => {
             if (edit === "replace") lines.splice(at, 1, pick(LINES));
             const text = edit === "rewrite" ? markdown() : lines.join("\n");
             const read = readDocument(write(state, text).state);
-            if (read.outsideModel || unindented(read.text) !== unindented(created(text)))
+            if (read.outsideModel || read.text !== created(text))
                 failures.push(
                     `${JSON.stringify(before.text)} with ${JSON.stringify(text)} read ${JSON.stringify(read.text)}, new ${JSON.stringify(created(text))}`,
                 );

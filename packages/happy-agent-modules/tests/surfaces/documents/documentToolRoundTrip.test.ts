@@ -232,7 +232,31 @@ const WRITTEN: [name: string, written: string, reads: string][] = [
         "\\# not a heading\n\n1\\. not a list\n\n\\*not emphasis\\* a_b_c 2 * 3\n",
         "\\# not a heading\n\n1\\. not a list\n\n\\*not emphasis\\* a_b_c 2 * 3\n",
     ],
-    ["an empty check item", "- [ ]\n- [x] done\n", "- [ ] \n- [x] done\n"],
+    ["an empty check item", "- [ ]\n- [x] done\n", "- [ ]\n- [x] done\n"],
+    [
+        "list items without text",
+        "-\n- [ ]\n- [x]\n- [ ] next\n\n1.\n2. two\n",
+        "-\n- [ ]\n- [x]\n- [ ] next\n\n1.\n2. two\n",
+    ],
+    ["list items that are a marker and a space", "- [ ] \n- \n\n1. \n", "- [ ]\n-\n\n1.\n"],
+    ["italic inside bold", "**Note: *important* thing**\n", "**Note: *important* thing**\n"],
+    ["bold inside italic", "*a **b** c*\n", "*a **b** c*\n"],
+    ["struck text inside bold", "**bold and ~~struck~~ text**\n", "**bold and ~~struck~~ text**\n"],
+    [
+        "emphasis that starts or ends inside other emphasis",
+        "***a** b* and **a *b*** and ***a* b**\n",
+        "***a** b* and **a *b*** and ***a* b**\n",
+    ],
+    [
+        "nested emphasis in a list item, a heading, and a table cell",
+        "- **a *b* c**\n\n# **a *b* c**\n\n| **a *b* c** |\n| --- |\n| 1 |\n",
+        "- **a *b* c**\n\n# **a *b* c**\n\n| **a *b* c** |\n| --- |\n| 1 |\n",
+    ],
+    [
+        "bold around a link",
+        "**a [link](https://x.y) c**\n",
+        "**a** [**link**](https://x.y) **c**\n",
+    ],
     ["an empty quote", "a\n\n>\n\nb\n", "a\n\n>\n\nb\n"],
     [
         "a heading that starts like a list",
@@ -276,7 +300,7 @@ const TYPED: [name: string, blocks: unknown[], reads: string][] = [
     [
         "an empty paragraph beneath a list item",
         [bullet("a", [p(), bullet("b")]), p("c")],
-        "- a\n\n  \n\n  - b\n\nc\n",
+        "- a\n\n\n\n  - b\n\nc\n",
     ],
     [
         "an empty paragraph nested beneath a paragraph",
@@ -284,10 +308,10 @@ const TYPED: [name: string, blocks: unknown[], reads: string][] = [
         "a\n\n\n\nb\n\nc\n",
     ],
     ["an empty heading", [block("heading", "", { level: 2 }), p("a")], "##\n\na\n"],
-    ["an empty bullet", [bullet(), bullet("a")], "- \n- a\n"],
-    ["an empty numbered item", [block("numberedListItem"), p("a")], "1. \n\na\n"],
+    ["an empty bullet", [bullet(), bullet("a")], "-\n- a\n"],
+    ["an empty numbered item", [block("numberedListItem"), p("a")], "1.\n\na\n"],
     ["an empty code block", [{ type: "codeBlock", content: [] }, p("a")], "```\n\n```\n\na\n"],
-    ["an empty check item", [block("checkListItem"), p("a")], "- [ ] \n\na\n"],
+    ["an empty check item", [block("checkListItem"), p("a")], "- [ ]\n\na\n"],
     ["an empty quote", [block("quote"), p("a")], ">\n\na\n"],
     ["a trailing line break", [p("a\n"), bullet("b\n\n"), p("c")], "a\n\n- b\n\nc\n"],
     ["a paragraph of one line break", [p("a"), p("\n"), p("b")], "a\n\n\n\nb\n"],
@@ -296,12 +320,12 @@ const TYPED: [name: string, blocks: unknown[], reads: string][] = [
         [{ ...p(), content: [text("a"), text("_", { underline: true }), text("b")] }],
         "a_b\n",
     ],
-    ["an empty bullet above a nested bullet", [bullet("", [bullet("x")])], "- \n  - x\n"],
-    ["an empty bullet beneath a bullet", [bullet("a", [bullet()]), p("b")], "- a\n\n  - \n\nb\n"],
+    ["an empty bullet above a nested bullet", [bullet("", [bullet("x")])], "-\n  - x\n"],
+    ["an empty bullet beneath a bullet", [bullet("a", [bullet()]), p("b")], "- a\n\n  -\n\nb\n"],
     [
         "an empty paragraph that ends a list item",
         [bullet("a", [p()]), bullet("b")],
-        "- a\n\n  \n\n- b\n",
+        "- a\n\n\n\n- b\n",
     ],
     ["spaced dashes", [p("---  -")], "\\---  -\n"],
     ["a star after a line break", [p("a\n* b")], "a\\\n\\* b\n"],
@@ -328,8 +352,65 @@ const TYPED: [name: string, blocks: unknown[], reads: string][] = [
                 content: [text("word ", { bold: true }), text("next"), text(" x ", { code: true })],
             },
         ],
-        "**word** next `x`&#32;\n",
+        "**word** next`  x  `\n",
     ],
+    [
+        "code that starts with a space, and code that is one",
+        [
+            {
+                ...p(),
+                content: [text(" lead", { code: true }), text("a"), text(" ", { code: true })],
+            },
+        ],
+        "` lead`a` `\n",
+    ],
+    [
+        "bold text with an italic word, and the other way round",
+        [
+            {
+                ...p(),
+                content: [
+                    text("a ", { bold: true }),
+                    text("b", { bold: true, italic: true }),
+                    text(" c", { bold: true }),
+                ],
+            },
+            {
+                ...p(),
+                content: [text("a", { bold: true, italic: true }), text(" b", { italic: true })],
+            },
+        ],
+        "**a *b* c**\n\n***a** b*\n",
+    ],
+    [
+        "bold and italic that overlap",
+        [
+            {
+                ...p(),
+                content: [
+                    text("a ", { bold: true }),
+                    text("b", { bold: true, italic: true }),
+                    text(" c", { italic: true }),
+                ],
+            },
+        ],
+        "**a** ***b*** *c*\n",
+    ],
+    [
+        "spaces formatted two ways between two kinds of emphasis",
+        [
+            {
+                ...p(),
+                content: [
+                    text("x ", { bold: true, strike: true }),
+                    text("  ", { strike: true }),
+                    text("b", { bold: true, italic: true }),
+                ],
+            },
+        ],
+        "**~~x~~   *b***\n",
+    ],
+    ["a carriage return in text", [p("x\ry")], "x&#13;y\n"],
     ["leading and trailing spaces", [p("  a  ")], "&#32; a &#32;\n"],
     ["a paragraph of spaces", [p("a"), p("   "), p("b")], "a\n\n&#32; &#32;\n\nb\n"],
     ["text that looks like a blank-line run", [p("a\n\n\nb")], "a\\\n\\\n\\\nb\n"],
@@ -437,7 +518,7 @@ describe("document tools round-trip Markdown", () => {
         const surfaceId = await t.create();
         await t.type(surfaceId, [p("x"), p()]);
         const written = await t.update(surfaceId, 1, "- a\n\n\n\n  beneath a\n");
-        expect(written.document.text).toBe("- a\n\n  \n\n  beneath a\n");
+        expect(written.document.text).toBe("- a\n\n\n\n  beneath a\n");
         expect(await t.blocks(surfaceId)).toMatchObject([
             { type: "bulletListItem", children: [{ content: [] }, { type: "paragraph" }] },
         ]);
