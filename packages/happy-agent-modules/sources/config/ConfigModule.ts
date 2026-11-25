@@ -5,10 +5,20 @@ import {
     type Compute,
     type ComputeServiceExecution,
 } from "@slopus/happy-agent-compute";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createId } from "@paralleldrive/cuid2";
 import { normalizePublicApiUrl } from "./PublicApiConfig.js";
-import { chmod, mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+    chmod,
+    mkdir,
+    open,
+    readdir,
+    readFile,
+    rename,
+    rm,
+    stat,
+    writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -45,6 +55,7 @@ import { parse, stringify, TomlDate, type TomlTable, type TomlValue } from "smol
 
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
 import { normalizeClaudeSetupToken } from "./ClaudeSetupToken.js";
+import type { ProviderCredentialSource } from "./ProviderCredentialSource.js";
 import type {
     HarnessPermissionAsker,
     HarnessPermissionDecision,
@@ -1568,6 +1579,22 @@ export type HappyAgentConfigSource = Readonly<Static<typeof happyAgentConfigSour
 export type HappyAgentConfiguration = Readonly<Static<typeof happyAgentConfigurationSchema>>;
 type PartialValues = Static<typeof partialValuesSchema>;
 type ConfigSourceKind = "global" | "local" | "runtime";
+
+/** The fields of a Claude, Codex, or Grok account that choose its credential, normalized. */
+const PROVIDER_CREDENTIAL_KEYS = [
+    "apiKey",
+    "authFile",
+    "authToken",
+    "configDir",
+    "credentialIsolation",
+    "oauthToken",
+] as const;
+
+/** Whether `path` is `directory` itself or anything below it. */
+function isWithin(directory: string, path: string): boolean {
+    const offset = relative(resolve(directory), resolve(path));
+    return offset === "" || (!offset.startsWith("..") && !isAbsolute(offset));
+}
 
 const DEFAULT_VALUES: HappyAgentConfigValues = {
     defaults: {
@@ -3165,44 +3192,209 @@ export class ConfigModule implements AgentModule {
 
     /** Save a vendor-issued setup token and apply it to new sessions without restarting. */
     async saveClaudeSetupToken(ctx: Context, token: string): Promise<void> {
+        await this.saveProviderSetupToken(ctx, "claude", token);
+    }
+
+    /**
+     * Save a vendor-issued Claude setup token as one Claude account's credential and apply it to
+     * new sessions without restarting. A token outranks every other Claude credential.
+     */
+    async saveProviderSetupToken(ctx: Context, providerId: string, token: string): Promise<void> {
         const normalized = normalizeClaudeSetupToken(token);
         await this.#runtimeLock.runInLock(ctx, async () => {
-            const provider = this.configuration.values.providers.claude;
-            if (provider?.type !== "claude") {
-                throw new Error("The Claude provider is not configured.");
+            if (this.configuration.values.providers[providerId]?.type !== "claude") {
+                throw new Error(`The Claude provider "${providerId}" is not configured.`);
             }
-            const next = structuredClone(this.#runtimeValues);
-            next.providers = {
-                ...next.providers,
-                claude: { ...next.providers?.claude, type: "claude", oauth_token: normalized },
-            };
-            const configuration = deepFreeze({
-                ...this.configuration,
-                sources: {
-                    ...this.configuration.sources,
-                    runtime: {
-                        ...this.configuration.sources.runtime,
-                        exists: true,
-                        values: normalizeSourceValues(next),
-                    },
-                },
-                provenance: {
-                    ...this.configuration.provenance,
-                    "providers.claude.oauthToken": "runtime" as const,
-                },
-                values: {
-                    ...this.configuration.values,
-                    providers: {
-                        ...this.configuration.values.providers,
-                        claude: { ...provider, oauthToken: normalized },
-                    },
-                },
-            });
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
-            this.#runtimeValues = next;
-            this.#configuration = configuration;
-            this.#credentialFailures.clear("claude");
+            await this.#replaceRuntimeCredential(providerId, "claude", (table) => ({
+                ...table,
+                oauth_token: normalized,
+            }));
         });
+    }
+
+    /**
+     * The private folder one attempt to sign an account in uses, below the agent home. Each
+     * attempt gets a new one, so a failed attempt never touches the credential in use.
+     */
+    providerSignInDirectory(providerId: string, attemptId: string): string {
+        if (!/^[a-z0-9]{1,64}$/.test(attemptId)) {
+            throw new Error("The sign-in attempt ID cannot name a folder.");
+        }
+        return join(this.#providerSignInsHome(providerId), attemptId);
+    }
+
+    /** Every sign-in attempt folder of one account that exists on disk. */
+    async providerSignInDirectories(providerId: string): Promise<readonly string[]> {
+        const home = this.#providerSignInsHome(providerId);
+        try {
+            const entries = await readdir(home, { withFileTypes: true });
+            return entries
+                .filter((entry) => entry.isDirectory())
+                .map((entry) => join(home, entry.name));
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * Where an account's credential comes from: one this installation owns, the machine's own
+     * sign-in or environment, or one configuration names. Only accounts that can sign in have one.
+     */
+    providerCredentialSource(providerId: string): ProviderCredentialSource | undefined {
+        const provider = this.configuration.values.providers[providerId];
+        if (provider === undefined) return undefined;
+        const internal = (path: string | undefined) =>
+            path !== undefined && isWithin(this.#providerSignInsHome(providerId), path);
+        switch (provider.type) {
+            case "codex":
+            case "grok":
+                if (provider.apiKey !== undefined) return "configured";
+                if (provider.authFile !== undefined) {
+                    return internal(provider.authFile) ? "internal" : "configured";
+                }
+                return provider.credentialIsolation === true ? "configured" : "system";
+            case "claude":
+                if (provider.oauthToken !== undefined) {
+                    // Only the daemon writes runtime.toml, so a token there was saved through it.
+                    return this.configuration.provenance[`providers.${providerId}.oauthToken`] ===
+                        "runtime"
+                        ? "internal"
+                        : "configured";
+                }
+                if (provider.apiKey !== undefined || provider.authToken !== undefined) {
+                    return "configured";
+                }
+                if (provider.configDir !== undefined) {
+                    return internal(provider.configDir) ? "internal" : "configured";
+                }
+                return provider.credentialIsolation === true ? "configured" : "system";
+            default:
+                return undefined;
+        }
+    }
+
+    /** The folder holding the sign-in an account uses, when that sign-in is this installation's. */
+    providerSignInHome(providerId: string): string | undefined {
+        const provider = this.configuration.values.providers[providerId];
+        if (this.providerCredentialSource(providerId) !== "internal") return undefined;
+        if (provider?.type === "claude")
+            return provider.oauthToken === undefined ? provider.configDir : undefined;
+        if (provider?.type === "codex" || provider?.type === "grok") {
+            return provider.authFile === undefined ? undefined : dirname(provider.authFile);
+        }
+        return undefined;
+    }
+
+    /**
+     * Point one account at the sign-in an attempt folder holds, in one atomic write of runtime.toml,
+     * and apply it to new sessions without restarting. Runtime keys and tokens that would outrank
+     * the sign-in are removed; the person's own configuration file is never changed.
+     */
+    async adoptProviderSignIn(ctx: Context, providerId: string, directory: string): Promise<void> {
+        await this.#runtimeLock.runInLock(ctx, async () => {
+            const type = this.configuration.values.providers[providerId]?.type;
+            if (type !== "codex" && type !== "claude" && type !== "grok") {
+                throw new Error(`The provider "${providerId}" cannot sign in.`);
+            }
+            if (!isWithin(this.#providerSignInsHome(providerId), directory)) {
+                throw new Error("The sign-in folder is not this account's.");
+            }
+            await this.#replaceRuntimeCredential(providerId, type, (table) => {
+                const {
+                    api_key: _apiKey,
+                    oauth_token: _oauthToken,
+                    auth_token: _authToken,
+                    auth_file: _authFile,
+                    config_dir: _configDir,
+                    ...rest
+                } = table;
+                return {
+                    ...rest,
+                    credential_isolation: true,
+                    ...(type === "claude"
+                        ? { config_dir: directory }
+                        : { auth_file: join(directory, "auth.json") }),
+                };
+            });
+        });
+    }
+
+    /**
+     * Rewrite one account's runtime table, then recompute the account's effective credential
+     * fields from the machine file under the new runtime layer. Call it inside the runtime lock.
+     */
+    async #replaceRuntimeCredential(
+        providerId: string,
+        type: "claude" | "codex" | "grok",
+        change: (table: Record<string, unknown>) => Record<string, unknown>,
+    ): Promise<void> {
+        const provider = this.configuration.values.providers[providerId];
+        if (provider === undefined)
+            throw new Error(`The provider "${providerId}" is not configured.`);
+        const next = structuredClone(this.#runtimeValues);
+        const tables = (next.providers ?? {}) as Record<string, Record<string, unknown>>;
+        tables[providerId] = change({ ...tables[providerId], type });
+        next.providers = tables as NonNullable<PartialValues["providers"]>;
+        if (!Value.Check(partialValuesSchema, next)) {
+            throw new Error("The generated runtime configuration is invalid.");
+        }
+        const runtimeSource = normalizeSourceValues(next);
+        const layers = [
+            ["global", this.configuration.sources.global.values],
+            ["runtime", runtimeSource],
+        ] as const;
+        const credential: Record<string, unknown> = {};
+        const provenance: Record<string, ConfigSourceKind> = {};
+        for (const [layer, values] of layers) {
+            const table = (
+                values["providers"] as Record<string, Record<string, unknown>> | undefined
+            )?.[providerId];
+            for (const key of PROVIDER_CREDENTIAL_KEYS) {
+                if (table?.[key] === undefined) continue;
+                credential[key] = table[key];
+                provenance[`providers.${providerId}.${key}`] = layer;
+            }
+        }
+        const record: Record<string, unknown> = { ...provider };
+        for (const key of PROVIDER_CREDENTIAL_KEYS) delete record[key];
+        const nextProvenance = { ...this.configuration.provenance };
+        for (const key of PROVIDER_CREDENTIAL_KEYS) {
+            delete nextProvenance[`providers.${providerId}.${key}`];
+        }
+        const configuration = deepFreeze({
+            ...this.configuration,
+            sources: {
+                ...this.configuration.sources,
+                runtime: {
+                    ...this.configuration.sources.runtime,
+                    exists: true,
+                    values: runtimeSource,
+                },
+            },
+            provenance: { ...nextProvenance, ...provenance },
+            values: {
+                ...this.configuration.values,
+                providers: {
+                    ...this.configuration.values.providers,
+                    [providerId]: { ...record, ...credential } as typeof provider,
+                },
+            },
+        });
+        if (!Value.Check(happyAgentConfigurationSchema, configuration)) {
+            throw new Error("The configuration for this account is invalid.");
+        }
+        await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+        this.#runtimeValues = next;
+        this.#configuration = configuration;
+        this.#credentialFailures.clear(providerId);
+    }
+
+    /** One account's sign-in folders: a readable name when its ID is safe, a hash otherwise. */
+    #providerSignInsHome(providerId: string): string {
+        const folder = /^[A-Za-z0-9_-]{1,64}$/.test(providerId)
+            ? providerId
+            : `account-${createHash("sha256").update(providerId).digest("hex").slice(0, 16)}`;
+        return join(this.configuration.paths.agentHome, "provider-accounts", folder);
     }
 
     /** Canonically rewrite the daemon-owned runtime configuration. */

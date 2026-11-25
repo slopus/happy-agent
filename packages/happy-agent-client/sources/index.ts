@@ -74,6 +74,7 @@ export * from "./protocol/connections.js";
 export * from "./protocol/daemon.js";
 export * from "./protocol/providerRoutes.js";
 export * from "./protocol/providerClis.js";
+export * from "./protocol/providerSignIn.js";
 export * from "./protocol/events.js";
 export * from "./protocol/feed.js";
 export * from "./protocol/files.js";

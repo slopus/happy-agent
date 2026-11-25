@@ -30,11 +30,15 @@ import { ClaudeSetupTokenError } from "../config/index.js";
 import {
     ProviderCliRequestError,
     ProviderClisModule,
+    ProviderSignInRequestError,
     providerCliIdSchema,
     providerCliMutationRequestSchema,
     providerCliSignInCodeRequestSchema,
     providerCliSignInRequestSchema,
+    providerSignInStartRequestSchema,
+    providerTokenRequestSchema,
     type ProviderCliId,
+    type ProviderCredential,
 } from "../providerClis/index.js";
 import {
     ProviderRouteRequestError,
@@ -1699,6 +1703,21 @@ export class ApiModule implements AgentModule {
                 }
                 return;
             }
+            const providerSignIn =
+                /^\/v0\/providers\/([^/]+)\/(sign-in|sign-in\/code|sign-in\/cancel|token)$/u.exec(
+                    url.pathname,
+                );
+            if (this.#providerClis !== undefined && providerSignIn !== null) {
+                await this.#handleProviderSignIn(
+                    ctx,
+                    request,
+                    response,
+                    decodePathSegment(providerSignIn[1]!, "provider ID"),
+                    providerSignIn[2]!,
+                    this.#providerClis,
+                );
+                return;
+            }
             if (
                 this.#providerClis !== undefined &&
                 (url.pathname === "/v0/provider-clis" ||
@@ -3199,6 +3218,32 @@ export class ApiModule implements AgentModule {
                 : [
                       this.#artifacts.onEvent((_eventCtx, event) => {
                           this.#convertArtifactEvent(event);
+                      }),
+                  ]),
+            ...(this.#providerClis === undefined
+                ? []
+                : [
+                      this.#providerClis.onSignInUpdated((providerSignIn, mutationId) => {
+                          this.#mutationIds.exit(() => {
+                              this.#journal.append(
+                                  "provider_sign_in.updated",
+                                  {
+                                      providerSignIn,
+                                      ...(mutationId === undefined ? {} : { mutationId }),
+                                  },
+                                  providerSignIn.updatedAt,
+                              );
+                              // A finished sign-in has changed the account's configuration.
+                              if (
+                                  providerSignIn.operation?.status === "succeeded" &&
+                                  providerSignIn.operation.finishedAt === providerSignIn.updatedAt
+                              ) {
+                                  this.#journal.append(
+                                      "config.updated",
+                                      mutationId === undefined ? {} : { mutationId },
+                                  );
+                              }
+                          });
                       }),
                   ]),
             ...(this.#providerClis === undefined
@@ -9899,6 +9944,120 @@ export class ApiModule implements AgentModule {
         }
     }
 
+    /**
+     * The routes under `/v0/providers/:providerId/sign-in` and `/token`; see "Provider sign-in"
+     * in API.md. They change the installation's accounts, so in team mode only the owner may.
+     */
+    async #handleProviderSignIn(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        providerId: string,
+        action: string,
+        providerClis: ProviderClisModule,
+    ): Promise<void> {
+        const reading = action === "sign-in" && request.method === "GET";
+        const method = action === "token" ? "PUT" : "POST";
+        if (!reading && request.method !== method) throw notFound("Route not found.");
+        if (!reading && this.#team.enabled && teamUser(ctx)?.isOwner !== true) {
+            throw new ApiError(403, "forbidden", "Only the team owner can sign accounts in.");
+        }
+        try {
+            if (reading) {
+                sendJson(response, 200, {
+                    providerSignIn: await providerClis.providerSignIn(ctx, providerId),
+                });
+                return;
+            }
+            if (action === "sign-in") {
+                const body = await optionalBodyAs(
+                    request,
+                    providerSignInStartRequestSchema,
+                    "provider sign-in request",
+                    2 * 1_024,
+                );
+                const providerSignIn = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await providerClis.startProviderSignIn(
+                            ctx,
+                            providerId,
+                            body.method,
+                            body.mutationId,
+                        ),
+                );
+                sendJson(response, 200, { providerSignIn });
+                return;
+            }
+            if (action === "sign-in/code") {
+                const body = await bodyAs(
+                    request,
+                    providerCliSignInCodeRequestSchema,
+                    "provider sign-in code",
+                    4 * 1_024,
+                );
+                const providerSignIn = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await providerClis.submitProviderSignInCode(
+                            ctx,
+                            providerId,
+                            body.code,
+                            body.mutationId,
+                        ),
+                );
+                sendJson(response, 200, { providerSignIn });
+                return;
+            }
+            if (action === "sign-in/cancel") {
+                const body = await optionalBodyAs(
+                    request,
+                    providerCliMutationRequestSchema,
+                    "provider sign-in cancellation",
+                    2 * 1_024,
+                );
+                const providerSignIn = await this.#withMutationId(
+                    body.mutationId,
+                    async () =>
+                        await providerClis.cancelProviderSignIn(ctx, providerId, body.mutationId),
+                );
+                sendJson(response, 200, { providerSignIn });
+                return;
+            }
+            const body = await bodyAs(
+                request,
+                providerTokenRequestSchema,
+                "provider token",
+                64 * 1_024,
+            );
+            const providerSignIn = await this.#withMutationId(body.mutationId, async () => {
+                const result = await providerClis.saveProviderToken(
+                    ctx,
+                    providerId,
+                    body.token,
+                    body.mutationId,
+                );
+                this.#journal.append("config.updated", {});
+                return result;
+            });
+            sendJson(response, 200, { providerSignIn });
+        } catch (error: unknown) {
+            if (error instanceof ClaudeSetupTokenError) throw invalidRequest(error.message);
+            if (error instanceof ProviderSignInRequestError) {
+                if (error.code === "not_found") throw notFound(error.message);
+                throw new ApiError(
+                    error.code === "invalid_request" ? 400 : 409,
+                    error.code,
+                    error.message,
+                    error.providerSignIn === undefined
+                        ? {}
+                        : { providerSignIn: error.providerSignIn },
+                );
+            }
+            throw error;
+        }
+    }
+
     /** The routes under `/v0/provider-routes`; see "Provider routes" in API.md. */
     async #handleProviderRoutes(
         ctx: Context,
@@ -11019,6 +11178,7 @@ export class ApiModule implements AgentModule {
                 ...(this.#providerRoutes === undefined || this.#team.enabled
                     ? {}
                     : { providerRoutes: true }),
+                ...(this.#providerClis === undefined ? {} : { providerSignIn: true }),
                 ...(this.#bridges === undefined ? {} : { workspaceBridges: true }),
                 ...(this.#feed === undefined ? {} : { feed: true, feedSubjectFilter: true }),
                 ...(this.#artifacts === undefined ? {} : { artifactCovers: true }),
@@ -11134,6 +11294,7 @@ export class ApiModule implements AgentModule {
         const providers: Record<string, ApiProviderDefinition> = {};
         for (const providerId of Object.keys(this.#config.configuration.values.providers)) {
             const pool = this.#config.smartProviderPool(providerId);
+            const credential = this.#providerClis?.providerCredential(providerId);
             providers[providerId] = {
                 name: this.#config.providerName(providerId),
                 type: this.#config.providerType(providerId) ?? "codex",
@@ -11143,6 +11304,7 @@ export class ApiModule implements AgentModule {
                 ...(pool === undefined
                     ? {}
                     : { pool: { strategy: pool.strategy, members: [...pool.members] } }),
+                ...(credential === undefined ? {} : { credential }),
             };
         }
         for (const route of routes) {
@@ -11844,6 +12006,8 @@ interface ApiProviderDefinition {
     readonly models: ApiProviderModelReference[];
     /** Only a smart provider has one. */
     readonly pool?: { readonly strategy: string; readonly members: string[] };
+    /** Only accounts that can sign in to a credential of their own have one. */
+    readonly credential?: ProviderCredential;
 }
 
 interface ApiProviderModelReference {

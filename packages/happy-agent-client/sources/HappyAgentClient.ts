@@ -227,6 +227,13 @@ import type {
     ProviderClisResponse,
 } from "./protocol/providerClis.js";
 import type {
+    ProviderSignInCancelRequest,
+    ProviderSignInCodeRequest,
+    ProviderSignInResponse,
+    ProviderSignInStartRequest,
+    ProviderTokenRequest,
+} from "./protocol/providerSignIn.js";
+import type {
     EventPageQuery,
     EventPageResponse,
     EventStreamFrame,
@@ -666,6 +673,80 @@ export class HappyAgentClient {
         return await this.#json({
             method: "POST",
             path: "v0/provider-clis/claude/setup-token",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `GET /v0/providers/:providerId/sign-in` — one account's sign-in into a credential this
+     * installation owns, refreshed and kept current by `provider_sign_in.updated`.
+     */
+    async getProviderSignIn(
+        providerId: string,
+        options: RequestOptions = {},
+    ): Promise<ProviderSignInResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/providers/${encodeURIComponent(providerId)}/sign-in`,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/providers/:providerId/sign-in` — starts, or joins, the vendor's sign-in for one
+     * account into a private folder of the daemon's, leaving the vendor's global sign-in alone.
+     */
+    async startProviderSignIn(
+        providerId: string,
+        request: ProviderSignInStartRequest = {},
+        options: RequestOptions = {},
+    ): Promise<ProviderSignInResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/providers/${encodeURIComponent(providerId)}/sign-in`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/providers/:providerId/sign-in/code` — hands the page's code to the sign-in. */
+    async submitProviderSignInCode(
+        providerId: string,
+        request: ProviderSignInCodeRequest,
+        options: RequestOptions = {},
+    ): Promise<ProviderSignInResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/providers/${encodeURIComponent(providerId)}/sign-in/code`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `POST /v0/providers/:providerId/sign-in/cancel` — stops the running sign-in, if any. */
+    async cancelProviderSignIn(
+        providerId: string,
+        request: ProviderSignInCancelRequest = {},
+        options: RequestOptions = {},
+    ): Promise<ProviderSignInResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/providers/${encodeURIComponent(providerId)}/sign-in/cancel`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `PUT /v0/providers/:providerId/token` — saves a Claude setup token for one account. */
+    async saveProviderToken(
+        providerId: string,
+        request: ProviderTokenRequest,
+        options: RequestOptions = {},
+    ): Promise<ProviderSignInResponse> {
+        return await this.#json({
+            method: "PUT",
+            path: `v0/providers/${encodeURIComponent(providerId)}/token`,
             json: request,
             signal: options.signal,
         });

@@ -8,12 +8,19 @@ Config before scanning providers and announcing the refreshed CLI object. The to
 included in CLI state or events. The installed program's sign-in status remains its own; a saved
 token does not claim that Claude Code's credential files changed or that Anthropic accepted it.
 
-## Happy uses the vendors' own sign-in, never its own
+## Happy uses the vendors' own sign-in, and can keep one for itself
 
-Rig deliberately has no login flow of its own. Signing in means running the vendor's program and
-relaying the page it prints, so credentials stay in the vendor's normal home folder (`~/.claude`,
-`~/.codex`, `~/.grok`) and every other tool that uses that assistant sees the same sign-in. No
-separate credential folders are created for Happy.
+Rig has no login flow of its own. Signing in always means running the vendor's program and
+relaying the page it prints. The global sign-in leaves credentials in the vendor's normal home
+folder (`~/.claude`, `~/.codex`, `~/.grok`), where every other tool sees the same sign-in.
+
+That shared sign-in broke in practice: people copied `~/.codex` between machines, and because a
+ChatGPT refresh token works only once, the copies signed each other out (three Codex logins on one
+machine were lost this way). Steve asked for each installation to sign each account in itself, so
+provider sign-in now runs the same vendor program with its home pointed at a private folder per
+account under the agent home, and the account uses only that folder from then on. The global
+sign-in remains for people who want one login shared with their other tools. The vendor's program
+still does the signing in; Happy never handles a password.
 
 ## On macOS, a signed-out answer from outside the desktop session means nothing
 
@@ -37,6 +44,14 @@ everywhere: the page and code appear as soon as the program prints them.
 waits 60 seconds for a pasted code, and then gives up. The module starts that prompt as the sign-in
 and bounds the wait to the program's own timeout, so the desktop shows the page and accepts the
 code within that minute.
+
+## A sign-in is replaced only when the new one succeeds
+
+Signing an account in again must never leave it worse off. Each attempt gets a fresh folder, the
+vendor's own check against that folder decides success, and only then does one write of
+`runtime.toml` switch the account. Failed, cancelled, and interrupted attempts delete their folder.
+The folder being replaced is not deleted while this daemon runs, because Codex renews into the
+same file a running session read from.
 
 ## Never run a real vendor sign-in in tests or on a developer's computer
 

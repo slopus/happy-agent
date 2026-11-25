@@ -10,6 +10,7 @@ import {
     serviceTierSchema,
     timestampSchema,
 } from "./common.js";
+import { providerCredentialSchema } from "./providerSignIn.js";
 
 /**
  * The newest wire protocol this client was built for.
@@ -169,6 +170,12 @@ export const healthResponseSchema = Type.Object({
             providerClis: Type.Optional(Type.Boolean()),
             /** True when the daemon serves `/v0/provider-routes`, described under Provider routes. */
             providerRoutes: Type.Optional(Type.Boolean()),
+            /**
+             * True when the daemon serves `/v0/providers/:providerId/sign-in`, the token route,
+             * `provider_sign_in.updated`, and provider `credential`, under Provider sign-in.
+             * Reported in team mode too.
+             */
+            providerSignIn: Type.Optional(Type.Boolean()),
             /**
              * True when every proxy tunnel has a WebSocket twin and the daemon pings its
              * WebSockets, described under WebSocket tunnels and Keepalive.
@@ -524,6 +531,11 @@ export const providerConfigSchema = Type.Object({
     models: Type.Array(providerModelReferenceSchema),
     /** Present only for a smart provider; older daemons omit it. */
     pool: Type.Optional(providerPoolSchema),
+    /**
+     * Where a `codex`, `claude`, or `grok` account's credential comes from and how it can sign in,
+     * under Provider sign-in. Other accounts and older daemons omit it.
+     */
+    credential: Type.Optional(providerCredentialSchema),
     /** The canonical provider key: `"claude"`, `"codex"`, `"grok"`, … */
     type: Type.String(),
 });

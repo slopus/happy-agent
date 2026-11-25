@@ -27,6 +27,10 @@ export type {
 export { DEFAULT_TELEGRAM_API_URL } from "./TelegramConfig.js";
 export { PublicApiConfigError } from "./PublicApiConfig.js";
 export { ClaudeSetupTokenError } from "./ClaudeSetupToken.js";
+export {
+    providerCredentialSourceSchema,
+    type ProviderCredentialSource,
+} from "./ProviderCredentialSource.js";
 export type { TeamMemberConfig } from "./TeamMembersConfig.js";
 export {
     remoteConnectionConfigSchema,
