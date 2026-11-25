@@ -237,8 +237,8 @@ it.each([
                         effortLevels: ["low"],
                     },
                     {
-                        id: "openai/gpt-6.1-sol",
-                        name: "GPT-6.1 Sol controller fixture",
+                        id: "openai/gpt-6.2-sol",
+                        name: "GPT-6.2 Sol controller fixture",
                         providerId: smartDefault ? "controller_pool" : "controller",
                         defaultEffort: "low",
                         effortLevels: ["low"],
@@ -345,6 +345,8 @@ it.each([
         await expect
             .poll(async () => (await client.getLiveSession("livefixture")).session.status)
             .toBe("active");
+        // Voice's opening turn takes the first script; a request must not race into that turn.
+        await expect.poll(() => snapshots.length).toBeGreaterThanOrEqual(1);
         if (recoverController) {
             providerSockets[0]!.send(
                 JSON.stringify(
@@ -617,10 +619,11 @@ it.each([
             "sessionRead",
             "sessionSend",
             "composerDraftAppend",
+            "end_call",
         ]);
         expect(
             captured?.requests.every(
-                (request) => request.model === "openai/gpt-6.1-sol" && request.effort === "low",
+                (request) => request.model === "openai/gpt-6.2-sol" && request.effort === "low",
             ),
         ).toBe(true);
         expect(snapshots).toHaveLength(1 + (recoverController ? 4 : 3) + (native ? 1 : 0));
@@ -638,7 +641,7 @@ it.each([
                 expect.objectContaining({
                     event: "session.created",
                     controllerProviderId: "controller",
-                    model: "openai/gpt-6.1-sol",
+                    model: "openai/gpt-6.2-sol",
                 }),
                 expect.objectContaining({ event: "control.attached" }),
                 expect.objectContaining({
@@ -865,8 +868,8 @@ it("queues a follow-up voice request behind the active desktop action and keeps 
                     effortLevels: ["low"],
                 },
                 {
-                    id: "openai/gpt-6.1-sol",
-                    name: "GPT-6.1 Sol controller fixture",
+                    id: "openai/gpt-6.2-sol",
+                    name: "GPT-6.2 Sol controller fixture",
                     providerId: "controller",
                     defaultEffort: "low",
                     effortLevels: ["low"],
@@ -1024,9 +1027,9 @@ it("queues a follow-up voice request behind the active desktop action and keeps 
         );
     expect(actions()).toHaveLength(2);
 
-    // One Voice conversation, pinned to GPT-6.1 Sol at low effort.
+    // One Voice conversation, pinned to GPT-6.2 Sol at low effort.
     expect(new Set(runs.map((run) => run.sessionId)).size).toBe(1);
-    expect(runs.every((run) => run.request.model === "openai/gpt-6.1-sol")).toBe(true);
+    expect(runs.every((run) => run.request.model === "openai/gpt-6.2-sol")).toBe(true);
     expect(runs.every((run) => run.request.effort === "low")).toBe(true);
     const followUp = runs.find(
         (run) =>
@@ -1036,10 +1039,15 @@ it("queues a follow-up voice request behind the active desktop action and keeps 
             ),
     );
     if (followUp === undefined) throw new Error("Missing follow-up Voice request.");
-    // Voice remembers the earlier request, and is handed only speech it has not seen.
-    const latest = JSON.stringify(followUp.request.context.messages.at(-1));
-    expect(latest).toContain("Then read the desktop");
-    expect(latest).not.toContain("Open the first conversation please");
+    // Voice remembers the earlier request, and is handed only speech it has not seen; the
+    // person's turns since the last send ride beside it, so a "send that" can carry them all.
+    const latest = JSON.parse(
+        (followUp.request.context.messages.at(-1) as unknown as { content: { text: string }[] })
+            .content[0]!.text,
+    ) as { transcripts: unknown[]; personSaid: string[] };
+    expect(JSON.stringify(latest.transcripts)).toContain("Then read the desktop");
+    expect(JSON.stringify(latest.transcripts)).not.toContain("Open the first conversation please");
+    expect(latest.personSaid.join(" ")).toContain("Open the first conversation please");
     expect(JSON.stringify(followUp.request.context.messages.slice(0, -1))).toContain(
         "Open the first conversation please",
     );

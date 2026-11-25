@@ -68,8 +68,8 @@ export function liveDesktopTools(live: LiveModule, agentId: string): AnyAgentToo
             live,
             agentId,
             "sessionSend",
-            "Stage exact text in the named conversation for independent human review and Send, opening that conversation first when it is not focused. This does NOT send it or answer questions.",
-            "Stage a message in a conversation for the person to send.",
+            "Send exact text to the named conversation as the person's message, without changing the screen. It never answers a question the conversation asked. A desktop that cannot send stages the text instead and says so.",
+            "Send a message to a conversation.",
             6,
         ),
         tool(

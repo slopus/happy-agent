@@ -5,7 +5,7 @@ import type { EventsModule } from "../../events/index.js";
 import type { HistoryModule } from "../../history/index.js";
 import type { TeamModule } from "../../team/index.js";
 import { formatConversationTurns } from "./formatConversationTurns.js";
-import type { VoiceOutline } from "./VoiceOutline.js";
+import type { VoiceDirectory } from "./VoiceDirectory.js";
 
 /** One conversation's share of a `read_conversations` answer. */
 export const VOICE_CONVERSATION_TEXT_LIMIT = 4_000;
@@ -26,7 +26,7 @@ export async function readVoiceConversation(
         readonly events: EventsModule;
         readonly team: TeamModule;
     },
-    outline: VoiceOutline,
+    directory: VoiceDirectory,
     agentId: string,
     input: { readonly turns: number; readonly replies: number },
 ): Promise<string> {
@@ -35,7 +35,7 @@ export async function readVoiceConversation(
     const visible =
         config !== undefined &&
         typeof config.metadata?.["archivedAt"] !== "number" &&
-        (!modules.team.enabled || (await inSidebar(ctx, agents, outline, agentId)));
+        (!modules.team.enabled || (await inSidebar(ctx, agents, directory, agentId)));
     if (!visible) return `${agentId} is not a conversation the person can see on this machine.`;
     const title = config.metadata?.["title"];
     const now = Date.now();
@@ -69,12 +69,10 @@ export async function readVoiceConversation(
 async function inSidebar(
     ctx: Context,
     agents: AgentSystemRef,
-    outline: VoiceOutline,
+    directory: VoiceDirectory,
     agentId: string,
 ): Promise<boolean> {
-    const rows = new Set(
-        outline.rows.flatMap((row) => (row.agentId === undefined ? [] : [row.agentId])),
-    );
+    const rows = new Set(directory.rows.map((row) => row.agentId));
     let current = agentId;
     for (let depth = 0; depth < 16; depth++) {
         if (rows.has(current)) return true;

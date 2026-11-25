@@ -34,7 +34,7 @@ import {
     type LiveDesktopContext,
     type LiveSessionRef,
 } from "@slopus/happy-agent-client";
-import type { SessionProviderError } from "@slopus/happy-providers";
+import type { SessionEvent, SessionProviderError } from "@slopus/happy-providers";
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
 import { afterCommit, asyncQueue, detach, shutdown, type Context } from "@steve.kite/stdlib";
@@ -51,9 +51,11 @@ import { EventsModule } from "../events/index.js";
 import { HistoryModule } from "../history/index.js";
 import { AGENT_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { SubtasksModule, type CreateSubtaskInput } from "../subtasks/index.js";
-import { SurfacesModule } from "../surfaces/index.js";
 import { TasksModule } from "../tasks/index.js";
 import { TeamModule } from "../team/index.js";
+import { UserInputModule } from "../userInput/index.js";
+import { ProjectsModule } from "../projects/index.js";
+import { WorkspacesModule } from "../workspaces/index.js";
 import { liveVersion } from "./impl/liveVersion.js";
 import { LiveError } from "./LiveError.js";
 import {
@@ -71,6 +73,7 @@ import {
     voiceAgents,
 } from "./persistence/liveVoiceAgents.js";
 import {
+    LIVE_GREETING_CUE,
     LIVE_LATER_REQUEST_INSTRUCTIONS,
     LIVE_QUEUED_REQUEST_INSTRUCTIONS,
     LIVE_VOICE_INSTRUCTIONS,
@@ -83,8 +86,6 @@ import {
     liveTaskCreateTools,
 } from "./impl/liveDesktopTools.js";
 import {
-    LIVE_APPEND_BYTES,
-    liveAppStateAppends,
     liveAppStateEntities,
     liveAppStateView,
     liveControllerAppState,
@@ -94,10 +95,27 @@ import { liveFixedOutcome } from "./impl/liveOutcome.js";
 import { liveMentionedTarget } from "./impl/liveMentionedTarget.js";
 import { formatConversationReads } from "./impl/formatConversationReads.js";
 import { readVoiceConversation } from "./impl/readVoiceConversation.js";
-import { readVoiceOutline } from "./impl/readVoiceOutline.js";
-import { renderVoiceOutline, VOICE_OUTLINE_TITLE } from "./impl/renderVoiceOutline.js";
-import type { VoiceOutline } from "./impl/VoiceOutline.js";
+import { readVoiceDirectory } from "./impl/readVoiceDirectory.js";
+import { readVoiceTurns, VOICE_REPLY_BYTES, type VoiceTurns } from "./impl/readVoiceTurns.js";
+import {
+    renderVoiceCallContext,
+    VOICE_CONTEXT_BYTES,
+    VOICE_DIRECTORY_ROWS,
+    type VoiceRowState,
+} from "./impl/renderVoiceCallContext.js";
+import { cutWords } from "./impl/cutWords.js";
+import { sortedJson } from "./impl/sortedJson.js";
+import type { VoiceDirectory, VoiceDirectoryRow } from "./impl/VoiceDirectory.js";
+import { voiceDirectoryUpdate } from "./impl/voiceDirectoryUpdate.js";
+import { VoiceRefs } from "./impl/VoiceRefs.js";
+import { voiceAgo, voiceClock, voiceTimeZone } from "./impl/voiceTimes.js";
+import {
+    appendCallHistory,
+    readCallHistory,
+    type VoiceCallSlot,
+} from "./persistence/liveCallHistory.js";
 import { voiceSidebarTools } from "./impl/voiceSidebarTools.js";
+import { voiceCallTools } from "./impl/voiceCallTools.js";
 import { getVoiceSettingsTool } from "./tools/get_voice_settings.js";
 import { setVoiceSettingsTool } from "./tools/set_voice_settings.js";
 import { LiveControllerError } from "./impl/LiveControllerError.js";
@@ -108,6 +126,7 @@ import {
     type LiveControllerDetail,
     type LiveDiagnostic,
 } from "./impl/liveDiagnostics.js";
+import { captureLiveContext } from "./impl/captureLiveContext.js";
 import {
     createLiveProviderTransport,
     LiveProviderError,
@@ -125,9 +144,27 @@ const REQUEST_DEADLINE_MS = 120_000;
 const REQUEST_ROUNDS = 8;
 /** One `read_conversations` answer stays cheap however many conversations it reads. */
 const CONVERSATIONS_TEXT_LIMIT = 24_000;
+/** A `list_sidebar` page: the phones' page of 50 within what one tool answer should carry. */
+const VOICE_SIDEBAR_PAGE = 50;
+const VOICE_SIDEBAR_BYTES = 24 * 1024;
+/** One update line is at most this big, as the phones bound theirs. */
+const VOICE_UPDATE_BYTES = 16 * 1024;
+/** Background lines go only this soon after a person's turn begins: its first words are the cue. */
+const PERSON_TURN_MS = 1_500;
+/** How long voice's goodbye is given before a call the person asked to end is closed. */
+const END_CALL_DELAY_MS = 2_000;
 /** How long a stopped Voice turn is given to settle before the next request reaches Voice. */
 const SETTLE_GRACE_MS = 10_000;
 type Transport = Awaited<ReturnType<typeof createLiveProviderTransport>>;
+type LiveContextKind =
+    | "context"
+    | "directory"
+    | "focus"
+    | "reply"
+    | "error"
+    | "outcome"
+    | "greeting"
+    | "status";
 type Fragment = Extract<LiveControlServerMessage, { type: "transcript" }>;
 export interface LiveControlSocket {
     send(text: string): void;
@@ -174,13 +211,48 @@ interface Call {
     /** The voice model prompt captured when the call started. */
     voiceInstructions: string;
     appState?: LiveAppState;
-    /** The latest sidebar outline, and the text GPT-Live was last fully told. */
-    outline?: VoiceOutline;
-    outlineText?: string;
-    outlineTimer?: ReturnType<typeof setTimeout>;
-    outlineSending?: true;
-    /** A changed outline waits while a request lacks its delivered outcome. */
-    outlineDue?: true;
+    /** The person's clock, as the desktop names it. */
+    timeZone: string;
+    /** The call's conversation references, the latest directory, and what voice was told of it. */
+    refs: VoiceRefs;
+    directory: VoiceDirectory;
+    toldRows: readonly VoiceDirectoryRow[];
+    /** The conversations voice was shown by reference; Voice is given only their agent IDs. */
+    listed: Set<string>;
+    /** The first context exactly as voice was told it. */
+    contextText: string;
+    /** Directory and status changes settle for a second from the first before they go. */
+    directoryTimer?: ReturnType<typeof setTimeout>;
+    statusTimer?: ReturnType<typeof setTimeout>;
+    /**
+     * Background lines wait, in order, for the person's next turn and while a request lacks its
+     * delivered outcome. Each is rendered when it goes, so its times are said as of then.
+     */
+    backlog: { kind: LiveContextKind; render: () => string }[];
+    /** When the person last spoke; background lines go only while they are taking a turn. */
+    personSpokeAt?: number;
+    /** Each conversation's status as voice was last told it, and those that may have changed. */
+    toldStatus: Map<string, string>;
+    statusDirty: Set<string>;
+    flushing?: true;
+    /** Lines voice was told since Voice's last request, so Voice starts from the same context. */
+    updates: string[];
+    /** The conversation on screen, by agent ID, or null for none. */
+    onScreen: string | null;
+    /** The last four conversations on screen or messaged, newest first; their replies are told. */
+    followed: string[];
+    /** Each followed conversation's words since its last step, until they are complete. */
+    pieces: Map<string, string>;
+    /** The newest message time voice was told of each conversation, so nothing is replayed. */
+    toldAt: Map<string, number>;
+    /** What was said aloud in this call, for the next call's recap. */
+    slots: VoiceCallSlot[];
+    /**
+     * What the person said in this call since voice last sent something, one entry per turn, so a
+     * "send that" can carry everything they built up rather than voice's shortened delegation.
+     */
+    personTurns: string[];
+    lastSpeaker?: "user" | "assistant";
     /** Accepted delegations without a delivered outcome. */
     requests: number;
     /** The target voice is currently highlighting, and why. */
@@ -218,6 +290,10 @@ interface Request {
     failure?: LiveControllerError;
     /** The outcome already spoken; nothing more from this turn is. */
     delivered: boolean;
+    /** A verified outcome waiting on whether Voice's current inference calls more actions. */
+    pendingFixed?: string;
+    /** Voice ended the call because the person asked; its outcome is not spoken. */
+    endCall?: true;
     startedAt: number;
     settled: ReturnType<typeof deferred<string | undefined>>;
 }
@@ -234,7 +310,9 @@ export class LiveModule implements AgentModule {
     readonly #bots: BotsModule;
     readonly #subtasks: SubtasksModule;
     readonly #tasks: TasksModule;
-    readonly #surfaces: SurfacesModule;
+    readonly #userInput: UserInputModule;
+    readonly #projects: ProjectsModule;
+    readonly #workspaces: WorkspacesModule;
     readonly #history: HistoryModule;
     readonly #events: EventsModule;
     readonly #team: TeamModule;
@@ -247,6 +325,10 @@ export class LiveModule implements AgentModule {
     readonly #voiceQueues = new Map<string, ReturnType<typeof asyncQueue>>();
     /** The request each Voice is working on, by Voice's agent ID. */
     readonly #requests = new Map<string, Request>();
+    /** Recap writes in flight; shutdown waits for them so a dropped call is remembered. */
+    readonly #recapWrites = new Set<Promise<unknown>>();
+    /** Why each conversation's last run failed, seen since the daemon started; cleared on success. */
+    readonly #failures = new Map<string, string>();
     /** Voice turns a restart interrupted; they are stopped, never resumed. */
     readonly #interrupted = new Set<string>();
     #agents: AgentSystemRef | undefined;
@@ -260,17 +342,21 @@ export class LiveModule implements AgentModule {
         bots: BotsModule,
         subtasks: SubtasksModule,
         tasks: TasksModule,
-        surfaces: SurfacesModule,
         history: HistoryModule,
         events: EventsModule,
         team: TeamModule,
+        userInput: UserInputModule,
+        projects: ProjectsModule,
+        workspaces: WorkspacesModule,
     ) {
         this.#config = config;
         this.#durable = durable;
         this.#bots = bots;
         this.#subtasks = subtasks;
         this.#tasks = tasks;
-        this.#surfaces = surfaces;
+        this.#userInput = userInput;
+        this.#projects = projects;
+        this.#workspaces = workspaces;
         this.#history = history;
         this.#events = events;
         this.#team = team;
@@ -308,22 +394,40 @@ export class LiveModule implements AgentModule {
                 await this.#update(tx, ownerId, session, {
                     status: "failed",
                     error: "Voice ended because the daemon restarted. Start a new call explicitly.",
+                    failureReason: "restart",
                     endedAt: Date.now(),
                     usage: { seconds: session.usage.seconds, final: false },
                 });
+                // What was said in it died with the process; that it dropped is still known.
+                await appendCallHistory(
+                    tx,
+                    ownerId,
+                    [
+                        {
+                            at: session.updatedAt,
+                            kind: "ending",
+                            text: "the call dropped (Happy Agent restarted)",
+                        },
+                    ],
+                    Date.now(),
+                );
             }
             for (const voice of await voiceAgents(tx))
                 this.#voiceOwners.set(voice.agentId, voice.ownerId);
         });
-        // Any bot, task, or Surface change may rename, add, or remove a row; an unchanged outline
-        // pushes nothing.
-        const outlineChanged = () => {
-            for (const call of this.#calls.values()) this.#queueOutline(call);
+        // Any bot, task, or subtask change may rename, add, move, or remove a conversation; an
+        // unchanged directory tells voice nothing.
+        const directoryChanged = () => {
+            for (const call of this.#calls.values()) this.#queueDirectory(call);
         };
         this.#unsubscribe = [
-            this.#bots.onEvent(outlineChanged),
-            this.#tasks.onEvent(outlineChanged),
-            this.#surfaces.onEvent(outlineChanged),
+            this.#bots.onEvent(directoryChanged),
+            this.#tasks.onEvent(directoryChanged),
+            this.#projects.onEvent(directoryChanged),
+            this.#workspaces.onEvent(directoryChanged),
+            this.#userInput.onEvent((_ctx, event) =>
+                this.#statusChanged(event.request.askingAgentId),
+            ),
         ];
         return {
             tools: async (toolCtx, scope) =>
@@ -345,8 +449,12 @@ export class LiveModule implements AgentModule {
             afterAgentActivatedTransact: (_hookCtx, scope, activation) => {
                 if (activation.restored && this.#voiceOwners.has(scope.agent.id))
                     this.#interrupted.add(scope.agent.id);
+                // A new subtask is a new conversation in the directory.
+                if (!activation.restored) directoryChanged();
             },
+            metadataChanged: () => directoryChanged(),
             beforeAgentLoop: async (hookCtx, scope) => {
+                this.#statusChanged(scope.agent.id);
                 if (!this.#interrupted.delete(scope.agent.id)) return;
                 await this.#requireAgents().abort(hookCtx, scope.agent.id);
             },
@@ -359,12 +467,11 @@ export class LiveModule implements AgentModule {
                 if (request === undefined || !request.accepted) return;
                 request.inferenceText = "";
                 if (request.delivered || request.failure !== undefined) return;
-                // Actions that all succeeded and ended in a terminal one are the outcome.
+                // Actions that all succeeded and ended in a terminal one are the outcome, unless
+                // this inference goes on to more actions: its first output decides.
                 const fixed = this.#fixedOutcome(request);
-                if (fixed !== undefined) {
-                    void this.#deliver(request, fixed, "fixed");
-                    return;
-                }
+                if (fixed === undefined) delete request.pendingFixed;
+                else request.pendingFixed = fixed;
                 if (++request.rounds > REQUEST_ROUNDS) {
                     request.failure = new LiveControllerError("limit", {
                         phase: "desktopAction",
@@ -377,8 +484,22 @@ export class LiveModule implements AgentModule {
                 }
             },
             onEvent: (_hookCtx, scope, event) => {
+                this.#followedEvent(scope.agent.id, event);
                 const request = this.#requests.get(scope.agent.id);
                 if (request === undefined || !request.accepted) return;
+                if (request.pendingFixed !== undefined) {
+                    if (
+                        event.type === "toolcall_start" ||
+                        (event.type === "done" && event.state === "tool_call")
+                    )
+                        delete request.pendingFixed;
+                    else if (
+                        event.type === "text_start" ||
+                        event.type === "text_delta" ||
+                        event.type === "done"
+                    )
+                        void this.#deliver(request, request.pendingFixed, "fixed");
+                }
                 if (event.type === "text_delta") {
                     if (request.inferenceText.length < OUTCOME_CHARACTERS)
                         request.inferenceText += event.delta;
@@ -395,6 +516,14 @@ export class LiveModule implements AgentModule {
                 }
             },
             afterAgentSettled: (_hookCtx, scope, settlement) => {
+                this.#failures.delete(scope.agent.id);
+                if (settlement.error !== undefined) {
+                    if (this.#failures.size >= 1000)
+                        this.#failures.delete(this.#failures.keys().next().value!);
+                    this.#failures.set(scope.agent.id, settlement.error);
+                }
+                this.#followedSettled(scope.agent.id, settlement.error);
+                this.#statusChanged(scope.agent.id);
                 const request = this.#requests.get(scope.agent.id);
                 if (request?.accepted === true) request.settled.resolve(settlement.error);
             },
@@ -422,23 +551,28 @@ export class LiveModule implements AgentModule {
     }
 
     /** The machine voice settings exactly as `config.voice` reports them. */
-    voiceSettings(): VoiceConfig {
+    async voiceSettings(): Promise<VoiceConfig> {
         const settings = this.#config.voiceSettings;
         const effective = this.#config.voiceController(settings);
+        const accounts = await this.#config.voiceAccounts().catch(() => []);
         return {
             controller: {
                 providerId: settings.controller_provider ?? null,
                 modelId: settings.controller_model ?? null,
                 effort: settings.controller_effort ?? null,
                 fastMode: settings.controller_fast_mode ?? false,
+                speed: settings.controller_speed ?? null,
             },
             effectiveController: {
                 providerId: effective.providerId,
                 modelId: effective.modelId,
                 effort: effective.effort,
                 serviceTier: effective.serviceTier,
+                speed: effective.speed,
+                speeds: [...effective.speeds],
                 notice: effective.notice,
             },
+            accounts: accounts.map((account) => ({ ...account })),
             defaultSystemPrompt: LIVE_VOICE_INSTRUCTIONS,
             systemPromptOverride: settings.system_prompt ?? null,
             effectiveSystemPrompt: settings.system_prompt ?? LIVE_VOICE_INSTRUCTIONS,
@@ -463,18 +597,19 @@ export class LiveModule implements AgentModule {
             ...(controller?.fastMode === undefined
                 ? {}
                 : { controller_fast_mode: controller.fastMode }),
+            ...(controller?.speed === undefined ? {} : { controller_speed: controller.speed }),
             ...(prompt === undefined
                 ? {}
                 : { system_prompt: prompt === LIVE_VOICE_INSTRUCTIONS ? null : prompt }),
         };
         if (await this.#config.updateRuntimeVoiceSettings(ctx, update))
             for (const listener of this.#settingsListeners) listener();
-        return this.voiceSettings();
+        return await this.voiceSettings();
     }
 
     async voiceSettingsForAdmin(ctx: Context, agentId: string): Promise<VoiceConfig> {
         await this.#requireAdmin(ctx, agentId);
-        return this.voiceSettings();
+        return await this.voiceSettings();
     }
 
     async updateVoiceSettingsForAdmin(
@@ -486,13 +621,81 @@ export class LiveModule implements AgentModule {
         return await this.updateVoiceSettings(ctx, patch);
     }
 
-    /** The person's sidebar as Voice reads it: names in order, with agent IDs for targeting. */
-    async voiceOutline(ctx: Context, ownerId: string): Promise<VoiceOutline> {
-        return await readVoiceOutline(
+    /** The person's conversations in sidebar order, with agent IDs for targeting. */
+    async voiceDirectory(ctx: Context, ownerId: string): Promise<VoiceDirectory> {
+        return await readVoiceDirectory(
             ctx,
-            { bots: this.#bots, tasks: this.#tasks, surfaces: this.#surfaces },
+            {
+                agents: this.#requireAgents(),
+                bots: this.#bots,
+                tasks: this.#tasks,
+                subtasks: this.#subtasks,
+                projects: this.#projects,
+                workspaces: this.#workspaces,
+            },
             ownerId,
+            (await readVoiceAgent(ctx, ownerId))?.agentId,
         );
+    }
+
+    /**
+     * `list_sidebar`, as the phones' `listConversations`: every conversation the person has here,
+     * those started during the call included, filtered by a case-insensitive substring of the
+     * title or the path it sits under, a page at a time, never the whole sidebar at once.
+     */
+    async voiceSidebar(
+        ctx: Context,
+        ownerId: string,
+        voiceAgentId: string,
+        input: { readonly query?: string; readonly cursor?: string } = {},
+    ): Promise<string> {
+        const call = this.#requests.get(voiceAgentId)?.call;
+        const directory = await this.voiceDirectory(ctx, ownerId);
+        const query = input.query?.trim().toLowerCase() ?? "";
+        const matches = directory.rows.filter(
+            (row) =>
+                query === "" ||
+                row.title.toLowerCase().includes(query) ||
+                [...row.parents, row.title].join(" > ").toLowerCase().includes(query),
+        );
+        const start = Math.max(0, Number.parseInt(input.cursor ?? "0", 10) || 0);
+        const runs = await this.#runActivity();
+        const rows = [];
+        let index = start;
+        for (; index < matches.length && rows.length < VOICE_SIDEBAR_PAGE; index++) {
+            const row = matches[index]!;
+            const state = await this.#rowState(row.agentId, runs).catch(() => undefined);
+            const ref = call?.refs.ref(row.agentId);
+            const entry = {
+                agentId: row.agentId,
+                title: row.title,
+                kind: row.kind,
+                ...(row.parents.length === 0 ? {} : { parents: row.parents }),
+                ...(ref === undefined ? {} : { ref }),
+                ...(state === undefined
+                    ? {}
+                    : {
+                          working: state.working,
+                          needsPerson: state.needsPerson,
+                          ...(state.question === undefined
+                              ? {}
+                              : { asks: cutWords(state.question, 512) }),
+                          ...(state.failed === undefined
+                              ? {}
+                              : { failed: cutWords(state.failed, 512) }),
+                          ...(state.lastActivityAt === undefined || call === undefined
+                              ? {}
+                              : { lastActivity: this.#when(call, state.lastActivityAt) }),
+                      }),
+            };
+            if (Buffer.byteLength(JSON.stringify([...rows, entry])) > VOICE_SIDEBAR_BYTES) break;
+            rows.push(entry);
+        }
+        return JSON.stringify({
+            rows,
+            total: matches.length,
+            ...(index < matches.length ? { nextCursor: String(index) } : {}),
+        });
     }
 
     /** Several conversations at once, bounded so reading many stays cheap. */
@@ -506,7 +709,7 @@ export class LiveModule implements AgentModule {
         },
     ): Promise<string> {
         const agents = this.#requireAgents();
-        const outline = await this.voiceOutline(ctx, ownerId);
+        const directory = await this.voiceDirectory(ctx, ownerId);
         const modules = {
             agents,
             history: this.#history,
@@ -517,7 +720,7 @@ export class LiveModule implements AgentModule {
         for (const id of input.ids)
             reads.push({
                 id,
-                text: await readVoiceConversation(ctx, modules, outline, id, input),
+                text: await readVoiceConversation(ctx, modules, directory, id, input),
             });
         return formatConversationReads(reads, CONVERSATIONS_TEXT_LIMIT);
     }
@@ -550,8 +753,6 @@ export class LiveModule implements AgentModule {
             (request.appState !== undefined &&
                 (!capabilities.includes("appState") ||
                     Buffer.byteLength(JSON.stringify(request.appState)) > FRAME_BYTES)) ||
-            (request.localConnectionId !== undefined &&
-                !request.desktopCapabilities?.includes("agentTargets")) ||
             (!capabilities.includes("appState") && namesTask(request.context))
         ) {
             throw new LiveError(
@@ -646,6 +847,22 @@ export class LiveModule implements AgentModule {
                 ...(request.appState === undefined
                     ? {}
                     : { appState: structuredClone(request.appState) }),
+                timeZone: voiceTimeZone(request.appState?.timeZone),
+                refs: VoiceRefs.start([]),
+                directory: { rows: [] },
+                toldRows: [],
+                listed: new Set(),
+                contextText: "",
+                backlog: [],
+                toldStatus: new Map(),
+                statusDirty: new Set(),
+                updates: [],
+                onScreen: null,
+                followed: [],
+                pieces: new Map(),
+                toldAt: new Map(),
+                slots: [],
+                personTurns: [],
                 requests: 0,
                 queued: 0,
                 queuedBytes: 0,
@@ -782,11 +999,7 @@ export class LiveModule implements AgentModule {
                         ? {}
                         : { capabilities: call.capabilities }),
                 });
-                this.#send(call, {
-                    type: "status",
-                    status: call.session.status,
-                    error: call.session.error,
-                });
+                this.#send(call, this.#statusFrame(call, call.session));
                 for (const fragment of call.fragments) this.#send(call, fragment);
                 return {
                     message: (text) =>
@@ -823,11 +1036,24 @@ export class LiveModule implements AgentModule {
         for (const unsubscribe of this.#unsubscribe.splice(0)) unsubscribe();
         await Promise.all(
             [...this.#calls.values()].map(async (call) => {
-                await this.close(this.#context(), call.ownerId, call.session.id);
-                await call.transport?.close();
+                // The desktop is told why before its socket goes: the daemon is stopping, which
+                // ends the call as a restart would, not as the person's own End.
+                if (!terminal(call.session))
+                    await this.#change(call, {
+                        status: "failed",
+                        error: "Voice ended because Happy Agent stopped. Start a new call once it is running again.",
+                        failureReason: "restart",
+                        endedAt: Date.now(),
+                    }).catch(() => undefined);
+                call.controllerAbort.abort();
+                this.#cancelActions(call);
+                await call.transport?.close().catch(() => undefined);
                 await call.queue;
             }),
         );
+        // A call the provider never confirmed closed still keeps its recap, as a drop.
+        for (const call of [...this.#calls.values()]) this.#dispose(call);
+        await Promise.all([...this.#recapWrites]);
     }
 
     /**
@@ -858,6 +1084,7 @@ export class LiveModule implements AgentModule {
             return refusal(
                 "This action was not started because an earlier action did not succeed.",
             );
+        action = this.#windowTarget(call, action);
         let result = this.#localRefusal(call, action);
         if (result === undefined) {
             try {
@@ -911,6 +1138,34 @@ export class LiveModule implements AgentModule {
         return JSON.stringify(result);
     }
 
+    /**
+     * Voice names conversations by agent ID, from the references it is given. A window that did not
+     * negotiate agent targets gets the target it lists for that agent instead; an agent it does not
+     * list stays an agent target and is refused.
+     */
+    #windowTarget(call: Call, action: LiveDesktopAction): LiveDesktopAction {
+        if (
+            call.capabilities.includes("agentTargets") ||
+            !("target" in action) ||
+            !("kind" in action.target) ||
+            action.target.kind !== "agent"
+        )
+            return action;
+        const agentId = action.target.agentId;
+        const entity = liveAppStateEntities(this.#view(call)).find(
+            (candidate) =>
+                candidate.session?.sessionId === agentId &&
+                (this.#thisMachine(call) === undefined ||
+                    candidate.connectionId === this.#thisMachine(call)),
+        );
+        if (entity?.session === undefined) return action;
+        return (
+            action.type === "desktopOpen"
+                ? { ...action, target: entity.target }
+                : { ...action, target: entity.session }
+        ) as LiveDesktopAction;
+    }
+
     /** Voice acts only on this daemon's own conversations, and names agents only when allowed. */
     #localRefusal(call: Call, action: LiveDesktopAction): LiveDesktopActionResult | undefined {
         const targets: (LiveActionTarget | LiveActionSession)[] =
@@ -925,9 +1180,7 @@ export class LiveModule implements AgentModule {
                 message:
                     "This window cannot open conversations by agent ID. Read desktopState and use its targets.",
             };
-        const local =
-            call.request.localConnectionId ??
-            call.appState?.servers.find((server) => server.kind === "local")?.connectionId;
+        const local = this.#thisMachine(call);
         const connectionId =
             "target" in action
                 ? action.target.connectionId
@@ -974,7 +1227,8 @@ export class LiveModule implements AgentModule {
                 ...(provider === undefined ? {} : { provider }),
                 model: controller.modelId,
                 effort: controller.effort as CreateSubtaskInput["effort"],
-                ...(controller.serviceTier === null ? {} : { serviceTier: controller.serviceTier }),
+                // Its opening turn only confirms it is set up; requests carry the call's own tier.
+                ...(controller.serviceTier === null ? {} : { serviceTier: "priority" as const }),
             },
             agentId,
             undefined,
@@ -990,8 +1244,9 @@ export class LiveModule implements AgentModule {
     #voiceTools(ownerId: string, agentId: string): AnyAgentTool[] {
         const capabilities = this.#requests.get(agentId)?.call.capabilities ?? [];
         return [
-            ...voiceSidebarTools(this, ownerId),
+            ...voiceSidebarTools(this, ownerId, agentId),
             ...liveDesktopTools(this, agentId),
+            ...voiceCallTools(this, agentId),
             ...(capabilities.includes("taskCreate") ? liveTaskCreateTools(this, agentId) : []),
             ...(capabilities.includes("sessionModelChange")
                 ? liveModelChangeTools(this, agentId)
@@ -1001,12 +1256,12 @@ export class LiveModule implements AgentModule {
 
     async #start(call: Call): Promise<void> {
         try {
-            const outline = await this.#readOutline(call);
+            const context = await this.#firstContext(call);
             call.transport = await createLiveProviderTransport({
                 credential: call.credential,
                 sdp: call.request.sdp,
                 instructions: call.voiceInstructions,
-                initialContext: outline,
+                initialContext: context,
                 signal: call.abort.signal,
                 onEvent: (event) =>
                     this.#enqueue(call, Buffer.byteLength(JSON.stringify(event)), () =>
@@ -1015,12 +1270,8 @@ export class LiveModule implements AgentModule {
             });
             call.request.sdp = "";
             delete call.request.appState;
-            call.outlineText = outline;
-            this.#diagnostic(call, {
-                event: "outline.pushed",
-                appendCount: 1,
-                bytes: Buffer.byteLength(outline),
-            });
+            call.contextText = context;
+            this.#contextPushed(call, "context", [context], false);
             if (terminal(call.session) || call.session.status === "closing") {
                 call.transport.dispose();
                 throw new Error("Voice stopped during startup.");
@@ -1049,8 +1300,9 @@ export class LiveModule implements AgentModule {
             this.#diagnostic(call, { event: "provider.ready" });
             if (call.session.status === "starting") {
                 await this.#change(call, { status: "active" });
-                // A sidebar that changed during startup reaches voice once it can be told.
-                this.#queueOutline(call);
+                await this.#greet(call);
+                // A directory that changed during startup reaches voice once it can be told.
+                this.#queueDirectory(call);
             }
         } else if (event.type === "usage") {
             await this.#change(call, {
@@ -1066,6 +1318,11 @@ export class LiveModule implements AgentModule {
                     : event.orderly
                       ? null
                       : (event.error ?? "The voice connection ended unexpectedly."),
+                ...(call.controllerLost
+                    ? { failureReason: "controlLost" as const }
+                    : event.orderly
+                      ? {}
+                      : { failureReason: event.reason ?? "connectionLost" }),
                 endedAt: Date.now(),
             });
             call.allocated.reject(
@@ -1090,6 +1347,14 @@ export class LiveModule implements AgentModule {
             if (!Value.Check(liveControlServerMessageSchema, fragment))
                 throw new Error("The voice transcript exceeded its protocol limits.");
             call.fragments.push(fragment);
+            const turnStarts = fragment.role === "user" && call.lastSpeaker !== "user";
+            this.#said(call, fragment.role, fragment.text);
+            // A turn's first words are the cue for held context; a change during the turn,
+            // such as a click while the person is still speaking, waits for the next one.
+            if (turnStarts) {
+                call.personSpokeAt = Date.now();
+                void this.#flush(call);
+            }
             this.#diagnostic(call, {
                 event: "transcript.received",
                 transcriptId: fragment.transcriptId,
@@ -1109,7 +1374,7 @@ export class LiveModule implements AgentModule {
             if (call.delegations.size >= 256)
                 throw new Error("Voice exceeded its bounded delegation capacity.");
             call.delegations.add(event.delegationId);
-            // A changed outline waits until this request's outcome is delivered.
+            // Background context waits until this request's outcome is delivered.
             call.requests += 1;
             const fragments = [...call.fragments];
             const queuedAt = Date.now();
@@ -1130,7 +1395,7 @@ export class LiveModule implements AgentModule {
                 )
                 .finally(() => {
                     call.requests -= 1;
-                    if (call.requests === 0) this.#releaseOutline(call);
+                    if (call.requests === 0) this.#releaseBackground(call);
                 });
         }
     }
@@ -1197,18 +1462,27 @@ export class LiveModule implements AgentModule {
         const timer = setTimeout(() => deadline.abort(), REQUEST_DEADLINE_MS);
         timer.unref();
         try {
-            const outline =
-                call.outline === undefined ? undefined : renderVoiceOutline(call.outline);
-            const hash =
-                outline === undefined
-                    ? undefined
-                    : createHash("sha256").update(outline).digest("hex");
+            // Voice starts from what voice was told: the first context once, then each update.
+            const hash = createHash("sha256").update(call.contextText).digest("hex");
             const sent = (await readVoiceAgent(ctx, call.ownerId))?.outlineSent;
-            const message = requestMessage(
-                delegationText,
-                fragments.filter((fragment) => !call.sentFragments.has(fragment.transcriptId)),
-                hash === undefined || hash === sent ? undefined : outline,
-            );
+            const updates = call.updates.splice(0);
+            const message = requestMessage({
+                delegation: delegationText,
+                fragments: fragments.filter(
+                    (fragment) => !call.sentFragments.has(fragment.transcriptId),
+                ),
+                now: voiceClock(Date.now(), call.timeZone),
+                personSaid: call.personTurns.map((turn) => turn.trim()).filter(Boolean),
+                thisMachine: this.#thisMachine(call),
+                refs: Object.fromEntries(
+                    [...call.listed].flatMap((agentId) => {
+                        const ref = call.refs.ref(agentId);
+                        return ref === undefined ? [] : [[ref, agentId]];
+                    }),
+                ),
+                ...(hash === sent ? {} : { context: call.contextText }),
+                updates,
+            });
             await agents.send(
                 ctx,
                 agentId,
@@ -1225,8 +1499,7 @@ export class LiveModule implements AgentModule {
                 },
             );
             for (const id of message.transcriptIds) call.sentFragments.add(id);
-            if (message.outline && hash !== undefined)
-                await saveOutlineSent(ctx, call.ownerId, agentId, hash);
+            if (message.context) await saveOutlineSent(ctx, call.ownerId, agentId, hash);
             const ended = await settledOrStopped(request, [
                 deadline.signal,
                 call.controllerAbort.signal,
@@ -1270,6 +1543,8 @@ export class LiveModule implements AgentModule {
                 await this.#deliver(request, request.failure.voiceContext, "controller");
                 return;
             }
+            if (request.pendingFixed !== undefined)
+                await this.#deliver(request, request.pendingFixed, "fixed");
             this.#diagnostic(call, {
                 event: "controller.finished",
                 delegationId,
@@ -1317,11 +1592,54 @@ export class LiveModule implements AgentModule {
         });
     }
 
+    /**
+     * Happy speaks first, as the phones' hosted agent does. A line in the startup context did not
+     * reliably start speech, so voice is cued once the call is active, as the phones cue it.
+     */
+    async #greet(call: Call): Promise<void> {
+        if (call.transport === undefined) return;
+        try {
+            await call.transport.append({
+                delegationId: null,
+                text: LIVE_GREETING_CUE,
+                speakable: true,
+            });
+            this.#contextPushed(call, "greeting", [LIVE_GREETING_CUE], true);
+        } catch {
+            // A missed greeting never fails the call; the person can still speak first.
+        }
+    }
+
+    /** End the call a request came from once its turn settles, because the person asked. */
+    endVoiceCall(agentId: string): string {
+        const request = this.#requests.get(agentId);
+        if (request === undefined || !request.accepted)
+            return refusal("No voice call is active for this request, so there is no call to end.");
+        request.endCall = true;
+        return JSON.stringify({ status: "succeeded", output: { type: "ack" } });
+    }
+
     /** The one spoken outcome of a request; nothing later from the same request is spoken. */
     async #deliver(request: Request, text: string, outcome: "fixed" | "controller"): Promise<void> {
         if (request.delivered) return;
         request.delivered = true;
         const call = request.call;
+        if (request.endCall) {
+            // Voice already said goodbye; give its audio a moment, then end as the person's End.
+            const timer = setTimeout(() => {
+                void this.close(this.#context(), call.ownerId, call.session.id).catch(
+                    () => undefined,
+                );
+            }, END_CALL_DELAY_MS);
+            timer.unref();
+            this.#diagnostic(call, {
+                event: "delegation.delivered",
+                delegationId: request.delegationId,
+                outcome,
+                durationMs: Date.now() - request.startedAt,
+            });
+            return;
+        }
         if (terminal(call.session) || call.session.status !== "active") return;
         try {
             if (call.transport === undefined)
@@ -1332,11 +1650,13 @@ export class LiveModule implements AgentModule {
                 outcomeHint === "queued"
                     ? LIVE_QUEUED_REQUEST_INSTRUCTIONS
                     : LIVE_LATER_REQUEST_INSTRUCTIONS;
+            const outcomeText = `${text}\n\n${instructions}`;
             await call.transport.append({
                 delegationId: request.delegationId,
-                text: `${text}\n\n${instructions}`,
+                text: outcomeText,
                 speakable: true,
             });
+            this.#contextPushed(call, "outcome", [outcomeText], true);
             this.#diagnostic(call, {
                 event: "delegation.delivered",
                 delegationId: request.delegationId,
@@ -1368,11 +1688,10 @@ export class LiveModule implements AgentModule {
         )
             return undefined;
         const names = new Map<string, string>();
-        for (const row of request.call.outline?.rows ?? [])
-            if (row.agentId !== undefined && !names.has(row.agentId))
-                names.set(row.agentId, row.name);
+        for (const row of request.call.directory.rows)
+            if (!names.has(row.agentId)) names.set(row.agentId, row.title);
         return liveFixedOutcome(
-            request.executed.map(({ action }) => action),
+            request.executed,
             this.#view(request.call),
             request.call.context,
             names,
@@ -1398,6 +1717,7 @@ export class LiveModule implements AgentModule {
                 event: "context.accepted",
                 context: liveContextSummary(call.context),
             });
+            await this.#focusChanged(call, message.revision);
         } else if (message.type === "actionResult") {
             const pending = call.actions.get(message.actionId);
             if (pending === undefined) throw new Error("The desktop answered an unknown action.");
@@ -1436,12 +1756,15 @@ export class LiveModule implements AgentModule {
                     );
                 return;
             }
+            // A desktop that sends answers `ack`; one that can only stage answers `staged`.
             if (
                 message.result.status === "succeeded" &&
-                (message.result.output.type === "staged") !==
-                    (pending.action.type === "sessionSend")
+                (pending.action.type === "sessionSend"
+                    ? message.result.output.type !== "staged" &&
+                      message.result.output.type !== "ack"
+                    : message.result.output.type === "staged")
             )
-                throw new Error("The desktop returned an invalid staging result.");
+                throw new Error("The desktop returned an invalid send result.");
             clearTimeout(pending.timer);
             pending.result = message.result;
             this.#diagnostic(call, {
@@ -1483,9 +1806,9 @@ export class LiveModule implements AgentModule {
     }
 
     /**
-     * The desktop stages and appends only in the focused conversation, and models opened it
-     * without then staging. A send or draft names its conversation, so one that is not focused is
-     * opened first; a refused open is that action's result and nothing is staged.
+     * A send goes to its named conversation and never changes the screen. The desktop appends to
+     * a draft only in the focused conversation, and models opened it without then appending, so
+     * a draft that is not focused is opened first; a refused open is that action's result.
      */
     async #execute(
         call: Call,
@@ -1494,7 +1817,7 @@ export class LiveModule implements AgentModule {
         inputTranscriptIds: string[],
     ): Promise<LiveDesktopActionResult> {
         if (
-            (action.type === "sessionSend" || action.type === "composerDraftAppend") &&
+            action.type === "composerDraftAppend" &&
             (call.context.activeSession === null ||
                 liveTargetKey(call.context.activeSession.target) !== liveTargetKey(action.target))
         ) {
@@ -1506,7 +1829,15 @@ export class LiveModule implements AgentModule {
             );
             if (opened.status !== "succeeded") return opened;
         }
-        return await this.#action(call, delegationId, action, inputTranscriptIds);
+        const result = await this.#action(call, delegationId, action, inputTranscriptIds);
+        // The reply to what voice sent is told as it is written.
+        if (action.type === "sessionSend" && result.status === "succeeded") {
+            // What comes next is a new message; the turns already sent are not sent again.
+            call.personTurns = [];
+            const agentId = await this.#localAgent(call, action.target);
+            if (agentId !== undefined) await this.#follow(call, agentId);
+        }
+        return result;
     }
 
     async #action(
@@ -1655,7 +1986,7 @@ export class LiveModule implements AgentModule {
                 call.session = session;
                 if (changes.status !== undefined)
                     this.#diagnostic(call, { event: "session.status", status: session.status });
-                this.#send(call, { type: "status", status: session.status, error: session.error });
+                this.#send(call, this.#statusFrame(call, session));
             }
             this.#emit({
                 ownerId,
@@ -1672,9 +2003,30 @@ export class LiveModule implements AgentModule {
         return session;
     }
 
+    /** A failed call says why to a desktop that negotiated typed failure reasons. */
+    #statusFrame(call: Call, session: LiveSession): LiveControlServerMessage {
+        return {
+            type: "status",
+            status: session.status,
+            error: session.error,
+            ...(session.status === "failed" &&
+            call.capabilities.includes("failureReasons") &&
+            typeof session.failureReason === "string"
+                ? { reason: session.failureReason }
+                : {}),
+        };
+    }
+
     async #fail(call: Call, error: string, providerError?: LiveProviderError): Promise<void> {
+        const failureReason =
+            providerError?.reason ?? (call.controllerLost ? ("controlLost" as const) : undefined);
         if (!terminal(call.session))
-            await this.#change(call, { status: "failed", error, endedAt: Date.now() });
+            await this.#change(call, {
+                status: "failed",
+                error,
+                ...(failureReason === undefined ? {} : { failureReason }),
+                endedAt: Date.now(),
+            });
         call.allocated.reject(
             new LiveError(
                 providerError?.status ?? 503,
@@ -1697,8 +2049,10 @@ export class LiveModule implements AgentModule {
         }
     }
     #dispose(call: Call): void {
+        if (this.#calls.get(call.session.id) === call) this.#saveRecap(call);
         clearTimeout(call.attachTimer);
-        clearTimeout(call.outlineTimer);
+        clearTimeout(call.directoryTimer);
+        clearTimeout(call.statusTimer);
         this.#cancelActions(call);
         call.abort.abort();
         // Stops Voice's turn for this call's request; Voice itself remains.
@@ -1712,77 +2066,546 @@ export class LiveModule implements AgentModule {
         return liveAppStateView(call.context, call.appState);
     }
 
-    /** The outline voice is told, or a fixed line when the sidebar cannot be read. */
-    async #readOutline(call: Call): Promise<string> {
+    /**
+     * The call's first context, as the phones give it: when the call started on the person's
+     * clock, the recap of earlier calls, the conversation on screen with its last turns, and the
+     * directory with references, status and last activity. What it tells counts as known.
+     */
+    async #firstContext(call: Call): Promise<string> {
+        const ctx = this.#context();
+        const now = Date.now();
+        let directory: VoiceDirectory = { rows: [] };
+        let recap: VoiceCallSlot[] = [];
         try {
-            call.outline = await this.voiceOutline(this.#context(), call.ownerId);
-            return renderVoiceOutline(call.outline);
+            directory = await this.voiceDirectory(ctx, call.ownerId);
+            recap = await readCallHistory(ctx, call.ownerId);
         } catch {
-            return `# ${VOICE_OUTLINE_TITLE}\n\nThe sidebar could not be read.`;
+            // The call still starts; voice is told what could be read.
         }
-    }
-
-    /** Coalesce sidebar changes for 250 ms with one push in flight; a request holds them. */
-    #queueOutline(call: Call): void {
-        if (call.session.status !== "active") return;
-        if (call.requests > 0) {
-            call.outlineDue = true;
-            return;
+        call.directory = directory;
+        call.toldRows = directory.rows;
+        call.refs = VoiceRefs.start(directory.rows.map((row) => row.agentId));
+        const onScreen = await this.#localAgent(call, call.context.activeTarget);
+        call.onScreen = onScreen ?? null;
+        let screen: Parameters<typeof renderVoiceCallContext>[0]["onScreen"];
+        if (onScreen !== undefined) {
+            const row = directory.rows.find((item) => item.agentId === onScreen) ?? {
+                agentId: onScreen,
+                title: await this.#title(onScreen),
+                kind: "subtask" as const,
+                parents: [],
+            };
+            const turns = await this.#turns(onScreen);
+            screen = {
+                row,
+                ref: call.refs.ref(onScreen),
+                state: await this.#rowState(onScreen),
+                turns,
+            };
+            this.#told(call, onScreen, turns);
+            await this.#follow(call, onScreen);
         }
-        if (call.outlineTimer !== undefined || call.outlineSending) return;
-        call.outlineTimer = setTimeout(() => {
-            delete call.outlineTimer;
-            void this.#pushOutline(call);
-        }, 250);
-        call.outlineTimer.unref();
+        const rows = await this.#rankedRows(call, directory);
+        for (const { row, state } of rows)
+            if (state !== undefined) call.toldStatus.set(row.agentId, statusKey(state));
+        if (screen !== undefined) call.toldStatus.set(screen.row.agentId, statusKey(screen.state));
+        // Voice is told the conversations voice can name; the rest are found by searching.
+        call.listed = new Set(
+            [...rows]
+                .sort((a, b) => a.rank - b.rank)
+                .slice(0, VOICE_DIRECTORY_ROWS)
+                .map(({ row }) => row.agentId),
+        );
+        const text = renderVoiceCallContext({
+            now,
+            timeZone: call.timeZone,
+            focusRevision: call.session.contextRevision,
+            recap,
+            onScreen: screen,
+            rows,
+            omitted: 0,
+            // A native call's voice prompt is a startup item too, so it comes out of the budget.
+            bytes:
+                VOICE_CONTEXT_BYTES -
+                (call.credential.type === "codex_subscription"
+                    ? Buffer.byteLength(call.voiceInstructions)
+                    : 0),
+        });
+        return text;
     }
 
     /**
-     * Voice counts as told only after every part is appended; an outline whose text did not
-     * change pushes nothing, and a request that starts between parts holds the rest.
+     * Every conversation with its state and its claim on the directory's budget: the one on screen
+     * and the followed ones first, then the most recently active. A subtask's parents rank with it,
+     * so a kept subtask always sits under its own conversation. Only those that can be listed are
+     * asked whether they need the person.
      */
-    async #pushOutline(call: Call): Promise<void> {
-        const transport = call.transport;
-        if (call.session.status !== "active" || transport === undefined) return;
-        call.outlineSending = true;
+    async #rankedRows(call: Call, directory: VoiceDirectory) {
+        // One query gives every conversation's last run, so ranking reads no conversation; the
+        // create path waits on this before the call is allocated.
+        const runs = await this.#runActivity();
+        const activity = directory.rows.map((row) => runs.get(row.agentId)?.at);
+        const recency = directory.rows
+            .map((_row, index) => index)
+            .sort((a, b) => (activity[b] ?? -1) - (activity[a] ?? -1) || a - b);
+        const rank = new Map<string, number>();
+        recency.forEach((index, position) => {
+            const { agentId } = directory.rows[index]!;
+            const first =
+                agentId === call.onScreen ? 0 : call.followed.includes(agentId) ? 1 : undefined;
+            rank.set(agentId, first ?? 2 + position);
+        });
+        const parent = new Map(
+            directory.rows.flatMap((row) =>
+                row.parentAgentId === undefined ? [] : [[row.agentId, row.parentAgentId] as const],
+            ),
+        );
+        for (const row of directory.rows) {
+            const own = rank.get(row.agentId)!;
+            for (
+                let current = parent.get(row.agentId), depth = 0;
+                current !== undefined && depth < 16;
+                current = parent.get(current), depth++
+            )
+                rank.set(current, Math.min(rank.get(current) ?? own, own));
+        }
+        const listable = new Set(
+            [...rank.entries()]
+                .sort((a, b) => a[1] - b[1])
+                .slice(0, VOICE_DIRECTORY_ROWS)
+                .map(([agentId]) => agentId),
+        );
+        return await Promise.all(
+            directory.rows.map(async (row) => ({
+                row,
+                ref: call.refs.ref(row.agentId),
+                rank: rank.get(row.agentId)!,
+                state: listable.has(row.agentId)
+                    ? await this.#rowState(row.agentId, runs).catch(() => undefined)
+                    : undefined,
+            })),
+        );
+    }
+
+    /** Whether a conversation is working or needs the person, and when it last did something. */
+    async #rowState(
+        agentId: string,
+        runs?: ReadonlyMap<string, { readonly at: number }>,
+    ): Promise<VoiceRowState> {
+        const ctx = this.#context();
+        const [activity, pending] = await Promise.all([
+            runs ?? this.#runActivity(),
+            this.#userInput.list(ctx, agentId, { status: "pending", limit: 1 }),
+        ]);
+        const working = this.#events.activeRunId(agentId) !== undefined;
+        const failed = working ? undefined : this.#failures.get(agentId);
+        return {
+            working,
+            needsPerson: pending.length > 0,
+            lastActivityAt: activity.get(agentId)?.at,
+            ...(pending[0] === undefined ? {} : { question: pending[0].question }),
+            ...(failed === undefined ? {} : { failed }),
+        };
+    }
+
+    /** When each conversation's latest run ended or started, from one query. */
+    async #runActivity(): Promise<ReadonlyMap<string, { readonly at: number }>> {
         try {
-            const text = await this.#readOutline(call);
-            if (text === call.outlineText) return;
-            const appends =
-                Buffer.byteLength(text) <= LIVE_APPEND_BYTES
-                    ? [text]
-                    : liveAppStateAppends(
-                          VOICE_OUTLINE_TITLE,
-                          text.slice(`# ${VOICE_OUTLINE_TITLE}\n`.length),
-                      );
-            for (const part of appends) {
-                if (call.requests > 0 || call.session.status !== "active") {
-                    call.outlineDue = true;
-                    return;
-                }
-                await transport.append({ delegationId: null, text: part, speakable: false });
-            }
-            call.outlineText = text;
-            this.#diagnostic(call, {
-                event: "outline.pushed",
-                appendCount: appends.length,
-                bytes: appends.reduce((sum, part) => sum + Buffer.byteLength(part), 0),
-            });
+            return await this.#history.runActivity(this.#context());
         } catch {
-            // The outline is background context; a failed append never fails the call.
-        } finally {
-            delete call.outlineSending;
-            if (call.outlineDue && call.requests === 0) {
-                delete call.outlineDue;
-                this.#queueOutline(call);
+            return new Map();
+        }
+    }
+
+    async #turns(agentId: string): Promise<VoiceTurns> {
+        try {
+            return await readVoiceTurns(this.#context(), this.#history, agentId, 5);
+        } catch {
+            return { turns: [], older: false, lastPersonAt: undefined, lastReplyAt: undefined };
+        }
+    }
+
+    async #title(agentId: string): Promise<string> {
+        const title = (await this.#requireAgents().config(this.#context(), agentId))?.metadata?.[
+            "title"
+        ];
+        return typeof title === "string" ? title : "Untitled";
+    }
+
+    /** Remember the newest message voice was told of a conversation, so it is never replayed. */
+    #told(call: Call, agentId: string, turns: VoiceTurns): void {
+        const newest = Math.max(
+            call.toldAt.get(agentId) ?? 0,
+            ...turns.turns.flatMap((turn) => [turn.message?.at ?? 0, turn.reply?.at ?? 0]),
+        );
+        call.toldAt.set(agentId, newest);
+    }
+
+    /** This computer's connection ID in the call's window. */
+    #thisMachine(call: Call): string | undefined {
+        return (
+            call.request.localConnectionId ??
+            call.appState?.servers.find((server) => server.kind === "local")?.connectionId ??
+            (call.context.connections.length === 1
+                ? call.context.connections[0]!.connectionId
+                : undefined)
+        );
+    }
+
+    /** The agent a desktop target's conversation is, when it is one of this daemon's. */
+    async #localAgent(
+        call: Call,
+        target: LiveActionTarget | LiveActionSession | null,
+    ): Promise<string | undefined> {
+        if (target === null) return undefined;
+        const local = this.#thisMachine(call);
+        if (local !== undefined && target.connectionId !== local) return undefined;
+        const agentId =
+            "kind" in target
+                ? target.kind === "agent"
+                    ? target.agentId
+                    : "sessionId" in target
+                      ? target.sessionId
+                      : undefined
+                : target.sessionId;
+        if (agentId === undefined) return undefined;
+        const config = await this.#requireAgents()
+            .config(this.#context(), agentId)
+            .catch(() => undefined);
+        return config === undefined ? undefined : agentId;
+    }
+
+    /** Make a conversation the newest of the four whose replies voice hears. */
+    async #follow(call: Call, agentId: string): Promise<void> {
+        if (agentId === call.voiceAgentId) return;
+        if (!call.followed.includes(agentId) && !call.toldAt.has(agentId)) {
+            // What is there when a conversation is first followed counts as known.
+            const turns = await this.#turns(agentId);
+            this.#told(call, agentId, turns);
+        }
+        call.followed = [agentId, ...call.followed.filter((id) => id !== agentId)];
+        while (call.followed.length > 4) {
+            const dropped = call.followed.findLast((id) => id !== call.onScreen);
+            if (dropped === undefined) break;
+            call.followed = call.followed.filter((id) => id !== dropped);
+            // One that drops out and comes back is never replayed what it was already told.
+            call.pieces.delete(dropped);
+        }
+    }
+
+    /**
+     * The screen in front changed. Voice is told the focus with its revision and, the first time
+     * it sees that conversation, its recent turns with their times; later turns already told are
+     * never replayed. A focused conversation becomes the newest followed one.
+     */
+    async #focusChanged(call: Call, revision: number): Promise<void> {
+        const agentId = (await this.#localAgent(call, call.context.activeTarget)) ?? null;
+        if (agentId === call.onScreen) return;
+        call.onScreen = agentId;
+        if (agentId === null) {
+            this.#push(
+                call,
+                "focus",
+                sortedJson({ event: "focus", focusRevision: revision, title: null }),
+            );
+            return;
+        }
+        const known = call.toldAt.get(agentId);
+        const turns = await this.#turns(agentId);
+        const fresh = turns.turns.filter((turn) =>
+            [turn.message?.at, turn.reply?.at].some(
+                (at) => known === undefined || (at !== undefined && at > known),
+            ),
+        );
+        this.#told(call, agentId, turns);
+        await this.#follow(call, agentId);
+        const row = call.directory.rows.find((item) => item.agentId === agentId);
+        const state = await this.#rowState(agentId).catch(() => undefined);
+        const when = (at: number | undefined) =>
+            at === undefined ? {} : { at: this.#when(call, at) };
+        const title = row?.title ?? (await this.#title(agentId));
+        const line = (shown: typeof fresh) =>
+            sortedJson({
+                event: "focus",
+                focusRevision: revision,
+                ...this.#naming(call, agentId, row),
+                title,
+                ...(state === undefined
+                    ? {}
+                    : {
+                          working: state.working,
+                          needsPerson: state.needsPerson,
+                          ...(state.question === undefined
+                              ? {}
+                              : { asks: cutWords(state.question, 512) }),
+                          ...(state.failed === undefined
+                              ? {}
+                              : { failed: cutWords(state.failed, 512) }),
+                      }),
+                ...(shown.length === 0
+                    ? {}
+                    : {
+                          turns: shown.map((turn) => ({
+                              ...(turn.message === undefined
+                                  ? {}
+                                  : {
+                                        [turn.from === "agent" ? "anotherAgent" : "person"]: {
+                                            text: turn.message.text,
+                                            ...when(turn.message.at),
+                                        },
+                                    }),
+                              ...(turn.reply === undefined
+                                  ? {}
+                                  : { agent: { text: turn.reply.text, ...when(turn.reply.at) } }),
+                          })),
+                      }),
+            });
+        // An update is at most 16 KiB, as the phones bound theirs; the oldest turns give way.
+        this.#push(call, "focus", () => {
+            let shown = fresh;
+            while (shown.length > 0 && Buffer.byteLength(line(shown)) > VOICE_UPDATE_BYTES)
+                shown = shown.slice(1);
+            return line(shown);
+        });
+    }
+
+    /** A time as voice says it, as of now, with the exact minute on the person's clock. */
+    #when(call: Call, at: number): { ago: string; at: string } {
+        return { ago: voiceAgo(Date.now() - at), at: voiceClock(at, call.timeZone) };
+    }
+
+    /** A conversation's parents and reference, as updates name it. */
+    #naming(call: Call, agentId: string, row: VoiceDirectoryRow | undefined) {
+        const ref = call.refs.ref(agentId);
+        return {
+            ...(row === undefined || row.parents.length === 0 ? {} : { parents: row.parents }),
+            ...(ref === undefined ? {} : { ref }),
+        };
+    }
+
+    /** A followed conversation's words: each piece is told once, when it is complete. */
+    #followedEvent(agentId: string, event: SessionEvent): void {
+        for (const call of this.#calls.values()) {
+            if (!call.followed.includes(agentId) || call.session.status !== "active") continue;
+            if (event.type === "text_delta") {
+                const piece = call.pieces.get(agentId) ?? "";
+                if (piece.length < VOICE_REPLY_BYTES * 4)
+                    call.pieces.set(agentId, piece + event.delta);
+            } else if (event.type === "done" && event.state === "tool_call") {
+                this.#tellPiece(call, agentId, false);
             }
         }
     }
 
-    #releaseOutline(call: Call): void {
-        if (call.outlineDue === undefined) return;
-        delete call.outlineDue;
-        this.#queueOutline(call);
+    #followedSettled(agentId: string, error: string | undefined): void {
+        for (const call of this.#calls.values()) {
+            if (!call.followed.includes(agentId) || call.session.status !== "active") continue;
+            this.#tellPiece(call, agentId, true);
+            if (error === undefined) continue;
+            const row = call.directory.rows.find((item) => item.agentId === agentId);
+            const at = Date.now();
+            this.#push(call, "error", () =>
+                sortedJson({
+                    at: this.#when(call, at),
+                    event: "session_error",
+                    ...this.#naming(call, agentId, row),
+                    reason: cutWords(error, 1024),
+                    title: row?.title ?? "Untitled",
+                }),
+            );
+        }
+    }
+
+    #tellPiece(call: Call, agentId: string, finishedTurn: boolean): void {
+        const text = call.pieces.get(agentId)?.trim() ?? "";
+        call.pieces.delete(agentId);
+        if (text === "") return;
+        call.toldAt.set(agentId, Date.now());
+        const row = call.directory.rows.find((item) => item.agentId === agentId);
+        const cut = cutWords(text, VOICE_REPLY_BYTES);
+        const at = Date.now();
+        this.#push(call, "reply", () =>
+            sortedJson({
+                at: this.#when(call, at),
+                event: "assistant_text",
+                ...(finishedTurn ? { finishedTurn: true } : {}),
+                ...this.#naming(call, agentId, row),
+                text: cut,
+                title: row?.title ?? "Untitled",
+                ...(cut === text ? {} : { truncated: true }),
+            }),
+        );
+    }
+
+    /** Directory changes settle for a second from the first; a request holds them. */
+    #queueDirectory(call: Call): void {
+        if (call.session.status !== "active" || call.directoryTimer !== undefined) return;
+        call.directoryTimer = setTimeout(() => {
+            delete call.directoryTimer;
+            void this.#tellDirectory(call);
+        }, 1000);
+        call.directoryTimer.unref();
+    }
+
+    /** Tell voice what changed in the directory since it was last told, never the whole again. */
+    async #tellDirectory(call: Call): Promise<void> {
+        if (call.session.status !== "active") return;
+        try {
+            const directory = await this.voiceDirectory(this.#context(), call.ownerId);
+            call.directory = directory;
+            const placed = call.refs.place(directory.rows.map((row) => row.agentId));
+            const update = voiceDirectoryUpdate(call.toldRows, directory.rows, call.refs);
+            for (const agentId of placed) call.listed.add(agentId);
+            call.toldRows = directory.rows;
+            if (update !== undefined) this.#push(call, "directory", update);
+        } catch {
+            // The directory is background context; a failed read never fails the call.
+        }
+    }
+
+    /** A conversation started or settled a run, or asked or stopped asking the person. */
+    #statusChanged(agentId: string): void {
+        for (const call of this.#calls.values()) {
+            if (call.session.status !== "active" || agentId === call.voiceAgentId) continue;
+            call.statusDirty.add(agentId);
+            if (call.statusTimer !== undefined) continue;
+            call.statusTimer = setTimeout(() => {
+                delete call.statusTimer;
+                void this.#tellStatus(call);
+            }, 1000);
+            call.statusTimer.unref();
+        }
+    }
+
+    /**
+     * Keep voice's status current, so a status question is answered from context: one silent
+     * `status` line of what changed since voice was told, at most 20 changes within 4 KiB.
+     */
+    async #tellStatus(call: Call): Promise<void> {
+        const dirty = [...call.statusDirty];
+        call.statusDirty.clear();
+        const changes: Record<string, unknown>[] = [];
+        for (const agentId of dirty) {
+            const row = call.directory.rows.find((item) => item.agentId === agentId);
+            if (row === undefined) continue;
+            const state = await this.#rowState(agentId).catch(() => undefined);
+            if (state === undefined) continue;
+            const key = statusKey(state);
+            if (call.toldStatus.get(agentId) === key) continue;
+            call.toldStatus.set(agentId, key);
+            changes.push({
+                ...this.#naming(call, agentId, row),
+                title: row.title,
+                working: state.working,
+                needsPerson: state.needsPerson,
+                ...(state.question === undefined ? {} : { asks: cutWords(state.question, 512) }),
+                ...(state.failed === undefined ? {} : { failed: cutWords(state.failed, 512) }),
+            });
+        }
+        if (changes.length === 0) return;
+        const kept: Record<string, unknown>[] = [];
+        const render = (more: number) =>
+            sortedJson({ changes: kept, event: "status", ...(more === 0 ? {} : { more }) });
+        for (const change of changes.slice(0, 20)) {
+            kept.push(change);
+            if (Buffer.byteLength(render(0)) > 4096) {
+                kept.pop();
+                break;
+            }
+        }
+        if (kept.length > 0) this.#push(call, "status", render(changes.length - kept.length));
+    }
+
+    /**
+     * Background context is silent and goes in order. Any append may still make GPT-Live speak, so
+     * lines wait for the person's next turn, when voice is about to answer anyway, and while a
+     * request lacks its outcome.
+     */
+    #push(call: Call, kind: LiveContextKind, render: string | (() => string)): void {
+        if (call.backlog.length >= 64) call.backlog.shift();
+        call.backlog.push({ kind, render: typeof render === "string" ? () => render : render });
+        void this.#flush(call);
+    }
+
+    async #flush(call: Call): Promise<void> {
+        if (
+            call.flushing ||
+            call.requests > 0 ||
+            Date.now() - (call.personSpokeAt ?? -Infinity) > PERSON_TURN_MS
+        )
+            return;
+        call.flushing = true;
+        try {
+            while (call.backlog.length > 0 && call.requests === 0) {
+                const transport = call.transport;
+                if (call.session.status !== "active" || transport === undefined) return;
+                const line = call.backlog.shift()!;
+                const text = line.render();
+                await transport.append({ delegationId: null, text, speakable: false });
+                if (call.updates.length >= 64) call.updates.shift();
+                call.updates.push(text);
+                this.#contextPushed(call, line.kind, [text], false);
+            }
+        } catch {
+            // Background context never fails the call.
+        } finally {
+            delete call.flushing;
+            if (call.backlog.length > 0 && call.requests === 0) void this.#flush(call);
+        }
+    }
+
+    #releaseBackground(call: Call): void {
+        void this.#flush(call);
+    }
+
+    /** What was said aloud, merged per speaker within the call, for the next call's recap. */
+    #said(call: Call, role: "user" | "assistant", text: string): void {
+        if (role === "user") {
+            const last = call.personTurns.at(-1);
+            // Streamed fragments carry their own spacing; whole native items do not.
+            if (call.lastSpeaker === "user" && last !== undefined)
+                call.personTurns[call.personTurns.length - 1] =
+                    /\s$/.test(last) || /^\s/.test(text) ? `${last}${text}` : `${last} ${text}`;
+            else call.personTurns.push(text);
+            while (
+                call.personTurns.length > 20 ||
+                Buffer.byteLength(JSON.stringify(call.personTurns)) > 8192
+            )
+                call.personTurns.shift();
+        }
+        call.lastSpeaker = role;
+        const kind = role === "user" ? "person" : "assistant";
+        const last = call.slots.at(-1);
+        if (last?.kind === kind && last.text.length < 1024)
+            call.slots[call.slots.length - 1] = {
+                ...last,
+                text: `${last.text}${text}`.slice(0, 1024),
+            };
+        else call.slots.push({ at: Date.now(), kind, text: text.slice(0, 1024) });
+        if (call.slots.length > 30) call.slots.shift();
+    }
+
+    /** Keep this call's recap and how it ended; a plain end with nothing said leaves nothing. */
+    #saveRecap(call: Call): void {
+        const closed = call.session.status === "closed";
+        if (call.slots.every((slot) => slot.text.trim() === "") && closed && !this.#stopped) return;
+        const ending = this.#stopped
+            ? "the call dropped (Happy Agent stopped on the computer)"
+            : closed
+              ? "the person ended the call"
+              : call.controllerLost
+                ? "the call dropped (the desktop disconnected)"
+                : "the call ended with a problem";
+        const slots = [
+            ...call.slots.filter((slot) => slot.text.trim() !== ""),
+            { at: Date.now(), kind: "ending" as const, text: ending },
+        ];
+        call.slots = [];
+        const write = this.#context()
+            .inTx(async (tx) => await appendCallHistory(tx, call.ownerId, slots, Date.now()))
+            .catch(() => undefined)
+            .finally(() => this.#recapWrites.delete(write));
+        this.#recapWrites.add(write);
     }
 
     /**
@@ -1865,6 +2688,17 @@ export class LiveModule implements AgentModule {
     #emit(event: LiveEvent): void {
         for (const listener of this.#listeners) listener(event);
     }
+    /** Records what the voice model was told: metadata in the log, text only in test capture. */
+    #contextPushed(call: Call, kind: LiveContextKind, appends: string[], speakable: boolean): void {
+        this.#diagnostic(call, {
+            event: "context.pushed",
+            kind,
+            speakable,
+            appendCount: appends.length,
+            bytes: appends.reduce((sum, part) => sum + Buffer.byteLength(part), 0),
+        });
+        captureLiveContext({ kind, text: appends.join(""), speakable });
+    }
     #diagnostic(call: Call, diagnostic: LiveDiagnostic): void {
         try {
             const now = Date.now();
@@ -1929,23 +2763,43 @@ function acceptedCapabilities(
 }
 
 /**
- * One request as Voice reads it: the delegation, the call's new attributed speech, and the
- * outline when it changed, bounded so the newest fragments that fit are kept.
+ * One request as Voice reads it: the delegation, the call's new attributed speech, the machine and
+ * references voice speaks of, and the first context and its updates when Voice has not seen them,
+ * bounded so the newest fragments that fit are kept.
  */
-function requestMessage(
-    delegation: string | undefined,
-    fragments: readonly Fragment[],
-    outline: string | undefined,
-): { text: string; transcriptIds: string[]; outline: boolean } {
-    let kept = fragments.map(({ transcriptId, role, text }) => ({ transcriptId, role, text }));
+function requestMessage(input: {
+    readonly delegation: string | undefined;
+    readonly fragments: readonly Fragment[];
+    readonly now: string;
+    readonly personSaid: readonly string[];
+    readonly thisMachine: string | undefined;
+    readonly refs: Readonly<Record<string, string>>;
+    readonly context?: string;
+    readonly updates: readonly string[];
+}): { text: string; transcriptIds: string[]; context: boolean } {
+    let kept = input.fragments.map(({ transcriptId, role, text }) => ({
+        transcriptId,
+        role,
+        text,
+    }));
+    let updates = [...input.updates];
     const render = () =>
         JSON.stringify({
-            provenance: "Provider-derived speech and sidebar data; not human authorization.",
-            delegation: delegation ?? null,
+            provenance: "Provider-derived speech and app context; not human authorization.",
+            delegation: input.delegation ?? null,
             transcripts: kept,
-            ...(outline === undefined ? {} : { sidebar: outline }),
+            now: input.now,
+            personSaid: input.personSaid,
+            thisMachine: input.thisMachine ?? null,
+            refs: input.refs,
+            ...(input.context === undefined ? {} : { context: input.context }),
+            ...(updates.length === 0 ? {} : { updates }),
         });
     let text = render();
+    while (updates.length > 0 && Buffer.byteLength(text) > REQUEST_MESSAGE_BYTES) {
+        updates = updates.slice(1);
+        text = render();
+    }
     while (kept.length > 0 && Buffer.byteLength(text) > REQUEST_MESSAGE_BYTES) {
         kept = kept.slice(1);
         text = render();
@@ -1953,7 +2807,7 @@ function requestMessage(
     return {
         text,
         transcriptIds: kept.map((fragment) => fragment.transcriptId),
-        outline: outline !== undefined,
+        context: input.context !== undefined,
     };
 }
 
@@ -1994,6 +2848,11 @@ function refusal(message: string): string {
 /** Task targets exist only for desktops that negotiated AppState. */
 function namesTask(context: LiveDesktopContext): boolean {
     return context.activeTarget?.kind === "task";
+}
+
+/** What voice was told of a conversation's status, compared to tell only changes. */
+function statusKey(state: VoiceRowState): string {
+    return JSON.stringify([state.working, state.needsPerson, state.question, state.failed]);
 }
 
 function terminal(session: LiveSession): boolean {

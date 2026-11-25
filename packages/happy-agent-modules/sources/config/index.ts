@@ -77,6 +77,7 @@ export {
     VoiceSettingsError,
     type VoiceSettingsToml,
     type VoiceSettingsUpdate,
+    type VoiceSpeed,
 } from "./VoiceSettings.js";
 export {
     DefaultModelError,

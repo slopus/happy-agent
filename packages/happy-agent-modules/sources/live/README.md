@@ -1,7 +1,7 @@
 # Desktop Live
 
 `LiveModule(ConfigModule, DurableFunctionsModule, BotsModule, SubtasksModule, TasksModule,
-SurfacesModule, HistoryModule, EventsModule, TeamModule)` owns
+HistoryModule, EventsModule, TeamModule, UserInputModule, ProjectsModule, WorkspacesModule)` owns
 window-scoped voice sessions, the machine's voice settings, and each person's Voice. The browser
 owns WebRTC media; this module owns one credential-selected provider call, its sideband, durable
 status, and a typed desktop control socket. GPT-Live is the voice; Voice is the text agent it hands
@@ -26,8 +26,10 @@ durable and need no review: the desktop verifies each action, and an interrupted
 again. A person typing to Voice gets a text answer; without an active call its desktop tools refuse.
 
 Voice runs on the controller route from the `[voice]` settings: `controller_provider`, `controller_model`,
-`controller_effort` and `controller_fast_mode`, defaulting to GPT-6.1 Sol at low effort on the
-configured default account, with fast mode off. `ConfigModule` stores runtime changes in generated
+`controller_effort` and `controller_speed` (`regular`, `fast` or `ultrafast`; the older
+`controller_fast_mode` still means fast or regular when no speed is stored), defaulting to GPT-6.2
+Sol at low effort on the configured default account at the fastest speed the route offers:
+Ultrafast where the account's plan offers it (`ProviderServiceTiers`), else Fast, else Regular. `ConfigModule` stores runtime changes in generated
 `runtime.toml`, which overrides the machine file, and resolves the route; this module reports them
 as `config.voice`, applies `PATCH /v0/config` voice changes for the API, and gives active admin bots
 `get_voice_settings` and `set_voice_settings`. `system_prompt` replaces the voice model's built-in
@@ -35,7 +37,7 @@ prompt; the built-in prompt is never stored. A pool chooses one enabled compatib
 and keeps it for the entire call, without account rotation or failover: the voice credential's own
 account when the pool includes it, otherwise one without a sign-in or usage failure in the last
 fifteen minutes, and a failed account only when every account has failed. Route, effort, service tier
-(priority only when fast mode is on and the route offers it) and voice prompt are frozen per call. Voice separately uses the explicitly selected official OpenAI API key
+(the speed's tier, never faster than asked) and voice prompt are frozen per call. Voice separately uses the explicitly selected official OpenAI API key
 or Codex subscription credential. There is no credential, account, model, or old-Realtime fallback.
 Native credentials are reloaded once from the selected provider-owned sign-in store before the
 single allocation; a rejected sign-in never triggers another allocation or an OAuth refresh here.
@@ -63,31 +65,50 @@ with a bounded write queue; Unix log files are readable only by their owner. Log
 the existing observation settings, including disabling logs or selecting a higher log level.
 
 Each delegation becomes one message to Voice: a JSON envelope (`provenance`, `delegation`,
-`transcripts`, and `sidebar` only when the outline changed since Voice last saw it) with only the
-speech fragments Voice has not been given, bounded to 64 KiB by dropping the oldest fragments. It
+`transcripts`, `thisMachine`, `refs`, `context` only when Voice has not seen that call's first
+context, by hash, and `updates`, the context lines voice was told since Voice's last request) with
+only the speech fragments Voice has not been given, bounded to 64 KiB by dropping the oldest
+updates, then the oldest fragments. It
 carries agent-origin metadata, so speech is never the person's authorization, and the call's frozen
 provider, model, effort and service tier. One first-in, first-out queue per person runs one request
 at a time across all of their calls, and Voice's turn settles before the next request reaches it.
-`sessionSend` and `composerDraftAppend` name their conversation; when it is not focused, the daemon
-first requests `desktopOpen` for it and stages only after that open succeeds. Actions run one at a
+`sessionSend` sends to its named conversation without changing the screen; the desktop answers
+`ack` when it sent and `staged` when it can only stage, and the outcome says which.
+`composerDraftAppend` names its conversation; when it is not focused, the daemon first requests
+`desktopOpen` for it and appends only after that open succeeds. Actions run one at a
 time in the order Voice called them, each on the latest accepted revision, and a batch stops at the
-first that does not succeed. When every action succeeded and all were terminal (open, staging, draft
+first that does not succeed. When every action succeeded and all were terminal (open, send, draft
 append, model change, task creation), voice receives a fixed outcome from `impl/liveOutcome.ts` at
 Voice's next inference, and nothing later from that turn is spoken. Otherwise voice hears Voice's
-final text, or a fixed explanation. `sessionSend` ends after exact text staging; only a separate
-human Send submits it. Voice acts only on this daemon's conversations: another server's connection
-is refused, and an agent target (`{ kind: "agent" }`) needs the `agentTargets` capability, which
-needs `appState` and the desktop's `localConnectionId`.
+final text, or a fixed explanation. Voice acts only on this daemon's conversations: another
+server's connection is refused. "This machine" is the call's `localConnectionId`, accepted on its
+own, else AppState's local server, else the context's only connection; Voice gets it with every
+request because connection IDs are window-relative. An agent target (`{ kind: "agent" }`) needs the
+`agentTargets` capability, which needs `appState` and `localConnectionId`; without it, an agent the
+window's AppState lists is sent as that entry's own target, and any other is refused. Voice's
+`end_call` (`impl/voiceCallTools.ts`) closes its call two seconds after the turn settles, without a
+spoken outcome, when the person asked to hang up.
 
-GPT-Live is told the sidebar as an outline of names (`impl/renderVoiceOutline.ts` over
-`impl/readVoiceOutline.ts`): the built-in bot first, the other bots, the person's tasks and the Surfaces they joined,
-with no status, activity, messages or IDs. Startup is bounded to 8 KiB with a count of omitted
-entries. A bot, task or Surface event re-reads it; only changed text is pushed, coalesced for 250
-milliseconds with one push in flight, split into appends of at most 500 bytes, and held while a
-request lacks its delivered outcome. AppState is never pushed: it only resolves names and targets
-and validates models. Desktop context revisions are accepted for actions, and `sessionUpdate` frames
-are validated and ignored; there are no background notices. With `voiceFocus`, the daemon highlights
-a uniquely named target before Voice runs and before each targeted action, and clears it when the
+GPT-Live is told what the phones tell their voice agent (happy `docs/agent-voice-call.md`), from
+this daemon's own records. The first context (`impl/renderVoiceCallContext.ts`, at most 24 KiB as a
+developer message, because GPT-Live takes 8,192 tokens of startup input) holds the call's start on
+the person's clock, the recap of recent calls (`persistence/liveCallHistory.ts`, the latest 30
+slots), the conversation on screen with its last five timed turns (`impl/readVoiceTurns.ts`), and
+the directory (`impl/readVoiceDirectory.ts`: Happy, the other bots, the person's tasks, then each
+project's root and workspace conversations under heading lines, and subtasks at any depth; when
+more than 100 exist, the one on screen, the followed ones and the most recently active are kept)
+with order-key references (`impl/VoiceRefs.ts`), status, the pending
+question, a failed last run, and last activity. Once the call is active, one speakable cue
+(`LIVE_GREETING_CUE`) asks voice to say hello first, as the phones cue their agent.
+During the call, silent JSON lines follow: `directory` changes (`impl/voiceDirectoryUpdate.ts`,
+settled for a second), `focus` from desktop context revisions with turns voice has not seen, and
+`assistant_text` and `session_error` from the last four conversations on screen or sent to, and
+`status` when a conversation starts or stops working, needs the person or fails. Each piece goes
+once and nothing is replayed. GPT-Live has no silent channel, so lines wait, in order, for the
+person's next turn (they go only within eight seconds of the person speaking) and while a request
+lacks its delivered outcome, and their times are rendered as `{ago, at}` when they go. AppState is never pushed: it only resolves names and targets and validates models, and
+`sessionUpdate` frames are validated and ignored. With `voiceFocus`, the daemon highlights a
+uniquely named target before Voice runs and before each targeted action, and clears it when the
 request ends.
 
 ## Lifecycle
@@ -130,7 +151,10 @@ short status summaries are best-effort, and overlapping delegations never produc
 helper, configuration and provider transport tests are targeted unit coverage.
 `tests/runtime/liveDesktopTransport.test.ts` uses the complete runtime, the real Voice agent and
 real HTTP/WebSockets with scripted provider inference. It can export Voice's sanitized requests
-through the test-only `HAPPY_LIVE_CAPTURE_FILE` environment variable. Bun transport smoke coverage lives in
+through the test-only `HAPPY_LIVE_CAPTURE_FILE` environment variable. A daemon started with the
+test-only `HAPPY_LIVE_CONTEXT_CAPTURE_FILE` appends each text pushed to the voice model (`context`,
+`directory`, `focus`, `reply`, `error` or `outcome`) as a JSON line `{at, kind, text, speakable}`, so a gym can prove an answer was in context
+before the question; the log's matching `context.pushed` record holds only kind, size and speakable. Bun transport smoke coverage lives in
 the Agent package; targeted API gym scenarios live in `packages/happy-agent-gym-tests/tests/happy_api_live.test.ts`.
 These fixtures do not prove microphone/media negotiation or account entitlement against OpenAI.
 

@@ -26,6 +26,7 @@ const eagerFiles = [
     "auto/impl/askParentTool.ts",
     "live/impl/voiceSidebarTools.ts",
     "live/impl/liveDesktopTools.ts",
+    "live/impl/voiceCallTools.ts",
 ];
 
 interface ToolDefinition {

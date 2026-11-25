@@ -138,6 +138,7 @@ import {
     voiceSettingsTomlSchema,
     voiceSettingsUpdateSchema,
     type VoiceSettingsToml,
+    type VoiceSpeed,
     type VoiceSettingsUpdate,
 } from "./VoiceSettings.js";
 import {
@@ -2622,7 +2623,10 @@ export class ConfigModule implements AgentModule {
         readonly modelId: string;
         readonly model: AgentModel | undefined;
         readonly effort: string;
-        readonly serviceTier: "priority" | null;
+        readonly serviceTier: "priority" | "ultrafast" | null;
+        /** The speed a call starting now uses, and the speeds the route offers. */
+        readonly speed: VoiceSpeed;
+        readonly speeds: readonly VoiceSpeed[];
         readonly notice: string | null;
     } {
         const models = this.models;
@@ -2642,7 +2646,31 @@ export class ConfigModule implements AgentModule {
             (model === undefined || model.effortLevels.includes("low")
                 ? "low"
                 : model.defaultEffort);
-        const fast = model?.serviceTiers?.includes("priority") === true;
+        const speeds: VoiceSpeed[] = [
+            "regular",
+            ...(model?.serviceTiers?.includes("priority") === true ? (["fast"] as const) : []),
+            ...(model?.serviceTiers?.includes("ultrafast") === true
+                ? (["ultrafast"] as const)
+                : []),
+        ];
+        // An unset speed takes the fastest the account's plan offers; a stored one never goes
+        // faster than asked and falls to the fastest offered below it.
+        const requested: VoiceSpeed | undefined =
+            settings.controller_speed ??
+            (settings.controller_fast_mode === undefined
+                ? undefined
+                : settings.controller_fast_mode
+                  ? "fast"
+                  : "regular");
+        const order: readonly VoiceSpeed[] = ["regular", "fast", "ultrafast"];
+        const speed =
+            [...speeds]
+                .reverse()
+                .find(
+                    (candidate) =>
+                        requested === undefined ||
+                        order.indexOf(candidate) <= order.indexOf(requested),
+                ) ?? "regular";
         let notice: string | null = null;
         if (providerId === null)
             notice =
@@ -2651,14 +2679,16 @@ export class ConfigModule implements AgentModule {
             notice = `${name} is not enabled on ${settings.controller_provider === undefined ? "the default account" : "the selected account"}, so voice cannot start. Choose another controller account or model in voice settings.`;
         else if (!model.effortLevels.some((level) => level === effort))
             notice = `${name} does not accept ${effort} effort, so voice cannot start. Choose another effort in voice settings.`;
-        else if (settings.controller_fast_mode === true && !fast)
-            notice = `Fast mode is not available for ${name}, so it is ignored.`;
+        else if (requested !== undefined && requested !== speed)
+            notice = `${requested === "ultrafast" ? "Ultrafast" : "Fast"} is not available for ${name} on this account, so voice uses ${speed === "regular" ? "Regular" : "Fast"}.`;
         return {
             providerId,
             modelId,
             model,
             effort,
-            serviceTier: settings.controller_fast_mode === true && fast ? "priority" : null,
+            serviceTier: speed === "ultrafast" ? "ultrafast" : speed === "fast" ? "priority" : null,
+            speed,
+            speeds,
             notice,
         };
     }
@@ -2733,7 +2763,7 @@ export class ConfigModule implements AgentModule {
         provider: BaseProvider;
         model: AgentModel;
         effort: SessionReasoningEffort;
-        serviceTier?: "priority";
+        serviceTier?: "priority" | "ultrafast";
         signal: AbortSignal;
     }> {
         const selection = this.voiceController();
@@ -2773,6 +2803,30 @@ export class ConfigModule implements AgentModule {
             ...(selection.serviceTier === null ? {} : { serviceTier: selection.serviceTier }),
             signal,
         };
+    }
+
+    /**
+     * The accounts a voice call can use, as `liveCredential` accepts them: enabled, not a pool, an
+     * official OpenAI endpoint, and the credential kind that endpoint takes. Nothing is fetched.
+     */
+    async voiceAccounts(): Promise<
+        readonly {
+            readonly providerId: string;
+            readonly credential: LiveCredential["type"];
+            readonly name: string;
+        }[]
+    > {
+        const accounts = [];
+        for (const providerId of this.providerIds) {
+            if (!this.isProviderEnabled(providerId)) continue;
+            const provider = await this.providers.resolve(providerId, undefined).catch(() => null);
+            // A pool is not a CodexProvider: voice needs one account, never a pool.
+            if (!(provider instanceof CodexProvider)) continue;
+            const credential = liveCredentialKind(provider);
+            if (credential !== undefined)
+                accounts.push({ providerId, credential, name: this.providerName(providerId) });
+        }
+        return accounts;
     }
 
     /** Reload only the selected account from its provider-owned store, without network refresh or fallback. */
@@ -7178,4 +7232,22 @@ function normalizeLocalBaseUrl(baseUrl: string): string {
         .trim()
         .replace(/\/+$/u, "")
         .replace(/^(https?:\/\/)localhost(?=[:/]|$)/u, "$1127.0.0.1");
+}
+
+/**
+ * Which voice credential an OpenAI account holds: a Codex sign-in on chatgpt.com is a subscription
+ * and an API key on api.openai.com is an API key. Any other endpoint or credential holds none.
+ */
+function liveCredentialKind(provider: CodexProvider): LiveCredential["type"] | undefined {
+    if (provider.bedrockTransport !== undefined) return undefined;
+    const endpoint = new URL(provider.endpoint);
+    if (endpoint.username || endpoint.password) return undefined;
+    if (endpoint.origin === "https://chatgpt.com" && provider.credential.name === "codex-session")
+        return "codex_subscription";
+    if (
+        endpoint.origin === "https://api.openai.com" &&
+        provider.credential.name === "codex-api-key"
+    )
+        return "openai_api_key";
+    return undefined;
 }

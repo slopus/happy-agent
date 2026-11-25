@@ -47,6 +47,17 @@ export const liveMigrations: readonly AgentModuleMigration[] = [
             );
         },
     ],
+    [
+        "003-live-call-history",
+        async (_ctx, db) => {
+            await agentDatabaseRun(
+                db,
+                sql`CREATE TABLE happy_live_call_history (
+        owner_id TEXT PRIMARY KEY, slots_json TEXT NOT NULL, updated_at INTEGER NOT NULL
+    )`,
+            );
+        },
+    ],
 ];
 
 const storedSchema = Type.Object({ ownerId: Type.String(), session: liveSessionSchema });

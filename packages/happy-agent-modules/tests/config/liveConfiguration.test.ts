@@ -23,6 +23,7 @@ async function fixture(
     extra = "",
     credential?: CodexSessionCredential,
     smart = false,
+    tiers?: string[],
 ) {
     const root = await mkdtemp(join(tmpdir(), "live-config-"));
     cleanups.push(() => rm(root, { recursive: true, force: true }));
@@ -47,11 +48,12 @@ async function fixture(
                         effortLevels: ["high"],
                     },
                     {
-                        id: "openai/gpt-6.1-sol",
-                        name: "GPT-6.1 Sol",
+                        id: "openai/gpt-6.2-sol",
+                        name: "GPT-6.2 Sol",
                         providerId: smart ? "pool" : "voice",
                         defaultEffort: "medium",
                         effortLevels: ["low", "medium"],
+                        ...(tiers === undefined ? {} : { serviceTiers: tiers }),
                     },
                 ],
             }),
@@ -69,7 +71,7 @@ it("uses exactly the explicitly selected official account and configured-default
     });
     expect(await f.config.liveControllerRoute()).toMatchObject({
         provider: f.provider,
-        model: { providerId: "voice", id: "openai/gpt-6.1-sol", defaultEffort: "low" },
+        model: { providerId: "voice", id: "openai/gpt-6.2-sol", defaultEffort: "low" },
     });
     expect(session).not.toHaveBeenCalled();
 });
@@ -83,7 +85,7 @@ it("freezes a smart default onto its hidden enabled account without changing the
     expect(f.config.models[0]?.providerId).toBe("pool");
     expect(await f.config.liveControllerRoute()).toMatchObject({
         provider: f.provider,
-        model: { providerId: "voice", id: "openai/gpt-6.1-sol", defaultEffort: "low" },
+        model: { providerId: "voice", id: "openai/gpt-6.2-sol", defaultEffort: "low" },
     });
     expect(await f.config.liveCredential({ type: "openai_api_key", providerId: "voice" })).toEqual({
         type: "openai_api_key",
@@ -222,6 +224,29 @@ it.each([
         f.config.liveCredential({ type: "openai_api_key", providerId: "voice" }),
     ).rejects.toThrow("official OpenAI");
 });
+it("lists exactly the accounts voice can use, with the credential kind each one holds", async () => {
+    const apiKey = await fixture();
+    expect(await apiKey.config.voiceAccounts()).toEqual([
+        { providerId: "voice", credential: "openai_api_key", name: "Voice" },
+    ]);
+    const signedIn = CodexSessionCredential.fromAuth(
+        { accessToken: "token", accountId: "fixture" },
+        { authFile: "/unused-live-fixture" },
+    );
+    vi.spyOn(signedIn, "reloadForUnauthorized").mockResolvedValue(signedIn);
+    const subscription = await fixture(undefined, 'name="Kirill\'s Codex"\n', signedIn);
+    expect(await subscription.config.voiceAccounts()).toEqual([
+        { providerId: "voice", credential: "codex_subscription", name: "Kirill's Codex" },
+    ]);
+    // Each listed account is one liveCredential accepts for that kind.
+    await expect(
+        subscription.config.liveCredential({ type: "codex_subscription", providerId: "voice" }),
+    ).resolves.toMatchObject({ type: "codex_subscription" });
+    for (const endpoint of ["https://proxy.example/v1", "https://user:password@api.openai.com/v1"])
+        expect(await (await fixture(endpoint)).config.voiceAccounts()).toEqual([]);
+    apiKey.config.setProviderEnabled("voice", false);
+    expect(await apiKey.config.voiceAccounts()).toEqual([]);
+});
 it("refuses credential-kind mismatches and disabled accounts without fallback", async () => {
     const f = await fixture();
     await expect(
@@ -246,7 +271,9 @@ it("runs the controller on the configured voice model, effort and fast mode", as
             modelId: "openai/gpt-6-astra",
             effort: "high",
             serviceTier: null,
-            notice: "Fast mode is not available for Fixture, so it is ignored.",
+            speed: "regular",
+            speeds: ["regular"],
+            notice: "Fast is not available for Fixture on this account, so voice uses Regular.",
         }),
     );
     const route = await f.config.liveControllerRoute();
@@ -256,6 +283,46 @@ it("runs the controller on the configured voice model, effort and fast mode", as
         effort: "high",
     });
     expect(route).not.toHaveProperty("serviceTier");
+});
+it("defaults the controller to the fastest speed the account's plan offers", async () => {
+    const tiers = (await fixture(undefined, "", undefined, false, ["priority", "ultrafast"]))
+        .config;
+    expect(tiers.voiceController()).toMatchObject({
+        modelId: "openai/gpt-6.2-sol",
+        effort: "low",
+        speed: "ultrafast",
+        speeds: ["regular", "fast", "ultrafast"],
+        serviceTier: "ultrafast",
+        notice: null,
+    });
+    expect(await tiers.liveControllerRoute()).toMatchObject({ serviceTier: "ultrafast" });
+    const fastOnly = (await fixture(undefined, "", undefined, false, ["priority"])).config;
+    expect(fastOnly.voiceController()).toMatchObject({ speed: "fast", serviceTier: "priority" });
+    expect((await fixture()).config.voiceController()).toMatchObject({
+        speed: "regular",
+        serviceTier: null,
+    });
+});
+it("keeps a stored speed, never going faster than asked, and reads the old fast mode", async () => {
+    const pick = async (voice: string, tiers = ["priority", "ultrafast"]) =>
+        (
+            await fixture(undefined, `[voice]\n${voice}\n`, undefined, false, tiers)
+        ).config.voiceController();
+    expect(await pick('controller_speed="fast"')).toMatchObject({ speed: "fast", notice: null });
+    expect(await pick('controller_speed="regular"')).toMatchObject({
+        speed: "regular",
+        serviceTier: null,
+    });
+    expect(await pick("controller_fast_mode=false")).toMatchObject({ speed: "regular" });
+    expect(await pick("controller_fast_mode=true")).toMatchObject({ speed: "fast" });
+    expect(await pick('controller_speed="ultrafast"\ncontroller_fast_mode=false')).toMatchObject({
+        speed: "ultrafast",
+    });
+    expect(await pick('controller_speed="ultrafast"', ["priority"])).toMatchObject({
+        speed: "fast",
+        serviceTier: "priority",
+        notice: "Ultrafast is not available for GPT-6.2 Sol on this account, so voice uses Fast.",
+    });
 });
 it("stores voice settings in generated runtime configuration over the machine file", async () => {
     const f = await fixture(undefined, '[voice]\nsystem_prompt="File prompt."\n');
@@ -294,11 +361,11 @@ it.each(["", 'controller_effort="medium"\n'])(
             controller_effort: "high",
         });
         await f.config.updateRuntimeVoiceSettings(createRootContext(), {
-            controller_model: "openai/gpt-6.1-sol",
+            controller_model: "openai/gpt-6.2-sol",
             controller_effort: null,
         });
         expect(f.config.voiceSettings).toEqual({
-            controller_model: "openai/gpt-6.1-sol",
+            controller_model: "openai/gpt-6.2-sol",
             ...(fileSettings ? { controller_effort: "medium" } : {}),
         });
         expect((await f.config.liveControllerRoute()).effort).toBe(fileSettings ? "medium" : "low");
@@ -312,7 +379,7 @@ it("rejects resetting to an incompatible file effort without changing runtime se
     const before = await readFile(f.config.configuration.paths.runtimeConfigPath, "utf8");
     await expect(
         f.config.updateRuntimeVoiceSettings(createRootContext(), { controller_effort: null }),
-    ).rejects.toThrow("GPT-6.1 Sol does not accept high effort.");
+    ).rejects.toThrow("GPT-6.2 Sol does not accept high effort.");
     expect(f.config.voiceSettings.controller_effort).toBe("medium");
     expect(await readFile(f.config.configuration.paths.runtimeConfigPath, "utf8")).toBe(before);
 });
@@ -340,7 +407,7 @@ it.each([true, false])(
         );
         expect(f.config.voiceController()).toMatchObject({
             providerId: "claude",
-            modelId: "openai/gpt-6.1-sol",
+            modelId: "openai/gpt-6.2-sol",
             model: undefined,
             notice: expect.stringContaining("voice cannot start"),
         });
@@ -351,7 +418,7 @@ it.each([true, false])(
 it.each([
     [{ controller_provider: "missing" }, "The selected controller account is not configured."],
     [{ controller_model: "openai/unknown" }, "No configured account offers openai/unknown."],
-    [{ controller_effort: "xhigh" }, "GPT-6.1 Sol does not accept xhigh effort."],
+    [{ controller_effort: "xhigh" }, "GPT-6.2 Sol does not accept xhigh effort."],
 ])("refuses an unusable controller selection %j before storing it", async (update, message) => {
     const f = await fixture();
     const refused = f.config.updateRuntimeVoiceSettings(createRootContext(), update);

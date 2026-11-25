@@ -2,6 +2,7 @@ import type {
     LiveActionSession,
     LiveActionTarget,
     LiveDesktopAction,
+    LiveDesktopActionResult,
     LiveDesktopContext,
 } from "@slopus/happy-agent-client";
 import { liveAppStateEntities, liveTargetKey, type LiveAppStateView } from "./liveAppState.js";
@@ -20,13 +21,16 @@ const TERMINAL = new Set<LiveDesktopAction["type"]>([
  * from the verified actions without another inference. Undefined when the controller must answer.
  */
 export function liveFixedOutcome(
-    executed: readonly LiveDesktopAction[],
+    executed: readonly {
+        readonly action: LiveDesktopAction;
+        readonly result: LiveDesktopActionResult;
+    }[],
     view: LiveAppStateView,
     context: LiveDesktopContext,
     /** Names of this daemon's conversations, for actions that named an agent. */
     agentNames: ReadonlyMap<string, string> = new Map(),
 ): string | undefined {
-    if (executed.length === 0 || executed.some((action) => !TERMINAL.has(action.type)))
+    if (executed.length === 0 || executed.some(({ action }) => !TERMINAL.has(action.type)))
         return undefined;
     const entities = liveAppStateEntities(view);
     const name = (target: LiveActionTarget | LiveActionSession) => {
@@ -51,12 +55,15 @@ export function liveFixedOutcome(
     };
     const unsent = "It has not been sent; the person must review it and press Send.";
     return executed
-        .map((action) => {
+        .map(({ action, result }) => {
             switch (action.type) {
                 case "desktopOpen":
                     return `Opened ${name(action.target)}.`;
                 case "sessionSend":
-                    return `Staged the message in ${name(action.target)}. ${unsent}`;
+                    // A desktop that only stages answers `staged`; one that sent answers `ack`.
+                    return result.status === "succeeded" && result.output.type === "staged"
+                        ? `Staged the message in ${name(action.target)}. ${unsent}`
+                        : `Sent to ${name(action.target)}.`;
                 case "composerDraftAppend":
                     return `Added the text to the draft in ${name(action.target)}. Nothing was sent.`;
                 case "sessionModelChange": {
@@ -74,7 +81,8 @@ export function liveFixedOutcome(
                     return `${name(action.target)} will use ${label} for its next message.`;
                 }
                 case "taskCreate":
-                    return `Created ${action.name === undefined ? "a new task" : `the task ${action.name}`} and staged its opening text as a draft. ${unsent}`;
+                    // A sending desktop gives it the text as its first message; an older one stages it.
+                    return `Started ${action.name === undefined ? "a new task" : `the task ${action.name}`}.`;
                 default:
                     return "";
             }

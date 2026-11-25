@@ -7,7 +7,13 @@ const resultSchema = Type.Object({ text: Type.String() }, { additionalProperties
 const toLLM = (result: Static<typeof resultSchema>) => [
     { type: "text" as const, text: result.text },
 ];
-const emptySchema = Type.Object({}, { additionalProperties: false });
+const sidebarSchema = Type.Object(
+    {
+        query: Type.Optional(Type.String({ maxLength: 256 })),
+        cursor: Type.Optional(Type.String({ maxLength: 16 })),
+    },
+    { additionalProperties: false },
+);
 const conversationsSchema = Type.Object(
     {
         ids: Type.Array(cuid2Schema, { minItems: 1, maxItems: 12, uniqueItems: true }),
@@ -18,21 +24,25 @@ const conversationsSchema = Type.Object(
 );
 
 /** Voice's fixed sidebar reads: the person's rows, and what was said in conversations. */
-export function voiceSidebarTools(live: LiveModule, ownerId: string): AnyAgentTool[] {
+export function voiceSidebarTools(
+    live: LiveModule,
+    ownerId: string,
+    agentId: string,
+): AnyAgentTool[] {
     return [
         defineAgentTool({
             name: "list_sidebar",
             defer: false,
-            capabilities: ["Read the rows of the person's sidebar."],
+            capabilities: ["Search the conversations in the person's sidebar."],
             description:
-                "Read the person's sidebar as {rows}, in its order: Happy, the other bots, the person's tasks, then the Surfaces they joined. Each row has its name and, unless it is a Surface, the agent ID of its conversation.",
-            parameters: emptySchema,
+                "Search the person's conversations, all of them, including ones the call's context does not list and ones started during the call: bots, tasks, project and workspace conversations, and their subtasks, in sidebar order. query keeps those whose title, or the project, workspace or conversation path they sit under, contains it as a case-insensitive substring; omit it for all. Returns {rows, total, nextCursor?}, at most 50 rows a page; pass nextCursor as cursor for the next page. Each row has its agent ID, title, kind, parents, the reference voice knows it by, whether it is working or needs the person and what it asks, a failed run's reason, and its last activity.",
+            parameters: sidebarSchema,
             returnType: resultSchema,
             durable: true,
             shouldReviewInAutoMode: () => false,
             autoReview: "never",
-            execute: async (ctx) => ({
-                text: JSON.stringify(await live.voiceOutline(ctx, ownerId)),
+            execute: async (ctx, input: Static<typeof sidebarSchema>) => ({
+                text: await live.voiceSidebar(ctx, ownerId, agentId, input),
             }),
             toLLM,
         }),

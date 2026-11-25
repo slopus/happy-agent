@@ -2,10 +2,16 @@ import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
 import { Type, type Static } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
+import { liveFailureReasonSchema, type LiveFailureReason } from "@slopus/happy-agent-client";
 
 // Public Live docs and native Codex 4dd51f4a5f2037f8aa322fe7807315e6530a4ec8
 // are distinct dialects. Never substitute endpoints or credentials on failure.
 const Text = Type.String({ maxLength: 65536 });
+/**
+ * The app's first context, a developer message: GPT-Live takes up to 8,192 tokens of startup
+ * input, and its prompting guide puts greeting instructions in a developer message there.
+ */
+const INITIAL_CONTEXT_BYTES = 24 * 1024;
 const Id = Type.String({ minLength: 1, maxLength: 512, pattern: "^[A-Za-z0-9_-]+$" });
 const Seconds = Type.Number({ minimum: 0 });
 const Timestamp = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
@@ -28,7 +34,7 @@ const Input = Type.Object(
         credential: Credential,
         sdp: Type.String({ minLength: 1, maxLength: 65536 }),
         instructions: Type.String({ minLength: 1, maxLength: 65536 }),
-        initialContext: Type.Optional(Type.String({ maxLength: 8192 })),
+        initialContext: Type.Optional(Type.String({ maxLength: INITIAL_CONTEXT_BYTES })),
     },
     { additionalProperties: false },
 );
@@ -84,6 +90,7 @@ export const LiveProviderEventSchema = Type.Union([
             orderly: Type.Boolean(),
             error: Type.Union([Type.String({ maxLength: 256 }), Type.Null()]),
             code: Type.Optional(FailureCode),
+            reason: Type.Optional(liveFailureReasonSchema),
         },
         { additionalProperties: false },
     ),
@@ -103,29 +110,58 @@ export type LiveProviderTransport = {
 export class LiveProviderError extends Error {
     readonly status: 403 | 501 | 503;
     readonly code: Static<typeof FailureCode>;
+    /** Why the call ended, as the desktop is told it; undefined when the cause is unknown. */
+    readonly reason: LiveFailureReason | undefined;
     constructor(
         code: Static<typeof FailureCode> = "live_unavailable",
-        reason?: "readiness_timeout" | "setup_timeout" | "close_timeout" | "sign_in" | "api_key",
+        reason?:
+            | "readiness_timeout"
+            | "setup_timeout"
+            | "close_timeout"
+            | "sign_in"
+            | "api_key"
+            | "usage"
+            | "connection_lost",
     ) {
         super(
-            reason === "sign_in"
-                ? "The selected sign-in expired or was rejected. Sign in to Codex again."
-                : reason === "api_key"
-                  ? "The selected OpenAI API key was rejected. Check the selected account's API key."
-                  : reason === "readiness_timeout"
-                    ? "GPT-Live did not become ready before the startup deadline."
-                    : reason === "setup_timeout"
-                      ? "GPT-Live connection setup exceeded its deadline."
-                      : reason === "close_timeout"
-                        ? "GPT-Live did not confirm closure before the deadline."
-                        : code === "forbidden"
-                          ? "The selected provider denied access to GPT-Live."
-                          : code === "unsupported"
-                            ? "GPT-Live is not supported by the selected provider."
-                            : "The GPT-Live connection is unavailable.",
+            reason === "usage"
+                ? "The selected account's voice usage is used up for now."
+                : reason === "sign_in"
+                  ? "The selected sign-in expired or was rejected. Sign in to Codex again."
+                  : reason === "api_key"
+                    ? "The selected OpenAI API key was rejected. Check the selected account's API key."
+                    : reason === "readiness_timeout"
+                      ? "GPT-Live did not become ready before the startup deadline."
+                      : reason === "setup_timeout"
+                        ? "GPT-Live connection setup exceeded its deadline."
+                        : reason === "close_timeout"
+                          ? "GPT-Live did not confirm closure before the deadline."
+                          : code === "forbidden"
+                            ? "The selected provider denied access to GPT-Live."
+                            : code === "unsupported"
+                              ? "GPT-Live is not supported by the selected provider."
+                              : "The GPT-Live connection is unavailable.",
         );
         this.name = "LiveProviderError";
         this.code = code;
+        this.reason =
+            reason === "sign_in"
+                ? "signIn"
+                : reason === "api_key"
+                  ? "apiKey"
+                  : reason === "usage"
+                    ? "usageExhausted"
+                    : reason === "readiness_timeout"
+                      ? "readinessTimeout"
+                      : reason === "setup_timeout"
+                        ? "setupTimeout"
+                        : reason === "connection_lost"
+                          ? "connectionLost"
+                          : code === "forbidden"
+                            ? "forbidden"
+                            : code === "unsupported"
+                              ? "unsupported"
+                              : undefined;
         this.status = code === "forbidden" ? 403 : code === "unsupported" ? 501 : 503;
     }
 }
@@ -268,7 +304,8 @@ export async function createLiveProviderTransport(
             instructions,
             ...(initialContext === undefined ? {} : { initialContext }),
         }) ||
-        (initialContext !== undefined && Buffer.byteLength(initialContext) > 8192) ||
+        (initialContext !== undefined &&
+            Buffer.byteLength(initialContext) > INITIAL_CONTEXT_BYTES) ||
         !(signal instanceof AbortSignal) ||
         typeof onEvent !== "function" ||
         signal.aborted
@@ -289,29 +326,43 @@ export async function createLiveProviderTransport(
             originator: "happy_agent",
         });
     const session = {
-        model: native ? "gpt-live-1-codex" : "gpt-live-1",
+        // Codex's own native model id; its endpoint chooses the served model and accepts any id.
+        // The public API's latest GPT-Live model is gpt-live-1.1 (changelog, November 19, 2026).
+        model: native ? "gpt-live-1-codex" : "gpt-live-1.1",
         instructions,
         // GPT-Live accepts only its own voices; a Realtime voice such as "marin" is refused as
         // "Voice session access denied." (code forbidden) after the call connects.
         audio: { output: { voice: "cove" } },
         delegation: { type: "client" },
-        ...(initialContext === undefined
-            ? {}
-            : native
-              ? {
-                    initial_items: [
-                        {
-                            type: "message",
-                            role: "user",
-                            content: [{ type: "input_text", text: initialContext }],
-                        },
-                    ],
-                }
+        // The native endpoint ignores `instructions` (a probe that asked every reply to start
+        // with a codeword was never followed) and follows startup developer messages, so native
+        // calls also give the voice prompt as the first startup item.
+        ...(native
+            ? {
+                  initial_items: [
+                      {
+                          type: "message",
+                          role: "developer",
+                          content: [{ type: "input_text", text: instructions }],
+                      },
+                      ...(initialContext === undefined
+                          ? []
+                          : [
+                                {
+                                    type: "message",
+                                    role: "developer",
+                                    content: [{ type: "input_text", text: initialContext }],
+                                },
+                            ]),
+                  ],
+              }
+            : initialContext === undefined
+              ? {}
               : {
                     input: [
                         {
                             type: "message",
-                            role: "user",
+                            role: "developer",
                             content: [{ type: "input_text", text: initialContext }],
                         },
                     ],
@@ -432,6 +483,7 @@ export async function createLiveProviderTransport(
             orderly,
             error: error?.message ?? null,
             ...(error ? { code: error.code } : {}),
+            ...(error?.reason === undefined ? {} : { reason: error.reason }),
         });
     };
     const send = (value: unknown): Promise<void> =>
@@ -516,11 +568,13 @@ export async function createLiveProviderTransport(
             ),
         );
     });
-    socket.on("error", () => finish(false, new LiveProviderError()));
+    socket.on("error", () =>
+        finish(false, new LiveProviderError("live_unavailable", "connection_lost")),
+    );
     socket.on("close", (code) => {
         if (state.phase === "ended") return;
         if (native && state.phase === "closing" && state.wasReady && code === 1000) finish(true);
-        else finish(false, new LiveProviderError());
+        else finish(false, new LiveProviderError("live_unavailable", "connection_lost"));
     });
     socket.on("message", (data, binary) => {
         if (state.phase === "ended") return;
@@ -546,13 +600,17 @@ export async function createLiveProviderTransport(
                 : undefined;
             finish(
                 false,
-                new LiveProviderError(
-                    code === "forbidden" ||
-                        code === "invalid_api_key" ||
-                        code === "insufficient_scope"
-                        ? "forbidden"
-                        : "live_unavailable",
-                ),
+                code === "insufficient_quota" ||
+                    code === "usage_limit_reached" ||
+                    code === "rate_limit_exceeded"
+                    ? new LiveProviderError("live_unavailable", "usage")
+                    : new LiveProviderError(
+                          code === "forbidden" ||
+                              code === "invalid_api_key" ||
+                              code === "insufficient_scope"
+                              ? "forbidden"
+                              : "live_unavailable",
+                      ),
             );
             return;
         }

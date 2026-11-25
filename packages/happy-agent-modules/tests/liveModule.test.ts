@@ -10,6 +10,9 @@ import type {
 } from "@slopus/happy-agent-client";
 import type { SessionEvent } from "@slopus/happy-providers";
 import { withLogger } from "@steve.kite/stdlib";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BotsModule } from "../sources/bots/index.js";
 import {
@@ -23,6 +26,7 @@ import { LiveModule } from "../sources/live/index.js";
 import {
     LIVE_LATER_REQUEST_INSTRUCTIONS,
     LIVE_QUEUED_REQUEST_INSTRUCTIONS,
+    LIVE_GREETING_CUE,
     LIVE_VOICE_INSTRUCTIONS,
     VOICE_AGENT_INSTRUCTIONS,
     VOICE_AGENT_OPENING,
@@ -34,9 +38,13 @@ import type {
 import type { EventsModule } from "../sources/events/index.js";
 import type { HistoryModule } from "../sources/history/index.js";
 import type { SubtasksModule } from "../sources/subtasks/index.js";
-import type { SurfacesModule } from "../sources/surfaces/index.js";
 import type { TasksModule } from "../sources/tasks/index.js";
 import type { TeamModule } from "../sources/team/index.js";
+import type { UserInputModule } from "../sources/userInput/index.js";
+import type { ProjectsModule } from "../sources/projects/index.js";
+import type { WorkspacesModule } from "../sources/workspaces/index.js";
+import { voiceClock, voiceTimeZone } from "../sources/live/impl/voiceTimes.js";
+import { readCallHistory } from "../sources/live/persistence/liveCallHistory.js";
 import { moduleDatabase } from "./support/moduleDatabase.js";
 
 const transport = vi.hoisted(() => ({ create: vi.fn() }));
@@ -120,6 +128,7 @@ async function fixture(startDurable = true) {
     const happy = { id: "happy-bot", name: "Happy", agentId: "happy-agent", status: "active" };
     const bots = {
         forAgent: vi.fn(async () => undefined),
+        forWorkspace: vi.fn(async () => undefined),
         chiefOfStaff: vi.fn(async () => happy),
         list: vi.fn(async () => [
             happy,
@@ -132,10 +141,88 @@ async function fixture(startDurable = true) {
         ]),
         onEvent,
     } as unknown as BotsModule;
-    const tasks = { listForMember: vi.fn(async () => []), onEvent } as unknown as TasksModule;
-    const surfaces = { list: vi.fn(async () => []), onEvent } as unknown as SurfacesModule;
-    const history = {} as unknown as HistoryModule;
-    const eventsModule = {} as unknown as EventsModule;
+    const tasks = {
+        listForMember: vi.fn(async () => []),
+        forWorkspace: vi.fn(async () => undefined),
+        onEvent,
+    } as unknown as TasksModule;
+    // Projects with their root conversations and workspaces, in sidebar order.
+    const projectTree = {
+        projects: [] as { id: string; name: string; agents: string[] }[],
+        workspaces: [] as {
+            id: string;
+            name: string;
+            projectId: string;
+            parentId: string;
+            agents: string[];
+        }[],
+    };
+    const projects = {
+        listCatalogPage: vi.fn(async () => ({
+            projects: projectTree.projects.map(({ id, name }) => ({ id, name, status: "ready" })),
+        })),
+        listAgentIds: vi.fn(
+            async (_ctx: unknown, id: string) =>
+                projectTree.projects.find((project) => project.id === id)?.agents ?? [],
+        ),
+        onEvent,
+    } as unknown as ProjectsModule;
+    const workspaces = {
+        listChildren: vi.fn(async (_ctx: unknown, projectId: string, parentId: string) =>
+            projectTree.workspaces
+                .filter((item) => item.projectId === projectId && item.parentId === parentId)
+                .map(({ id, name }) => ({ id, name, status: "ready" })),
+        ),
+        listAgentIds: vi.fn(
+            async (_ctx: unknown, id: string) =>
+                projectTree.workspaces.find((workspace) => workspace.id === id)?.agents ?? [],
+        ),
+        onEvent,
+    } as unknown as WorkspacesModule;
+    const userInput = {
+        list: vi.fn(async () => []),
+        onEvent: vi.fn(() => () => undefined),
+    } as unknown as UserInputModule;
+    // Each conversation's public history, oldest first; tests add messages to it.
+    const conversations = new Map<
+        string,
+        { role: "user" | "assistant" | "agent"; text: string; at: number }[]
+    >();
+    const history = {
+        // Each conversation's latest run, taken here as its latest message.
+        runActivity: vi.fn(
+            async () =>
+                new Map(
+                    [...conversations].flatMap(([id, messages]) =>
+                        messages.length === 0
+                            ? []
+                            : [
+                                  [
+                                      id,
+                                      {
+                                          at: Math.max(...messages.map((m) => m.at)),
+                                          running: false,
+                                      },
+                                  ],
+                              ],
+                    ),
+                ),
+        ),
+        read: vi.fn(async (_ctx: unknown, agentId: string, query: { limit: number }) => ({
+            messages: (conversations.get(agentId) ?? []).slice(-query.limit).map((message) => ({
+                message: {
+                    role: message.role,
+                    at: message.at,
+                    blocks: [{ type: "text", text: message.text }],
+                },
+            })),
+        })),
+    } as unknown as HistoryModule;
+    const working = new Set<string>();
+    const titles = new Map<string, string>();
+    const eventsModule = {
+        activeRunId: vi.fn((agentId: string) => (working.has(agentId) ? "run" : undefined)),
+    } as unknown as EventsModule;
     const team = { enabled: false } as unknown as TeamModule;
     const created = new Set<string>();
     const archived = new Set<string>();
@@ -144,6 +231,8 @@ async function fixture(startDurable = true) {
             created.add(agentId);
             return { agentId };
         }),
+        isSubtask: vi.fn(() => false),
+        sortSiblings: vi.fn(<T>(siblings: readonly T[]) => [...siblings]),
     } as unknown as SubtasksModule;
     const turns: Record<string, Round[]> = {};
     const sends: { agentId: string; text: string; options: Record<string, unknown> }[] = [];
@@ -158,10 +247,12 @@ async function fixture(startDurable = true) {
         bots,
         subtasks,
         tasks,
-        surfaces,
         history,
         eventsModule,
         team,
+        userInput,
+        projects,
+        workspaces,
     );
     const db = moduleDatabase([...durable.migrations, ...live.migrations], "live-test");
     ensureAgentDatabaseConnection(db.database);
@@ -211,6 +302,7 @@ async function fixture(startDurable = true) {
                     const tools = await hooks.overrideTools!(db.context, scope(agentId), {
                         tools: [],
                     } as never);
+                    await emit(agentId, { type: "toolcall_start" } as SessionEvent);
                     await emit(agentId, { type: "done", state: "tool_call", tokens });
                     toolResults.push(
                         ...(await Promise.all(
@@ -235,10 +327,16 @@ async function fixture(startDurable = true) {
     };
     const agents = {
         config: vi.fn(async (_ctx: unknown, agentId: string) =>
-            created.has(agentId)
-                ? { metadata: archived.has(agentId) ? { archivedAt: 1 } : {} }
+            created.has(agentId) || conversations.has(agentId)
+                ? {
+                      metadata: {
+                          ...(archived.has(agentId) ? { archivedAt: 1 } : {}),
+                          ...(titles.has(agentId) ? { title: titles.get(agentId) } : {}),
+                      },
+                  }
                 : undefined,
         ),
+        childOf: vi.fn(async () => []),
         send: vi.fn(
             async (
                 _ctx: unknown,
@@ -341,8 +439,14 @@ async function fixture(startDurable = true) {
         bots,
         subtasks,
         tasks,
-        surfaces,
+        userInput,
+        projects,
+        workspaces,
+        projectTree,
         history,
+        conversations,
+        titles,
+        working,
         eventsModule,
         team,
         agents,
@@ -388,6 +492,11 @@ async function activeCall(
         provider: f.calls[index]!,
         speak: (text: string) =>
             f.calls[index]!.onEvent({ type: "transcript", role: "user", text }),
+        /** A new turn of the person's, after voice spoke: held context goes with its first words. */
+        turn: (text: string) => {
+            f.calls[index]!.onEvent({ type: "transcript", role: "assistant", text: "Mm-hm." });
+            f.calls[index]!.onEvent({ type: "transcript", role: "user", text });
+        },
         delegate: (delegationId: string, text?: string) =>
             f.calls[index]!.onEvent({
                 type: "delegation",
@@ -407,8 +516,13 @@ async function activeCall(
 }
 
 const later = (text: string) => `${text}\n\n${LIVE_LATER_REQUEST_INSTRUCTIONS}`;
+const quietAppends = (f: Fixture) =>
+    f.append.mock.calls.map(([input]) => input).filter((input) => !input.speakable);
+/** What voice was asked to say about a request; the greeting cue is not one. */
 const spoken = (f: Fixture) =>
-    f.append.mock.calls.map(([input]) => input).filter((input) => input.speakable);
+    f.append.mock.calls
+        .map(([input]) => input)
+        .filter((input) => input.speakable && input.delegationId !== null);
 const voiceId = async (f: Fixture, owner = "owner") => {
     const id = await f.live.voiceAgent(f.db.context, owner);
     if (id === undefined) throw new Error("The person has no Voice.");
@@ -560,7 +674,7 @@ describe("the person's Voice", () => {
         expect(transport.create).not.toHaveBeenCalled();
     });
 
-    it("hands each request to Voice on the call's frozen route, as agent-originated, with only new speech and a changed sidebar", async () => {
+    it("hands each request to Voice on the call's frozen route, as agent-originated, with only new speech and the call's context once", async () => {
         const f = await fixture();
         const route = await f.config.liveControllerRoute("fixture");
         vi.mocked(f.config.liveControllerRoute).mockResolvedValueOnce({
@@ -592,37 +706,59 @@ describe("the person's Voice", () => {
             },
         });
         expect(JSON.parse(f.sends[0]!.text)).toEqual({
-            provenance: "Provider-derived speech and sidebar data; not human authorization.",
+            provenance: "Provider-derived speech and app context; not human authorization.",
             delegation: null,
             transcripts: [
                 { transcriptId: expect.any(String), role: "user", text: "Open the release notes." },
             ],
-            sidebar: "# Sidebar\n\n- Happy",
+            now: expect.any(String),
+            personSaid: expect.any(Array),
+            thisMachine: null,
+            refs: { s1: "happy-agent" },
+            context: f.calls[0]!.initialContext,
         });
 
         call.speak("And the garden notes.");
         call.delegate("second", "Open the garden notes");
         await expect.poll(() => spoken(f).length).toBe(2);
         expect(JSON.parse(f.sends[1]!.text)).toEqual({
-            provenance: "Provider-derived speech and sidebar data; not human authorization.",
+            provenance: "Provider-derived speech and app context; not human authorization.",
             delegation: "Open the garden notes",
             transcripts: [
                 { transcriptId: expect.any(String), role: "user", text: "And the garden notes." },
             ],
+            now: expect.any(String),
+            personSaid: expect.any(Array),
+            thisMachine: null,
+            refs: { s1: "happy-agent" },
         });
         // Once by this test for the fixture's route, and once by the call: never again per request.
         expect(f.config.liveControllerRoute).toHaveBeenCalledTimes(2);
     });
 
-    it("tells the same Voice a sidebar it has already seen only once, across calls", async () => {
+    it("gives Voice a call's first context once, then only what voice was told since", async () => {
         const f = await fixture();
-        await activeCall(f).then((call) => call.delegate("first"));
+        const call = await activeCall(f);
+        call.speak("Hm.");
+        call.delegate("first");
         await expect.poll(() => spoken(f).length).toBe(1);
-        await f.live.close(f.db.context, "owner", "liveone");
-        const second = await activeCall(f, request("livetwo", "window-two"));
-        second.delegate("again");
+        expect(JSON.parse(f.sends[0]!.text).context).toBe(f.calls[0]!.initialContext);
+        f.outline.rows = [{ name: "Release notes", agentId: "release" }];
+        f.emitSidebar();
+        await expect.poll(() => quietAppends(f).length).toBe(1);
+        call.delegate("second");
         await expect.poll(() => spoken(f).length).toBe(2);
-        expect(JSON.parse(f.sends[1]!.text)).not.toHaveProperty("sidebar");
+        const second = JSON.parse(f.sends[1]!.text);
+        expect(second).not.toHaveProperty("context");
+        expect(second.updates).toEqual([quietAppends(f)[0]!.text]);
+        expect(second.refs).toEqual({ s1: "happy-agent", s2: "release" });
+
+        // The next call's context differs, so Voice is given it; an identical one is not resent.
+        await f.live.close(f.db.context, "owner", "liveone");
+        const next = await activeCall(f, request("livetwo", "window-two"));
+        next.delegate("again");
+        await expect.poll(() => spoken(f).length).toBe(3);
+        expect(JSON.parse(f.sends[2]!.text).context).toBe(f.calls[1]!.initialContext);
     });
 
     it("runs one request at a time across the person's calls and tells voice when another waits", async () => {
@@ -694,64 +830,142 @@ describe("the person's Voice", () => {
             ]);
     });
 
-    it("opens an off-screen conversation before staging in it and stages the focused one directly", async () => {
+    it("runs actions Voice calls across inferences before the fixed outcome", async () => {
         const f = await fixture();
-        f.turns["stage-release"] = [
-            {
-                actions: [
-                    { name: "sessionSend", args: { target: releaseNotes, text: "Ship it." } },
-                ],
-            },
-            { text: "Never spoken." },
-        ];
-        f.turns["stage-garden"] = [
-            { actions: [{ name: "sessionSend", args: { target: gardenNotes, text: "Done." } }] },
+        f.turns["two-opens"] = [
+            { actions: [open({ kind: "session", ...releaseNotes })] },
+            { actions: [open({ kind: "session", ...gardenNotes })] },
             { text: "Never spoken." },
         ];
         const call = await activeCall(f, voiceRequest(), succeeded);
-        call.delegate("release", "stage-release");
+        call.delegate("opens", "two-opens");
         await expect.poll(() => spoken(f).length).toBe(1);
-        expect(call.actions().map((frame) => frame.action)).toEqual([
-            { type: "desktopOpen", target: { kind: "session", ...releaseNotes } },
-            { type: "sessionSend", target: releaseNotes, text: "Ship it." },
+        expect(call.actions().map((frame) => frame.action.type)).toEqual([
+            "desktopOpen",
+            "desktopOpen",
         ]);
-        expect(spoken(f)[0]!.text).toBe(
-            later(
-                "Staged the message in Release notes. It has not been sent; the person must review it and press Send.",
-            ),
-        );
-        call.delegate("garden", "stage-garden");
-        await expect.poll(() => spoken(f).length).toBe(2);
-        expect(
-            call
-                .actions()
-                .slice(2)
-                .map((frame) => frame.action.type),
-        ).toEqual(["sessionSend"]);
+        expect(spoken(f)[0]!.text).toBe(later("Opened Release notes. Opened Garden notes."));
     });
 
-    it("never stages when the conversation cannot be opened, and speaks Voice's own account", async () => {
+    it("sends to a named conversation without changing the screen and says it was sent", async () => {
         const f = await fixture();
-        f.turns["stage-release"] = [
+        f.turns["send-release"] = [
             {
                 actions: [
                     { name: "sessionSend", args: { target: releaseNotes, text: "Ship it." } },
                 ],
             },
-            { text: "Release notes could not be opened, so nothing was staged." },
+            { text: "Never spoken." },
         ];
-        const call = await activeCall(f, voiceRequest(), () => ({
-            status: "refused",
-            code: "notFound",
-            message: "That conversation is no longer available.",
-        }));
-        call.delegate("release", "stage-release");
-        await expect.poll(() => spoken(f).length).toBe(1);
-        expect(spoken(f)[0]!.text).toBe(
-            later("Release notes could not be opened, so nothing was staged."),
+        f.turns["send-garden"] = [
+            { actions: [{ name: "sessionSend", args: { target: gardenNotes, text: "Done." } }] },
+            { text: "Never spoken." },
+        ];
+        // This desktop sends; one that can only stage answers `staged` and voice says so.
+        let staging = false;
+        const call = await activeCall(f, voiceRequest(), (frame) =>
+            frame.action.type === "sessionSend"
+                ? { status: "succeeded", output: { type: staging ? "staged" : "ack" } }
+                : succeeded(frame),
         );
-        expect(call.actions().map((frame) => frame.action.type)).toEqual(["desktopOpen"]);
-        expect(f.toolResults[0]!.text).toContain("That conversation is no longer available.");
+        call.delegate("release", "send-release");
+        await expect.poll(() => spoken(f).length).toBe(1);
+        expect(call.actions().map((frame) => frame.action)).toEqual([
+            { type: "sessionSend", target: releaseNotes, text: "Ship it." },
+        ]);
+        expect(spoken(f)[0]!.text).toBe(later("Sent to Release notes."));
+        staging = true;
+        call.delegate("garden", "send-garden");
+        await expect.poll(() => spoken(f).length).toBe(2);
+        expect(call.actions().map((frame) => frame.action.type)).toEqual([
+            "sessionSend",
+            "sessionSend",
+        ]);
+        expect(spoken(f)[1]!.text).toBe(
+            later(
+                "Staged the message in Garden notes. It has not been sent; the person must review it and press Send.",
+            ),
+        );
+    });
+
+    it("gives Voice every turn the person built a message from, until it is sent", async () => {
+        const f = await fixture();
+        f.turns["send-that"] = [
+            {
+                actions: [
+                    { name: "sessionSend", args: { target: releaseNotes, text: "Built up." } },
+                ],
+            },
+            { text: "Never spoken." },
+        ];
+        const call = await activeCall(f, voiceRequest(), (frame) =>
+            frame.action.type === "sessionSend"
+                ? { status: "succeeded", output: { type: "ack" } }
+                : succeeded(frame),
+        );
+        call.speak(" I'm thinking the cache race");
+        call.speak(" is the lock.");
+        call.provider.onEvent({ type: "transcript", role: "assistant", text: "Mm-hm." });
+        call.speak(" And, um, also check the eviction path.");
+        call.provider.onEvent({ type: "transcript", role: "assistant", text: "Got it." });
+        call.speak(" Okay, send that to the release notes task.");
+        call.delegate("send", "send-that");
+        await expect.poll(() => spoken(f).length).toBe(1);
+        expect(JSON.parse(f.sends[0]!.text).personSaid).toEqual([
+            "I'm thinking the cache race is the lock.",
+            "And, um, also check the eviction path.",
+            "Okay, send that to the release notes task.",
+        ]);
+        // What was sent is not offered again for the next message.
+        call.speak(" Next thought.");
+        call.delegate("again");
+        await expect.poll(() => spoken(f).length).toBe(2);
+        expect(JSON.parse(f.sends[1]!.text).personSaid).toEqual(["Next thought."]);
+    });
+
+    it("opens an off-screen draft before appending to it, and never appends when it cannot", async () => {
+        const f = await fixture();
+        f.turns["draft-release"] = [
+            {
+                actions: [
+                    {
+                        name: "composerDraftAppend",
+                        args: { target: releaseNotes, text: "Ship it." },
+                    },
+                ],
+            },
+            { text: "Release notes could not be opened, so nothing was added." },
+        ];
+        let refuse = false;
+        const call = await activeCall(f, voiceRequest(), (frame) =>
+            refuse
+                ? {
+                      status: "refused",
+                      code: "notFound",
+                      message: "That conversation is no longer available.",
+                  }
+                : succeeded(frame),
+        );
+        call.delegate("release", "draft-release");
+        await expect.poll(() => spoken(f).length).toBe(1);
+        expect(call.actions().map((frame) => frame.action.type)).toEqual([
+            "desktopOpen",
+            "composerDraftAppend",
+        ]);
+        expect(spoken(f)[0]!.text).toBe(
+            later("Added the text to the draft in Release notes. Nothing was sent."),
+        );
+        refuse = true;
+        call.delegate("again", "draft-release");
+        await expect.poll(() => spoken(f).length).toBe(2);
+        expect(spoken(f)[1]!.text).toBe(
+            later("Release notes could not be opened, so nothing was added."),
+        );
+        expect(call.actions().map((frame) => frame.action.type)).toEqual([
+            "desktopOpen",
+            "composerDraftAppend",
+            "desktopOpen",
+        ]);
     });
 
     it("stops a batch after a refused action without starting the rest", async () => {
@@ -982,6 +1196,7 @@ describe("the person's Voice", () => {
             "sessionRead",
             "sessionSend",
             "composerDraftAppend",
+            "end_call",
         ]);
         expect(
             JSON.parse(await f.live.runVoiceAction(f.db.context, voice, { type: "desktopState" })),
@@ -1002,6 +1217,7 @@ describe("the person's Voice", () => {
             "sessionRead",
             "sessionSend",
             "composerDraftAppend",
+            "end_call",
             "taskCreate",
             "sessionModelChange",
         ]);
@@ -1042,21 +1258,55 @@ describe("Voice's targets", () => {
         f.outline.rows = [{ name: "Release notes", agentId: "release-agent" }];
     };
 
-    it("refuses an agent target in a window that cannot open one, without asking the desktop", async () => {
+    it("gives a window without agent targets its own target for an agent it lists, and refuses others", async () => {
         const f = await fixture();
-        f.turns["agent"] = [
+        const listed = { kind: "agent", connectionId: "local", agentId: "notes" };
+        f.turns["open-listed"] = [
+            {
+                actions: [
+                    open(listed),
+                    { name: "sessionSend", args: { target: listed, text: "Ship it." } },
+                ],
+            },
+            { text: "Never spoken." },
+        ];
+        f.turns["open-unlisted"] = [
             { actions: [open(agentTarget)] },
             { text: "That could not be opened." },
         ];
-        const call = await activeCall(f, voiceRequest(), succeeded);
-        call.delegate("agent", "agent");
+        const call = await activeCall(f, voiceRequest(), (frame) =>
+            frame.action.type === "sessionSend"
+                ? { status: "succeeded", output: { type: "ack" } }
+                : succeeded(frame),
+        );
+        call.delegate("listed", "open-listed");
         await expect.poll(() => spoken(f).length).toBe(1);
-        expect(call.actions()).toEqual([]);
-        expect(JSON.parse(f.toolResults[0]!.text)).toMatchObject({
+        expect(call.actions().map((frame) => frame.action)).toEqual([
+            { type: "desktopOpen", target: { kind: "session", ...gardenNotes } },
+            { type: "sessionSend", target: gardenNotes, text: "Ship it." },
+        ]);
+        expect(spoken(f)[0]!.text).toBe(later("Opened Garden notes. Sent to Garden notes."));
+        call.delegate("unlisted", "open-unlisted");
+        await expect.poll(() => spoken(f).length).toBe(2);
+        expect(call.actions()).toHaveLength(2);
+        expect(JSON.parse(f.toolResults.at(-1)!.text)).toMatchObject({
             status: "refused",
             message:
                 "This window cannot open conversations by agent ID. Read desktopState and use its targets.",
         });
+    });
+
+    it("ends the call when the person asked, after voice's goodbye, without speaking an outcome", async () => {
+        const f = await fixture();
+        f.turns["hang-up"] = [
+            { actions: [{ name: "end_call", args: {} }] },
+            { text: "Ending the call." },
+        ];
+        const call = await activeCall(f);
+        call.delegate("bye", "hang-up");
+        await expect.poll(() => call.status(), { timeout: 4000 }).toBe("closed");
+        expect(spoken(f)).toEqual([]);
+        expect(f.append.mock.calls.map(([input]) => input.text)).toEqual([LIVE_GREETING_CUE]);
     });
 
     it("refuses another server's conversation", async () => {
@@ -1076,26 +1326,37 @@ describe("Voice's targets", () => {
         });
     });
 
-    it("accepts agent targets only with the desktop's own connection ID", async () => {
+    it("accepts the desktop's own connection ID on its own, and agent targets only with it", async () => {
         const f = await fixture();
-        await expect(
-            f.live.reserve(f.db.context, "owner", {
-                ...voiceRequest(),
-                localConnectionId: "local",
-            }),
-        ).rejects.toMatchObject({ status: 400 });
-        await f.start({ ...voiceRequest([...allCapabilities, "agentTargets"]) });
-        const control = await f.attach();
+        f.turns["remote"] = [
+            { actions: [open({ kind: "session", ...releaseNotes, connectionId: "remote" })] },
+            { text: "That is on another server." },
+        ];
+        // A window that names this machine "remote" acts there, whatever an earlier window said.
+        const call = await activeCall(
+            f,
+            { ...request(), desktopCapabilities: ["voiceFocus"], localConnectionId: "remote" },
+            succeeded,
+        );
+        expect(call.frames[0]).toMatchObject({ type: "hello", capabilities: ["voiceFocus"] });
+        call.delegate("remote", "remote");
+        await expect.poll(() => spoken(f).length).toBe(1);
+        expect(call.actions().map((frame) => frame.action.type)).toEqual(["desktopOpen"]);
+        expect(JSON.parse(f.sends[0]!.text).thisMachine).toBe("remote");
+
+        const other = await fixture();
+        await other.start(voiceRequest([...allCapabilities, "agentTargets"]));
+        const control = await other.attach();
         expect(control.frames[0]).toMatchObject({ type: "hello", capabilities: allCapabilities });
     });
 
-    it("opens a named agent's conversation before staging in it and names it as the sidebar does", async () => {
+    it("sends to a named agent's conversation as it is, and names it as the sidebar does", async () => {
         const f = await fixture();
         withRelease(f);
-        f.turns["stage-agent"] = [
+        f.turns["send-agent"] = [
             { actions: [{ name: "desktopState", args: {} }] },
             { actions: [{ name: "sessionSend", args: { target: agentTarget, text: "Ship it." } }] },
-            { text: "Staged it in Release notes for review." },
+            { text: "Sent to Release notes." },
         ];
         const call = await activeCall(
             f,
@@ -1105,7 +1366,7 @@ describe("Voice's targets", () => {
         expect(call.frames[0]).toMatchObject({
             capabilities: [...allCapabilities, "agentTargets"],
         });
-        call.delegate("agent", "stage-agent");
+        call.delegate("agent", "send-agent");
         await expect.poll(() => spoken(f).length).toBe(1);
         expect(JSON.parse(f.toolResults[0]!.text)).toMatchObject({
             status: "succeeded",
@@ -1113,11 +1374,10 @@ describe("Voice's targets", () => {
         });
         expect(call.actions().map((frame) => frame.action)).toEqual([
             { type: "desktopState" },
-            { type: "desktopOpen", target: agentTarget },
             { type: "sessionSend", target: agentTarget, text: "Ship it." },
         ]);
         // The desktop's state read keeps the fixed outcome from applying, so Voice answers.
-        expect(spoken(f)[0]!.text).toBe(later("Staged it in Release notes for review."));
+        expect(spoken(f)[0]!.text).toBe(later("Sent to Release notes."));
     });
 
     it("speaks an agent target's sidebar name in the fixed outcome", async () => {
@@ -1141,29 +1401,251 @@ describe("what voice is told", () => {
     const quiet = (f: Fixture) =>
         f.append.mock.calls.map(([input]) => input).filter((input) => !input.speakable);
 
-    it("starts voice with the sidebar outline and the stored or built-in voice prompt", async () => {
+    it("starts voice with the phones' first context and the stored or built-in voice prompt", async () => {
         const f = await fixture();
         (f.config as unknown as { voiceSettings: object }).voiceSettings = {
             system_prompt: "Speak like a lighthouse keeper.",
         };
-        await activeCall(f);
+        const asked = Date.now() - 5 * 60_000;
+        const replied = Date.now() - 3 * 60_000;
+        f.outline.rows = [
+            { name: "Release notes", agentId: "release-agent" },
+            { name: "Cache", agentId: "cache-agent" },
+        ];
+        f.conversations.set("happy-agent", [
+            { role: "user", text: "What changed?", at: asked },
+            { role: "assistant", text: "The cache race is fixed.", at: replied },
+        ]);
+        f.working.add("cache-agent");
+        // A failed run and a pending question are visible without asking anyone.
+        await f.hooks.afterAgentSettled?.(f.db.context, f.scope("release-agent"), {
+            error: "Rate limited by the provider.",
+        } as never);
+        vi.mocked(f.userInput.list).mockImplementation(async (_ctx, agentId) =>
+            agentId === "release-agent" ? ([{ question: "Which branch?" }] as never) : [],
+        );
+        const body = voiceRequest();
+        body.context.activeTarget = {
+            kind: "bot",
+            connectionId: "local",
+            groupId: "home",
+            sessionId: "happy-agent",
+            botId: "happy-bot",
+        };
+        await activeCall(f, body);
         expect(f.calls[0]!.instructions).toBe("Speak like a lighthouse keeper.");
-        expect(f.calls[0]!.initialContext).toBe("# Sidebar\n\n- Happy");
+        const context = f.calls[0]!.initialContext!;
+        const now = context.match(/^Now: (\S+) \(the person's local time, UTC\)\n/)?.[1];
+        expect(now).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d\+00:00$/);
+        expect(context.slice(context.indexOf("\n") + 1)).toBe(
+            [
+                "focusRevision: 1",
+                "",
+                "On screen: Happy — bot, ref s1",
+                "Working: no. Needs the person: no.",
+                `Last message from the person: 5 minutes ago (${voiceClock(asked, "UTC")})`,
+                `Last reply: 3 minutes ago (${voiceClock(replied, "UTC")})`,
+                "Last turns, oldest first:",
+                "1. The person (5 minutes ago): What changed?",
+                "   Agent (3 minutes ago): The cache race is fixed.",
+                "",
+                "Conversations in the app, in the sidebar's order:",
+                `- Happy — bot, ref s1, last active 3 minutes ago (${voiceClock(replied, "UTC").slice(11, 16)})`,
+                "- Release notes — bot, ref s2, needs the person (asks: Which branch?), failed (Rate limited by the provider.)",
+                "- Cache — bot, ref s3, working",
+            ].join("\n"),
+        );
         (f.config as unknown as { voiceSettings: object }).voiceSettings = {};
         await activeCall(f, request("livetwo", "window-two"));
         expect(f.calls[1]!.instructions).toBe(LIVE_VOICE_INSTRUCTIONS);
     });
 
-    it("tells voice the sidebar only when its outline text changes, after a pending outcome", async () => {
+    it("starts a call without reading any conversation's history except the one on screen", async () => {
+        const f = await fixture();
+        f.outline.rows = Array.from({ length: 60 }, (_, index) => ({
+            name: `Bot ${String(index)}`,
+            agentId: `bot-agent-${String(index)}`,
+        }));
+        for (const { agentId } of f.outline.rows)
+            f.conversations.set(agentId, [{ role: "assistant", text: "Done.", at: Date.now() }]);
+        await activeCall(f);
+        expect(f.history.read).not.toHaveBeenCalled();
+        expect(f.history.runActivity).toHaveBeenCalledTimes(1);
+        expect(f.calls[0]!.initialContext).toContain("- Bot 59 — bot, ref s");
+    });
+
+    it("never hands a model the whole sidebar: 100 listed, the rest found by paged search", async () => {
+        const f = await fixture();
+        f.outline.rows = Array.from({ length: 130 }, (_, index) => ({
+            name: `Bot ${String(index).padStart(3, "0")}`,
+            agentId: `many-${String(index)}`,
+        }));
+        // Six projects of 100 conversations, then the one asked for in the last project's
+        // workspace: far past the first context, and past where the directory once stopped.
+        f.projectTree.projects = Array.from({ length: 6 }, (_, project) => ({
+            id: `p${String(project)}`,
+            name: `Project ${String(project)}`,
+            agents: Array.from(
+                { length: 100 },
+                (_, index) => `p${String(project)}-${String(index)}`,
+            ),
+        }));
+        for (const { agents } of f.projectTree.projects)
+            for (const id of agents) {
+                f.titles.set(id, "Gym performance session");
+                f.conversations.set(id, []);
+            }
+        f.projectTree.workspaces = [
+            { id: "w", name: "Ledger work", projectId: "p5", parentId: "p5", agents: ["ledger"] },
+        ];
+        f.titles.set("ledger", "Lighthouse Ledger");
+        // Never active, so recency never lifts it into the 100 listed.
+        f.conversations.set("ledger", []);
+        f.turns["search"] = [
+            {
+                actions: [
+                    { name: "list_sidebar", args: {} },
+                    { name: "list_sidebar", args: { cursor: "50" } },
+                    { name: "list_sidebar", args: { query: "bot 12" } },
+                    { name: "list_sidebar", args: { query: "Lighthouse Ledger" } },
+                    { name: "read_conversations", args: { ids: ["ledger"] } },
+                ],
+            },
+            { text: "Found it." },
+        ];
+        const call = await activeCall(f);
+        const context = f.calls[0]!.initialContext!;
+        expect(context.match(/^- .* — bot, ref /gmu)).toHaveLength(100);
+        expect(context).toContain(
+            "… and 632 more not listed; ask your backend to find one by name.",
+        );
+        call.delegate("search", "search");
+        await expect.poll(() => spoken(f).length).toBe(1);
+        // Voice is given references only for what voice was shown.
+        expect(Object.keys(JSON.parse(f.sends[0]!.text).refs)).toHaveLength(100);
+        const [first, second, found, far] = f.toolResults
+            .slice(0, 4)
+            .map((result) => JSON.parse(result.text));
+        const read = f.toolResults[4]!.text;
+        expect(first.rows).toHaveLength(50);
+        expect(first).toMatchObject({ total: 732, nextCursor: "50" });
+        expect(far).toEqual({
+            rows: [
+                expect.objectContaining({
+                    agentId: "ledger",
+                    title: "Lighthouse Ledger",
+                    kind: "conversation",
+                    parents: ["Project 5", "Ledger work"],
+                }),
+            ],
+            total: 1,
+        });
+        expect(context).not.toContain("Lighthouse Ledger");
+        expect(read).toContain("Lighthouse Ledger");
+        expect(second.rows[0].title).toBe("Bot 049");
+        expect(found.rows.map((row: { title: string }) => row.title)).toEqual(
+            Array.from({ length: 10 }, (_, index) => `Bot 12${String(index)}`),
+        );
+        expect(found).not.toHaveProperty("nextCursor");
+        expect(found.rows.at(-1)).toMatchObject({ agentId: "many-129", kind: "bot" });
+    });
+
+    it("counts a native call's voice prompt inside the startup budget", async () => {
+        const f = await fixture();
+        vi.mocked(f.config.liveCredential).mockResolvedValue({
+            type: "codex_subscription",
+            token: "fake",
+        } as never);
+        (f.config as unknown as { voiceSettings: object }).voiceSettings = {
+            system_prompt: "p".repeat(20_000),
+        };
+        f.outline.rows = Array.from({ length: 100 }, (_, index) => ({
+            name: `Conversation ${String(index)} ${"x".repeat(60)}`,
+            agentId: `wide-${String(index)}`,
+        }));
+        await activeCall(f);
+        const context = f.calls[0]!.initialContext!;
+        expect(Buffer.byteLength(context) + 20_000).toBeLessThanOrEqual(24 * 1024);
+        expect(context).toContain("more not listed");
+    });
+
+    it("lists project and workspace conversations under their headings, with references", async () => {
+        const f = await fixture();
+        const at = Date.now() - 60_000;
+        f.projectTree.projects = [{ id: "app", name: "App", agents: ["root-chat"] }];
+        f.projectTree.workspaces = [
+            {
+                id: "feature",
+                name: "Feature",
+                projectId: "app",
+                parentId: "app",
+                agents: ["feature-chat"],
+            },
+            {
+                id: "owned",
+                name: "Bot's own",
+                projectId: "app",
+                parentId: "app",
+                agents: ["hidden"],
+            },
+        ];
+        vi.mocked(f.bots.forWorkspace).mockImplementation(async (_ctx, id) =>
+            id === "owned" ? ({} as never) : undefined,
+        );
+        for (const [id, title] of [
+            ["root-chat", "Root chat"],
+            ["feature-chat", "Feature chat"],
+            ["hidden", "Hidden"],
+        ] as const) {
+            f.titles.set(id, title);
+            f.conversations.set(id, []);
+        }
+        f.conversations.set("feature-chat", [{ role: "assistant", text: "Done.", at }]);
+        const call = await activeCall(f);
+        call.speak("Hm.");
+        const context = f.calls[0]!.initialContext!;
+        expect(context).toContain(
+            [
+                "Conversations in the app, in the sidebar's order:",
+                "- Happy — bot, ref s1",
+                "- App — project",
+                "  - Root chat — conversation, ref s2",
+                "  - Feature — workspace",
+                `    - Feature chat — conversation, ref s3, last active a minute ago (${voiceClock(at, voiceTimeZone(undefined)).slice(11, 16)})`,
+            ].join("\n"),
+        );
+        expect(context).not.toContain("Hidden");
+
+        // A conversation added to the workspace is told with its parents.
+        f.titles.set("second-chat", "Second chat");
+        f.conversations.set("second-chat", []);
+        f.projectTree.workspaces[0]!.agents.push("second-chat");
+        f.emitSidebar();
+        await expect.poll(() => quiet(f).length, { timeout: 3000 }).toBe(1);
+        expect(JSON.parse(quiet(f)[0]!.text)).toEqual({
+            added: [
+                {
+                    kind: "conversation",
+                    parents: ["App", "Feature"],
+                    ref: "s4",
+                    title: "Second chat",
+                },
+            ],
+            event: "directory",
+        });
+    });
+
+    it("tells voice only what changed in the directory, settled and after a pending outcome", async () => {
         const f = await fixture();
         let release!: () => void;
         f.turns["hold"] = [
             { gate: new Promise<void>((resolve) => (release = resolve)), text: "Done." },
         ];
         const call = await activeCall(f);
+        call.speak("Hm.");
         f.emitSidebar();
         f.emitSidebar();
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 1200));
         expect(quiet(f)).toEqual([]);
 
         f.outline.rows = [
@@ -1171,24 +1653,339 @@ describe("what voice is told", () => {
             { name: "Two", agentId: "two" },
         ];
         f.emitSidebar();
-        await expect.poll(() => quiet(f).length).toBe(1);
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        // Settled, but held until the person's next turn begins.
+        expect(quiet(f)).toEqual([]);
+        call.turn("And now?");
+        await expect.poll(() => quiet(f).length, { timeout: 3000 }).toBe(1);
         expect(quiet(f)[0]).toEqual({
             delegationId: null,
-            text: "# Sidebar\n\n- Happy\n- One\n- Two",
+            text: '{"added":[{"kind":"bot","ref":"s2","title":"One"},{"kind":"bot","ref":"s3","title":"Two"}],"event":"directory"}',
             speakable: false,
         });
 
         call.delegate("hold", "hold");
         await expect.poll(() => f.sends.length).toBe(1);
-        f.outline.rows = [];
+        f.outline.rows = [{ name: "Two, renamed", agentId: "two" }];
         f.emitSidebar();
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 1200));
         expect(quiet(f)).toHaveLength(1);
         release();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        call.turn("What changed?");
         await expect.poll(() => quiet(f).length).toBe(2);
         const order = f.append.mock.calls.map(([input]) => input.delegationId);
-        expect(order).toEqual([null, "hold", null]);
-        expect(quiet(f)[1]!.text).toBe("# Sidebar\n\n- Happy");
+        // The greeting cue, the first change, the outcome, then the change it held.
+        expect(order).toEqual([null, null, "hold", null]);
+        expect(quiet(f)[1]!.text).toBe(
+            '{"event":"directory","removed":["s2"],"renamed":[{"ref":"s3","title":"Two, renamed"}]}',
+        );
+    });
+
+    it("records each push's kind and size, and its text only in the test capture file", async () => {
+        const directory = await mkdtemp(join(tmpdir(), "live-capture-"));
+        const file = join(directory, "context.jsonl");
+        vi.stubEnv("HAPPY_LIVE_CONTEXT_CAPTURE_FILE", file);
+        try {
+            const f = await fixture();
+            f.turns["read"] = [{ text: "Release notes finished a minute ago." }];
+            const call = await activeCall(f);
+            call.speak("Hm.");
+            f.outline.rows = [{ name: "Release notes", agentId: "notes" }];
+            f.emitSidebar();
+            await expect.poll(() => quiet(f).length, { timeout: 3000 }).toBe(1);
+            call.delegate("read", "read");
+            await expect.poll(() => f.append.mock.calls.length).toBe(3);
+            const pushes = () => f.records().filter((record) => record.event === "context.pushed");
+            await expect.poll(() => pushes().length).toBe(4);
+            expect(pushes().map(({ kind, speakable }) => ({ kind, speakable }))).toEqual([
+                { kind: "context", speakable: false },
+                { kind: "greeting", speakable: true },
+                { kind: "directory", speakable: false },
+                { kind: "outcome", speakable: true },
+            ]);
+            expect(pushes()[2]).toMatchObject({
+                appendCount: 1,
+                bytes: Buffer.byteLength(quiet(f)[0]!.text),
+            });
+            expect(JSON.stringify(f.records())).not.toContain("Release notes");
+            const lines = (await readFile(file, "utf8"))
+                .trim()
+                .split("\n")
+                .map((line) => JSON.parse(line));
+            expect(lines.map(({ kind, text, speakable }) => ({ kind, text, speakable }))).toEqual([
+                { kind: "context", text: f.calls[0]!.initialContext, speakable: false },
+                { kind: "greeting", text: LIVE_GREETING_CUE, speakable: true },
+                { kind: "directory", text: quiet(f)[0]!.text, speakable: false },
+                { kind: "outcome", text: f.append.mock.calls[2]![0].text, speakable: true },
+            ]);
+            expect(lines.every(({ at }) => Number.isInteger(at))).toBe(true);
+        } finally {
+            vi.unstubAllEnvs();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
+    it("hears replies only from the four conversations most recently on screen", async () => {
+        const f = await fixture();
+        for (const id of ["one", "two", "three", "four", "five"]) f.conversations.set(id, []);
+        const call = await activeCall(f, voiceRequest());
+        call.speak("Hm.");
+        for (const [index, id] of ["one", "two", "three", "four", "five"].entries())
+            call.binding.message(
+                JSON.stringify({
+                    type: "desktopContext",
+                    revision: index + 2,
+                    context: {
+                        ...voiceRequest().context,
+                        activeTarget: {
+                            kind: "session",
+                            connectionId: "local",
+                            groupId: "g",
+                            sessionId: id,
+                        },
+                    },
+                }),
+            );
+        await expect.poll(() => quietAppends(f).length).toBe(5);
+        for (const id of ["one", "five"]) {
+            await f.hooks.onEvent?.(f.db.context, f.scope(id), {
+                type: "text_delta",
+                delta: `Reply from ${id}.`,
+            });
+            await f.hooks.afterAgentSettled?.(f.db.context, f.scope(id), {} as never);
+        }
+        call.turn("Anything new?");
+        await expect.poll(() => quietAppends(f).length).toBe(6);
+        // "one" fell out of the four when "five" came on screen.
+        expect(quietAppends(f)[5]!.text).toContain("Reply from five.");
+        expect(JSON.stringify(quietAppends(f))).not.toContain("Reply from one.");
+    });
+
+    it("bounds a focus update to 16 KiB, letting the oldest turns give way", async () => {
+        const f = await fixture();
+        const long = "word ".repeat(1_600);
+        f.conversations.set(
+            "long-agent",
+            Array.from({ length: 5 }, (_, index) => [
+                { role: "user" as const, text: `Question ${String(index)} ${long}`, at: index },
+                { role: "assistant" as const, text: `Answer ${String(index)} ${long}`, at: index },
+            ]).flat(),
+        );
+        const call = await activeCall(f, voiceRequest());
+        call.speak("Hm.");
+        call.binding.message(
+            JSON.stringify({
+                type: "desktopContext",
+                revision: 2,
+                context: {
+                    ...voiceRequest().context,
+                    activeTarget: {
+                        kind: "session",
+                        connectionId: "local",
+                        groupId: "g",
+                        sessionId: "long-agent",
+                    },
+                },
+            }),
+        );
+        await expect.poll(() => quietAppends(f).length).toBe(1);
+        const text = quietAppends(f)[0]!.text;
+        expect(Buffer.byteLength(text)).toBeLessThanOrEqual(16 * 1024);
+        expect(text).toContain("Answer 4");
+        expect(text).not.toContain("Question 0");
+    });
+
+    it("tells the focus with a conversation's unseen turns once, and its followed replies and errors", async () => {
+        const f = await fixture();
+        const at = Date.now() - 2 * 60_000;
+        f.outline.rows = [{ name: "Release notes", agentId: "release-agent" }];
+        f.conversations.set("release-agent", [
+            { role: "user", text: "Cut the release.", at },
+            { role: "assistant", text: "Tagged it.", at },
+        ]);
+        const call = await activeCall(f, voiceRequest());
+        call.speak("Hm.");
+        const focus = (revision: number, sessionId: string | null) =>
+            call.binding.message(
+                JSON.stringify({
+                    type: "desktopContext",
+                    revision,
+                    context: {
+                        ...voiceRequest().context,
+                        activeTarget:
+                            sessionId === null
+                                ? null
+                                : {
+                                      kind: "session",
+                                      connectionId: "local",
+                                      groupId: "g",
+                                      sessionId,
+                                  },
+                    },
+                }),
+            );
+        focus(2, "release-agent");
+        await expect.poll(() => quiet(f).length).toBe(1);
+        const clock = voiceClock(at, "UTC");
+        expect(JSON.parse(quiet(f)[0]!.text)).toEqual({
+            event: "focus",
+            focusRevision: 2,
+            ref: "s2",
+            title: "Release notes",
+            working: false,
+            needsPerson: false,
+            turns: [
+                {
+                    person: { text: "Cut the release.", at: { ago: "2 minutes ago", at: clock } },
+                    agent: { text: "Tagged it.", at: { ago: "2 minutes ago", at: clock } },
+                },
+            ],
+        });
+        focus(3, null);
+        focus(4, "release-agent");
+        await expect.poll(() => quiet(f).length).toBe(3);
+        expect(JSON.parse(quiet(f)[1]!.text)).toEqual({
+            event: "focus",
+            focusRevision: 3,
+            title: null,
+        });
+        expect(JSON.parse(quiet(f)[2]!.text)).not.toHaveProperty("turns");
+
+        // Words before a step go when the step comes; the last words when the run settles.
+        const emit = (event: SessionEvent) =>
+            f.hooks.onEvent?.(f.db.context, f.scope("release-agent"), event);
+        await emit({ type: "text_delta", delta: "Checking the changelog." });
+        await emit({ type: "done", state: "tool_call", tokens });
+        await emit({ type: "text_delta", delta: "Release 2.4 is out." });
+        await f.hooks.afterAgentSettled?.(f.db.context, f.scope("release-agent"), {} as never);
+        await f.hooks.afterAgentSettled?.(f.db.context, f.scope("release-agent"), {
+            error: "The provider stopped.",
+        } as never);
+        await expect.poll(() => quiet(f).length).toBe(6);
+        const lines = quiet(f)
+            .slice(3)
+            .map((input) => JSON.parse(input.text));
+        expect(lines).toEqual([
+            {
+                at: { ago: "just now", at: expect.any(String) },
+                event: "assistant_text",
+                ref: "s2",
+                text: "Checking the changelog.",
+                title: "Release notes",
+            },
+            {
+                at: { ago: "just now", at: expect.any(String) },
+                event: "assistant_text",
+                finishedTurn: true,
+                ref: "s2",
+                text: "Release 2.4 is out.",
+                title: "Release notes",
+            },
+            {
+                at: { ago: "just now", at: expect.any(String) },
+                event: "session_error",
+                reason: "The provider stopped.",
+                ref: "s2",
+                title: "Release notes",
+            },
+        ]);
+        // A conversation nobody followed tells nothing.
+        await f.hooks.onEvent?.(f.db.context, f.scope("happy-agent"), {
+            type: "text_delta",
+            delta: "Unrelated.",
+        });
+        await f.hooks.afterAgentSettled?.(f.db.context, f.scope("happy-agent"), {} as never);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(quiet(f)).toHaveLength(6);
+    });
+
+    it("carries what was said in the last call into the next call's recap", async () => {
+        const f = await fixture();
+        const call = await activeCall(f);
+        call.speak("Remember the word pineapple.");
+        call.provider.onEvent({
+            type: "transcript",
+            role: "assistant",
+            text: "Got it, pineapple.",
+        });
+        await expect
+            .poll(() => call.frames.filter((frame) => frame.type === "transcript").length)
+            .toBe(2);
+        await f.live.close(f.db.context, "owner", "liveone");
+        await expect.poll(() => call.status()).toBe("closed");
+        await expect
+            .poll(async () => (await readCallHistory(f.db.context, "owner")).length)
+            .toBe(3);
+        await activeCall(f, request("livetwo", "window-two"));
+        expect(f.calls[1]!.initialContext).toContain(
+            [
+                "Previous voice conversation (earlier calls, oldest first):",
+                "- just now, the person: Remember the word pineapple.",
+                "- just now, you: Got it, pineapple.",
+                "- just now: the person ended the call",
+            ].join("\n"),
+        );
+    });
+
+    it("holds background context for the person's next turn, and keeps status current then", async () => {
+        const f = await fixture();
+        f.outline.rows = [{ name: "Release notes", agentId: "release-agent" }];
+        f.conversations.set("release-agent", []);
+        const call = await activeCall(f);
+        f.working.add("release-agent");
+        await f.hooks.beforeAgentLoop?.(f.db.context, f.scope("release-agent"), {} as never);
+        f.outline.rows.push({ name: "Cache", agentId: "cache-agent" });
+        f.emitSidebar();
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        // Nothing goes while the person is quiet: any append may make voice speak.
+        expect(quietAppends(f)).toEqual([]);
+        call.speak("What's working?");
+        await expect.poll(() => quietAppends(f).length).toBe(2);
+        expect(quietAppends(f).map(({ text }) => JSON.parse(text))).toEqual([
+            {
+                added: [{ kind: "bot", ref: "s3", title: "Cache" }],
+                event: "directory",
+            },
+            {
+                changes: [
+                    {
+                        needsPerson: false,
+                        ref: "s2",
+                        title: "Release notes",
+                        working: true,
+                    },
+                ],
+                event: "status",
+            },
+        ]);
+        // An unchanged status tells nothing again.
+        await f.hooks.beforeAgentLoop?.(f.db.context, f.scope("release-agent"), {} as never);
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        expect(quietAppends(f)).toHaveLength(2);
+    });
+
+    it("tells the desktop a stopping daemon ended the call, and remembers it as dropped", async () => {
+        const f = await fixture();
+        const call = await activeCall(f, { ...request(), desktopCapabilities: ["failureReasons"] });
+        call.speak("Remember the word pineapple.");
+        await expect
+            .poll(() => call.frames.filter((frame) => frame.type === "transcript").length)
+            .toBe(1);
+        await f.live.stop();
+        expect(call.frames.filter((frame) => frame.type === "status").at(-1)).toEqual({
+            type: "status",
+            status: "failed",
+            error: "Voice ended because Happy Agent stopped. Start a new call once it is running again.",
+            reason: "restart",
+        });
+        expect(await readCallHistory(f.db.context, "owner")).toEqual([
+            expect.objectContaining({ kind: "person", text: "Remember the word pineapple." }),
+            expect.objectContaining({
+                kind: "ending",
+                text: "the call dropped (Happy Agent stopped on the computer)",
+            }),
+        ]);
     });
 
     it("never pushes AppState, context, or conversation updates to voice", async () => {
@@ -1217,7 +2014,8 @@ describe("what voice is told", () => {
             .poll(() => f.records().map((record) => record.event))
             .toContain("context.accepted");
         await new Promise((resolve) => setTimeout(resolve, 300));
-        expect(f.append).not.toHaveBeenCalled();
+        // Only the greeting cue: nothing from AppState, context, or session updates.
+        expect(f.append.mock.calls.map(([input]) => input.text)).toEqual([LIVE_GREETING_CUE]);
         expect(await call.status()).toBe("active");
     });
 
@@ -1274,11 +2072,13 @@ describe("what voice is told", () => {
         async (voiceError) => {
             const f = await fixture();
             if (voiceError) f.agents.send.mockRejectedValueOnce(new Error("Private diagnostic"));
-            f.append.mockRejectedValueOnce(new Error("Private socket diagnostic"));
             const call = await activeCall(f);
+            await expect.poll(() => f.append.mock.calls.length).toBe(1);
+            f.append.mockRejectedValueOnce(new Error("Private socket diagnostic"));
             call.delegate("delivery");
             await expect.poll(() => call.status()).toBe("failed");
-            expect(f.append).toHaveBeenCalledOnce();
+            // The greeting, then the one failed delivery, never a second attempt.
+            expect(f.append).toHaveBeenCalledTimes(2);
             expect(call.close).toHaveBeenCalledOnce();
             expect((await f.live.get(f.db.context, "owner", "liveone")).error).toContain(
                 "could not deliver",
@@ -1446,15 +2246,23 @@ describe("window-owned Live sessions", () => {
             f.bots,
             f.subtasks,
             f.tasks,
-            f.surfaces,
             f.history,
             f.eventsModule,
             f.team,
+            f.userInput,
+            f.projects,
+            f.workspaces,
         );
         const hooks = (await restored.beforeStart(
             f.db.context,
             f.agents as never,
         )) as AgentModuleHooks;
+        expect(await readCallHistory(f.db.context, "owner")).toEqual([
+            expect.objectContaining({
+                kind: "ending",
+                text: "the call dropped (Happy Agent restarted)",
+            }),
+        ]);
         expect(await restored.get(f.db.context, "owner", "liveone")).toMatchObject({
             status: "failed",
             usage: { seconds: null, final: false },
@@ -1467,6 +2275,37 @@ describe("window-owned Live sessions", () => {
             } as never),
         ).toBe(VOICE_AGENT_INSTRUCTIONS);
         await restored.stop();
+    });
+
+    it("tells a desktop that negotiated failure reasons why its call failed", async () => {
+        for (const negotiated of [true, false]) {
+            const f = await fixture();
+            const call = await activeCall(f, {
+                ...request(),
+                desktopCapabilities: negotiated ? ["failureReasons"] : [],
+            });
+            call.provider.onEvent({
+                type: "ended",
+                orderly: false,
+                error: "The selected sign-in expired or was rejected. Sign in to Codex again.",
+                reason: "signIn",
+            });
+            await expect.poll(() => call.status()).toBe("failed");
+            const failed = call.frames.filter(
+                (frame) => frame.type === "status" && frame.status === "failed",
+            );
+            expect(failed).toEqual([
+                {
+                    type: "status",
+                    status: "failed",
+                    error: "The selected sign-in expired or was rejected. Sign in to Codex again.",
+                    ...(negotiated ? { reason: "signIn" } : {}),
+                },
+            ]);
+            expect(await f.live.get(f.db.context, "owner", "liveone")).toMatchObject({
+                failureReason: "signIn",
+            });
+        }
     });
 
     it("negotiates capabilities and echoes them in hello", async () => {
@@ -1537,37 +2376,47 @@ describe("window-owned Live sessions", () => {
             model: undefined,
             effort: "low",
             serviceTier: null,
-            notice: "Fast mode is not available for Sonnet 5, so it is ignored.",
+            speed: "regular",
+            speeds: ["regular"],
+            notice: "Fast is not available for Sonnet 5 on this account, so voice uses Regular.",
         }));
+        config.voiceAccounts = vi.fn(async () => [
+            { providerId: "codex", credential: "codex_subscription", name: "Codex" },
+        ]);
         const update = vi.fn(async (_ctx: unknown, _update: unknown) => true);
         config.updateRuntimeVoiceSettings = update;
         const changed = vi.fn();
         f.live.onSettingsUpdated(changed);
-        expect(f.live.voiceSettings()).toEqual({
+        expect(await f.live.voiceSettings()).toEqual({
             controller: {
                 providerId: null,
                 modelId: "anthropic/sonnet-5",
                 effort: null,
                 fastMode: true,
+                speed: null,
             },
             effectiveController: {
                 providerId: "claude",
                 modelId: "anthropic/sonnet-5",
                 effort: "low",
                 serviceTier: null,
-                notice: "Fast mode is not available for Sonnet 5, so it is ignored.",
+                speed: "regular",
+                speeds: ["regular"],
+                notice: "Fast is not available for Sonnet 5 on this account, so voice uses Regular.",
             },
+            accounts: [{ providerId: "codex", credential: "codex_subscription", name: "Codex" }],
             defaultSystemPrompt: LIVE_VOICE_INSTRUCTIONS,
             systemPromptOverride: null,
             effectiveSystemPrompt: LIVE_VOICE_INSTRUCTIONS,
         });
         await f.live.updateVoiceSettings(f.db.context, {
-            controller: { providerId: null, fastMode: false },
+            controller: { providerId: null, fastMode: false, speed: "ultrafast" },
             systemPrompt: LIVE_VOICE_INSTRUCTIONS,
         });
         expect(update).toHaveBeenLastCalledWith(expect.anything(), {
             controller_provider: null,
             controller_fast_mode: false,
+            controller_speed: "ultrafast",
             system_prompt: null,
         });
         expect(changed).toHaveBeenCalledOnce();

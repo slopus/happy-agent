@@ -11265,7 +11265,7 @@ export class ApiModule implements AgentModule {
                 publicUrl: this.#config.publicApiUrl,
                 localPort: this.#config.publicApiPort,
             },
-            ...(this.#live === undefined ? {} : { voice: this.#live.voiceSettings() }),
+            ...(this.#live === undefined ? {} : { voice: await this.#live.voiceSettings() }),
             workspace: values.workspace,
         };
     }

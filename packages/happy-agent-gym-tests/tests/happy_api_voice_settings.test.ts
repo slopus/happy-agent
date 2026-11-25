@@ -29,21 +29,34 @@ describe("voice settings through the public API", () => {
                 "taskCreate",
                 "sessionModelChange",
                 "agentTargets",
+                "failureReasons",
             ],
         });
         const initial = (await gym.client.getConfig()).config.voice!;
         expect(initial).toMatchObject({
-            controller: { providerId: null, modelId: null, effort: null, fastMode: false },
+            controller: {
+                providerId: null,
+                modelId: null,
+                effort: null,
+                fastMode: false,
+                speed: null,
+            },
             effectiveController: {
                 providerId: "gym",
-                modelId: "openai/gpt-6.1-sol",
+                modelId: "openai/gpt-6.2-sol",
                 effort: "low",
                 serviceTier: null,
+                speed: "regular",
+                speeds: ["regular"],
                 notice: expect.stringContaining("voice cannot start"),
             },
+            // The gym's scripted accounts are not OpenAI accounts, so none can carry a call.
+            accounts: [],
             systemPromptOverride: null,
         });
-        expect(initial.defaultSystemPrompt).toMatch(/^You are Happy, a calm, friendly voice/u);
+        expect(initial.defaultSystemPrompt).toMatch(
+            /^You are Happy, the voice side of the person.s coding agents/u,
+        );
         expect(initial.effectiveSystemPrompt).toBe(initial.defaultSystemPrompt);
 
         const cursor = (await gym.client.getEvents({ limit: 1 })).latestCursor;
@@ -62,7 +75,7 @@ describe("voice settings through the public API", () => {
                 modelId: "gym/model-2",
                 effort: "high",
                 serviceTier: null,
-                notice: "Fast mode is not available for Gym Model Two, so it is ignored.",
+                notice: "Fast is not available for Gym Model Two on this account, so voice uses Regular.",
             },
         });
         expect(await updates(gym, cursor)).toHaveLength(1);
@@ -73,7 +86,7 @@ describe("voice settings through the public API", () => {
             { controller: { providerId: "missing" } },
             { controller: { modelId: "gym/unknown" } },
             { systemPrompt: "   " },
-            { controller: { speed: "fast" } },
+            { controller: { speed: "warp" } },
         ]) {
             expect(
                 await gym.raw.patch("/v0/config", { node: { name: "Renamed" }, voice }),
@@ -114,6 +127,7 @@ describe("voice settings through the public API", () => {
             modelId: "gym/model-2",
             effort: null,
             fastMode: true,
+            speed: null,
         });
         expect(gym.errors).toEqual([]);
     });

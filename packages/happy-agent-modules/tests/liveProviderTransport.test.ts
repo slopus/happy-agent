@@ -103,20 +103,32 @@ function fixture(native = false, extra: Partial<LiveProviderDependencies> = {}) 
 describe("Live provider dialect and lifecycle", () => {
     afterEach(() => vi.useRealTimers());
     test.each([false, true])(
-        "seeds attributed compact AppState using the exact dialect startup field (native: %s)",
+        "seeds the app's first context as a developer message in the exact dialect startup field (native: %s)",
         async (native) => {
             const f = fixture(native);
             const transport = await f.start('{"active":{"conversation":"Garden notes"}}');
             const body = JSON.parse(String(f.requests[0]!.options?.body));
-            expect(body.session[native ? "initial_items" : "input"]).toEqual([
-                {
-                    type: "message",
-                    role: "user",
-                    content: [
-                        { type: "input_text", text: '{"active":{"conversation":"Garden notes"}}' },
-                    ],
-                },
-            ]);
+            const context = {
+                type: "message",
+                role: "developer",
+                content: [
+                    { type: "input_text", text: '{"active":{"conversation":"Garden notes"}}' },
+                ],
+            };
+            // The native endpoint ignores `instructions`, so the voice prompt also leads its
+            // startup items; the public session follows `instructions` itself.
+            expect(body.session[native ? "initial_items" : "input"]).toEqual(
+                native
+                    ? [
+                          {
+                              type: "message",
+                              role: "developer",
+                              content: [{ type: "input_text", text: body.session.instructions }],
+                          },
+                          context,
+                      ]
+                    : [context],
+            );
             expect(body.session[native ? "input" : "initial_items"]).toBeUndefined();
             transport.dispose();
         },
@@ -215,7 +227,7 @@ describe("Live provider dialect and lifecycle", () => {
         expect(JSON.parse(String(f.requests[0]!.options?.body))).toMatchObject({
             transport: { type: "webrtc", sdp: "v=offer\r\n" },
             session: {
-                model: "gpt-live-1",
+                model: "gpt-live-1.1",
                 audio: { output: { voice: "cove" } },
                 delegation: { type: "client" },
             },
@@ -488,8 +500,24 @@ describe("Live provider dialect and lifecycle", () => {
                 orderly: false,
                 error: "The selected provider denied access to GPT-Live.",
                 code: "forbidden",
+                reason: "forbidden",
             },
         ]);
+        transport.dispose();
+    });
+    test.each([
+        ["insufficient_quota", "usageExhausted"],
+        ["rate_limit_exceeded", "usageExhausted"],
+        ["invalid_api_key", "forbidden"],
+        ["server_error", undefined],
+    ])("types a provider error %s as the failure reason %s", async (code, reason) => {
+        const f = fixture(false);
+        const transport = await f.start();
+        f.socket.event({ type: "error", error: { code, message: "upstream private body" } });
+        const ended = f.events.find((event) => event.type === "ended");
+        expect(ended).toMatchObject({ type: "ended", orderly: false });
+        expect(ended && "reason" in ended ? ended.reason : undefined).toBe(reason);
+        expect(JSON.stringify(f.events)).not.toContain("upstream private body");
         transport.dispose();
     });
     test("malformed terminal usage cannot finalize usage or cleanly end", async () => {

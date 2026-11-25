@@ -2100,23 +2100,35 @@ New clients use `api` for daemon reachability, independently of mobile pairing.
 
     ```json
     {
-        "controller": { "providerId": null, "modelId": null, "effort": null, "fastMode": false },
+        "controller": {
+            "providerId": null,
+            "modelId": null,
+            "effort": null,
+            "fastMode": false,
+            "speed": null
+        },
         "effectiveController": {
             "providerId": "codex",
-            "modelId": "openai/gpt-6.1-sol",
+            "modelId": "openai/gpt-6.2-sol",
             "effort": "low",
-            "serviceTier": null,
+            "serviceTier": "ultrafast",
+            "speed": "ultrafast",
+            "speeds": ["regular", "fast", "ultrafast"],
             "notice": null
         },
-        "defaultSystemPrompt": "You are Happy, a calm, friendly voice companion…",
+        "accounts": [
+            { "providerId": "codex", "credential": "codex_subscription", "name": "Codex" },
+            { "providerId": "openai", "credential": "openai_api_key", "name": "OpenAI" }
+        ],
+        "defaultSystemPrompt": "You are Happy, the voice side of the person's coding agents…",
         "systemPromptOverride": null,
-        "effectiveSystemPrompt": "You are Happy, a calm, friendly voice companion…"
+        "effectiveSystemPrompt": "You are Happy, the voice side of the person's coding agents…"
     }
     ```
 
     `controller` holds the stored controller selection; `null` means the default. The default
     provider is the configured default provider or account pool, the default model is
-    `openai/gpt-6.1-sol`, the default effort is `low` when the model accepts it and the model's
+    `openai/gpt-6.2-sol`, the default effort is `low` when the model accepts it and the model's
     default effort otherwise, and fast mode is off. `effectiveController` is what a call starting
     now would use: `providerId` is `null` when no default provider is configured, and
     `serviceTier` is `"priority"` only when fast mode is on and that route offers the priority
@@ -2136,7 +2148,8 @@ New clients use `api` for daemon reachability, independently of mobile pairing.
 /v0/live/sessions` `credential`): enabled, a single account rather than a pool, on an official
     OpenAI endpoint, each as `{ providerId, credential, name? }` with the credential kind it holds,
     `codex_subscription` for a Codex sign-in on chatgpt.com and `openai_api_key` for an API key on
-    api.openai.com, and its display `name`; an empty list means none is usable.
+    api.openai.com, and its display `name`. An account appears once per kind it can supply, and an empty list
+    means none is usable.
 
     `defaultSystemPrompt` is the built-in voice model prompt, which
     is never persisted; `systemPromptOverride` is the stored replacement or `null`; and
@@ -2145,7 +2158,8 @@ New clients use `api` for daemon reachability, independently of mobile pairing.
     call, and its own instructions are fixed and not configurable.
 
     The settings live in the machine configuration's `[voice]` table: `controller_provider`,
-    `controller_model`, `controller_effort`, `controller_fast_mode`, and `system_prompt`. Values
+    `controller_model`, `controller_effort`, `controller_speed`, `controller_fast_mode`, and
+    `system_prompt`. Values
     written through `PATCH /v0/config` or the admin-bot voice settings tools are stored in the
     daemon-owned runtime configuration and take precedence over the user-authored file.
 
@@ -2260,7 +2274,7 @@ The optional `voice` object changes the voice settings:
             "providerId": "claude",
             "modelId": "anthropic/sonnet-5",
             "effort": null,
-            "fastMode": false
+            "speed": "fast"
         },
         "systemPrompt": null
     }
@@ -15505,17 +15519,20 @@ archives it, the next call creates a new Voice. Voice has a fixed tool array and
 instructions that are not configurable: a tool that lists the person's sidebar, a tool that
 reads the public user and assistant text of any conversation on this daemon the person can see, and
 every desktop action below for the window of the call it is serving, so it can do whatever the
-person does by clicking.
+person does by clicking, and a tool that ends the call it is serving when the person asked to hang
+up: the call closes as the person's End does, about two seconds later so voice's goodbye is heard,
+and no outcome is spoken.
 Calls in several windows share the person's one Voice and one queue; each request's actions go
 only to the window of the call that made it, and a request the person writes in Voice's
 conversation has no window to act on.
 
 Voice runs the machine's voice settings (`config.voice`, see `GET /v0/config`).
-By default it uses `openai/gpt-6.1-sol` at low effort through the daemon's configured-default
-provider or account pool. The settings may instead name any configured provider, account, or
-account pool, any model that provider offers from any vendor, an effort that model accepts, and
-fast mode. Fast mode requests the `priority` service tier only when the selected route's catalog
-offers it; otherwise it is ignored, and the effective settings say so. The daemon captures the
+By default it uses `openai/gpt-6.2-sol` at low effort and the fastest speed the account's plan
+offers, Ultrafast where available, through the daemon's configured-default provider or account
+pool. The settings may instead name any configured provider, account, or account pool, any model
+that provider offers from any vendor, an effort that model accepts, and a speed. A speed the
+selected route does not offer falls to the fastest one it offers below it, and the effective
+settings say so. The daemon captures the
 selection when the call starts, verifies that the provider is enabled and offers the model and
 effort, resolves one compatible enabled account, and freezes provider, account, model, effort,
 and service tier for the call: every request of that call reaches Voice with that exact selection.
@@ -15535,8 +15552,10 @@ is queued rather than refused as busy. Voice handles one request at a time: the 
 given to it only after the previous one's outcome is delivered, and the desktop has at most one
 outstanding action. Each request retains its original delegation identity and source transcript
 identities. It reaches Voice as one message in Voice's conversation holding the delegation text,
-the call's new attributed user and assistant transcript fragments, and the sidebar outline when it
-changed since Voice last received one. That message is attributed provider context with agent
+the call's new attributed user and assistant transcript fragments, `thisMachine` (the call's
+connection ID for this daemon), `refs` (each conversation reference's agent ID), the call's first
+context when Voice has not received that exact text, and the context updates voice was told since
+Voice's previous request. That message is attributed provider context with agent
 origin, never a person's own message, so it is not human authorization. Every dispatched desktop
 action uses the current accepted context revision. Spoken outcomes use human-readable names rather
 than internal IDs; ambiguous names require clarification.
@@ -15558,20 +15577,20 @@ stops Voice's active turn; Voice itself remains. Already-started desktop mutatio
 existing uncertainty and deduplication rules. When the frozen account's sign-in is rejected or its
 usage runs out, the explanation says so and what the person can do.
 
-A request whose actions all succeed and end in a terminal action — `desktopOpen`, `sessionSend`
-staging, `composerDraftAppend`, `sessionModelChange`, or `taskCreate` — receives a fixed,
-truthful outcome composed by the daemon from the verified results, delivered as soon as the last
-result is verified. Voice's turn may continue to completion, but nothing more from that turn is
+A request whose actions all succeed and end in a terminal action — `desktopOpen`, `sessionSend`,
+`composerDraftAppend`, `sessionModelChange`, or `taskCreate` — receives a fixed,
+truthful outcome composed by the daemon from the verified results, delivered as soon as Voice's
+next inference shows it calls no further action. Voice's turn may continue to completion, but nothing more from that turn is
 spoken. Requests that read state or receive a refusal or failure are answered with Voice's final
 text for that request. No outcome is delivered to the voice model before the action it describes
 has a verified result.
 
-The voice model receives the person's sidebar outline as Markdown under a `# Sidebar` heading,
-described below, when the call starts and again only when the sidebar itself changes. Agent
-activity is never pushed: no run starts or settlements, message briefs, conversation statuses,
-or desktop AppState. The outline is attributed data, not instructions, authorization, or an order
-to speak. The voice model may answer directly from it; anything else, including whether some work
-finished, requires a request to Voice, which looks it up when asked.
+The voice model receives the call's first context when the call starts and silent context
+updates during it, described under Voice context below. It answers from that context when it
+holds the answer, and hands everything else to Voice. Every update is attributed data, not
+instructions, authorization, or an order to speak; none asks the voice model to respond. Voice
+receives the same first context and every update voice was told since its previous request, so
+it starts from what voice already knows.
 
 Every route uses ordinary API authentication. A session belongs to its creating principal;
 another principal receives `404` for its ID and never receives its journal events. The session
@@ -15587,7 +15606,7 @@ bounded text updates, and shutdown. Credentials never enter responses, events, U
 browser. Selecting a Codex subscription credential is an explicit experimental choice, not a
 promise of entitlement; selecting an OpenAI API key explicitly opts into API billing. The
 daemon never falls back between credential kinds, accounts, or transports after a refusal.
-Use current GPT-Live only: the public `gpt-live-1` transport or Codex's native
+Use current GPT-Live only: the public `gpt-live-1.1` transport or Codex's native
 `gpt-live-1-codex` integration. Never fall back to older Realtime models or protocols.
 
 ### The live session object
@@ -15684,10 +15703,13 @@ Two optional fields negotiate additive desktop capabilities:
 - `appState` — the initial Desktop AppState object described below. It is valid only when
   `desktopCapabilities` includes `appState`, and its serialized form is at most 256 KiB.
 - `localConnectionId` — the desktop's connection ID for the daemon serving this request, an
-  opaque ID as above. It is valid only when `desktopCapabilities` includes `agentTargets`, and is
-  then required; the daemon accepts `agentTargets` only when it is present. Because creation
-  rejects unknown fields, send it only to a daemon whose `capabilities.desktopLiveCapabilities`
-  lists `agentTargets`. The daemon acts only on this connection and refuses any target on another.
+  opaque ID as above. It is valid on its own; the daemon accepts `agentTargets` only when it is
+  present. It names this computer in this window only: connection IDs are window-relative, so
+  the daemon gives Voice the current call's value with every request and never one from an
+  earlier call. Without it, the daemon takes the AppState server of kind `local`, or the
+  context's only connection. Because older daemons reject it without `agentTargets`, send it alone
+  only to a daemon whose `capabilities.desktopLiveCapabilities` lists `failureReasons`. The daemon
+  acts only on this connection and refuses any target on another.
 
 The accepted capability list is echoed in control `hello`. A desktop must not send fields,
 frames, task targets, or action results that belong to a capability the daemon did not accept,
@@ -15759,7 +15781,7 @@ and `usage.final: false` unless actual final provider usage was received. A loca
 normal WebSocket close never invents a provider event or final usage. A transport error or
 interrupted start remains `failed`. Closing voice does not abort, archive, or recreate any coding
 session or its tasks.
-Daemon shutdown closes owned calls; restart marks unfinished local sessions failed and never
+Daemon shutdown fails owned calls with `failureReason` `restart`, telling the desktop before its control socket closes; restart marks unfinished local sessions failed and never
 replays creation or delegated mutations. A Voice turn a restart interrupted is stopped, not
 resumed, and its desktop actions are never executed again. Terminal records remain readable for seven days,
 bounded to the newest 1,000 per principal. Evicted records return `404`.
@@ -15818,7 +15840,9 @@ An `AgentTarget` may appear wherever an action takes a `DesktopTarget` or a `Ses
 desktop resolves it to its own entity for that agent — a task's, a bot's, a subtask's, or another
 conversation's — and refuses an agent it cannot show with `notFound`. A result whose `target`
 answers an action that named an `AgentTarget` may name either form. Without `agentTargets` the
-daemon never sends an `AgentTarget`, and older desktops are unaffected.
+daemon never sends an `AgentTarget`, and older desktops are unaffected: when Voice names an agent
+the window's AppState lists, the daemon sends that entry's own target instead, and refuses an
+agent the window does not list.
 
 ### Desktop AppState
 
@@ -15857,29 +15881,101 @@ capability the desktop sends the `appState` frame only when a server's `models` 
 activity, status, names, order, focus, or messages.
 
 The daemon uses AppState only to resolve names and targets and to validate model choices for
-Voice's actions. It never pushes AppState, or anything derived from it, to the voice model.
+Voice's actions. It never pushes AppState to the voice model; the voice context comes from the
+daemon's own records.
 
-### Sidebar outline
+### Voice context
 
-The voice model receives the person's own sidebar on this daemon, never the desktop's: Happy,
-their bots, their tasks, and their joined Surfaces, in that order. The outline holds names only: no
-conversation status, activity times, messages, or IDs:
+The voice model is told what the phones' voice calls tell their voice agent, from this daemon's
+own records and never from the desktop's projection.
 
-```markdown
-# Sidebar
+**The directory** is the person's conversations on this daemon in sidebar order: Happy, the other
+active bots, the person's active tasks, then each project's root conversations and its
+workspaces' conversations under project and workspace heading lines, nested as the sidebar nests
+them, and under any conversation its live subtasks at any depth. Workspaces a bot or task owns
+belong to that bot or task and are not listed again. The person's own Voice is the call itself
+and is not listed. Headings have no reference; a conversation's `parents` include them. Each conversation has a reference, `s`
+and a decimal order key: references compare as text in sidebar order (`s4` < `s49` < `s5`), the
+call's first directory gets the shortest keys its length allows (`s1`–`s9`, else the fewest digits
+from `s11`, never ending in 0), and a later conversation gets a key between its neighbours. A
+reference is the conversation's for the whole call, through renames, moves, and absences, and is
+never handed to another. Speech never uses references or IDs.
 
-- Happy
-- Release notes
-- Preview viewer release
-- Team todos
+**The first context** is plain text, at most 24 KiB, sent as a developer message in the session's
+startup input:
+
+```text
+Now: 2026-11-06T09:15+01:00 (the person's local time, Europe/Berlin)
+focusRevision: 3
+
+Previous voice conversation (earlier calls, oldest first):
+- 3 minutes ago, the person: Remember the word pineapple.
+- 3 minutes ago, you: Got it, pineapple.
+- 2 minutes ago: the person ended the call
+
+On screen: Fix cache race — subtask, ref s3, under Release notes
+Working: yes. Needs the person: no.
+Last message from the person: 5 minutes ago (2026-11-06T09:10+01:00)
+Last reply: 3 minutes ago (2026-11-06T09:12+01:00)
+Last turns, oldest first:
+1. The person (5 minutes ago): Why does the cache race?
+   Agent (3 minutes ago): Two writers share the lock …
+
+Conversations in the app, in the sidebar's order:
+- Happy — bot, ref s1, last active 2 minutes ago (09:13)
+- Release notes — task, ref s2, needs the person (asks: Which branch?), last active an hour ago (08:10)
+  - Fix cache race — subtask, ref s3, working, last active 3 minutes ago (09:12)
+- App — project
+  - Root chat — conversation, ref s4, last active yesterday (17:40)
+  - Feature — workspace
+    - Feature chat — conversation, ref s5, failed (Rate limited.), last active 20 minutes ago (08:55)
 ```
 
-The outline is bounded to 8 KiB and marks omitted entries explicitly; omitted entries are never
-sent later. It is sent as the call's initial context and again, as a complete replacement under
-the same heading, only when the outline's text changes, such as a renamed row or new or
-archived work. A changed outline waits while a voice request lacks its delivered
-outcome and is sent after it; several changes meanwhile send one outline. Nothing else is pushed
-to the voice model in the background.
+Once the call is active, the daemon appends the greeting, "Hi, Happy here.", as speakable text,
+so Happy speaks first; a line in the startup context alone did not reliably start speech, and
+speakable text is said rather than followed as an instruction.
+
+`Now` is when the call started, on the clock of AppState's `timeZone` or, without it, this
+machine's; it is not a live clock. `focusRevision` is the desktop context revision. The recap is
+what was said aloud in the person's recent calls, the latest 30 lines across calls, each line at
+most 1 KiB within 8 KiB, with how each call ended; a call that ended plainly with nothing said
+leaves nothing. The conversation on screen is the desktop context's `activeTarget` when it is one
+of this daemon's conversations, with its last five turns: each a message of the person's or
+another agent's and the agent's last words after it, the person's cut at 2 KiB and the agent's at
+8 KiB after a whole word. The directory lists at most 100 conversations within 12 KiB, in sidebar
+order, each with whether it is working, needs the person and what it asks, why its last run
+failed when it did since the daemon started, and when it was last active. When more exist it
+keeps the one on screen and the followed ones, then the most recently active, each kept subtask
+with the conversations it sits under, and counts the rest. When the whole is too big, the older
+turns give way first, then the lowest-priority directory lines, then the recap's older lines,
+and the newest turn last.
+
+**Updates** are silent context appends, one JSON line each with keys sorted, never a response
+request. GPT-Live has no channel that guarantees silence, so updates are held until the person
+starts speaking, when voice answers anyway, and while a voice request lacks its delivered outcome;
+then they are sent in order. Times in them are `{ago, at}`, rendered when the update is sent:
+
+- `{"event":"directory","added":[{"kind":"task","ref":"s6","title":"Draft the notes"}],"removed":["s5"],"renamed":[{"ref":"s3","title":"Fix the cache race"}],"moved":[{"after":"s39","parents":["Release notes"],"ref":"s3"}]}`
+  — what changed in the directory, settled for one second from the first change, at most 20
+  changes within 4 KiB with the rest counted in `more`. An addition says `after` only when its
+  reference does not sort into place. Status and activity alone send nothing.
+- `{"event":"focus","focusRevision":4,"ref":"s3","title":"Fix cache race","parents":["Release notes"],"working":true,"needsPerson":false,"turns":[…]}`
+  — the screen in front changed, or `"title":null` when no conversation is in front. `turns`,
+  each `{person|anotherAgent, agent}` with `text` and `at`, holds only turns voice has not been
+  told in this call.
+- `{"event":"status","changes":[{"ref":"s2","title":"Release notes","working":false,"needsPerson":true,"asks":"Which branch?"}]}`
+  — conversations whose state changed since voice was told: working, needing the person and what
+  they ask, or a failed last run (`failed`), settled for one second, at most 20 within 4 KiB.
+- `{"event":"assistant_text","title":…,"ref":…,"text":…,"at":…,"finishedTurn":true}` — a
+  complete piece of a followed conversation's words, once: words before a tool call when the call
+  comes, and its last words when its run settles (`finishedTurn`). A piece over 8 KiB is cut
+  after a whole word with `"truncated":true`.
+- `{"event":"session_error","title":…,"ref":…,"reason":…,"at":…}` — a followed conversation's
+  run ended in an error; `reason` is at most 1 KiB.
+
+The followed conversations are the last four on screen or sent to by voice during the call,
+newest first, the one on screen always among them. What a conversation already held when it was
+first followed counts as known, and nothing is ever replayed.
 
 ### `GET /v0/live/sessions/:id/control?windowId=...`
 
@@ -15925,7 +16021,8 @@ Server-to-client frames after hello are:
   desktop can say how it ended: `signIn` (the Codex sign-in expired or was rejected), `apiKey`,
   `forbidden`, `unsupported`, `usageExhausted`, `setupTimeout`, `readinessTimeout`,
   `connectionLost`, `controlLost` (the desktop's control connection dropped), or `restart` (the
-  daemon restarted). It is omitted when the cause is unknown.
+  daemon restarted). It is omitted when the cause is unknown. The live session object carries the
+  same value as optional `failureReason`, `null` otherwise; older daemons omit it.
 - `{ type: "transcript", transcriptId, role, text, startMs?, endMs? }` — a normalized provider
   fragment, role `user` or `assistant`. Include the time fields only as a pair when the provider
   supplied its real nonnegative session-relative millisecond interval, with `startMs <= endMs`;
@@ -15941,7 +16038,7 @@ Server-to-client frames after hello are:
   The desktop highlights the target as the entity voice is talking about. It is decorative: it
   authorizes nothing, opens nothing, and is never an action. The daemon sends one as soon as a
   request's target is uniquely resolved — including from an exact, unique name match against
-  the sidebar outline or AppState before Voice runs — and immediately before each targeted action, using
+  AppState before Voice runs — and immediately before each targeted action, using
   `navigation` before `desktopOpen` and `mention` otherwise. It never sends one for a different
   target while an action is outstanding. It clears the highlight with `target: null` when the
   request ends. The desktop ignores `reason` on a clear, ignores stale or unknown targets, and
@@ -15951,19 +16048,19 @@ Server-to-client frames after hello are:
 
 The action union is:
 
-| `type`                | Other fields                                              | UI-equivalent behavior                                                                    |
-| --------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `desktopState`        | none                                                      | Read the current bounded context.                                                         |
-| `desktopOpen`         | `target: DesktopTarget`                                   | Focus/open that existing entity.                                                          |
-| `sessionRead`         | `target: SessionRef`                                      | Return bounded public conversation text and status.                                       |
-| `sessionSend`         | `target: SessionRef`, `text`                              | Stage exact text for an independent explicit human Send; never answer a pending question. |
-| `sessionWatch`        | `target: SessionRef`, `enabled`                           | Retained for compatibility; current daemons never request it.                             |
-| `composerDraftAppend` | `target: SessionRef`, `text`                              | Append text to that session's draft without replacing it or its attachments.              |
-| `taskCreate`          | `connectionId`, optional `name`, `text`, optional `model` | Create a task, open it, and stage `text` as its unsent draft.                             |
-| `sessionModelChange`  | `target: SessionRef`, `providerId`, `modelId`             | Choose the model for that session's next message through its composer.                    |
-| `workspaceCreate`     | `project: ProjectRef`                                     | Retained for compatibility; current daemons never request it.                             |
-| `sessionCreate`       | `group: GroupRef`, optional `prompt`                      | Retained for compatibility; current daemons never request it.                             |
-| `botCreate`           | `connectionId`, optional `name`, optional `prompt`        | Retained for compatibility; current daemons never request it.                             |
+| `type`                | Other fields                                              | UI-equivalent behavior                                                                                |
+| --------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `desktopState`        | none                                                      | Read the current bounded context.                                                                     |
+| `desktopOpen`         | `target: DesktopTarget`                                   | Focus/open that existing entity.                                                                      |
+| `sessionRead`         | `target: SessionRef`                                      | Return bounded public conversation text and status.                                                   |
+| `sessionSend`         | `target: SessionRef`, `text`                              | Send exact text as the person's message without changing the screen; never answer a pending question. |
+| `sessionWatch`        | `target: SessionRef`, `enabled`                           | Retained for compatibility; current daemons never request it.                                         |
+| `composerDraftAppend` | `target: SessionRef`, `text`                              | Append text to that session's draft without replacing it or its attachments.                          |
+| `taskCreate`          | `connectionId`, optional `name`, `text`, optional `model` | Create a task, open it, and stage `text` as its unsent draft.                                         |
+| `sessionModelChange`  | `target: SessionRef`, `providerId`, `modelId`             | Choose the model for that session's next message through its composer.                                |
+| `workspaceCreate`     | `project: ProjectRef`                                     | Retained for compatibility; current daemons never request it.                                         |
+| `sessionCreate`       | `group: GroupRef`, optional `prompt`                      | Retained for compatibility; current daemons never request it.                                         |
+| `botCreate`           | `connectionId`, optional `name`, optional `prompt`        | Retained for compatibility; current daemons never request it.                                         |
 
 `taskCreate` requires the `taskCreate` capability and `sessionModelChange` requires the
 `sessionModelChange` capability. A desktop may refuse a retained compatibility action with
@@ -15992,14 +16089,14 @@ nonblank and at most 256; provider and model IDs are nonblank and at most 128 an
 No action accepts paths, arbitrary URLs/API calls, shell commands, JavaScript, permission
 overrides, security settings, or permission/question answers. A model choice is limited to the
 choices the desktop's own picker offers. An optional
-creation prompt is a draft, not an automatic user-authored message. In v1, `sessionSend` refuses
-or stages the exact text visibly and returns terminal `succeeded` with `{ type: "staged" }`.
-Staged means awaiting an independent explicit human Send, never sent or authorized, and never
-uses the action's `pending` state. The later human Send is an ordinary UI action observed through
-context or session updates, not a delayed result for the staged action. Refuse staging while the
-target has a pending question or awaits input, and recheck that guard at Send time. Never route
-generated text through a question-answer path or label it as human authorization before that
-explicit exact-text Send.
+creation prompt is a draft, not an automatic user-authored message. `sessionSend` submits the
+exact text to its named target through the desktop's ordinary send path, as the person's own
+message, without navigating or touching the target's draft, and returns terminal `succeeded` with
+`{ type: "ack" }` once the message is accepted. A desktop that can only stage the text visibly
+returns `{ type: "staged" }` instead: awaiting an independent explicit human Send, never sent or
+authorized. Neither uses the action's `pending` state. Refuse while the target has a pending
+question or awaits input (`forbidden`), while its connection is offline (`unavailable`), or for a
+missing target (`notFound`). Never route generated text through a question-answer path.
 
 Before every action, the desktop checks current call/window, the expected context revision,
 connection/target visibility, connectivity, write eligibility, and existing permission guards.
@@ -16013,7 +16110,7 @@ that bound instead of evicting a mutation's deduplication record.
 `result` is one of these closed variants:
 
 - `{ status: "succeeded", output }`, where `output` is `{ type: "ack" }`,
-  `{ type: "staged" }` (only exact-text staging for `sessionSend`, not submission),
+  `{ type: "staged" }` (only for `sessionSend` on a desktop that stages instead of sending),
   `{ type: "context", context }`, `{ type: "created", target: DesktopTarget }`, or
   `{ type: "session", target: SessionRef, status, messages, truncated }`.
 - `{ status: "pending" }` — waiting for ordinary UI completion, not a v1 `sessionSend`

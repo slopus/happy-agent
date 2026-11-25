@@ -774,10 +774,12 @@ export async function startHappyAgentRuntime(
             bots,
             subtasks,
             tasks,
-            surfaces,
             history,
             events,
             team,
+            userInput,
+            projects,
+            workspaces,
         );
         const feed = new FeedModule(
             durableFunctions,
