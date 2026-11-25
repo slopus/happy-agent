@@ -71,8 +71,10 @@ function serializeBlocks(
         const lines = ownMarkdown(block, number, omitted);
         const marker = listMarkerWidth(block, number);
         const continuation = indent + " ".repeat(marker);
+        // A line without text is left empty: spaces on it would show as nothing, and an exact
+        // replacement would still have to match them.
         let text = lines
-            .map((line, index) => (index === 0 ? indent : continuation) + line)
+            .map((line, index) => (line === "" ? "" : (index === 0 ? indent : continuation) + line))
             .join("\n");
         const children = block.children ?? [];
         if (children.length > 0) {
@@ -114,7 +116,7 @@ function serializeBlocks(
 
 /** A list item whose Markdown is its marker alone. */
 function bareMarker(block: DocumentBlock): boolean {
-    return /^(?:-|\d+\.) ?$/.test(ownMarkdown(block, 1, new Set()).join("\n"));
+    return /^(?:-|\d+\.)$/.test(ownMarkdown(block, 1, new Set()).join("\n"));
 }
 
 function bulletLike(type: string): boolean {
@@ -183,8 +185,11 @@ function ownMarkdown(block: DocumentBlock, number: number, omitted: Set<OmittedC
     }
 }
 
+/** The lines behind a list marker. An item without text is its marker alone, with no space after. */
 function prefixed(marker: string, lines: string[]): string[] {
-    return lines.map((line, index) => (index === 0 ? marker + line : line));
+    return lines.map((line, index) =>
+        index > 0 ? line : line === "" ? marker.trimEnd() : marker + line,
+    );
 }
 
 function tableMarkdown(content: unknown, omitted: Set<OmittedContent>): string[] {
