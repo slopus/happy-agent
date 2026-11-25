@@ -204,9 +204,12 @@ function inlineMarkdown(content: unknown, context: Context): string {
         return escapeLines(escapeText(content, context, false), context);
     const nodes = normalizeInline(content, context);
     for (const level of ["all", "noEmphasis", "plain"] as const) {
-        const markdown = escapeLines(renderInline(nodes, context, level), context);
+        // Text is escaped by its neighbours, so runs only this level's formatting tells apart
+        // render as one. Otherwise the result would not read back as the Markdown it is.
+        const runs = mergeRuns(atLevel(nodes, level));
+        const markdown = escapeLines(renderInline(runs, context, level), context);
         if (level !== "all") context.omitted.add("some formatting");
-        if (sameInline(parseInlineMarkdown(markdown), expected(nodes, level))) return markdown;
+        if (sameInline(parseInlineMarkdown(markdown), expected(runs, level))) return markdown;
     }
     return escapeLines(escapeText(plainText(content), context, false), context);
 }
@@ -234,13 +237,33 @@ function normalizeInline(content: unknown, context: Context): (Text | Link)[] {
                 type: "link",
                 href: node.href,
                 content: sharedWhitespace(
-                    node.content.map(text).filter((child) => child.text !== ""),
+                    splitEdges(node.content.map(text).filter((child) => child.text !== "")),
                 ) as Text[],
             });
         else if (node?.type === "text" && node.text !== "") out.push(text(node));
     }
     if (dropTrailingBreaks(out)) context.omitted.add("trailing line breaks");
-    return sharedWhitespace(out);
+    return mergeRuns(sharedWhitespace(splitEdges(mergeRuns(out))));
+}
+
+/**
+ * Formatting on the whitespace at a run's edges is invisible and cannot be written: a delimiter
+ * next to a space does not open or close. Those edges become runs of their own, so the text
+ * between them keeps its formatting instead of the whole block losing it.
+ */
+function splitEdges(nodes: (Text | Link)[]): (Text | Link)[] {
+    return nodes.flatMap((node): (Text | Link)[] => {
+        if (node.type !== "text" || Object.keys(node.styles ?? {}).length === 0) return [node];
+        const leading = /^\s*/.exec(node.text)![0];
+        const trailing = node.text.length > leading.length ? /\s*$/.exec(node.text)![0] : "";
+        return [
+            leading,
+            node.text.slice(leading.length, node.text.length - trailing.length),
+            trailing,
+        ]
+            .filter((part) => part !== "")
+            .map((part) => ({ ...node, text: part }));
+    });
 }
 
 /**
@@ -267,6 +290,34 @@ function dropTrailingBreaks(nodes: (Text | Link)[]): boolean {
 }
 
 /**
+ * Neighbouring text that differs only in formatting Markdown cannot write is one run. Escaping
+ * depends on the characters around each one, so split runs would escape what joined text does not.
+ */
+function mergeRuns(nodes: (Text | Link)[]): (Text | Link)[] {
+    const out: (Text | Link)[] = [];
+    for (const node of nodes) {
+        const last = out.at(-1);
+        if (node.type === "link")
+            out.push({
+                ...node,
+                content: mergeRuns(node.content).filter((run) => run.type === "text"),
+            });
+        else if (
+            last?.type === "text" &&
+            Object.keys(last.styles ?? {})
+                .sort()
+                .join() ===
+                Object.keys(node.styles ?? {})
+                    .sort()
+                    .join()
+        )
+            out[out.length - 1] = { ...last, text: last.text + node.text };
+        else out.push(node);
+    }
+    return out;
+}
+
+/**
  * Formatting on whitespace alone is invisible and cannot be written in Markdown, so a
  * whitespace-only run keeps just the emphasis both its neighbours have.
  */
@@ -281,6 +332,23 @@ function sharedWhitespace(nodes: (Text | Link)[]): (Text | Link)[] {
         for (const key of ["bold", "italic", "strike"])
             if (before[key] === true && after[key] === true) kept[key] = true;
         return { ...node, styles: kept };
+    });
+}
+
+/** The runs as a formatting level writes them: without emphasis, or as plain text. */
+function atLevel(
+    nodes: readonly (Text | Link)[],
+    level: "all" | "noEmphasis" | "plain",
+): (Text | Link)[] {
+    if (level === "all") return [...nodes];
+    const text = (node: Text): Text => ({
+        ...node,
+        styles: level === "noEmphasis" && node.styles?.["code"] === true ? { code: true } : {},
+    });
+    return nodes.flatMap((node): (Text | Link)[] => {
+        if (node.type === "text") return [text(node)];
+        const content = node.content.map(text);
+        return level === "plain" ? content : [{ ...node, content }];
     });
 }
 
