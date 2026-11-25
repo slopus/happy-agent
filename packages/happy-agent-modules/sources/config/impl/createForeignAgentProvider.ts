@@ -5,7 +5,6 @@ import { agentModuleConfig, agentPermissionMode } from "@slopus/happy-agent-base
 import {
     AcpProvider,
     foreignAgent,
-    type AcpProviderOptions,
     type AcpPermissionQuestion,
     type AcpTurnEnvironment,
     type ForeignAgent,
@@ -160,10 +159,7 @@ export function createReadOnlyForeignAgentProvider(
     route: ForeignAgentRoute,
     agentHome: string,
 ): AcpProvider {
-    // happy-providers 0.0.67 and earlier have no read-only start for any agent.
-    const agent = route.agent as ForeignAgent & {
-        connectReadOnly?: (start: ForeignAgentStart) => NonNullable<AcpProviderOptions["connect"]>;
-    };
+    const agent = route.agent;
     if (agent.connectReadOnly === undefined) {
         throw new Error(`${agent.label} cannot be started without its own tools.`);
     }
