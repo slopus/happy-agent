@@ -412,9 +412,9 @@ enforce its boundary locally.
 
 ## Foreign harnesses
 
-Claude Code, Codex CLI, Antigravity, OpenCode, and other ACP agents run their own agent loop, so
-everything above about Happy's sandbox and Auto review does not apply to what they do with their
-own tools. Each keeps its own permission system and reviewer, and Happy sets its mode from the
+Claude Code, Codex CLI, OpenCode, and other ACP agents run their own agent loop, so everything
+above about Happy's sandbox and Auto review does not apply to what they do with their own tools.
+Each keeps its own permission system and reviewer, and Happy sets its mode from the
 conversation's permission mode:
 
 - Read only: the agent's own read-only or plan mode. Anything it asks is refused without asking
@@ -424,27 +424,31 @@ conversation's permission mode:
   Allow for this session when the agent offers it, or Deny. What the agent's own rules and
   settings allow, such as reads outside the project or commands it judges safe, it does without
   asking.
-- Auto: the agent's own Auto mode, except Antigravity, which runs `accept-edits` with its terminal
-  sandbox on. Every ask goes to Happy's Auto reviewer first, under the same rules, timeout, and
-  refusal limit as Happy's own calls: allowed once, or refused for good. Only when the reviewer
-  decides nothing does it reach the person. The agent's calls of Happy's tools are reviewed when
-  they run, like Happy's own.
+- Auto: the agent's own Auto mode. Every ask goes to Happy's Auto reviewer first, under the same
+  rules, timeout, and refusal limit as Happy's own calls: allowed once, or refused for good. Only
+  when the reviewer decides nothing does it reach the person.
 - Full access: the agent's own bypass mode. Anything it still asks is allowed.
 
 Stop withdraws an open question and cancels the agent's ask. A foreign agent's reviewer is more
 permissive than Happy's: Claude Code's `auto` classifier allowed a force push, `rm` outside the
 project, and writes to `.git/hooks`; Antigravity's own `auto` let its review model take writes
-outside the project, `curl`, and a force push out of its sandbox without asking, which is why
-Happy does not use it outside Full access; Codex's Guardian decides alone, and its denials are
-final. In Workspace write and Auto, Antigravity's asks to run a command inside its own sandbox are
-allowed at once, as Happy runs its own sandboxed commands.
+outside the project, `curl`, and a force push out of its sandbox without asking; Codex's Guardian
+decides alone, and its denials are final.
 
-Happy's own tools reach the agent over MCP, and the agent's permission system gates them. A tool
-with `autoReview: "never"` is approved in advance on Claude Code and Codex CLI. In Workspace
-write, any other Happy tool the agent asks about is allowed when that tool's
-`shouldReviewInAutoMode` is false for the call, and goes to the person otherwise. In Auto, the
-agent's ask about a Happy tool is allowed and Happy reviews the call when it runs. See [Harnesses](recipe/harnesses.md#permissions) for each
-agent's modes and sub-agents.
+Antigravity is the exception. Happy runs it as a custom agent with none of its own file,
+terminal, browser or sub-agent tools; only its web search remains. It works through Happy's
+Claude-shaped Bash, Read, Write, Edit, Glob and Grep over MCP, and starts sub-agents with
+`create_agent` and `create_subtask`, so everything it does runs in Happy's sandbox under the
+conversation's mode and Happy's reviewer, exactly as Happy's own loop does, including the one-off
+`dangerouslyDisableSandbox` escalation in Auto. Its own sandbox, labels and review models decide
+nothing. If agy cannot load Happy's agent it falls back to its own tools, and Happy stops the
+session instead.
+
+Happy's own tools reach every foreign agent over MCP. The agent's ask about one is always
+approved, and Happy decides the call when it runs, under the conversation's own mode: Read only
+and Workspace write contain it as they contain Happy's own calls, and Auto reviews it. A tool with
+`autoReview: "never"` is also approved in advance on Claude Code and Codex CLI. See
+[Harnesses](recipe/harnesses.md#permissions) for each agent's modes and sub-agents.
 
 ## Docker sandbox environments
 

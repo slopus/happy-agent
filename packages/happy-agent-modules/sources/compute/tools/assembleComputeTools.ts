@@ -9,6 +9,7 @@ import { assembleCodexComputeTools } from "./codex/assembleCodexComputeTools.js"
 import { assembleGrokComputeTools } from "./grok/assembleGrokComputeTools.js";
 import { assembleKimiComputeTools } from "./kimi/assembleKimiComputeTools.js";
 import { assembleGlmComputeTools } from "./glm/assembleGlmComputeTools.js";
+import { assembleAntigravityComputeTools } from "./antigravity/assembleAntigravityComputeTools.js";
 
 /**
  * The one place a machine becomes a tool surface.
@@ -35,6 +36,8 @@ export function assembleComputeTools(
             return assembleKimiComputeTools(compute, reads, chatMedia);
         case "glm":
             return assembleGlmComputeTools(compute, reads, outputWaitsReleased);
+        case "antigravity":
+            return assembleAntigravityComputeTools(compute, reads, outputWaitsReleased, chatMedia);
         case "foreign":
             // A foreign agent works the machine with its own native tools; handing it a second
             // shell and editor would only give it two names for everything.

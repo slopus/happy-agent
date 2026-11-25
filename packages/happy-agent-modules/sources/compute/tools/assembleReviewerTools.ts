@@ -37,6 +37,8 @@ export function assembleReviewerTools(
             return assembleKimiReviewerTools(compute, reads);
         case "glm":
             return assembleGlmReviewerTools(compute, reads);
+        // A reviewer never runs on a harness; neither array is ever chosen.
+        case "antigravity":
         case "foreign":
             return [];
     }

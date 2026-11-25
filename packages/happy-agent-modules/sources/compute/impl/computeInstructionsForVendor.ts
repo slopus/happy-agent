@@ -11,7 +11,7 @@ import { claudeShellName } from "../tools/claude/impl/claudeShellName.js";
  * them in its own vocabulary.
  */
 export function computeInstructionsForVendor(vendor: ComputeToolVendor, compute: Compute): string {
-    if (vendor === "claude" || vendor === "glm") {
+    if (vendor === "claude" || vendor === "glm" || vendor === "antigravity") {
         const shell = claudeShellName(compute);
         return instructionsByVendor[vendor]
             .replaceAll("BashOutput", `${shell}Output`)
@@ -24,6 +24,10 @@ export function computeInstructionsForVendor(vendor: ComputeToolVendor, compute:
 const instructionsByVendor: Readonly<Record<ComputeToolVendor, string>> = Object.freeze({
     // A foreign agent already knows its own tools.
     foreign: "",
+    antigravity: [
+        "Write and Edit can change an existing file without a prior Read. If a file was read or written earlier and then changed on disk, the stale change is refused; Read it again first.",
+        "A command that outlives its timeout is not killed. It keeps running and comes back with a shell ID, and every later BashOutput of it returns only what is new.",
+    ].join("\n"),
     claude: [
         "Write and Edit can change an existing file without a prior Read. If a file was read or written earlier and then changed on disk, the stale change is refused; Read it again first.",
         "A command that outlives its timeout is not killed. It keeps running and comes back with a shell ID, and every later BashOutput of it returns only what is new.",

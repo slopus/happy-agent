@@ -143,30 +143,18 @@ describe("A foreign harness's own permission asks", () => {
         expect(await questionsAsked(gym)).toBe(0);
     }, 60_000);
 
-    it("let a Happy tool call through in Workspace write only when that tool would not review it", async () => {
+    it("let a Happy tool call through in every mode, since Happy decides it when it runs", async () => {
         const gym = await gymWithScriptedHarness();
         await gym.writeFile("inside.txt", "inside");
-        // present_files reviews only paths outside the workspace.
-        await gym.send(`PRESENT=${join(await realpath(gym.workspacePath), "inside.txt")}`, {
-            ...select,
-            permissionMode: "workspace_write",
-        });
-        expect(lastText(await gym.history())).toBe("permission=once");
+        const inside = join(await realpath(gym.workspacePath), "inside.txt");
+        // present_files reviews paths outside the workspace, but only once the call reaches Happy.
+        for (const permissionMode of ["read_only", "workspace_write", "auto"] as const) {
+            for (const path of [inside, "/etc/hosts"]) {
+                await gym.send(`PRESENT=${path}`, { ...select, permissionMode });
+                expect(lastText(await gym.history())).toBe("permission=once");
+            }
+        }
         expect(await questionsAsked(gym)).toBe(0);
-
-        const outside = await gym.send("PRESENT=/etc/hosts", {
-            ...select,
-            permissionMode: "workspace_write",
-            wait: false,
-        });
-        const question = await pendingQuestion(gym);
-        expect(question.context).toContain("/etc/hosts");
-        await gym.client.answerQuestion(gym.defaultSessionId, question.id, {
-            answers: { permission: ["Deny"] },
-            mutationId: randomUUID(),
-        });
-        await gym.waitForRun(outside.runId);
-        expect(lastText(await gym.history())).toBe("permission=no");
     }, 60_000);
 
     it("are withdrawn and cancelled when the turn is stopped", async () => {

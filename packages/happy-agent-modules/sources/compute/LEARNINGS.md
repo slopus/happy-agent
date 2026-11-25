@@ -16,6 +16,16 @@ other vendors. Kimi's production search and media descriptions state the bounded
 JavaScript regex, and image behavior actually implemented, while provider reference descriptors
 retain the native harness text unchanged.
 
+## Antigravity gets Happy's Claude-shaped machine; other foreign harnesses get none
+
+Every foreign model used to get `[]`, because a harness brings its own shell and editor. Happy
+now runs Antigravity with none of its own file, terminal or sub-agent tools, so an `antigravity/`
+model gets its own vendor surface instead: Bash with BashOutput, BashInput and BashStop, Read,
+Write, Edit, Glob and Grep, built from the Claude definitions as GLM's is, plus Claude's compute
+instructions. Gemini has no harness surface of its own to match, and Claude's names are the most
+widely known. Claude Code, Codex CLI, OpenCode and generic ACP agents keep `[]`. The reviewer
+never runs on a harness, so neither foreign vendor has a reviewer array.
+
 ## Bounded mutation reads stay bounded through the write
 
 An initial bounded inspection followed by the shared helpers' unbounded reread could admit a file

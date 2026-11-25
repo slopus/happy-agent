@@ -9,6 +9,8 @@ export const computeToolVendorSchema = Type.Union([
     Type.Literal("grok"),
     Type.Literal("kimi"),
     Type.Literal("glm"),
+    /** Antigravity, which Happy runs with none of its own tools, so it works through Happy's. */
+    Type.Literal("antigravity"),
     /** A foreign agent such as Claude Code, which brings its own filesystem and shell tools. */
     Type.Literal("foreign"),
 ]);
@@ -69,6 +71,9 @@ export function computeToolVendor(selection: ComputeToolSelection): ComputeToolV
     // and its model IDs are the gateway's, so `openai/...` there is not Codex. Those models get the
     // Claude Code harness's function tools with a text-only reader, which is GLM's surface.
     if (selection.providerKind === "openai_compatible") return "glm";
+    // Happy runs Antigravity with no tools of its own but web search; it works the machine
+    // through Happy's tools, served to it over MCP.
+    if (selection.model?.startsWith("antigravity/") === true) return "antigravity";
     const family = selection.model === undefined ? undefined : providerModelFamily(selection.model);
     // A foreign agent brings its own tools, whichever account it runs on.
     if (family !== undefined) return family;

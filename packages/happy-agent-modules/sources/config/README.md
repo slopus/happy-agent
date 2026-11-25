@@ -159,7 +159,8 @@ permission mode leaves open, the route hands the ask, named after the harness, t
 registered with `onHarnessPermissionReview` — the permissions module, which in Auto puts it to
 Happy's reviewer and allows or refuses it — and then, if that left it undecided, to whatever
 registered with `onHarnessPermission` — the user-input module, which puts it to the person. With
-nothing to decide it, the ask is refused.
+nothing to decide it, the ask is refused. Antigravity is the exception: it runs with none of its
+own tools, only Happy's over MCP, which Happy's sandbox and reviewer decide like any Happy agent's.
 
 An agent on any harness may start sub-agents and subtasks on every enabled harness; there is no
 per-harness reach setting. `harnessUsage` reads Antigravity's quota from `agy -p /usage` (`impl/harnessUsage.ts`), at most

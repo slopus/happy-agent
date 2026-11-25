@@ -97,11 +97,10 @@ interface HarnessPermissions {
     readonly harnessName: string;
     /**
      * In Auto, its reviewer hands an action it will not decide alone to the person instead of
-     * deciding: Antigravity asks before writing outside its sandbox, while Claude Code's
-     * classifier and Codex's reviewer decide by themselves.
+     * deciding. Claude Code's classifier and Codex's reviewer decide by themselves.
      */
     readonly autoAsksPerson: boolean;
-    /** Its permission system asks before Happy's own tools; Antigravity never gates MCP calls. */
+    /** Its permission system asks before Happy's own tools. */
     readonly gatesHappyTools: boolean;
     /** How to have it start one of its own sub-agents, when that sub-agent's asks reach Happy. */
     readonly ownSubagent?: string;

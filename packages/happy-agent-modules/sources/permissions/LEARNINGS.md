@@ -48,21 +48,20 @@ unavailable, a timeout — goes to the person and does not move the circuit, sin
 it. These reviews emit no per-call permission event: the public history records a review against
 a Happy tool call, and a harness's own action has none.
 
-## Happy Auto runs Antigravity in `accept-edits` with its sandbox on, not in its own `auto`
+## Antigravity runs with no tools of its own, so Happy's sandbox and reviewer decide everything
 
-The first write-up of Antigravity's `auto` described its asks from black-box results alone and
-called a refused force push "its own policy"; Kirill asked exactly which check decides what.
-Antigravity's logs and the decision it stores on each conversation step showed that every command
-leaving its sandbox goes to its own review model, which ran writes outside the project, `curl`,
-and once a force push without asking anyone; a monitor model blocked the same push on another run.
-Kirill decided that nothing may leave the sandbox without Happy deciding. Happy now starts
-`agy acp --sandbox` and maps Auto, like Workspace write, to `accept-edits`, which asks before
-reads and writes outside the project, every command, and every MCP call, and runs no review model
-of its own. Reviewing every sandboxed `ls` would be slow and costly, so the provider marks asks
-whose `BypassSandbox` is not true as sandboxed and Happy allows them at once. agy turns its sandbox
-off where it cannot run and offers `auto` only where it can, so nothing is marked in a session
-without `auto` or for a configured command. Describe a harness's own review only from evidence:
-its model decisions vary on the same action, and an ask carries the command without its reason.
+Antigravity's logs and the decision it stores on each conversation step showed that its own
+review model took commands out of its sandbox (writes outside the project, `curl`, once a force
+push) without asking anyone, and a monitor model blocked the same push on another run. Running it
+in `accept-edits` with its sandbox on still left two sandboxes, two sets of labels and agy's
+monitors in the path. Kirill decided on one sandbox and one reviewer, with no trust in agy's.
+Happy now starts agy as a per-session custom agent whose only built-in tool is `search_web`; it
+reads, writes, runs commands and starts sub-agents only through Happy's tools over MCP, which run
+in Happy's sandbox under Happy's mode and reviewer exactly like Happy's own loop. agy runs in its
+`default` mode for every Happy mode, its asks about Happy tools are approved because Happy decides
+the call when it runs, and anything else it asks about is refused unasked. Describe a harness's
+own checks only from evidence: its model decisions vary on the same action, and an ask carries
+the command without its reason.
 
 ## Antigravity's own sub-agents fail closed, so `invoke_subagent` stays
 
@@ -78,7 +77,9 @@ itself would be an escape.
 
 Happy used to skip Auto review for Happy tool calls from a foreign harness, leaving them to the
 harness's reviewer, which is more permissive than Happy's (Claude Code's classifier allowed a force
-push and `rm` outside the project). Now that Happy reviews the harness's asks, the harness's ask
-about a Happy tool is approved without review and the call itself is reviewed here when it runs,
-with its real tool, arguments, events, and Full access lending, so each call is reviewed exactly
-once and its refusal reaches every harness as the tool's result.
+push and `rm` outside the project). Now the harness's ask about a Happy tool is approved in every
+mode and the call itself is decided here when it runs, with its real tool, arguments, events, and
+Full access lending, under the conversation's own mode: Read only and Workspace write contain it
+as they contain Happy's own calls, and Auto reviews it. Each call is decided exactly once, and its
+refusal reaches every harness as the tool's result. Asking the person first in Workspace write, as
+before, put a question in front of calls Happy's own loop runs without one.

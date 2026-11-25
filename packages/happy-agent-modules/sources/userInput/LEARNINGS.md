@@ -86,6 +86,9 @@ option, because that is what clients send. When the turn stops, the question is 
 harness is told `cancelled`, so a stopped agent never leaves a question the person can still
 answer. A question nobody answers (away, timed out) is a denial, not a cancellation: ACP agents
 read `cancelled` as their own turn being cancelled. A Happy sub-agent asks on its own conversation through the same path.
+Antigravity no longer asks: it runs with none of its own tools, only Happy's over MCP, so its
+calls go through Happy's sandbox and Auto reviewer like any Happy agent's, and anything else it
+asks is refused without a question.
 
 ## Writing instead of answering ends the question
 
