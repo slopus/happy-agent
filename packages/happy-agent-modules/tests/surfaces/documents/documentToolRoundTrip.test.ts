@@ -95,6 +95,7 @@ async function desk() {
         );
     };
     return {
+        call,
         /** A document Surface as a person makes one, optionally with initial Markdown. */
         create: async (text?: string) =>
             (
@@ -231,6 +232,31 @@ const WRITTEN: [name: string, written: string, reads: string][] = [
         "\\# not a heading\n\n1\\. not a list\n\n\\*not emphasis\\* a_b_c 2 * 3\n",
         "\\# not a heading\n\n1\\. not a list\n\n\\*not emphasis\\* a_b_c 2 * 3\n",
     ],
+    ["an empty check item", "- [ ]\n- [x] done\n", "- [ ] \n- [x] done\n"],
+    ["an empty quote", "a\n\n>\n\nb\n", "a\n\n>\n\nb\n"],
+    [
+        "a heading that starts like a list",
+        "## 1. Setup\n\n# - not a list\n",
+        "## 1. Setup\n\n# - not a list\n",
+    ],
+    ["a heading that is a number sign", "# \\#\n", "# \\#\n"],
+    [
+        "a table cell with a number sign and a pipe",
+        "| # | a \\| b |\n| --- | --- |\n| 1. x | - y |\n",
+        "| # | a \\| b |\n| --- | --- |\n| 1. x | - y |\n",
+    ],
+    [
+        "a code span with a pipe in a table cell",
+        "| `a\\|b` |\n| --- |\n| 1 |\n",
+        "| `a\\|b` |\n| --- |\n| 1 |\n",
+    ],
+    ["tabs in text and code", "a\tb\n\n```\n\tx\n```\n", "a\tb\n\n```\n\tx\n```\n"],
+    ["a line break at the end of a block", "a\\\n\nb  \n", "a\\\\\n\nb\n"],
+    [
+        "a link whose text is code",
+        "See [`run()`](https://example.com) and **`bold code`** and *a `b` c*.\n",
+        "See [run()](https://example.com) and `bold code` and *a* `b` *c*.\n",
+    ],
     ["a quote", "> one\n>\n> two\n", "> one\n\n> two\n"],
     ["a divider", "a\n\n---\n\nb\n", "a\n\n---\n\nb\n"],
     ["HTML stays text", "<b>bold</b>\n", "\\<b>bold\\</b>\n"],
@@ -261,6 +287,49 @@ const TYPED: [name: string, blocks: unknown[], reads: string][] = [
     ["an empty bullet", [bullet(), bullet("a")], "- \n- a\n"],
     ["an empty numbered item", [block("numberedListItem"), p("a")], "1. \n\na\n"],
     ["an empty code block", [{ type: "codeBlock", content: [] }, p("a")], "```\n\n```\n\na\n"],
+    ["an empty check item", [block("checkListItem"), p("a")], "- [ ] \n\na\n"],
+    ["an empty quote", [block("quote"), p("a")], ">\n\na\n"],
+    ["a trailing line break", [p("a\n"), bullet("b\n\n"), p("c")], "a\n\n- b\n\nc\n"],
+    ["a paragraph of one line break", [p("a"), p("\n"), p("b")], "a\n\n\n\nb\n"],
+    [
+        "text an underline splits",
+        [{ ...p(), content: [text("a"), text("_", { underline: true }), text("b")] }],
+        "a_b\n",
+    ],
+    ["an empty bullet above a nested bullet", [bullet("", [bullet("x")])], "- \n  - x\n"],
+    ["an empty bullet beneath a bullet", [bullet("a", [bullet()]), p("b")], "- a\n\n  - \n\nb\n"],
+    [
+        "an empty paragraph that ends a list item",
+        [bullet("a", [p()]), bullet("b")],
+        "- a\n\n  \n\n- b\n",
+    ],
+    ["spaced dashes", [p("---  -")], "\\---  -\n"],
+    ["a star after a line break", [p("a\n* b")], "a\\\n\\* b\n"],
+    ["spaced underscores after a line break", [p("a\n_ _ _")], "a\\\n_ _ \\_\n"],
+    ["a heading that is a number sign", [block("heading", "#", { level: 2 })], "## \\#\n"],
+    [
+        "a code span with a pipe in a table cell",
+        [
+            {
+                type: "table",
+                content: {
+                    type: "tableContent",
+                    rows: [{ cells: [[text("a|b", { code: true })]] }, { cells: [[text("1")]] }],
+                },
+            },
+        ],
+        "| `a\\|b` |\n| --- |\n| 1 |\n",
+    ],
+    [
+        "bold that ends in a space",
+        [
+            {
+                ...p(),
+                content: [text("word ", { bold: true }), text("next"), text(" x ", { code: true })],
+            },
+        ],
+        "**word** next `x`&#32;\n",
+    ],
     ["leading and trailing spaces", [p("  a  ")], "&#32; a &#32;\n"],
     ["a paragraph of spaces", [p("a"), p("   "), p("b")], "a\n\n&#32; &#32;\n\nb\n"],
     ["text that looks like a blank-line run", [p("a\n\n\nb")], "a\\\n\\\n\\\nb\n"],
@@ -388,6 +457,30 @@ describe("document tools round-trip Markdown", () => {
             seq: 3,
             text: "a\n\n\n\nb, edited\n",
         });
+    });
+
+    it("puts a new first block first", async () => {
+        const t = await desk();
+        const surfaceId = await t.create();
+        await t.type(surfaceId, [p("one"), p("two")]);
+        expect((await t.update(surfaceId, 1, "zero\n\none\n\ntwo\n")).document.text).toBe(
+            "zero\n\none\n\ntwo\n",
+        );
+    });
+
+    it("says when a line break at the end of a block is left out", async () => {
+        const t = await desk();
+        const surfaceId = await t.create();
+        await t.type(surfaceId, [p("a\n"), p("b")]);
+        const before = await t.blocks(surfaceId);
+        const read = await t.call("read_document", { surfaceId });
+        expect(read).toMatchObject({
+            document: { text: "a\n\nb\n" },
+            omitted: expect.stringContaining("trailing line breaks"),
+        });
+        // Editing another block leaves the line break where it was.
+        await t.update(surfaceId, 1, "a\n\nb, edited\n");
+        expect((await t.blocks(surfaceId))[0]).toEqual(before[0]);
     });
 
     it("keeps a block that shows as nothing but is not an empty paragraph", async () => {
