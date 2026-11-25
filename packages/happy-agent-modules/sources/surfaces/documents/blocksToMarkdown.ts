@@ -78,7 +78,13 @@ function serializeBlocks(
         if (children.length > 0) {
             if (LIST_TYPES.has(block.type)) {
                 // A nested list stays tight; any other child needs a blank line to belong here.
-                const gap = LIST_TYPES.has(children[0]!.type) ? "\n" : "\n\n";
+                // So does a first item with no text beneath an item that has some: right under
+                // a line of text its bare marker would underline that text as a heading or join it.
+                const gap =
+                    LIST_TYPES.has(children[0]!.type) &&
+                    !(bareMarker(children[0]!) && !bareMarker(block))
+                        ? "\n"
+                        : "\n\n";
                 text += `${gap}${serializeBlocks(children, continuation, omitted)}`;
             } else {
                 // Markdown can only nest beneath list items; other children follow as siblings.
@@ -97,11 +103,18 @@ function serializeBlocks(
                 LIST_TYPES.has(chunk.type) &&
                 (previous.type === chunk.type ||
                     (bulletLike(previous.type) && bulletLike(chunk.type)));
-            out += sameList ? "\n" : "\n\n";
+            // An empty paragraph that ends the item before shows only as blank lines, and
+            // those count from a full separation.
+            out += sameList && !/\n[ \t]*$/.test(previous.text) ? "\n" : "\n\n";
         }
         out += chunk.text;
     });
     return out;
+}
+
+/** A list item whose Markdown is its marker alone. */
+function bareMarker(block: DocumentBlock): boolean {
+    return /^(?:-|\d+\.) ?$/.test(ownMarkdown(block, 1, new Set()).join("\n"));
 }
 
 function bulletLike(type: string): boolean {
