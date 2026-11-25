@@ -3242,7 +3242,11 @@ export class ConfigModule implements AgentModule {
      */
     providerCredentialSource(providerId: string): ProviderCredentialSource | undefined {
         const provider = this.configuration.values.providers[providerId];
-        if (provider === undefined) return undefined;
+        // A test-scripted account counts as an unconfigured Codex account, as `providerType` says,
+        // so it reads the same before and after its runtime table makes it a configured one.
+        if (provider === undefined) {
+            return this.providers.typeOf(providerId) === "gym" ? "system" : undefined;
+        }
         const internal = (path: string | undefined) =>
             path !== undefined && isWithin(this.#providerSignInsHome(providerId), path);
         switch (provider.type) {

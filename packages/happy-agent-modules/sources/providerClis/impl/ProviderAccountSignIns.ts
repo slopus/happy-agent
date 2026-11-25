@@ -716,7 +716,9 @@ export class ProviderAccountSignIns {
     }
 
     #signInCliId(providerId: string): ProviderSignInCliId | undefined {
-        const type = this.#config.configuration.values.providers[providerId]?.type;
+        // The type the catalog shows, so a test-scripted account reads like the Codex account it
+        // becomes once its runtime table is loaded.
+        const type = this.#config.providerType(providerId);
         return PROVIDER_SIGN_IN_CLI_IDS.find((id) => id === type);
     }
 

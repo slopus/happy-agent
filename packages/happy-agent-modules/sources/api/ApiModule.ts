@@ -11310,12 +11310,14 @@ export class ApiModule implements AgentModule {
         for (const route of routes) {
             let provider = providers[route.providerId];
             if (provider === undefined) {
+                const credential = this.#providerClis?.providerCredential(route.providerId);
                 provider = {
                     name: this.#config.providerName(route.providerId),
                     type: this.#config.providerType(route.providerId) ?? "codex",
                     enabled: this.#config.isProviderEnabled(route.providerId),
                     hidden: this.#config.isProviderHidden(route.providerId),
                     models: [],
+                    ...(credential === undefined ? {} : { credential }),
                 };
                 providers[route.providerId] = provider;
             }
