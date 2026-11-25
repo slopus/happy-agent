@@ -31,6 +31,7 @@ import type { LibSQLDatabase } from "drizzle-orm/libsql";
 import { AbortModule } from "../abort/index.js";
 import { ActivityModule } from "../activity/index.js";
 import { FeedModule } from "../feed/index.js";
+import { ViewersModule } from "../viewers/index.js";
 import { ApiModule } from "../api/index.js";
 import { ArtifactDataModule } from "../artifactData/index.js";
 import { ArtifactsModule } from "../artifacts/index.js";
@@ -234,6 +235,7 @@ export interface HappyAgentRuntimeModules {
     readonly surfaces: SurfacesModule;
     readonly feed: FeedModule;
     readonly nodeSearch: NodeSearchModule;
+    readonly viewers: ViewersModule;
     readonly workflows: WorkflowsModule;
     readonly workspaces: WorkspacesModule;
 }
@@ -799,6 +801,7 @@ export async function startHappyAgentRuntime(
             globalSkills,
         );
         const secretRequests = new SecretRequestsModule(artifacts, secrets);
+        const viewers = new ViewersModule();
         const apiModule = new ApiModule(
             abort,
             config,
@@ -847,6 +850,7 @@ export async function startHappyAgentRuntime(
             userEnvironment,
             secretRequests,
             attachments,
+            viewers,
         );
         api = apiModule;
 
@@ -922,6 +926,7 @@ export async function startHappyAgentRuntime(
             surfaces,
             feed,
             nodeSearch,
+            viewers,
             workflows,
             workspaces,
         };
@@ -1004,6 +1009,7 @@ export async function startHappyAgentRuntime(
             imageGeneration,
             feed,
             nodeSearch,
+            viewers,
             compute.skillsModule,
             compute.computeModule,
             happy,
