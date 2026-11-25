@@ -134,8 +134,8 @@ function ownMarkdown(block: DocumentBlock, number: number, omitted: Set<OmittedC
     switch (block.type) {
         case "heading": {
             const level = Math.min(6, Math.max(1, Number(props["level"]) || 1));
-            // A trailing run of `#` after a space would read as the heading's closing sequence.
-            const text = (lines(true)[0] ?? "").replace(/(\s)#(#*)$/, "$1\\#$2");
+            // A trailing run of `#` after a space, or alone, would read as the closing sequence.
+            const text = (lines(true)[0] ?? "").replace(/(^|\s)#(#*)$/, "$1\\#$2");
             return [`${"#".repeat(level)}${text === "" ? "" : ` ${text}`}`];
         }
         case "bulletListItem":
@@ -568,12 +568,15 @@ function escapeText(text: string, context: Context, inLink: boolean): string {
     return out;
 }
 
-/** Turn hard breaks into `\` line ends and protect every line from block syntax. */
+/**
+ * Turn hard breaks into `\` line ends and protect every line from block syntax. A heading's text
+ * and a table cell cannot start a block, so there only the whitespace at their ends is kept.
+ */
 function escapeLines(markdown: string, context: Context): string {
     const lines = markdown.split("\n");
     return lines
         .map((line, index) => {
-            let escaped = escapeLine(line);
+            let escaped = escapeLine(line, !context.singleLine);
             if (index < lines.length - 1) escaped = `${escaped}\\`;
             return escaped;
         })
@@ -584,11 +587,18 @@ function escapeLines(markdown: string, context: Context): string {
  * Keep a line from starting a heading, quote, list, fence, rule, or setext underline, and keep
  * its leading and trailing whitespace, which Markdown would otherwise drop.
  */
-function escapeLine(line: string): string {
+function escapeLine(line: string, startsBlock = true): string {
     if (line === "") return line;
-    let out = line;
-    const indent = /^[ \t]*/.exec(out)![0];
-    let rest = out.slice(indent.length);
+    const indent = /^[ \t]*/.exec(line)![0];
+    const rest = startsBlock ? escapeStart(line.slice(indent.length)) : line.slice(indent.length);
+    let out = indent === "" ? rest : `${whitespaceEntity(indent[0]!)}${indent.slice(1)}${rest}`;
+    const trailing = /[ \t]+$/.exec(out);
+    if (trailing !== null && out.length > trailing[0].length)
+        out = `${out.slice(0, out.length - 1)}${whitespaceEntity(out.at(-1)!)}`;
+    return out;
+}
+
+function escapeStart(rest: string): string {
     if (
         /^#{1,6}(\s|$)/.test(rest) ||
         rest.startsWith(">") ||
@@ -596,16 +606,9 @@ function escapeLine(line: string): string {
         /^(?:=+[ \t]*|-[- \t]*)$/.test(rest) ||
         rest.startsWith("~~~")
     )
-        rest = `\\${rest}`;
-    else {
-        const ordered = /^(\d{1,9})([.)])(\s|$)/.exec(rest);
-        if (ordered !== null) rest = `${ordered[1]}\\${rest.slice(ordered[1]!.length)}`;
-    }
-    out = indent === "" ? rest : `${whitespaceEntity(indent[0]!)}${indent.slice(1)}${rest}`;
-    const trailing = /[ \t]+$/.exec(out);
-    if (trailing !== null && out.length > trailing[0].length)
-        out = `${out.slice(0, out.length - 1)}${whitespaceEntity(out.at(-1)!)}`;
-    return out;
+        return `\\${rest}`;
+    const ordered = /^(\d{1,9})([.)])(\s|$)/.exec(rest);
+    return ordered === null ? rest : `${ordered[1]}\\${rest.slice(ordered[1]!.length)}`;
 }
 
 function whitespaceEntity(char: string): string {
