@@ -1068,6 +1068,25 @@ export class SurfacesModule implements AgentModule {
             };
         });
     }
+    /** Replace exact text in the latest Markdown, applied as the difference from that version. */
+    async editDocumentMarkdown(
+        ctx: Context,
+        surfaceId: string,
+        edit: { oldText: string; newText: string; replaceAll: boolean },
+        actor: SurfaceActor,
+    ): Promise<{ seq: number; changed: boolean; replacements: number }> {
+        return ctx.inTx(async (tx) => {
+            const surface = await this.#surface(tx, surfaceId, "document");
+            const result = await this.#documents.agentEdit(tx, surface, edit, actor);
+            if (result.appended)
+                await this.#documentChangedTransactional(tx, surfaceId, result.seq, actor);
+            return {
+                seq: result.seq,
+                changed: result.appended,
+                replacements: result.replacements,
+            };
+        });
+    }
     async documentChanges(
         ctx: Context,
         surfaceId: string,

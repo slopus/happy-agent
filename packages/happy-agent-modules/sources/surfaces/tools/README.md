@@ -7,7 +7,11 @@ symlink images, and settles its durable result in the edit's own transaction. A 
 admin array adds type-specific creation and user administration only for actual active admin bots. Every mutation owns its permission policy.
 
 Document tools read the Markdown projection at the latest or an earlier `seq`, write full
-replacement Markdown against the `seq` the model read, and list the change log. A write applies
+replacement Markdown against the `seq` the model read, replace exact text in the latest version,
+and list the change log. `edit_document` takes `old_string`, `new_string`, and `replace_all` like
+the file edit tools, needs no `seq`, fails without writing when the text is absent or not unique,
+and returns only the new `seq`, whether anything changed, and the number of replacements, so a
+small change costs a few tokens instead of the document twice. A write applies
 only the difference from that version, so people's concurrent edits survive, and it is refused
 with an explanation when the document holds content Markdown cannot represent. Blank lines are
 content: blocks are one blank line apart and every two more blank lines are an empty paragraph,

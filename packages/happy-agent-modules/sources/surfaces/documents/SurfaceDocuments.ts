@@ -14,6 +14,7 @@ import { Value } from "@sinclair/typebox/value";
 import { afterCommit, type Context } from "@steve.kite/stdlib";
 import * as Y from "yjs";
 import { apiResourceVersion } from "../../utils/apiResourceVersion.js";
+import { replaceExactText } from "../impl/replaceExactText.js";
 import type { SurfacesPersistence } from "../persistence/SurfacesPersistence.js";
 import { SurfaceError } from "../SurfaceError.js";
 import { agentDocumentChange } from "./agentDocumentChange.js";
@@ -294,6 +295,28 @@ export class SurfaceDocuments {
                 "This edit is larger than one 1 MiB document change. Make it in smaller steps.",
             );
         return this.change(ctx, surface, update, actor, null);
+    }
+
+    /**
+     * Replace exact text in the latest version's Markdown and apply the result as an agent's
+     * write against that version, so only the blocks the replacement touched change.
+     */
+    async agentEdit(
+        ctx: Context,
+        surface: Surface,
+        edit: Parameters<typeof replaceExactText>[1],
+        actor: DocumentActor,
+    ): Promise<{ seq: number; appended: boolean; replacements: number }> {
+        const head = await this.head(ctx, surface);
+        const { text } = readDocument(await this.#currentState(ctx, head));
+        const edited = replaceExactText(text, edit, {
+            where: "the document",
+            rewrite: "write the whole document with update_document",
+        });
+        return {
+            ...(await this.agentChange(ctx, surface, head.seq, edited.text, actor)),
+            replacements: edited.replacements,
+        };
     }
 
     async entries(

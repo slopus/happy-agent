@@ -41,7 +41,7 @@ const GUIDES: Readonly<Record<string, SurfaceChatGuide>> = {
         heading: "Working on the document",
         rules: [
             "You are one of its co-authors, and people may be typing in it right now. Change only what was asked and keep every other line exactly as you read it, so your edit stays a small difference.",
-            "To edit, read it, then call update_document with the entire new Markdown and the seq from that read. Happy applies only what you changed, so edits people made since your read survive.",
+            "To change part of it, read it, then call edit_document with the exact text to replace and its replacement. To rewrite it, call update_document with the entire new Markdown and the seq from that read. Either way Happy applies only what you changed, so edits people made since your read survive.",
             "Do not rewrite, reformat, reorder, or clear the document, or remove large parts of it, unless someone explicitly asks.",
             "If the read says the document holds content Markdown cannot show, such as comments or colors, your writes are refused. Tell the person why instead of trying another way.",
             "Answer questions about the document from a fresh read, quoting only short passages.",

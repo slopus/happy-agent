@@ -11767,8 +11767,9 @@ read it on demand. Document content and history are not included in desktop boot
 #### Agent tools
 
 Ordinary models receive `read_document` (`surfaceId`, optional `seq` to read an older version),
-`update_document` (`surfaceId`, the `seq` it read, and full replacement Markdown `text`), and
-`list_document_versions` (`surfaceId`, optional `afterSeq`, optional `limit` from 1 through 20,
+`update_document` (`surfaceId`, the `seq` it read, and full replacement Markdown `text`),
+`edit_document` (`surfaceId`, exact `old_string`, its replacement `new_string`, and optional
+`replace_all`), and `list_document_versions` (`surfaceId`, optional `afterSeq`, optional `limit` from 1 through 20,
 default 10). `read_document` returns the Markdown and the `seq` it was read at, says when
 content Markdown cannot show was left out, and, when the document is one of the installation's
 important documents, includes its `promptDocument`. `update_document` compares the agent's
@@ -11779,9 +11780,13 @@ blocks are one blank line apart, three blank lines in a row are one empty paragr
 two more are another; at the start or end of the text every two blank lines are one. An agent
 adds or removes empty paragraphs by writing more or fewer blank lines. A `seq` outside 1
 through the latest is invalid, except 0 for an empty document. A document containing content outside the content model refuses the
-write with an error telling the agent why. `list_document_versions` lists log entries.
-Reading needs no review; updates are durable and own ordinary shared-data Auto review with no
-filesystem elevation. Active admin bots additionally receive `create_document_surface`,
+write with an error telling the agent why. `edit_document` replaces exact text in the latest
+version's Markdown and applies the result the same way, so it takes no `seq`. `old_string`
+must appear exactly once unless `replace_all` is true; absent, repeated, empty, or unchanged
+text is refused without writing. It returns `{ seq, changed, replacements }` and not the
+document. `list_document_versions` lists log entries.
+Reading needs no review; updates and edits are durable and own ordinary shared-data Auto review
+with no filesystem elevation. Active admin bots additionally receive `create_document_surface`,
 accepting `name`, required explicit `creatorUserId`, optional initial Markdown `text`, and
 optional absolute `imagePath`. Its authority, attribution, creator join rules, image handling,
 and permission boundaries match `create_todo_surface`. Creation follows the catalog's default

@@ -53,6 +53,12 @@ const documentWriteSchema = Type.Object({
     ...documentReadingSchema.properties,
     changed: Type.Boolean(),
 });
+/** An exact replacement's outcome, without the text: an edit must cost less than a rewrite. */
+const documentEditSchema = Type.Object({
+    seq: surfaceDocumentSeqSchema,
+    changed: Type.Boolean(),
+    replacements: Type.Integer({ minimum: 1 }),
+});
 /** Name what the Markdown leaves out, so the agent knows the document holds more than it sees. */
 const omittedNote = (omitted: readonly string[]) =>
     omitted.length === 0
@@ -432,7 +438,7 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                 "restore document revision",
             ],
             description:
-                "Edit a document Surface by giving its entire new Markdown and the seq of the version you read. Happy compares your Markdown with that version block by block and applies only what you changed, so edits people made since then are kept. Unchanged Markdown changes nothing. Blocks are one blank line apart. Three blank lines in a row are an empty paragraph and every two more are another, so write fewer blank lines to remove empty paragraphs and more to add them. Empty text clears the content; history keeps every version. To restore an earlier version, read it with read_document and write its text with the latest seq. Use seq 0 only for a document you read as empty.",
+                "Edit a document Surface by giving its entire new Markdown and the seq of the version you read. For a change smaller than a rewrite, use edit_document instead. Happy compares your Markdown with that version block by block and applies only what you changed, so edits people made since then are kept. Unchanged Markdown changes nothing. Blocks are one blank line apart. Three blank lines in a row are an empty paragraph and every two more are another, so write fewer blank lines to remove empty paragraphs and more to add them. Empty text clears the content; history keeps every version. To restore an earlier version, read it with read_document and write its text with the latest seq. Use seq 0 only for a document you read as empty.",
             parameters: Type.Object(
                 {
                     surfaceId: surfaceIdSchema,
@@ -462,6 +468,64 @@ export function surfaceTools(surfaces: SurfacesModule, scope: AgentModuleScope, 
                     ...omittedNote(result.omitted),
                 };
             },
+            toLLM: textResult,
+        }),
+        defineAgentTool({
+            name: "edit_document",
+            defer: true,
+            capabilities: [
+                "Change part of a shared document's Markdown by exact replacement, without rewriting it.",
+            ],
+            searchKeywords: [
+                "edit document",
+                "replace text in document",
+                "patch shared markdown",
+                "small document change",
+            ],
+            description: [
+                "Performs exact string replacements in a document Surface's Markdown. The edit applies to the document's latest version, as read_document returns it, and is saved the way update_document saves: only the blocks you changed are written, so what people are typing elsewhere is kept, and history keeps every version.",
+                "Usage:",
+                "- Copy old_string exactly from read_document's text, line breaks included. No seq is needed.",
+                "- The edit will FAIL if old_string is not unique in the document. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.",
+                "- Use replace_all for replacing and renaming strings across the document.",
+                "- The result gives the new seq and whether anything changed, not the text. Happy keeps Markdown in one normal form, so what you wrote may read back slightly differently, such as * bullets as -. Read the document again before editing text you just wrote.",
+                "- Prefer this to update_document for any change smaller than a rewrite.",
+            ].join("\n"),
+            parameters: Type.Object(
+                {
+                    surfaceId: surfaceIdSchema,
+                    old_string: Type.String({ description: "The text to replace" }),
+                    new_string: Type.String({
+                        description:
+                            "The text to replace it with (must be different from old_string)",
+                    }),
+                    replace_all: Type.Optional(
+                        Type.Boolean({
+                            default: false,
+                            description: "Replace all occurrences of old_string (default false)",
+                        }),
+                    ),
+                },
+                { additionalProperties: false },
+            ),
+            returnType: documentEditSchema,
+            durable: true,
+            transactional: true,
+            requiresAutoOrFullAccess: true,
+            shouldReviewInAutoMode: () => true,
+            describeAutoPermissionAction: ({ surfaceId }) =>
+                `editing the shared document in Surface ${JSON.stringify(surfaceId)} while preserving history. Access: shared data write; no filesystem access`,
+            execute: async (ctx, input) =>
+                surfaces.editDocumentMarkdown(
+                    ctx,
+                    input.surfaceId,
+                    {
+                        oldText: input.old_string,
+                        newText: input.new_string,
+                        replaceAll: input.replace_all === true,
+                    },
+                    await actor(ctx),
+                ),
             toLLM: textResult,
         }),
         defineAgentTool({

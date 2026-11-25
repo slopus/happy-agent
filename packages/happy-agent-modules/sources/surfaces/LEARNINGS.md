@@ -167,6 +167,19 @@ Markdown cannot express. The write instead aligns blocks between that version an
 Markdown, keeps unchanged blocks and their invisible attributes, and applies only the computed
 difference to the current document in the write transaction. Unchanged Markdown appends nothing.
 
+## A small change is an exact replacement, not a rewrite
+
+`update_document` takes the entire Markdown and returns the entire document, so changing one
+word in a 5 KB document cost about 10 KB of tokens. Kirill asked for editing to be as cheap as
+the file edit tools. `edit_document` replaces exact text in the latest version's Markdown with
+the same `old_string`, `new_string`, and `replace_all` those tools take, then goes through the
+same block-level difference as a full write, so other blocks, their identities, and what
+Markdown cannot show stay as they were. It needs no `seq` because it reads and writes in one
+transaction. It answers with the new `seq`, whether anything changed, and how many replacements
+it made, never the text. An edit whose Markdown reads back as the same document reports
+`changed: false` instead of failing. `update_document` still returns the full text: a rewrite
+is where the agent most needs to see what its Markdown became and what people merged in.
+
 ## Blank lines are empty paragraphs an agent can add and remove
 
 An empty paragraph shows in Markdown only as two more blank lines. The parser dropped blank

@@ -1,0 +1,69 @@
+{
+  "capabilities": [
+    "Change part of a shared document's Markdown by exact replacement, without rewriting it."
+  ],
+  "defer": true,
+  "description": "Performs exact string replacements in a document Surface's Markdown. The edit applies to the document's latest version, as read_document returns it, and is saved the way update_document saves: only the blocks you changed are written, so what people are typing elsewhere is kept, and history keeps every version.\nUsage:\n- Copy old_string exactly from read_document's text, line breaks included. No seq is needed.\n- The edit will FAIL if old_string is not unique in the document. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.\n- Use replace_all for replacing and renaming strings across the document.\n- The result gives the new seq and whether anything changed, not the text. Happy keeps Markdown in one normal form, so what you wrote may read back slightly differently, such as * bullets as -. Read the document again before editing text you just wrote.\n- Prefer this to update_document for any change smaller than a rewrite.",
+  "durable": true,
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "new_string": {
+        "description": "The text to replace it with (must be different from old_string)",
+        "type": "string"
+      },
+      "old_string": {
+        "description": "The text to replace",
+        "type": "string"
+      },
+      "replace_all": {
+        "default": false,
+        "description": "Replace all occurrences of old_string (default false)",
+        "type": "boolean"
+      },
+      "surfaceId": {
+        "maxLength": 24,
+        "minLength": 24,
+        "pattern": "^[a-z][a-z0-9]{23}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "surfaceId",
+      "old_string",
+      "new_string"
+    ],
+    "type": "object"
+  },
+  "name": "edit_document",
+  "requiresAutoOrFullAccess": true,
+  "returnType": {
+    "properties": {
+      "changed": {
+        "type": "boolean"
+      },
+      "replacements": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "seq": {
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "seq",
+      "changed",
+      "replacements"
+    ],
+    "type": "object"
+  },
+  "searchKeywords": [
+    "edit document",
+    "replace text in document",
+    "patch shared markdown",
+    "small document change"
+  ],
+  "transactional": true
+}

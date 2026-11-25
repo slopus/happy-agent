@@ -20,7 +20,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -43,7 +43,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -66,7 +66,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -89,7 +89,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -112,7 +112,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -135,7 +135,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -158,7 +158,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -181,7 +181,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 133
+    "toolCount": 134
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -204,7 +204,7 @@
       "workspacePath"
     ],
     "providerKind": "codex",
-    "toolCount": 130
+    "toolCount": 131
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -227,7 +227,7 @@
       "workspacePath"
     ],
     "providerKind": "codex",
-    "toolCount": 130
+    "toolCount": 131
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -250,7 +250,7 @@
       "workspacePath"
     ],
     "providerKind": "codex",
-    "toolCount": 129
+    "toolCount": 130
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -273,7 +273,7 @@
       "workspacePath"
     ],
     "providerKind": "grok",
-    "toolCount": 133
+    "toolCount": 134
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -296,7 +296,7 @@
       "workspacePath"
     ],
     "providerKind": "bedrock",
-    "toolCount": 133
+    "toolCount": 134
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -319,7 +319,7 @@
       "workspacePath"
     ],
     "providerKind": "openai_compatible",
-    "toolCount": 133
+    "toolCount": 134
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -342,7 +342,7 @@
       "workspacePath"
     ],
     "providerKind": "gym",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -365,7 +365,7 @@
       "workspacePath"
     ],
     "providerKind": "gym",
-    "toolCount": 129
+    "toolCount": 130
   },
   {
     "builtBy": "permissions/PermissionsModule.ts:PermissionsModule",
@@ -388,7 +388,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "permissions/PermissionsModule.ts:PermissionsModule",
@@ -411,7 +411,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "permissions/PermissionsModule.ts:PermissionsModule",
@@ -434,7 +434,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "permissions/PermissionsModule.ts:PermissionsModule",
@@ -457,7 +457,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "bots/impl/formatChiefOfStaffInstructions.ts:formatChiefOfStaffInstructions",
@@ -477,7 +477,7 @@
       "shell"
     ],
     "providerKind": "claude",
-    "toolCount": 185
+    "toolCount": 186
   },
   {
     "builtBy": "bots/BotsModule.ts:BotsModule",
@@ -497,7 +497,7 @@
       "shell"
     ],
     "providerKind": "claude",
-    "toolCount": 136
+    "toolCount": 137
   },
   {
     "builtBy": "tasks/TasksModule.ts:TasksModule",
@@ -517,7 +517,7 @@
       "taskId"
     ],
     "providerKind": "claude",
-    "toolCount": 128
+    "toolCount": 129
   },
   {
     "builtBy": "subtasks/SubtasksModule.ts:SubtasksModule",
@@ -537,7 +537,7 @@
       "taskAgentId"
     ],
     "providerKind": "claude",
-    "toolCount": 110
+    "toolCount": 111
   },
   {
     "builtBy": "collaboration/CollaborationModule.ts:CollaborationModule",
@@ -561,7 +561,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 110
+    "toolCount": 111
   },
   {
     "builtBy": "auto/prompts/guardian-policy-template.md",
@@ -602,7 +602,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "auto/AutoModule.ts:AutoModule",
@@ -626,7 +626,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "auto/AutoModule.ts:AutoModule",
@@ -650,7 +650,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "auto/impl/createPermissionReviewInstructions.ts:ASK_PARENT_GUIDELINE",
@@ -717,7 +717,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "workflows/WorkflowsModule.ts:WorkflowsModule",
@@ -741,7 +741,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 110
+    "toolCount": 111
   },
   {
     "builtBy": "collaboration/CollaborationModule.ts:CollaborationModule",
@@ -768,7 +768,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 134
+    "toolCount": 135
   },
   {
     "builtBy": "mcp/McpModule.ts:McpModule",
@@ -791,7 +791,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 143
+    "toolCount": 144
   },
   {
     "builtBy": "mcp/McpModule.ts:McpModule",
@@ -814,7 +814,7 @@
       "workspacePath"
     ],
     "providerKind": "codex",
-    "toolCount": 139
+    "toolCount": 140
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -838,7 +838,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 131
+    "toolCount": 132
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -862,7 +862,7 @@
       "workspacePath"
     ],
     "providerKind": "codex",
-    "toolCount": 127
+    "toolCount": 128
   },
   {
     "builtBy": "systemPrompt/SystemPromptModule.ts:SystemPromptModule.instructions",
@@ -886,7 +886,7 @@
       "workspacePath"
     ],
     "providerKind": "grok",
-    "toolCount": 130
+    "toolCount": 131
   },
   {
     "builtBy": "permissions/PermissionsModule.ts:PermissionsModule",
@@ -910,7 +910,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 131
+    "toolCount": 132
   },
   {
     "builtBy": "permissions/PermissionsModule.ts:PermissionsModule",
@@ -934,7 +934,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 131
+    "toolCount": 132
   },
   {
     "builtBy": "permissions/PermissionsModule.ts:PermissionsModule",
@@ -958,7 +958,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 131
+    "toolCount": 132
   },
   {
     "builtBy": "permissions/PermissionsModule.ts:PermissionsModule",
@@ -982,7 +982,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 131
+    "toolCount": 132
   },
   {
     "builtBy": "bots/impl/formatChiefOfStaffInstructions.ts:formatChiefOfStaffInstructions",
@@ -1003,7 +1003,7 @@
       "shell"
     ],
     "providerKind": "claude",
-    "toolCount": 178
+    "toolCount": 179
   },
   {
     "builtBy": "bots/BotsModule.ts:BotsModule",
@@ -1024,7 +1024,7 @@
       "shell"
     ],
     "providerKind": "claude",
-    "toolCount": 133
+    "toolCount": 134
   },
   {
     "builtBy": "tasks/TasksModule.ts:TasksModule",
@@ -1045,7 +1045,7 @@
       "taskId"
     ],
     "providerKind": "claude",
-    "toolCount": 127
+    "toolCount": 128
   },
   {
     "builtBy": "subtasks/SubtasksModule.ts:SubtasksModule",
@@ -1065,7 +1065,7 @@
       "taskAgentId"
     ],
     "providerKind": "claude",
-    "toolCount": 110
+    "toolCount": 111
   },
   {
     "builtBy": "collaboration/CollaborationModule.ts:CollaborationModule",
@@ -1089,7 +1089,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 110
+    "toolCount": 111
   },
   {
     "builtBy": "auto/prompts/guardian-policy-template.md",
@@ -1131,7 +1131,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 131
+    "toolCount": 132
   },
   {
     "builtBy": "auto/AutoModule.ts:AutoModule",
@@ -1156,7 +1156,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 131
+    "toolCount": 132
   },
   {
     "builtBy": "auto/AutoModule.ts:AutoModule",
@@ -1181,7 +1181,7 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 131
+    "toolCount": 132
   },
   {
     "builtBy": "auto/impl/createPermissionReviewInstructions.ts:ASK_PARENT_GUIDELINE",
@@ -1248,6 +1248,6 @@
       "workspacePath"
     ],
     "providerKind": "claude",
-    "toolCount": 131
+    "toolCount": 132
   }
 ]
