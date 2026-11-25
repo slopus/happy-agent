@@ -209,6 +209,17 @@ to this; set `DOCUMENT_ROUND_TRIP_SEED` and `DOCUMENT_ROUND_TRIP_RUNS` to search
 case CommonMark cannot write is left: a block that is not a list, nested beneath a list item
 with no text, reads as that item's next sibling and is stored that way after an agent write.
 
+A second pass against the cases the cloud's documents assert found more. Italic inside bold,
+the commonest nested formatting, read back as plain text: a run's trailing space closed every
+open delimiter and delimiters opened in a fixed order. A run's trailing space is now written
+after only the formatting that ends there has closed, formatting that lasts longest opens
+first, and formatting that overlaps instead of nesting ends at the spaces beside each change
+before any of it is dropped. Whitespace runs in a row count as one when their emphasis is
+chosen. A list item without text is its marker alone and an empty nested paragraph is an empty
+line, because trailing spaces show as nothing but an exact replacement must match them. Spaces
+at the edge of code stay inside its code span. A carriage return in text is written as a
+character reference.
+
 ## Calendars expand recurrence on the daemon, from series records
 
 A calendar keeps one record per series and no stored occurrences, because there are no
