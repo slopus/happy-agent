@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { surfaceTeamClients } from "./support/surfaceTeamClients.js";
 
 const running: AgentGym[] = [];
-const streams: HappyAgentEventStream[] = [];
+const streams: { close(): void }[] = [];
 afterEach(async () => {
     for (const stream of streams.splice(0)) stream.close();
     await Promise.all(running.splice(0).map((gym) => gym.dispose()));
@@ -34,6 +34,30 @@ async function openStream(client: HappyAgentClient) {
 
 type Window = Awaited<ReturnType<typeof openStream>>;
 
+/** The event stream's bytes as the daemon wrote them, read over its HTTP listener. */
+async function openRawStream(httpUrl: string, token: string) {
+    const controller = new AbortController();
+    streams.push({ close: () => controller.abort() });
+    const response = await fetch(new URL("/v0/events/stream", httpUrl), {
+        headers: { authorization: `Bearer ${token}` },
+        signal: controller.signal,
+    });
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    /** Read until `check` holds for everything received so far. */
+    const until = async (check: (text: string) => boolean): Promise<string> => {
+        while (!check(text)) {
+            const { value, done } = await reader.read();
+            if (done) throw new Error("The raw event stream ended.");
+            text += decoder.decode(value, { stream: true });
+        }
+        return text;
+    };
+    const hello = /"streamId":"([a-z0-9]+)"/.exec(await until((text) => text.includes("streamId")));
+    return { streamId: hello![1]!, until };
+}
+
 async function view(window: Window, targets: ViewerTarget[]): Promise<PutViewersResponse> {
     return await window.client.putViewers(window.streamId, { targets });
 }
@@ -41,10 +65,7 @@ async function view(window: Window, targets: ViewerTarget[]): Promise<PutViewers
 function viewerFrames(window: Window): ViewersUpdatedFrame[] {
     return window.stream.frames
         .filter((frame) => frame.event === "viewers.updated")
-        .map((frame) => {
-            expect(frame.id).toBeUndefined();
-            return frame.data as ViewersUpdatedFrame;
-        });
+        .map((frame) => frame.data as ViewersUpdatedFrame);
 }
 
 /** Wait until a window has received exactly `count` viewer frames. */
@@ -344,6 +365,54 @@ describe("viewers show who is here to other people", () => {
         ]);
         expect(gym.errors).toEqual([]);
     }, 120_000);
+
+    it("sends viewer frames without an id, and keeps them out of the journal and replay", async () => {
+        const { gym, alice, bob, bobId, agent, tokenFor } = await team();
+        const before = (await alice.getEvents()).latestCursor;
+        const raw = await openRawStream(gym.daemon.httpUrl!, tokenFor("alice"));
+        await alice.putViewers(raw.streamId, { targets: [agent] });
+        await view(await openStream(bob), [agent]);
+
+        const text = await raw.until((text) => /event: viewers\.updated\n[^\n]*\n\n/.test(text));
+        const block = text.split("\n\n").find((lines) => lines.includes("event: viewers.updated"))!;
+        const [event, data, ...rest] = block.split("\n");
+        expect([event, rest]).toEqual(["event: viewers.updated", []]);
+        expect(JSON.parse(data!.replace(/^data: /, ""))).toEqual({
+            target: agent,
+            viewer: { userId: bobId, here: true, lastSeenAt: expect.any(Number) },
+        });
+
+        // A later journal event marks where replay ends.
+        const { surface } = await alice.createSurface({ type: "todo", name: "After" });
+        const pulled = (await alice.getEvents({ after: before, limit: 1000 })).events;
+        expect(pulled.some((event) => (event.type as string) === "viewers.updated")).toBe(false);
+        const replay = new HappyAgentEventStream(alice, { after: before });
+        streams.push(replay);
+        await replay.waitFor(
+            (frame) =>
+                frame.event === "surface.created" &&
+                JSON.stringify(frame.data).includes(surface.id),
+            "the replayed Surface",
+        );
+        expect(replay.frames.some((frame) => frame.event === "viewers.updated")).toBe(false);
+        expect(gym.errors).toEqual([]);
+    });
+
+    it("records everyone here as leaving when the daemon shuts down cleanly", async () => {
+        const { gym, alice, bob, aliceId, agent } = await team();
+        const aliceWindow = await openStream(alice);
+        await view(aliceWindow, [agent]);
+        const arrived = Date.now();
+        while (Date.now() <= arrived + 5);
+        const stopping = Date.now();
+        await gym.restart();
+
+        const bobWindow = await openStream(bob);
+        const [seen] = (await view(bobWindow, [agent])).targets[0]!.viewers;
+        expect(seen).toMatchObject({ userId: aliceId, here: false });
+        expect(seen!.lastSeenAt).toBeGreaterThanOrEqual(stopping);
+        expect(gym.errors).toEqual([]);
+    });
 
     it("is absent in standalone mode", async () => {
         const gym = await createAgentGym();

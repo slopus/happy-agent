@@ -6702,8 +6702,11 @@ export class ApiModule implements AgentModule {
         };
         // Live document frames address a stream by this name; journal events never use it.
         const streamId = this.#surfaces === undefined ? undefined : createId();
-        if (streamId !== undefined)
-            this.#eventStreams.set(streamId, { writer, userId: teamUser(ctx)?.id });
+        const streamUserId = teamUser(ctx)?.id;
+        if (streamId !== undefined) {
+            this.#eventStreams.set(streamId, { writer, userId: streamUserId });
+            if (streamUserId !== undefined) this.#viewers?.openStream(streamId, streamUserId);
+        }
         let heartbeat: NodeJS.Timeout | undefined;
         let unsubscribe = (): void => undefined;
         void writer.done.then(() => {
@@ -8146,12 +8149,14 @@ export class ApiModule implements AgentModule {
         const readable = await Promise.all(
             targets.map(async (target) => await this.#canView(ctx, target)),
         );
+        // The stream may have closed while its targets were checked.
         const lists = await viewers.view(
             ctx,
             streamId,
             userId,
             targets.filter((_, index) => readable[index]),
         );
+        if (lists === undefined) throw notFound("The event stream was not found.");
         let next = 0;
         sendJson(response, 200, {
             targets: targets.map((target, index) =>
