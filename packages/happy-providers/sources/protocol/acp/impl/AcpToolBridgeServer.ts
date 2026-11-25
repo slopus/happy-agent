@@ -47,6 +47,8 @@ export interface BridgeListing {
     /** Every bridged tool by name, whether declared or reached through `call_tool`. */
     readonly all: ReadonlyMap<string, BridgeDeclaration>;
     readonly behindCallTool: readonly string[];
+    /** Whether `call_tool` is declared, to describe any tool and run those left out. */
+    readonly callTool: boolean;
 }
 
 /**
@@ -62,13 +64,16 @@ export interface BridgeListing {
 export class AcpToolBridgeServer {
     readonly url: string;
     readonly headers: Readonly<Record<string, string>>;
+    /** What the agent is offered over `tools/list` and through `call_tool`. */
+    readonly listing: BridgeListing;
     readonly #http: HttpServer;
     readonly #open = new Set<AcpBridgeCall>();
     #closed = false;
 
-    private constructor(http: HttpServer, url: string, token: string) {
+    private constructor(http: HttpServer, url: string, token: string, listing: BridgeListing) {
         this.#http = http;
         this.url = url;
+        this.listing = listing;
         this.headers = Object.freeze({ Authorization: `Bearer ${token}` });
     }
 
@@ -94,6 +99,11 @@ export class AcpToolBridgeServer {
                 inputSchema: toInputSchema(tool),
             })),
             declarationBudget,
+            new Set(
+                tools
+                    .filter((tool) => tool.defer !== true)
+                    .map((tool) => AcpToolBridgeServer.toolName(tool)),
+            ),
         );
         const path = `/${randomUUID()}/mcp`;
         const token = randomBytes(24).toString("base64url");
@@ -113,7 +123,7 @@ export class AcpToolBridgeServer {
             server.setRequestHandler(CallToolRequestSchema, async (call) => {
                 let name = call.params.name;
                 let args: unknown = call.params.arguments ?? {};
-                if (name === ACP_BRIDGE_CALL_TOOL && listing.behindCallTool.length > 0) {
+                if (name === ACP_BRIDGE_CALL_TOOL && listing.callTool) {
                     const target = callToolTarget(args, listing.all);
                     if ("result" in target) return target.result;
                     ({ name, args } = target);
@@ -167,7 +177,7 @@ export class AcpToolBridgeServer {
             http.listen(0, "127.0.0.1", () => resolve());
         });
         const { port } = http.address() as AddressInfo;
-        bridge = new AcpToolBridgeServer(http, `http://127.0.0.1:${port}${path}`, token);
+        bridge = new AcpToolBridgeServer(http, `http://127.0.0.1:${port}${path}`, token, listing);
         return bridge;
     }
 
@@ -200,26 +210,44 @@ export function acpBridgeResult(message: SessionToolResultMessage): CallToolResu
  * Antigravity declares a session's MCP tools smallest first until about 60 KB and silently drops
  * the rest; over ACP it offers its model no way to call a dropped tool, so Happy's largest tools,
  * `create_agent` and `create_subtask` among them, were unreachable. Within the budget, the bridge
- * declares tools smallest first as the agent would, and lists every other tool by name in one
- * small `call_tool`, which describes a tool or runs it. A call through `call_tool` reaches Agent
+ * declares the tools Happy hands every model up front (`upFront`, those not marked `defer`)
+ * first, then the rest, each smallest first, and lists every other tool by name in one small
+ * `call_tool`, which describes a tool or runs it. A call through `call_tool` reaches Agent
  * Base as a call of the named tool, so permission and validation are unchanged.
+ *
+ * Such an agent may also show its model only tool names (Antigravity 1.5.15 loads MCP tools
+ * lazily and leaves the model to read their schemas from files), so `call_tool` is declared even
+ * when everything fits, to describe any of Happy's tools.
  */
 export function bridgeListing(
     declarations: readonly BridgeDeclaration[],
     budget: number | undefined,
+    upFront: ReadonlySet<string> = new Set(),
 ): BridgeListing {
     const all = new Map(declarations.map((declaration) => [declaration.name, declaration]));
     const size = (declaration: BridgeDeclaration): number => JSON.stringify(declaration).length;
     const total = declarations.reduce((sum, declaration) => sum + size(declaration), 0);
-    if (budget === undefined || total <= budget || all.has(ACP_BRIDGE_CALL_TOOL)) {
-        return { declared: declarations, all, behindCallTool: [] };
+    if (budget === undefined || all.has(ACP_BRIDGE_CALL_TOOL)) {
+        return { declared: declarations, all, behindCallTool: [], callTool: false };
+    }
+    if (total + size(callToolDeclaration([])) <= budget) {
+        return {
+            declared: [...declarations, callToolDeclaration([])],
+            all,
+            behindCallTool: [],
+            callTool: true,
+        };
     }
     // Reserve room for `call_tool` as if it named every tool, then fill smallest first.
     let remaining = budget - size(callToolDeclaration([...all.keys()]));
     const fits = new Set<string>();
-    for (const declaration of [...declarations].sort((a, b) => size(a) - size(b))) {
+    const deferred = (declaration: BridgeDeclaration): number =>
+        upFront.has(declaration.name) ? 0 : 1;
+    for (const declaration of [...declarations].sort(
+        (a, b) => deferred(a) - deferred(b) || size(a) - size(b),
+    )) {
         const bytes = size(declaration);
-        if (bytes > remaining) break;
+        if (bytes > remaining) continue;
         remaining -= bytes;
         fits.add(declaration.name);
     }
@@ -233,13 +261,17 @@ export function bridgeListing(
         ],
         all,
         behindCallTool,
+        callTool: true,
     };
 }
 
 function callToolDeclaration(names: readonly string[]): BridgeDeclaration {
     return {
         name: ACP_BRIDGE_CALL_TOOL,
-        description: `Use one of Happy's tools that are not among your functions: ${names.join(", ")}. Pass only name to read that tool's description and parameters, then call again with name and its arguments to run it.`,
+        description:
+            names.length === 0
+                ? "Describe or run any of Happy's tools. Pass only name to read that tool's description and parameters, then call again with name and its arguments to run it."
+                : `Describe or run any of Happy's tools, including those that are not among your functions: ${names.join(", ")}. Pass only name to read that tool's description and parameters, then call again with name and its arguments to run it.`,
         inputSchema: {
             type: "object",
             properties: {
@@ -267,7 +299,7 @@ function callToolTarget(
                 content: [
                     {
                         type: "text",
-                        text: `Unknown Happy tool ${JSON.stringify(name)}. Available: ${[...all.keys()].join(", ")}.`,
+                        text: `Unknown Happy tool ${JSON.stringify(name)}. Pass the tool's name as name and its arguments as arguments. Available: ${[...all.keys()].join(", ")}.`,
                     },
                 ],
                 isError: true,

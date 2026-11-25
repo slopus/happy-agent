@@ -11,8 +11,14 @@
 // "needs permission" asks the client before a command, and "needs permission for happy" before a
 // bridged happy_secret call (with "only always", offering no one-time allow), then replies with
 // the option it got; "needs agy command" asks before a command as Antigravity does, leaving its
-// sandbox with "bypass"; anything else is echoed back.
+// sandbox with "bypass"; "needs agy mcp permission" asks before calling happy_secret through
+// call_mcp_tool, as Antigravity 1.5.15 does; anything else is echoed back.
+//
+// Started as Antigravity is, with --agent, --add-dir and --log-file, it logs the agent file it
+// finds when a session opens and writes a log, where SCRIPTED_AGY_FALLBACK makes it report that
+// the agent was not found, as agy does before falling back to its default agent.
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 
 import * as acp from "@agentclientprotocol/sdk";
@@ -27,6 +33,13 @@ const log = (entry) =>
 const sessionsFile = `${process.env.SCRIPTED_ACP_LOG}.sessions`;
 const stubbornFile = `${process.env.SCRIPTED_ACP_LOG}.stubborn`;
 const failedFile = `${process.env.SCRIPTED_ACP_LOG}.failed`;
+const flag = (name) => {
+    const index = process.argv.indexOf(name);
+    return index === -1 ? undefined : process.argv[index + 1];
+};
+const agyAgent = flag("--agent");
+const agyLog = flag("--log-file");
+if (agyLog !== undefined) appendFileSync(agyLog, "I0000 started\n");
 const known = () =>
     existsSync(sessionsFile) ? JSON.parse(readFileSync(sessionsFile, "utf8")) : {};
 
@@ -51,11 +64,13 @@ class ScriptedAgent {
         const sessionId = `s${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
         this.#servers.set(sessionId, params.mcpServers);
         writeFileSync(sessionsFile, JSON.stringify({ ...known(), [sessionId]: true }));
+        this.#openAgent();
         log({
             method: "newSession",
             sessionId,
             mcpServers: params.mcpServers.length,
             approvedTools: params._meta?.["happy/approvedTools"],
+            systemPrompt: params._meta?.antigravity?.systemPrompt?.append,
         });
         return {
             sessionId,
@@ -95,9 +110,22 @@ class ScriptedAgent {
         };
     }
 
+    #openAgent() {
+        if (agyAgent === undefined) return;
+        const file = join(flag("--add-dir"), ".agents", "agents", agyAgent, "agent.md");
+        log({ method: "agentFile", text: existsSync(file) ? readFileSync(file, "utf8") : null });
+        if (process.env.SCRIPTED_AGY_FALLBACK !== undefined) {
+            appendFileSync(
+                agyLog,
+                `W0000 Agent \"${agyAgent}\" not found, falling back to default\n`,
+            );
+        }
+    }
+
     async loadSession(params) {
         if (known()[params.sessionId] !== true)
             throw acp.RequestError.resourceNotFound(params.sessionId);
+        this.#openAgent();
         this.#servers.set(params.sessionId, params.mcpServers);
         log({ method: "loadSession", sessionId: params.sessionId });
         // A real agent replays history here; the client must ignore it.
@@ -183,6 +211,39 @@ class ScriptedAgent {
                     title: `Run ${fn}`,
                     name: fn,
                     rawInput,
+                },
+                options: [
+                    { optionId: "allow", name: "Allow", kind: "allow_once" },
+                    { optionId: "deny", name: "Deny", kind: "reject_once" },
+                ],
+            });
+            const chosen =
+                answer.outcome.outcome === "selected" ? answer.outcome.optionId : "cancelled";
+            await this.#say(params.sessionId, `permission=${chosen}`);
+            return { stopReason: "end_turn" };
+        }
+        // Antigravity 1.5.15 loads MCP tools lazily and asks before its own call_mcp_tool.
+        if (text.includes("needs agy mcp permission")) {
+            const answer = await this.#conn.requestPermission({
+                sessionId: params.sessionId,
+                toolCall: {
+                    toolCallId: `call_${Date.now()}`,
+                    kind: "execute",
+                    status: "pending",
+                    title: "MCP Tool happy_secret",
+                    // "malformed" names the tool inside call_tool's arguments the wrong way, as
+                    // Gemini once did; the bridge answers that with the names it knows.
+                    rawInput: text.includes("malformed")
+                        ? {
+                              ServerName: "happy",
+                              ToolName: "call_tool",
+                              Arguments: { ToolName: "happy_secret" },
+                          }
+                        : {
+                              ServerName: "happy",
+                              ToolName: "happy_secret",
+                              Arguments: { why: "test" },
+                          },
                 },
                 options: [
                     { optionId: "allow", name: "Allow", kind: "allow_once" },

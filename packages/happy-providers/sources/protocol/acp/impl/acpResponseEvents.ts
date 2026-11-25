@@ -187,9 +187,11 @@ const AGY_ADDED_ARGUMENTS = new Set(["toolSummary", "toolAction", "waitForPrevio
 
 /**
  * The bridged Happy tool call a permission ask is about, or `"description"` for a `call_tool`
- * that only reads a tool's description. First-party drivers say so in `happy/bridgedCall`
- * metadata; Antigravity names the function it is about to call, `mcp_happy_<tool>`, and sends
- * that call's input. A `call_tool` call is the call of the tool it names.
+ * that runs nothing: one that only reads a tool's description, or names no tool. First-party drivers say so in `happy/bridgedCall`
+ * metadata. Antigravity either names the function it is about to call, `mcp_happy_<tool>`, and
+ * sends that call's input, or, when it loads MCP tools lazily, asks about its own
+ * `call_mcp_tool` with `{ ServerName, ToolName, Arguments }`. A `call_tool` call is the call of
+ * the tool it names.
  */
 export function acpBridgedCallOfAsk(
     toolCall: { readonly title?: string | null; readonly rawInput?: unknown },
@@ -198,6 +200,20 @@ export function acpBridgedCallOfAsk(
     if (typeof meta === "object" && meta !== null) {
         const { name, arguments: args } = meta as { name?: unknown; arguments?: unknown };
         return typeof name === "string" ? { name, arguments: args ?? {} } : undefined;
+    }
+    const raw = toolCall.rawInput as
+        | { ServerName?: unknown; ToolName?: unknown; Arguments?: unknown }
+        | null
+        | undefined;
+    if (
+        typeof raw === "object" &&
+        raw !== null &&
+        raw.ServerName === ACP_BRIDGE_NAME &&
+        typeof raw.ToolName === "string"
+    ) {
+        const input =
+            typeof raw.Arguments === "object" && raw.Arguments !== null ? raw.Arguments : {};
+        return bridgedCall(raw.ToolName, input);
     }
     const prefix = `mcp_${ACP_BRIDGE_NAME}_`;
     const named = (toolCall as { readonly name?: unknown }).name;
@@ -215,11 +231,19 @@ export function acpBridgedCallOfAsk(
                 : {},
         ).filter(([key]) => !AGY_ADDED_ARGUMENTS.has(key)),
     );
-    const name = fn.slice(prefix.length);
+    return bridgedCall(fn.slice(prefix.length), input);
+}
+
+/** One named bridged call, unwrapping a `call_tool` into the call of the tool it names. */
+function bridgedCall(
+    name: string,
+    input: object,
+): { readonly name: string; readonly arguments: unknown } | "description" | undefined {
     if (name !== ACP_BRIDGE_CALL_TOOL) return { name, arguments: input };
     const { name: target, arguments: args } = input as { name?: unknown; arguments?: unknown };
-    if (typeof target !== "string") return undefined;
-    if (args === undefined) return "description";
+    // Without a tool name or arguments it runs nothing: the bridge answers with a description or
+    // with the names it knows, which teaches the model the right call.
+    if (typeof target !== "string" || args === undefined) return "description";
     if (typeof args !== "string") return { name: target, arguments: args };
     try {
         return { name: target, arguments: JSON.parse(args) as unknown };

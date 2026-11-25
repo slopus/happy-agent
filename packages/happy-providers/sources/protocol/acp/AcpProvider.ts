@@ -81,6 +81,12 @@ export interface AcpAgentProfile {
      * the rest of a larger toolbox. Happy's tools past it are reached through one `call_tool`.
      */
     readonly toolDeclarationBudget?: number;
+    /**
+     * For an agent that takes text for its own system prompt in a session's `_meta`: that `_meta`
+     * for Happy's instructions and a guide to Happy's tools. It is sent with every new, resumed
+     * and loaded session, and the first prompt no longer carries the instructions.
+     */
+    readonly systemPromptMeta?: (prompt: string) => Record<string, unknown>;
 }
 
 export interface AcpProviderOptions {

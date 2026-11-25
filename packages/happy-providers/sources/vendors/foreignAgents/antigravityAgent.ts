@@ -1,13 +1,9 @@
-import type * as acp from "@agentclientprotocol/sdk";
-import { Type } from "@sinclair/typebox";
-import { Value } from "@sinclair/typebox/value";
-
 import { execFileHidden } from "@/core/hiddenChildProcess.js";
 
 import type { SessionReasoningEffort } from "@/core/SessionRunRequest.js";
-import { ACP_SANDBOXED_META, type AcpConnect } from "@/protocol/acp/AcpConnection.js";
 import type { AcpAgentLaunch } from "@/protocol/acp/AcpProvider.js";
-import { acpSelectValues, type AcpSelectValue } from "@/protocol/acp/impl/acpConfigOptions.js";
+import type { AcpSelectValue } from "@/protocol/acp/impl/acpConfigOptions.js";
+import { antigravityHappyOnly } from "@/vendors/foreignAgents/antigravityHappyOnly.js";
 import {
     acpSpawnConnect,
     foreignAgentLaunch,
@@ -27,8 +23,8 @@ const EFFORT_SUFFIXES: readonly SessionReasoningEffort[] = [
     "max",
 ];
 
-/** The first `agy` whose ACP server asks before acting and takes ACP `mcpServers`. */
-const MIN_AGY_VERSION = [1, 5, 5] as const;
+/** The first `agy` known to run Happy's custom agent: no tools of its own, Happy's MCP allowed. */
+const MIN_AGY_VERSION = [1, 5, 15] as const;
 const VERSION_TIMEOUT_MS = 15_000;
 
 const models: readonly ForeignAgentModel[] = [
@@ -43,41 +39,30 @@ const models: readonly ForeignAgentModel[] = [
 /**
  * Google Antigravity through its own ACP server, `agy acp`, with the signed-in `agy` CLI.
  *
- * agy keeps its own permission system: it asks before what its mode does not allow, and those
- * asks reach Happy. In `accept-edits` and `auto` it asks before every MCP call too, naming the
- * function `mcp_happy_<tool>`; Happy answers those for its own tools by each tool's rule. It takes
- * Happy's bridge as an ACP `mcpServers` entry without advertising that it does.
- *
- * Happy starts it with `--sandbox`, so in `accept-edits` every command runs in agy's terminal
- * sandbox unless the model asks to leave it, and agy asks before each command either way. Happy
- * goes ahead with the sandboxed ones itself and reviews the rest. agy's own `auto` would instead
- * let its own review model clear commands that leave the sandbox without asking anyone.
+ * Happy starts agy as a custom agent with none of agy's own tools but web search (see
+ * {@link antigravityHappyOnly}), so it reads, writes, runs commands and starts sub-agents only
+ * through Happy's bridged tools, under Happy's one sandbox and reviewer. agy asks before every
+ * MCP call; those asks are approved, because Happy decides each call when it runs. Happy's
+ * instructions and a guide to its tools become the end of agy's system prompt.
  */
 export const antigravityAgent: ForeignAgent = {
     type: "antigravity",
     modelPrefix: "antigravity",
     label: "Antigravity",
     connect: (start) => {
-        const launch = foreignAgentLaunch(start, { command: "agy", args: ["acp", "--sandbox"] });
-        // Only Happy's own launch is known to keep the sandbox on.
-        const connect =
-            start.command === undefined
-                ? withSandboxedAsks(acpSpawnConnect(launch))
-                : acpSpawnConnect(launch);
-        // A configured command may be any adapter; only Happy's own choice is version-checked, and
-        // only until it passes once.
-        const own = start.command === undefined;
+        const launch = foreignAgentLaunch(start, { command: "agy", args: ["acp"] });
+        // A configured command may be any adapter, run as it is; only Happy's own launch is known
+        // to take a custom agent, and only it is version-checked, until it passes once.
+        if (start.command !== undefined) return acpSpawnConnect(launch);
+        const connect = antigravityHappyOnly(launch);
         let checked: Promise<void> | undefined;
         return async (cwd, client) => {
-            if (own) {
-                checked ??= requireAgyVersion(launch).catch((error: unknown) => {
-                    checked = undefined;
-                    throw error;
-                });
-                await checked;
-            }
+            checked ??= requireAgyVersion(launch).catch((error: unknown) => {
+                checked = undefined;
+                throw error;
+            });
+            await checked;
             const connection = await connect(cwd, client);
-            if (!own) return connection;
             const capabilities = connection.init.agentCapabilities;
             return {
                 ...connection,
@@ -108,81 +93,19 @@ export const antigravityAgent: ForeignAgent = {
                 { configId: "thought_level", value: level },
             ];
         },
-        // agy 1.5.10 declares about 60 KB of MCP tools to its model and drops the rest without a
-        // way to call them; the margin leaves room for its own schema additions.
+        // agy 1.5.10 declared about 60 KB of MCP tools to its model and dropped the rest without a
+        // way to call them; the margin leaves room for its own schema additions. 1.5.15 shows its
+        // model only the tools' names, and call_tool describes them.
         toolDeclarationBudget: 48_000,
-        // Happy answers agy's asks by mode. Auto is `accept-edits`, which asks before anything
-        // that leaves the project or the sandbox; Full access is agy's Auto with every ask allowed.
-        permissionOptions: (mode) => [
-            {
-                configId: "mode",
-                value:
-                    mode === "read_only"
-                        ? "plan"
-                        : mode === "full_access"
-                          ? "auto"
-                          : "accept-edits",
-            },
-        ],
+        // One mode for every Happy mode: agy's `default` asks before each MCP call, and before any
+        // edit or command of its own should it ever have tools again. Happy's own mode decides
+        // what its tools may do.
+        permissionOptions: () => [{ configId: "mode", value: "default" }],
+        systemPromptMeta: (prompt) => ({ antigravity: { systemPrompt: { append: prompt } } }),
     },
     credentialEnvironment: (credentials) =>
         credentials.apiKey === undefined ? {} : { GEMINI_API_KEY: credentials.apiKey },
 };
-
-/** agy's `run_command` input when the model keeps the terminal sandbox on, as it does by default. */
-const sandboxedCommand = Type.Object({
-    CommandLine: Type.String(),
-    BypassSandbox: Type.Optional(Type.Literal(false)),
-});
-
-/**
- * Mark agy's asks to run a command inside its terminal sandbox, so Happy goes ahead with them
- * itself. Where the sandbox cannot run, agy turns it off and asks before running commands
- * unsandboxed; it offers its Auto mode only where the sandbox works, so without Auto among the
- * session's modes nothing is marked and every command ask is reviewed.
- */
-export function withSandboxedAsks(connect: AcpConnect): AcpConnect {
-    return async (cwd, client) => {
-        let sandboxWorks = false;
-        const observe = <T extends { configOptions?: acp.SessionConfigOption[] | null }>(
-            response: T,
-        ): T => {
-            const mode = response.configOptions?.find((option) => option.id === "mode");
-            sandboxWorks =
-                mode !== undefined && acpSelectValues(mode).some(({ value }) => value === "auto");
-            return response;
-        };
-        const connection = await connect(cwd, {
-            ...client,
-            requestPermission: (params) =>
-                client.requestPermission(
-                    sandboxWorks &&
-                        params.toolCall.kind === "execute" &&
-                        Value.Check(sandboxedCommand, params.toolCall.rawInput)
-                        ? {
-                              ...params,
-                              toolCall: {
-                                  ...params.toolCall,
-                                  _meta: { ...params.toolCall._meta, [ACP_SANDBOXED_META]: true },
-                              },
-                          }
-                        : params,
-                ),
-        });
-        const conn = connection.conn;
-        return {
-            ...connection,
-            conn: Object.assign(Object.create(conn) as typeof conn, {
-                newSession: async (params: acp.NewSessionRequest) =>
-                    observe(await conn.newSession(params)),
-                loadSession: async (params: acp.LoadSessionRequest) =>
-                    observe(await conn.loadSession(params)),
-                resumeSession: async (params: acp.ResumeSessionRequest) =>
-                    observe(await conn.resumeSession(params)),
-            }),
-        };
-    };
-}
 
 /**
  * agy lists most models by name and takes their effort as a separate thinking level, and names a

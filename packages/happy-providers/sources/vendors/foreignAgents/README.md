@@ -9,7 +9,7 @@ model, effort and permission mode become its own options, and how credentials re
 | ------------- | -------------------------------------------------------------------- | ---------------------------------------------------- |
 | `claude-code` | Claude Agent SDK ([`claudeAgent`](../claudeAgent/README.md))         | SDK `mcpServers` (HTTP)                              |
 | `codex-cli`   | `codex app-server` ([`codexAppServer`](../codexAppServer/README.md)) | `mcp_servers` thread config (HTTP)                   |
-| `antigravity` | ACP, `agy acp` (1.5.5 or newer)                                      | ACP `mcpServers` (HTTP)                              |
+| `antigravity` | ACP, `agy acp` (1.5.15 or newer), as Happy's custom agent            | ACP `mcpServers` (HTTP), named in its agent file     |
 | `opencode`    | ACP, `opencode acp`                                                  | ACP `mcpServers` (HTTP)                              |
 | `acp`         | ACP, to the configured `command`                                     | ACP `mcpServers` (HTTP), when the agent accepts them |
 
@@ -18,29 +18,41 @@ as an ACP connection and take steering mid-turn. ACP is for agents without such 
 
 Model IDs are `<type>/<the agent's model value>`, or `acp/<harness>/<model>` for a configured ACP
 agent. Their family is `foreign`, so they receive no
-Happy vendor tools: a foreign agent already has its own filesystem and shell. The models a type
+Happy vendor tools: a foreign agent already has its own filesystem and shell. Antigravity is the
+exception: Happy removes its own tools, so Happy hands an `antigravity/` model a Claude-shaped
+shell and file array. The models a type
 lists here are only assumed until the agent reports its own through `modelsFromSelector`; OpenCode
 and the generic `acp` agent assume none. Codex CLI runs the pinned `@openai/codex` this package
 depends on, else a `codex` on PATH, else the pinned release through `npx`.
 
-Antigravity is started as `agy acp --sandbox`, without `--dangerously-skip-permissions`, after
-checking that `agy --version` is at least 1.5.5. It takes HTTP `mcpServers` over ACP although it
-does not advertise `mcpCapabilities`, so its initialize answer is read as accepting them. Its model
-selector lists base names (`gemini-3.8-flash`) with a separate `thought_level` option, and its
-modes are `default`, `plan`, `accept-edits`, and `auto`. Happy's Workspace write and Auto both run
-`accept-edits`, and only Full access runs agy's `auto`, whose own review model takes commands out
-of its sandbox without asking. With `--sandbox`, `accept-edits` asks before every command and
-says in `BypassSandbox` whether the command leaves the terminal sandbox; `withSandboxedAsks` marks
-the asks that stay in it with `happy/sandboxed`, which `AcpSession` allows in Workspace write and
-Auto without review. It marks nothing for a configured `command`, or in a session whose modes lack
-`auto`, which agy offers only where its sandbox works. In `accept-edits` and `auto`, agy 1.5.10
-through 1.5.15 asks before every MCP call, naming the function `mcp_happy_<tool>` (see the ACP
-README's Permission), and offers only Allow and Deny; on Deny it ends its turn at once. What each
-mode asks about is tabled in the harnesses recipe (`docs/recipe/harnesses.md`). It also
-declares MCP tools to its model smallest first up to about 60 KB and, over ACP, drops the rest
-with no way to call them (it neither offers its `call_tool` nor honors `antigravity/alwaysLoad`),
-so its profile sets `toolDeclarationBudget` and the bridge offers everything past it through
-`call_tool`. It titles its own record of an MCP call `Run mcp_happy_<tool>`.
+Antigravity is started by `antigravityHappyOnly` as `agy acp --agent happy-<random> --add-dir
+<folder> --log-file <folder>/agy.log`, after checking that `agy --version` is at least 1.5.15.
+Each connection gets a private temporary folder holding a custom agent file,
+`.agents/agents/<name>/agent.md`, written just before each session opens: `mainAgent: true`,
+`inheritMcp: false`, `tools: [search_web]` (agy's only tool left), and `mcpServers` naming
+Happy's bridge with the session's URL and bearer header. agy refuses an ACP-passed MCP server its
+agent file does not name, expands no variables there, and accepts only the list form. The file's
+body replaces agy's identity, tool, sub-agent and skill sections of its system prompt; agy still
+adds the person's OS, its MCP server list, artifacts, behavioral guidelines and communication
+style. Happy's own instructions and a guide to its tools (`acpToolGuide`) are appended through
+ACP `_meta.antigravity.systemPrompt.append` on every new, resumed and loaded session, so the first
+prompt no longer carries them. agy reads the file when a session opens; one it cannot load makes it
+log `Agent "<name>" not found, falling back to default` and continue with all of its own tools,
+so after every open the log is read and such a session is stopped. Anything agy asks about other
+than a Happy tool call is refused without asking anyone. The file, which holds the token, is
+deleted when the process exits; the log stays. A configured `command` runs as it is, with agy's
+own tools.
+
+agy 1.5.15 loads MCP tools lazily: its model sees only their names under `<mcp_servers>` and is
+told to read schema files with tools it no longer has, and every call goes through agy's own
+`call_mcp_tool`, which asks first with `{ ServerName, ToolName, Arguments }` titled
+`MCP Tool <name>`. 1.5.10 declared tools directly as `mcp_happy_<tool>` up to about 60 KB and
+dropped the rest; both forms are recognized. Its profile sets `toolDeclarationBudget`, so the
+bridge declares the up-front tools first and always offers `call_tool`, which describes any Happy
+tool and runs those left out. agy's monitors (`agy_tool_safety`, a Flash-Lite call, and a blocking
+`severe_internal_risks_agy`) still see each call and could only block it, never allow anything
+Happy refuses. agy runs in its `default` mode for every Happy mode. It titles its own record of an
+MCP call `MCP Tool <name>` (1.5.15) or `Run mcp_happy_<tool>` (1.5.10).
 
 ## Files
 
@@ -48,3 +60,5 @@ so its profile sets `toolDeclarationBudget` and the bridge offers everything pas
 - `foreignAgents.ts` — every built-in agent, by harness type, and the agent behind a harness.
 - `claudeCodeAgent.ts`, `codexCliAgent.ts`, `antigravityAgent.ts`, `opencodeAgent.ts`,
   `acpGenericAgent.ts` — one each.
+- `antigravityHappyOnly.ts` — Antigravity's per-session agent file, launch flags, and the checks
+  that keep agy's own tools out.

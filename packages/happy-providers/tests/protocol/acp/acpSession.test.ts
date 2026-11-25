@@ -31,7 +31,8 @@ import {
 import type * as acp from "@agentclientprotocol/sdk";
 import { acpConfigOptionId } from "@/protocol/acp/impl/acpConfigOptions.js";
 import { acpGenericAgent } from "@/vendors/foreignAgents/acpGenericAgent.js";
-import { antigravityAgent, withSandboxedAsks } from "@/vendors/foreignAgents/antigravityAgent.js";
+import { antigravityAgent } from "@/vendors/foreignAgents/antigravityAgent.js";
+import { antigravityHappyOnly } from "@/vendors/foreignAgents/antigravityHappyOnly.js";
 
 const AGENT = fileURLToPath(new URL("./fixtures/scriptedAcpAgent.mjs", import.meta.url));
 const tools = [
@@ -711,16 +712,11 @@ describe("AcpSession", () => {
         });
     }, 30_000);
 
-    it("lets a Happy tool call through in Auto, and in Workspace write when the tool's own rule needs no approval", async () => {
+    it("lets a Happy tool call through in every mode, as Happy decides the call when it runs", async () => {
         const asked: string[] = [];
-        let review = false;
         const h = harness({
             tools: [
-                {
-                    ...tools[0]!,
-                    shouldReviewInAutoMode: (args: { why?: string }) =>
-                        review || args.why !== "test",
-                },
+                { ...tools[0]!, shouldReviewInAutoMode: () => true },
                 { name: "happy_listed", description: "Never reviewed.", autoReview: "never" },
                 { name: "listed", namespace: "ns", autoReview: "never" },
             ],
@@ -730,21 +726,12 @@ describe("AcpSession", () => {
             },
         });
         const session = await h.session();
-        h.setPermissionMode("workspace_write");
-        h.user("needs permission for happy");
-        expect(text(await h.run(session))).toBe("permission=yes");
+        for (const mode of ["read_only", "workspace_write", "auto", "full_access"] as const) {
+            h.setPermissionMode(mode);
+            h.user("needs permission for happy");
+            expect(text(await h.run(session)), mode).toBe("permission=yes");
+        }
         expect(asked).toEqual([]);
-
-        // In Workspace write, a call its rule says needs approval goes to the person.
-        review = true;
-        h.user("needs permission for happy");
-        expect(text(await h.run(session))).toBe("permission=no");
-        expect(asked).toHaveLength(1);
-        // In Auto every Happy tool call goes ahead: Happy's own reviewer decides it when it runs.
-        h.setPermissionMode("auto");
-        h.user("needs permission for happy");
-        expect(text(await h.run(session))).toBe("permission=yes");
-        expect(asked).toHaveLength(1);
 
         // The agent is told which bridged tools it may call without asking at all.
         expect(h.log().find((entry) => entry.method === "newSession")).toMatchObject({
@@ -752,90 +739,111 @@ describe("AcpSession", () => {
         });
     }, 30_000);
 
-    it("recognizes Antigravity's ask about a Happy tool, by its function name and through call_tool", async () => {
+    it("recognizes Antigravity's ask about a Happy tool, by its function name, through call_tool, and through call_mcp_tool", async () => {
         const asked: string[] = [];
-        let review = false;
         const h = harness({
-            tools: [
-                {
-                    ...tools[0]!,
-                    shouldReviewInAutoMode: (args: { why?: string }) =>
-                        review || args.why !== "test",
-                },
-            ],
+            tools: [{ ...tools[0]!, shouldReviewInAutoMode: () => true }],
             askPermission: async (question) => {
                 asked.push(question.action);
                 return "deny";
             },
         });
         const session = await h.session();
-        h.setPermissionMode("auto");
-        for (const prompt of [
-            "needs agy permission for happy",
-            "needs agy permission for call_tool",
-            "needs agy permission for call_tool description",
-        ]) {
-            h.user(prompt);
-            expect(text(await h.run(session)), prompt).toBe("permission=allow");
-        }
-        expect(asked).toEqual([]);
-
-        // In Auto, a call the tool's own rule wants reviewed goes ahead too, to be reviewed by
-        // Happy when it runs; in Workspace write it goes to the person.
-        review = true;
-        h.user("needs agy permission for call_tool");
-        expect(text(await h.run(session))).toBe("permission=allow");
-        expect(asked).toEqual([]);
-        h.setPermissionMode("workspace_write");
-        h.user("needs agy permission for call_tool");
-        expect(text(await h.run(session))).toBe("permission=deny");
-        expect(asked).toHaveLength(1);
-    }, 30_000);
-
-    it("goes ahead with Antigravity's sandboxed commands and reviews the ones that leave its sandbox", async () => {
-        const asked: string[] = [];
-        const agy = (modes: string) =>
-            harness({
-                env: { SCRIPTED_ACP_MODES: modes },
-                profile: { permissionOptions: antigravityAgent.profile.permissionOptions! },
-                connect: (launch) =>
-                    withSandboxedAsks((cwd, client) => acpConnectionSpawn(launch, cwd, client)),
-                askPermission: async (question) => {
-                    asked.push(question.action);
-                    return "deny";
-                },
-            });
-        const h = agy("default,accept-edits,auto,plan");
-        const session = await h.session();
         for (const mode of ["workspace_write", "auto"] as const) {
             h.setPermissionMode(mode);
-            h.user("needs agy command");
+            for (const prompt of [
+                "needs agy permission for happy",
+                "needs agy permission for call_tool",
+                "needs agy permission for call_tool description",
+                "needs agy mcp permission",
+                "needs agy mcp permission malformed",
+            ]) {
+                h.user(prompt);
+                expect(text(await h.run(session)), `${mode}: ${prompt}`).toBe("permission=allow");
+            }
+        }
+        expect(asked).toEqual([]);
+    }, 30_000);
+
+    it("runs Antigravity as Happy's agent, with Happy's MCP server named in its agent file", async () => {
+        const asked: string[] = [];
+        const h = harness({
+            profile: antigravityAgent.profile,
+            connect: (launch) => antigravityHappyOnly(launch),
+            tools: [
+                { ...tools[0]!, defer: false },
+                {
+                    name: "happy_later",
+                    description: "Does a later thing. More detail.",
+                    defer: true,
+                    parameters: Type.Object({
+                        what: Type.String(),
+                        how: Type.Optional(Type.String()),
+                    }),
+                },
+            ],
+            askPermission: async (question) => {
+                asked.push(question.action);
+                return "allow_once";
+            },
+        });
+        const session = await h.session();
+        h.user("hello");
+        expect(text(await h.run(session))).toContain("echo:");
+
+        const file = h.log().find((entry) => entry.method === "agentFile")?.text as string;
+        expect(file).toMatch(/^---\nname: happy-[0-9a-f]{12}\n/u);
+        expect(file).toContain("mainAgent: true");
+        expect(file).toContain("inheritMcp: false");
+        expect(file).toContain("tools: [search_web]");
+        expect(file).toMatch(/serverUrl: "http:\/\/127\.0\.0\.1:\d+\/[^"]+\/mcp"/u);
+        expect(file).toMatch(/headers: \{"Authorization":"Bearer [^"]+"\}/u);
+        expect(file).toContain("call_mcp_tool");
+
+        // Happy's instructions and its tool guide end agy's system prompt, not the first prompt.
+        const opened = h.log().find((entry) => entry.method === "newSession")!;
+        const prompt = opened.systemPrompt as string;
+        expect(prompt.startsWith("Be Happy.")).toBe(true);
+        expect(prompt).toContain("## happy_secret\nReturns the secret.");
+        expect(prompt).toContain("- happy_later(what, how?): Does a later thing.");
+        expect(prompt).toContain("call_tool with only its name");
+        expect(h.log().find((entry) => entry.method === "prompt")?.text).not.toContain(
+            "happy-instructions",
+        );
+
+        // A Happy tool call goes ahead in every mode; anything of agy's own is refused unasked.
+        for (const mode of ["read_only", "auto", "full_access"] as const) {
+            h.setPermissionMode(mode);
+            h.user("needs agy mcp permission");
             expect(text(await h.run(session)), mode).toBe("permission=allow");
-            h.user("needs agy command bypass");
+            h.user("needs agy command");
             expect(text(await h.run(session)), mode).toBe("permission=deny");
         }
-        expect(asked).toHaveLength(2);
-        expect(asked[0]).toContain('"BypassSandbox":true');
-        // Read only still refuses a sandboxed command.
-        h.setPermissionMode("read_only");
-        h.user("needs agy command");
-        expect(text(await h.run(session))).toBe("permission=deny");
-
-        // Auto among the modes is how agy says its sandbox works; without it, every command asks.
-        const unsandboxed = agy("default,accept-edits,plan");
-        const other = await unsandboxed.session();
-        unsandboxed.setPermissionMode("auto");
-        unsandboxed.user("needs agy command");
-        expect(text(await unsandboxed.run(other))).toBe("permission=deny");
-        expect(asked).toHaveLength(3);
-        // Happy's Auto runs agy in accept-edits; only Full access uses agy's own Auto.
+        expect(asked).toEqual([]);
+        // agy runs in its `default` mode whatever Happy's mode is.
         expect(
             ["read_only", "workspace_write", "auto", "full_access"].map(
                 (mode) =>
                     antigravityAgent.profile.permissionOptions!(mode as AcpPermissionMode)[0]!
                         .value,
             ),
-        ).toEqual(["plan", "accept-edits", "accept-edits", "auto"]);
+        ).toEqual(["default", "default", "default", "default"]);
+    }, 30_000);
+
+    it("stops an Antigravity session whose agent file agy did not load", async () => {
+        const h = harness({
+            profile: antigravityAgent.profile,
+            connect: (launch) => antigravityHappyOnly(launch),
+            env: { SCRIPTED_AGY_FALLBACK: "1" },
+        });
+        const session = await h.session();
+        h.user("hello");
+        const events = await h.run(session);
+        expect(done(events)).toMatchObject({ state: "error" });
+        expect((done(events) as { message: string }).message).toContain(
+            "Antigravity did not load Happy's agent",
+        );
+        expect(h.log().some((entry) => entry.method === "prompt")).toBe(false);
     }, 30_000);
 
     it("withdraws the person's question and cancels the agent's ask when the turn stops", async () => {
@@ -925,7 +933,7 @@ describe("AcpSession", () => {
             { configId: "thought_level", value: "medium" },
         ]);
         expect(antigravityAgent.profile.permissionOptions?.("workspace_write")).toEqual([
-            { configId: "mode", value: "accept-edits" },
+            { configId: "mode", value: "default" },
         ]);
     });
 

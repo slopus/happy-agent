@@ -30,29 +30,35 @@ Agent Base ── run(context) ──▶ AcpSession ── ACP over stdio ──
   history, a lost session — opens a new ACP session and replays Happy's instructions and
   transcript into its first prompt.
 - **Permission.** The agent's own permission is mapped onto its config options by the vendor
-  profile, and the agent's own reviewer decides what it does without asking. Its
-  `session/request_permission` asks are answered from the Happy mode: Read only refuses, Full
-  access allows, and otherwise the turn environment's `askPermission` decides: in Auto Happy's
-  own reviewer first, else the person, offered Allow for this session only when the agent offers
-  `allow_always`. A refusal may carry a reason, sent back in the response's
+  profile, and the agent's own reviewer decides what it does without asking. An ask about a call
+  of a bridged Happy tool is allowed in every mode, because Happy decides that call under the
+  conversation's own mode, sandbox and reviewer when it runs. The ask is recognized by
+  `happy/bridgedCall` metadata from a first-party driver, by Antigravity's `mcp_happy_<tool>`
+  function name, or by its `call_mcp_tool` input `{ ServerName: "happy", ToolName, Arguments }`;
+  an ask about `call_tool` is judged as the tool it names, and one that only reads a description
+  passes. Other `session/request_permission` asks are answered from the Happy mode: Read only
+  refuses, Full access allows, and otherwise the turn environment's `askPermission` decides: in
+  Auto Happy's own reviewer first, else the person, offered Allow for this session only when the
+  agent offers `allow_always`. A refusal may carry a reason, sent back in the response's
   `happy/refusalReason` metadata for a first-party driver to tell its model. Stopping the turn
-  withdraws the question and answers the agent `cancelled`. In Auto, an ask about a Happy tool is
-  allowed, because Happy reviews the call itself when it runs; in Workspace write it is allowed
-  when that tool has `autoReview: "never"` or its `shouldReviewInAutoMode` is false for the call.
-  The ask is recognized by `happy/bridgedCall`
-  metadata from a first-party driver, or by Antigravity's `mcp_happy_<tool>` function name; an ask
-  about `call_tool` is judged as the tool it names, and one that only reads a description passes. New sessions
-  carry the never-reviewed Happy tool names in `happy/approvedTools` metadata so a first-party
-  driver can approve them in advance. An ask whose tool call carries `happy/sandboxed: true`, set
-  by a driver that knows the agent will run the action inside its own sandbox, is allowed in
-  Workspace write and Auto without asking anyone, as Happy runs its own sandboxed commands.
+  withdraws the question and answers the agent `cancelled`. New sessions carry the never-reviewed
+  Happy tool names in `happy/approvedTools` metadata so a first-party driver can approve them in
+  advance. An ask whose tool call carries `happy/sandboxed: true`, set by a driver that knows the
+  agent will run the action inside its own sandbox, is allowed in Workspace write and Auto without
+  asking anyone, as Happy runs its own sandboxed commands.
+- **System prompt.** An agent that takes system-prompt text in a session's `_meta` sets
+  `systemPromptMeta` in its profile. Happy's instructions and `acpToolGuide`'s guide to its tools
+  (tools not marked `defer` in full with their parameters, deferred ones as one line each) are
+  then sent that way on every new, resumed and loaded session instead of in the first prompt.
+  Notices Happy adds later still reach the agent only inside a prompt, as `<system-reminder>`.
 - **Tool schemas.** The bridge drops string `pattern` keywords from the schemas it advertises:
   Antigravity validates them with Go's regex dialect and rejects its whole toolbox on one it
   cannot compile. Agent Base still validates every call against the full schema.
-- **Tool budget.** An agent that hands its model only part of a large toolbox sets
-  `toolDeclarationBudget` in its profile. The bridge then declares the smallest tools that fit and
-  one `call_tool` naming the rest; `call_tool` with only a name answers that tool's description and
-  schema, and with arguments it reaches Agent Base as a call of the named tool.
+- **Tool budget.** An agent that hands its model only part of a large toolbox, or only tool names,
+  sets `toolDeclarationBudget` in its profile. The bridge then declares the tools not marked
+  `defer` first and the rest after, each smallest first, within the budget, and always one
+  `call_tool` naming whatever was left out; `call_tool` with only a name answers any tool's
+  description and schema, and with arguments it reaches Agent Base as a call of the named tool.
 - **Compaction.** ACP has none. `compact` asks the agent for a handoff summary and the next run
   starts a new ACP session from it.
 
@@ -109,6 +115,7 @@ that call their model selector something else.
 - `impl/processTree.ts` — ends every process group in an agent's tree on stop.
 - `impl/acpConfigOptions.ts` — reads select config options, including their `_meta`.
 - `impl/AcpToolBridgeServer.ts` — the MCP bridge for Happy's tools.
+- `impl/acpToolGuide.ts` — Happy's tools written out for an agent's system prompt.
 - `impl/acpResponseEvents.ts` — ACP `session/update` → Happy session events.
 - `impl/acpPromptFromMessages.ts` — Happy messages → ACP prompts, including replay.
 - `impl/acpSessionStore.ts` — the durable join between a Happy agent and its ACP session.

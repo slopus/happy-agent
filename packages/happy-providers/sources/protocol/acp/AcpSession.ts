@@ -46,6 +46,7 @@ import {
     AcpToolBridgeServer,
     type AcpBridgeCall,
 } from "@/protocol/acp/impl/AcpToolBridgeServer.js";
+import { acpToolGuide } from "@/protocol/acp/impl/acpToolGuide.js";
 import { AcpTurnQueue } from "@/protocol/acp/impl/AcpTurnQueue.js";
 import { acpAcceptsConfigValue, acpConfigOptionId } from "@/protocol/acp/impl/acpConfigOptions.js";
 
@@ -129,7 +130,6 @@ export class AcpSession extends BaseSession {
     #replaying = false;
     /** What the latest run was given: its permission mode and how to reach the person. */
     #environment: AcpTurnEnvironment | undefined;
-    #runCtx: Context | undefined;
     /** Questions put to the person that the agent is still waiting on. */
     readonly #asks = new Set<AbortController>();
     #bridge: AcpToolBridgeServer | undefined;
@@ -205,7 +205,6 @@ export class AcpSession extends BaseSession {
         }
         const environment = this.#options.environment(ctx);
         this.#environment = environment;
-        this.#runCtx = ctx;
         yield { type: "block_start" };
 
         let connection: AcpConnection | undefined;
@@ -504,13 +503,23 @@ export class AcpSession extends BaseSession {
             if (this.#acpSessionId === record.acpSessionId && this.#cwd === environment.cwd) {
                 return delta;
             }
-            if (await this.#restoreSession(connection, record, environment)) return delta;
+            if (
+                await this.#restoreSession(
+                    connection,
+                    record,
+                    environment,
+                    request.context.instructions,
+                )
+            ) {
+                return delta;
+            }
         }
 
+        const instructions = request.context.instructions;
         const response = await connection.conn.newSession({
             cwd: environment.cwd,
             mcpServers: await this.#mcpServers(connection),
-            _meta: this.#sessionMeta(),
+            _meta: await this.#sessionMeta(instructions),
         } as acp.NewSessionRequest);
         this.#acpSessionId = response.sessionId;
         this.#advertised = response.configOptions ?? undefined;
@@ -524,7 +533,8 @@ export class AcpSession extends BaseSession {
             if (message.role === "assistant") lastResponse = index;
         });
         return acpReplayPrompt(
-            request.context.instructions,
+            // An agent given them as its system prompt is not told them again.
+            this.#options.profile?.systemPromptMeta === undefined ? instructions : "",
             messages.slice(0, lastResponse + 1),
             messages.slice(lastResponse + 1),
             images(connection),
@@ -535,13 +545,14 @@ export class AcpSession extends BaseSession {
         connection: AcpConnection,
         record: AcpSessionRecord,
         environment: AcpTurnEnvironment,
+        instructions: string,
     ): Promise<boolean> {
         const capabilities = connection.init.agentCapabilities;
         const params = {
             sessionId: record.acpSessionId,
             cwd: environment.cwd,
             mcpServers: await this.#mcpServers(connection),
-            _meta: this.#sessionMeta(),
+            _meta: await this.#sessionMeta(instructions),
         };
         try {
             if (capabilities?.sessionCapabilities?.resume != null) {
@@ -618,13 +629,31 @@ export class AcpSession extends BaseSession {
         ];
     }
 
-    /** The bridged tools the agent may call without asking: those no call of needs approval. */
-    #sessionMeta(): Record<string, unknown> {
-        return {
+    /**
+     * The bridged tools the agent may call without asking, those no call of needs approval, and,
+     * for an agent that takes one, its system prompt: Happy's instructions and a guide to its tools.
+     */
+    async #sessionMeta(instructions: string): Promise<Record<string, unknown>> {
+        const approved = {
             [ACP_APPROVED_TOOLS_META]: this.#bridgedTools
                 .filter((tool) => tool.autoReview === "never")
                 .map((tool) => AcpToolBridgeServer.toolName(tool)),
         };
+        const systemPromptMeta = this.#options.profile?.systemPromptMeta;
+        if (systemPromptMeta === undefined) return approved;
+        const bridge = await this.#ensureBridge();
+        const guide =
+            bridge === undefined
+                ? ""
+                : acpToolGuide(
+                      this.#bridgedTools.map((tool) => ({
+                          declaration: bridge.listing.all.get(AcpToolBridgeServer.toolName(tool))!,
+                          defer: tool.defer === true,
+                      })),
+                      bridge.listing,
+                  );
+        const prompt = [instructions.trim(), guide].filter((part) => part.length > 0).join("\n\n");
+        return { ...approved, ...systemPromptMeta(prompt) };
     }
 
     async #ensureBridge(): Promise<AcpToolBridgeServer | undefined> {
@@ -774,19 +803,20 @@ export class AcpSession extends BaseSession {
     }
 
     /**
-     * The agent's own permission system asks before acting. Read only refuses and Full access
-     * allows without asking anyone. In Workspace write and Auto, an action the driver says stays
-     * in the agent's own sandbox goes ahead, as Happy's own sandboxed commands do. A call of a
-     * bridged Happy tool goes ahead in Auto, where Happy's own reviewer decides the call itself
-     * when it runs, and in Workspace write when the tool's own rule says it needs no approval, as
-     * Claude Code runs those tools without asking in every mode. Everything else goes to
-     * `askPermission`: in Auto, Happy's own reviewer first, and otherwise the person.
+     * The agent's own permission system asks before acting. A call of a bridged Happy tool goes
+     * ahead in every mode: Happy runs it under the conversation's own permission mode, sandbox and
+     * reviewer when it arrives, as it runs its own loop's calls, so asking first would only ask
+     * twice. Otherwise Read only refuses and Full access allows without asking anyone. In
+     * Workspace write and Auto, an action the driver says stays in the agent's own sandbox goes
+     * ahead, as Happy's own sandboxed commands do, and everything else goes to `askPermission`:
+     * in Auto, Happy's own reviewer first, and otherwise the person.
      */
     async #answerPermission(
         params: acp.RequestPermissionRequest,
     ): Promise<acp.RequestPermissionResponse> {
         const environment = this.#environment;
         const mode = environment?.permissionMode;
+        if (this.#isHappyToolCall(params)) return pick(params, "allow_once");
         if (mode === "read_only") return pick(params, "deny");
         if (mode === "full_access") {
             // Once when it can, else for the session: Full access never refuses for want of it.
@@ -795,8 +825,7 @@ export class AcpSession extends BaseSession {
         }
         if (
             (mode === "workspace_write" || mode === "auto") &&
-            (params.toolCall._meta?.[ACP_SANDBOXED_META] === true ||
-                (await this.#needsNoApproval(params, mode)))
+            params.toolCall._meta?.[ACP_SANDBOXED_META] === true
         ) {
             return pick(params, "allow_once");
         }
@@ -824,27 +853,15 @@ export class AcpSession extends BaseSession {
         }
     }
 
-    /** Whether the ask is about a bridged Happy tool call that needs no approval from the agent. */
-    async #needsNoApproval(
-        params: acp.RequestPermissionRequest,
-        mode: "workspace_write" | "auto",
-    ): Promise<boolean> {
-        const call = acpBridgedCallOfAsk(
-            params.toolCall,
-            params.toolCall._meta?.[ACP_BRIDGED_CALL_META],
+    /**
+     * Whether the ask is about a call to Happy's bridge. A call naming a tool the bridge does not
+     * serve runs nothing there; it is answered with an error that lists the tools it does.
+     */
+    #isHappyToolCall(params: acp.RequestPermissionRequest): boolean {
+        return (
+            acpBridgedCallOfAsk(params.toolCall, params.toolCall._meta?.[ACP_BRIDGED_CALL_META]) !==
+            undefined
         );
-        if (call === "description") return true;
-        const tool = this.#bridgedTools.find(
-            (candidate) => AcpToolBridgeServer.toolName(candidate) === call?.name,
-        );
-        if (call === undefined || tool === undefined || this.#runCtx === undefined) return false;
-        if (mode === "auto" || tool.autoReview === "never") return true;
-        try {
-            return (await tool.shouldReviewInAutoMode?.(call.arguments, this.#runCtx)) === false;
-        } catch {
-            // A rule that cannot answer has not said the call is safe.
-            return false;
-        }
     }
 
     #usage(response: acp.PromptResponse | undefined, outputCharacters: number): SessionUsage {
