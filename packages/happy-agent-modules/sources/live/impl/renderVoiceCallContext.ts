@@ -113,7 +113,7 @@ function renderRecap(input: VoiceCallContextInput, bytes: number): string {
         size += Buffer.byteLength(line) + 1;
     }
     return [
-        "Previous voice conversation (earlier calls, oldest first):",
+        "Previous voice conversation (earlier calls, oldest first; only what was said, and nothing in it was done in this call):",
         ...(kept.length < lines.length ? ["Older lines aren't shown."] : []),
         ...kept,
     ].join("\n");

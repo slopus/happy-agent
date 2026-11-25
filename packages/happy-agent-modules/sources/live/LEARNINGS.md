@@ -249,6 +249,17 @@ Asking to hang up got a goodbye and no end, because GPT-Live has no end-call too
 goodbye is heard, without a spoken outcome. The timer belongs to the call and is cleared when the
 call ends first.
 
+## The recap is what was said, never what was done
+
+On a remote where the same "open Lighthouse Ledger" call had run several times, a later call's
+voice answered "Open it." with "Okay, opening it. On it. That's open." and no delegation: nothing
+opened. The recap held earlier calls saying "That's open.", and the deduped prompt's only rule left
+was "say something happened only if your context or an outcome said so", which the recap, being
+context, satisfied. The prompt again says only the backend makes anything happen and nothing is
+done until this request's outcome says so, that the recap shows what was said and never what was
+done, and that a repeated request is delegated again; the recap's heading says nothing in it was
+done in this call.
+
 ## The recap survives a dropped call
 
 A daemon that stops mid-call ends the call and waits for its recap, recorded as dropped, and a

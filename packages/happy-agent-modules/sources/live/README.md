@@ -123,7 +123,7 @@ too and comes out of the same budget.
 Now: 2026-11-06T09:15+01:00 (the person's local time, Europe/Berlin)
 focusRevision: 3
 
-Previous voice conversation (earlier calls, oldest first):
+Previous voice conversation (earlier calls, oldest first; only what was said, and nothing in it was done in this call):
 - 3 minutes ago, the person: Remember the word pineapple.
 - 2 minutes ago: the person ended the call
 

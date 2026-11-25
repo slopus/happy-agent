@@ -1974,7 +1974,7 @@ describe("what voice is told", () => {
         await activeCall(f, request("livetwo", "window-two"));
         expect(f.calls[1]!.initialContext).toContain(
             [
-                "Previous voice conversation (earlier calls, oldest first):",
+                "Previous voice conversation (earlier calls, oldest first; only what was said, and nothing in it was done in this call):",
                 "- just now, the person: Remember the word pineapple.",
                 "- just now, you: Got it, pineapple.",
                 "- just now: the person ended the call",
