@@ -32,8 +32,8 @@ program has to answer `--version` to count as installed.
 Each assistant has its own check. Claude reads `claude auth status --json`. Codex runs
 `codex login status` and reads the email and plan from the token claims in `~/.codex/auth.json`.
 Grok reads `~/.grok/auth.json`. Antigravity checks its token file and falls back to `agy models`.
-Sign-ins use each vendor's normal home folder, so an existing sign-in is reused rather than
-repeated.
+The global sign-in uses each vendor's normal home folder, so an existing sign-in is reused rather
+than repeated.
 
 On macOS, the keychain is only readable from the person's desktop session. Claude Code keeps its
 sign-in in the keychain, so from a daemon started outside that session it reports itself signed
@@ -55,8 +55,27 @@ daemon. The sign-in function stores an attempt marker on its first run; a rerun 
 marker ends the operation as `interrupted` instead of starting a new sign-in on its own. An
 install that reruns after a restart simply runs the vendor installer again.
 
+## Signing one account in to its own credential
+
+`impl/ProviderAccountSignIns.ts` signs one configured Codex, Claude, or Grok account in without
+touching the vendor's global sign-in. It runs the same vendor program and sign-in flows as the
+global sign-in, but with `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, or `GROK_HOME` pointed at a new private
+folder the config module names for that attempt, and without credential variables such as
+`OPENAI_API_KEY` in its environment. Codex gets a `config.toml` there that keeps its sign-in in a
+file rather than the keyring. The vendor's own sign-in check, run against the same folder, decides
+success; only then does the config module point the account at the folder (`auth_file` or
+`config_dir`, with `credential_isolation`) in one write of `runtime.toml`.
+
+Each attempt is its own folder and its own Durable Function keyed by the account, so a failed,
+cancelled, or interrupted attempt only deletes its folder and the account keeps what it had.
+Folders an account used while this daemon ran are kept, because a session opened before a newer
+sign-in may still renew its credential; the account's next sign-in after a restart deletes them.
+The config module also saves a pasted Claude setup token for any Claude account. Every change is a
+`provider_sign_in.updated` event carrying the whole object.
+
 ## Reaching it
 
 `ApiModule` serves the module under `/v0/provider-clis` and turns each change into a
-`provider_cli.updated` event, plus `config.updated` when an operation succeeds. `packages/happy-agent/API.md`
-is the contract.
+`provider_cli.updated` event, plus `config.updated` when an operation succeeds. It serves account
+sign-ins under `/v0/providers/:providerId/sign-in` and `/token`, in team mode too but only for the
+owner, as `provider_sign_in.updated` events. `packages/happy-agent/API.md` is the contract.

@@ -48,6 +48,7 @@ export const apiErrorCodeSchema = Type.Union([
     Type.Literal("busy"),
     Type.Literal("no_installer"),
     Type.Literal("not_installed"),
+    Type.Literal("not_supported"),
     Type.Literal("rate_limited"),
 ]);
 

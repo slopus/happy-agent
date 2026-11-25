@@ -11,6 +11,7 @@ import { checkProviderCliSignIn } from "./impl/checkProviderCliSignIn.js";
 import { createProviderCliVersion } from "./impl/createProviderCliVersion.js";
 import { discoverProviderCli } from "./impl/discoverProviderCli.js";
 import { installerProcess } from "./impl/installerProcess.js";
+import { ProviderAccountSignIns } from "./impl/ProviderAccountSignIns.js";
 import {
     PROVIDER_CLI_DEFINITIONS,
     type ProviderCliDefinition,
@@ -34,6 +35,7 @@ import {
     type ProviderCliSignIn,
     type ProviderCliSignInMethod,
 } from "./ProviderCli.js";
+import type { ProviderCredential, ProviderSignIn } from "./ProviderSignIn.js";
 
 const INSTALL_FUNCTION = "provider-cli-install";
 const SIGN_IN_FUNCTION = "provider-cli-sign-in";
@@ -86,6 +88,7 @@ export class ProviderClisModule implements AgentModule {
     readonly #refreshes = new Map<ProviderCliId, Promise<void>>();
     readonly #pendingEmits = new Map<ProviderCliId, NodeJS.Timeout>();
     readonly #listeners = new Set<Listener>();
+    readonly #accounts: ProviderAccountSignIns;
 
     constructor(
         config: ConfigModule,
@@ -95,6 +98,17 @@ export class ProviderClisModule implements AgentModule {
         this.#config = config;
         this.#providerScan = providerScan;
         this.#durable = durable;
+        this.#accounts = new ProviderAccountSignIns({
+            config,
+            providerScan,
+            durable,
+            program: async (ctx, cliId) => {
+                await this.#refresh(ctx, cliId);
+                const installation = this.#entry(cliId).installation;
+                return installation.status === "installed" ? installation.path : null;
+            },
+            machine: () => this.#machine(),
+        });
         const now = Date.now();
         for (const id of PROVIDER_CLI_IDS) {
             this.#entries.set(id, {
@@ -178,8 +192,68 @@ export class ProviderClisModule implements AgentModule {
             this.#touch("claude");
             const providerCli = this.#project("claude");
             this.#emitSnapshot(providerCli, mutationId);
+            await this.#accounts.announce(ctx, "claude", mutationId);
             return providerCli;
         });
+    }
+
+    /** Hear every change of an account's provider sign-in object, after it has happened. */
+    onSignInUpdated(
+        listener: (providerSignIn: ProviderSignIn, mutationId: string | undefined) => void,
+    ): () => void {
+        return this.#accounts.onUpdated(listener);
+    }
+
+    /**
+     * Where an account's credential comes from and how it can sign in, for accounts that can sign
+     * in to a credential of their own; undefined for every other account.
+     */
+    providerCredential(providerId: string): ProviderCredential | undefined {
+        return this.#accounts.credential(providerId);
+    }
+
+    /** One account's sign-in into a credential this installation owns. */
+    async providerSignIn(ctx: Context, providerId: string): Promise<ProviderSignIn> {
+        return await this.#accounts.get(ctx, providerId);
+    }
+
+    /** Start, or join, signing one account in to a credential this installation owns. */
+    async startProviderSignIn(
+        ctx: Context,
+        providerId: string,
+        method: ProviderCliSignInMethod | undefined,
+        mutationId?: string,
+    ): Promise<ProviderSignIn> {
+        return await this.#accounts.start(ctx, providerId, method, mutationId);
+    }
+
+    /** Hand the code a vendor's page showed to an account's waiting sign-in. */
+    async submitProviderSignInCode(
+        ctx: Context,
+        providerId: string,
+        code: string,
+        mutationId?: string,
+    ): Promise<ProviderSignIn> {
+        return await this.#accounts.submitCode(ctx, providerId, code, mutationId);
+    }
+
+    /** Stop an account's running sign-in, if any. */
+    async cancelProviderSignIn(
+        ctx: Context,
+        providerId: string,
+        mutationId?: string,
+    ): Promise<ProviderSignIn> {
+        return await this.#accounts.cancel(ctx, providerId, mutationId);
+    }
+
+    /** Save a pasted Claude setup token as one Claude account's own credential. */
+    async saveProviderToken(
+        ctx: Context,
+        providerId: string,
+        token: string,
+        mutationId?: string,
+    ): Promise<ProviderSignIn> {
+        return await this.#accounts.saveToken(ctx, providerId, token, mutationId);
     }
 
     /** Start, or join, installing the assistant with its vendor's official installer. */

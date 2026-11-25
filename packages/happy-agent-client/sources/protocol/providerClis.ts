@@ -3,6 +3,39 @@ import { type Static, Type } from "@sinclair/typebox";
 const nullableString = Type.Union([Type.String(), Type.Null()]);
 
 /**
+ * An install or sign-in the daemon runs with a vendor's program; see "The operation object"
+ * under Provider CLIs in API.md. Provider sign-in reports the same object.
+ */
+export const providerCliOperationSchema = Type.Object({
+    id: Type.String({ minLength: 1 }),
+    kind: Type.Union([Type.Literal("install"), Type.Literal("sign_in")]),
+    status: Type.Union([
+        Type.Literal("running"),
+        Type.Literal("waiting"),
+        Type.Literal("succeeded"),
+        Type.Literal("failed"),
+        Type.Literal("cancelled"),
+    ]),
+    message: Type.String({ minLength: 1 }),
+    authorization: Type.Union([
+        Type.Object({
+            method: Type.String(),
+            url: Type.String({ minLength: 1 }),
+            userCode: nullableString,
+            openedByProgram: Type.Boolean(),
+            acceptsCode: Type.Boolean(),
+            expiresAt: Type.Integer({ minimum: 0 }),
+        }),
+        Type.Null(),
+    ]),
+    output: Type.Array(Type.String()),
+    error: Type.Union([Type.Object({ code: Type.String(), message: Type.String() }), Type.Null()]),
+    startedAt: Type.Integer({ minimum: 0 }),
+    finishedAt: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
+});
+export type ProviderCliOperation = Static<typeof providerCliOperationSchema>;
+
+/**
  * One assistant's command-line program on the daemon's machine; see "Provider CLIs" in API.md.
  * Sets that may grow (`id`, `installation.source`, the sign-in `methods`) are open strings.
  */
@@ -52,39 +85,7 @@ export const providerCliSchema = Type.Object({
          */
         acceptsToken: Type.Optional(Type.Boolean()),
     }),
-    operation: Type.Union([
-        Type.Object({
-            id: Type.String({ minLength: 1 }),
-            kind: Type.Union([Type.Literal("install"), Type.Literal("sign_in")]),
-            status: Type.Union([
-                Type.Literal("running"),
-                Type.Literal("waiting"),
-                Type.Literal("succeeded"),
-                Type.Literal("failed"),
-                Type.Literal("cancelled"),
-            ]),
-            message: Type.String({ minLength: 1 }),
-            authorization: Type.Union([
-                Type.Object({
-                    method: Type.String(),
-                    url: Type.String({ minLength: 1 }),
-                    userCode: nullableString,
-                    openedByProgram: Type.Boolean(),
-                    acceptsCode: Type.Boolean(),
-                    expiresAt: Type.Integer({ minimum: 0 }),
-                }),
-                Type.Null(),
-            ]),
-            output: Type.Array(Type.String()),
-            error: Type.Union([
-                Type.Object({ code: Type.String(), message: Type.String() }),
-                Type.Null(),
-            ]),
-            startedAt: Type.Integer({ minimum: 0 }),
-            finishedAt: Type.Union([Type.Integer({ minimum: 0 }), Type.Null()]),
-        }),
-        Type.Null(),
-    ]),
+    operation: Type.Union([providerCliOperationSchema, Type.Null()]),
     /** UUIDv7; keep the object with the greater one. */
     version: Type.String({ minLength: 1 }),
     updatedAt: Type.Integer({ minimum: 0 }),

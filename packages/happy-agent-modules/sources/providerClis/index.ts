@@ -11,3 +11,10 @@ export {
     type ProviderCliOperation,
 } from "./ProviderCli.js";
 export { ProviderClisModule } from "./ProviderClisModule.js";
+export {
+    ProviderSignInRequestError,
+    providerSignInStartRequestSchema,
+    providerTokenRequestSchema,
+    type ProviderCredential,
+    type ProviderSignIn,
+} from "./ProviderSignIn.js";

@@ -1,10 +1,23 @@
 # Config module learnings
 
+## An account's own sign-in is runtime configuration
+
+Provider sign-in points one Codex, Claude, or Grok account at a folder the daemon owns. The config
+module owns those folders (`provider-accounts/<account>/<attempt>` under the agent home, the
+account's ID hashed when it is not a safe folder name) and the switch: it rewrites the account's
+runtime table, removing runtime keys and tokens that would outrank the sign-in and setting
+`credential_isolation`, and recomputes only that account's credential fields from the machine file
+and the new runtime layer, so a key the person wrote in `happy.toml` still wins. Where the
+credential comes from (`internal`, `system`, or `configured`) is derived from those same fields
+and their provenance: a token is `internal` only when runtime.toml supplies it, and a file or
+folder only when it lies inside the account's own folder.
+
 ## Pasted Claude tokens are live runtime credentials
 
 Onboarding offered a setup token but the daemon had no way to save it. The shared
-`saveClaudeSetupToken` method removes all whitespace, including Unicode NEL and BOM, validates
-the token, and atomically merges it into `runtime.toml`. It replaces the frozen configuration
+`saveProviderSetupToken` method, which saves for any Claude account (`saveClaudeSetupToken` is the
+`claude` account), removes all whitespace, including Unicode NEL and BOM, validates the token, and
+atomically merges it into `runtime.toml`. It replaces the frozen configuration
 snapshot only after the write succeeds. Existing provider registry factories read that snapshot
 when opening a new provider, so saving takes effect without a restart or replacing cancellation
 boundaries. Provider enablement overrides and unrelated runtime settings remain unchanged.

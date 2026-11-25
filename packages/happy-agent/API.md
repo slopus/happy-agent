@@ -721,6 +721,12 @@ routes under `/v0/provider-clis` and the `provider_cli.updated` event reports
 `capabilities.providerClis: true` from health. Older daemons omit it and answer the routes with
 `404`; clients then offer only the manual terminal path for installing and signing in.
 
+Provider sign-in is additive and does not increment the protocol version. A daemon that serves
+the routes under `/v0/providers/:providerId/sign-in` and `/v0/providers/:providerId/token`, the
+`provider_sign_in.updated` event, and `credential` on `GET /v0/config` provider entries reports
+`capabilities.providerSignIn: true` from health. Older daemons omit all of them and answer the
+routes with `404`; clients then offer only the global sign-in under Provider CLIs.
+
 Stories is removed. `/v0/stories` routes answer `404 not_found`; Stories tools, events, bot fields,
 and bootstrap fields are absent. Saved user preferences remain opaque and have no effect.
 Historical message quotes remain readable, with `frame: null` on current daemons. The still-frame
@@ -1644,7 +1650,11 @@ Fields:
   Surface catalog and members. `providerClis: true` advertises the routes under
   `/v0/provider-clis` and the `provider_cli.updated` event, described under Provider CLIs.
   `providerRoutes: true` advertises the routes under `/v0/provider-routes`, described under
-  Provider routes. `webSocketTunnels: true` advertises the WebSocket twins of the proxy tunnels,
+  Provider routes. `providerSignIn: true` advertises the routes under
+  `/v0/providers/:providerId/sign-in` and `/v0/providers/:providerId/token`, the
+  `provider_sign_in.updated` event, and `credential` on `GET /v0/config` provider entries,
+  described under Provider sign-in; unlike `providerClis`, it is reported in team mode too.
+  `webSocketTunnels: true` advertises the WebSocket twins of the proxy tunnels,
   described under WebSocket tunnels, and the WebSocket keepalive pings described under Keepalive.
   `artifactCovers: true` advertises artifact `cover` and `summary`, described under Artifacts.
   `search: true` advertises `POST /v0/search`, described under Search.
@@ -2061,6 +2071,18 @@ Field groups:
     left out, so `members` may be empty. Clients show a pool's members by joining each ID to its own
     entry here and in `GET /v0/usage`. Only smart providers carry `pool`. It is additive and does
     not increment the protocol version; older daemons omit it.
+
+    A provider entry of type `codex`, `claude`, or `grok` also carries `credential`, saying
+    whether the account uses a credential this installation owns (`"internal"`), the machine's
+    own sign-in or environment (`"system"`), or one its configuration names (`"configured"`),
+    and how it can sign in:
+
+    ```json
+    "credential": { "source": "system", "methods": ["device", "browser"], "acceptsToken": false }
+    ```
+
+    It is described under Provider sign-in. It is additive and does not increment the protocol
+    version; older daemons omit it.
 
 - `settings` — daemon behavior toggles and tunables.
 - `api` — optional daemon-wide public connectivity settings. Supporting daemons return
@@ -3702,7 +3724,10 @@ Response — `200`: `{ "providerCli": { ... } }`, the refreshed Claude provider 
 emits `config.updated` and `provider_cli.updated`, echoing `mutationId` when supplied. As with all
 provider CLI routes, team mode returns `501 unsupported` before parsing the body. Older daemons
 without the route return `404`; updating to a daemon that advertises `signIn.acceptsToken` enables
-this path. The route exists only for `claude`; other assistant IDs return `404`.
+this path. The route exists only for `claude`; other assistant IDs return `404`. It saves the
+token for the account `claude`; `PUT /v0/providers/:providerId/token` under Provider sign-in does
+the same for any Claude account, in team mode too. On a daemon with provider sign-in, success also
+emits `provider_sign_in.updated` for the account `claude`.
 
 ### `POST /v0/provider-clis/:cliId/cancel`
 
@@ -3710,6 +3735,235 @@ Cancels the running install or sign-in and stops the vendor's program. Request b
 `{ "mutationId": "..." }`. Response — `200`: `{ "providerCli": { ... } }` whose operation is
 `"cancelled"`. With no running operation, the object is returned unchanged. A cancelled install
 may leave a partly installed program; the next discovery reports what is there.
+
+## Provider sign-in
+
+An account that signs in with a vendor subscription, such as a Codex (ChatGPT) sign-in, a Claude
+subscription, or a Grok sign-in, normally uses the sign-in that the vendor's own program keeps for
+the daemon's operating-system user: `~/.codex`, Claude Code's login, or `~/.grok`. Provider
+sign-in signs one configured account in to a credential that this installation owns instead. The
+daemon runs the vendor's own sign-in with the vendor's program, as under Provider CLIs, but points
+the program at a private folder that belongs to that one account. The vendor's global sign-in, and
+every other program that uses it, stay exactly as they were. From then on only this daemon uses
+and renews the credential.
+
+This matters because a ChatGPT sign-in can be renewed only once with the same token. Two machines
+or programs holding copies of one sign-in sign each other out when either renews it. An account
+signed in here belongs to this installation alone.
+
+Accounts of type `codex`, `claude`, and `grok` can sign in. Other accounts, such as `bedrock`,
+`openai_compatible`, and smart pools, have nothing to sign in to. Their sign-in routes answer
+`409` with code `not_supported`.
+
+Signing in is a long-running operation. A request starts it and answers at once, and progress,
+the page to open, and the result arrive as `provider_sign_in.updated` events. The operation object
+is the one described under Provider CLIs. These routes never return or log a credential, an
+authorization code, or a token, and they store one only in the daemon's own files described
+below.
+
+Provider sign-in changes this installation's configuration, not a program belonging to the
+daemon's operating-system user, so it is available in team mode too. Every member's agents use
+the installation's accounts, so in team mode only the team owner may start, continue, or cancel a
+sign-in or save a token; anyone else receives `403` with code `forbidden`. Every member may read
+the sign-in object. A daemon that serves these routes reports `capabilities.providerSignIn: true`
+from health and includes `credential` on the provider entries of `GET /v0/config`. Older daemons
+omit both and answer the routes with `404`. Clients then offer only the global sign-in under
+Provider CLIs and the Claude setup-token route.
+
+### Where the credential lives
+
+Each attempt signs in to a new private folder in the daemon's own data,
+`<agent home>/provider-accounts/<account>/<operation ID>/`, readable only by the daemon's user:
+
+- `codex` — the program runs with `CODEX_HOME` set to the folder, which holds a `config.toml`
+  that keeps the sign-in in a file (`cli_auth_credentials_store = "file"`). On success the
+  account's `auth_file` names the folder's `auth.json`.
+- `claude` — the program runs with `CLAUDE_CONFIG_DIR` set to the folder. On success the
+  account's `config_dir` names the folder.
+- `grok` — the program runs with `GROK_HOME` set to the folder. On success the account's
+  `auth_file` names the folder's `auth.json`.
+
+The program runs without `OPENAI_API_KEY`, `CODEX_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `XAI_API_KEY`, and `CLAUDE_SECURESTORAGE_CONFIG_DIR` in
+its environment, so it signs in rather than finding a key that happens to be exported. Success is decided by the
+program's own sign-in check against that folder, exactly as under Provider CLIs. On macOS, Claude
+Code keeps the sign-in in the keychain, under a name derived from the folder, and only a daemon
+running in the person's desktop session can read it there.
+
+When the sign-in succeeds, one atomic write of the daemon-owned `runtime.toml` points the account
+at the new credential: it sets the field above and `credential_isolation = true`, and removes from
+`runtime.toml` every key or token that would take precedence over it (`api_key` for every type,
+and also `oauth_token` and `auth_token` for Claude). From then on the account no longer uses the
+vendor's global sign-in or the daemon's environment. The person's own configuration file is never
+changed. A key or token named there still takes precedence, and the account's `credential.source`
+then stays `"configured"`.
+
+The change applies without a restart. The daemon forgets the account's earlier credential
+failures, runs the provider scan under the ordinary scan rules, including respecting an explicit
+disabled override, and emits `config.updated`. Sessions already running keep the credential they
+opened with; new sessions use the new one.
+
+Signing in to a different account than before is accepted: that is how a person changes
+accounts. The successful object reports the account that signed in.
+
+A failed, cancelled, expired, or interrupted attempt deletes its folder. A replaced credential's
+folder stays while the daemon that replaced it runs, because sessions opened before the change may
+still renew it. The account's next sign-in after a restart deletes it.
+
+### The provider sign-in object
+
+```json
+{
+    "providerId": "codex_work",
+    "cliId": "codex",
+    "installed": true,
+    "credential": { "source": "internal", "methods": ["device", "browser"], "acceptsToken": false },
+    "account": { "email": "ada@example.com", "plan": "Pro" },
+    "operation": null,
+    "version": "01991f3a-5c1e-7000-8000-2f9a1b3c4d5e",
+    "updatedAt": 1755400000000
+}
+```
+
+- `providerId` — the account, as it appears in `GET /v0/config`.
+- `cliId` — the assistant whose program signs the account in, as under Provider CLIs: `"codex"`,
+  `"claude"`, or `"grok"`.
+- `installed` — whether that program is installed on the daemon's machine. Signing in needs it.
+  In standalone mode, `POST /v0/provider-clis/:cliId/install` installs it.
+- `credential` — exactly the account's `credential` in `GET /v0/config`, described below.
+- `account` — `{ "email", "plan" }` of the installation's own sign-in when `credential.source` is
+  `"internal"` and the vendor's program reveals it, each a string or `null` when unknown;
+  otherwise `null`. A saved setup token reveals no account, so it reports `null`.
+- `operation` — the current or most recent sign-in of this account, or `null` when there has been
+  none. It is the operation object described under Provider CLIs, always with `kind: "sign_in"`.
+  Besides the codes listed there, `error.code` may be `save_failed`: the vendor's program signed
+  in, but the daemon could not save the new configuration, so the account still uses its earlier
+  credential.
+- `version` — a UUIDv7 minted whenever any field changes. Events carry the complete object, so a
+  client reconciling a snapshot with an event keeps the greater version.
+- `updatedAt` — when any field last changed, in epoch milliseconds.
+
+An account has at most one sign-in at a time. Its result stays on the object until the next
+sign-in starts. A sign-in cannot survive a daemon restart, since the vendor's waiting program
+ends with the daemon, so it becomes `"failed"` with code `interrupted`, and the person starts it
+again.
+
+### The account's credential in `GET /v0/config`
+
+Every provider entry of type `codex`, `claude`, or `grok` in `GET /v0/config` carries
+`credential`, so a settings screen can show where the account's credential comes from without
+another request:
+
+```json
+"credential": { "source": "system", "methods": ["device", "browser"], "acceptsToken": false }
+```
+
+- `source` — where the account's credential comes from:
+    - `"internal"` — a credential this installation owns: signed in through provider sign-in, or a
+      setup token saved through `PUT /v0/providers/:providerId/token` or
+      `POST /v0/provider-clis/claude/setup-token`.
+    - `"system"` — whatever the machine provides: the vendor's own sign-in for the daemon's
+      operating-system user, or the daemon's environment. The account names no credential of its
+      own.
+    - `"configured"` — a key, token, credential file, or folder that configuration names, written
+      by a person or by `POST /v0/provider-routes/:routeId/use`, or credential isolation with no
+      credential named at all.
+
+    The set may grow; clients treat an unknown value as `"configured"`.
+
+- `methods` — the sign-in methods `POST /v0/providers/:providerId/sign-in` accepts for the
+  account, in the order the daemon prefers them. `"device"` comes first where the vendor offers
+  it, because it can be finished on any device; then `"browser"`. It describes what the daemon
+  supports, not whether the program is installed, which the sign-in object's `installed` says.
+- `acceptsToken` — `true` when `PUT /v0/providers/:providerId/token` accepts a pasted token for
+  the account, which is the case for Claude accounts.
+
+Other provider entries omit `credential`. Whether the credential currently works is the
+account's `signIn` in `GET /v0/usage`; `credential` says only where it comes from.
+
+### `GET /v0/providers/:providerId/sign-in`
+
+Response — `200`: `{ "providerSignIn": { ... } }` after finding the account's program and, when
+`credential.source` is `"internal"`, asking it which account is signed in, bounded to ten seconds
+as under Provider CLIs. An unknown account returns `404`; an account that cannot sign in returns
+`409` with code `not_supported`.
+
+### `POST /v0/providers/:providerId/sign-in`
+
+Starts the vendor's sign-in for the account into a new folder. Request body, every field
+optional:
+
+```json
+{ "method": "device", "mutationId": "optional-client-value" }
+```
+
+- `method` — one of the account's `credential.methods`. Omitted, the daemon uses the first.
+
+Response — `200`: `{ "providerSignIn": { ... } }` with the new `"running"` sign-in. It becomes
+`"waiting"` with its `authorization` as soon as the vendor's program provides the page to open,
+normally within seconds, and then `"succeeded"`, `"failed"`, or `"cancelled"`. A `"device"`
+sign-in can be finished on any device. A `"browser"` sign-in for Codex or Grok finishes through a
+page served on the daemon's machine, so the browser must run there. Claude's `"browser"` page can
+instead show a code to paste back (`acceptsCode: true`), so it can be finished anywhere. Each
+step, each output line, and the result emit `provider_sign_in.updated`. A successful sign-in also
+emits `config.updated`.
+
+Signing in while the account already has an internal credential starts a new sign-in, which
+replaces it only when it succeeds.
+
+- Starting while a sign-in of the same account is running joins it and returns it unchanged.
+- `400` with code `invalid_request` when `method` is not one of `credential.methods`.
+- `409` with code `not_installed` and the current `providerSignIn` when the program is missing.
+- `409` with code `not_supported` when the account cannot sign in.
+- `403` with code `forbidden` for a team member who is not the owner.
+
+### `POST /v0/providers/:providerId/sign-in/code`
+
+Hands the code the vendor's page showed to the waiting sign-in, for an `authorization` whose
+`acceptsCode` is `true`. Request:
+
+```json
+{ "code": "the-code-from-the-page", "mutationId": "optional-client-value" }
+```
+
+`code` is 1–2,048 printable characters. The daemon writes it to the vendor's program and never
+stores, returns, or logs it. Response — `200`: `{ "providerSignIn": { ... } }`. The outcome
+arrives as for any sign-in. `409` with code `conflict` and the current `providerSignIn` when no
+sign-in is waiting or it does not accept a code.
+
+### `POST /v0/providers/:providerId/sign-in/cancel`
+
+Cancels the running sign-in, stops the vendor's program, and deletes the attempt's folder. The
+account keeps the credential it had. Request body, optional: `{ "mutationId": "..." }`. Response
+— `200`: `{ "providerSignIn": { ... } }` whose operation is `"cancelled"`. With no running
+sign-in, the object is returned unchanged.
+
+### `PUT /v0/providers/:providerId/token`
+
+Saves a token obtained with the vendor's `claude setup-token` command as the credential of one
+Claude account. It is `POST /v0/provider-clis/claude/setup-token` for any account of type
+`claude`, and validates and normalizes the token exactly as that route does. Request:
+
+```json
+{ "token": "sk-ant-oat01-...", "mutationId": "optional-client-value" }
+```
+
+The daemon writes the normalized token as `oauth_token` in the account's table of the daemon-owned
+`runtime.toml`, preserves unrelated settings, and applies it without a restart. A saved token
+takes precedence over every other credential of a Claude account, so the account's
+`credential.source` becomes `"internal"`; a later successful sign-in removes the token again. The
+daemon then forgets the account's earlier credential failures and runs the provider scan under the
+ordinary scan rules. The token is never returned in configuration snapshots, sign-in objects,
+events, or logs. Saving validates the token's shape, not whether Anthropic accepts it; clients use
+provider verification to check that.
+
+Response — `200`: `{ "providerSignIn": { ... } }`. Success emits `config.updated` and
+`provider_sign_in.updated`, echoing `mutationId` when supplied.
+
+- `400` with code `invalid_request` for a malformed token, without changing configuration or
+  exposing the submitted value.
+- `409` with code `not_supported` for an account that is not of type `claude`.
+- `403` with code `forbidden` for a team member who is not the owner.
 
 ## Provider routes
 
@@ -16393,6 +16647,17 @@ version rules. Snapshot-to-stream cursor and version-gap recovery rules remain u
   events per second for one assistant. Absent on older daemons and in team mode.
     - `providerCli` (the complete provider CLI object).
     - `mutationId` — echoed when the API request that started or changed the operation supplied
+      one.
+
+**Provider sign-in**
+
+- `provider_sign_in.updated` — one account's provider sign-in object changed: a sign-in made
+  progress, printed output, or finished, a token was saved, or a read found a different program
+  or account. This is a complete replacement rather than a version-chain diff; clients keep the
+  object with the greater `version` for its `providerId`. Output lines may be coalesced, at most a
+  few events per second for one account. Absent on older daemons.
+    - `providerSignIn` (the complete provider sign-in object).
+    - `mutationId` — echoed when the API request that started or changed the sign-in supplied
       one.
 
 **Provider-account usage**
