@@ -16,6 +16,7 @@ import { ImageProcessingError } from "../../../impl/images/ImageProcessingError.
 import { prepareImageForPrompt } from "../../../impl/images/prepareImageForPrompt.js";
 import { MAX_PROMPT_IMAGE_INPUT_BYTES } from "../../../impl/images/referenceImageLimits.js";
 import { quoteVisibleExact } from "../../../impl/quoteVisibleExact.js";
+import { replaceExactText } from "../../impl/replaceExactText.js";
 import { SurfaceError } from "../../SurfaceError.js";
 import type { SurfacesModule } from "../../SurfacesModule.js";
 import type { VaultChange, VaultContent } from "../SurfaceVaults.js";
@@ -518,13 +519,18 @@ export function vaultTools(surfaces: SurfacesModule, scope: AgentModuleScope) {
                         "invalid_request",
                         `${JSON.stringify(input.path)} is not a text file of at most 16 MiB.`,
                     );
-                const edited = replaceText(
+                const edited = replaceExactText(
                     current,
-                    input.path,
-                    input.old_string,
-                    input.new_string,
-                    input.replace_all === true,
-                );
+                    {
+                        oldText: input.old_string,
+                        newText: input.new_string,
+                        replaceAll: input.replace_all === true,
+                    },
+                    {
+                        where: JSON.stringify(input.path),
+                        rewrite: "write the whole file with write_vault_file",
+                    },
+                ).text;
                 return writeVaultPath(
                     ctx,
                     vaults,
@@ -1560,40 +1566,6 @@ function describeActivity(item: { kind: string } & Record<string, unknown>): str
         default:
             return "changed";
     }
-}
-
-/** Exact replacement with the uniqueness rule the file tools use. */
-function replaceText(
-    content: string,
-    path: string,
-    oldText: string,
-    newText: string,
-    all: boolean,
-): string {
-    if (oldText === newText)
-        throw new SurfaceError(
-            "invalid_request",
-            "The replacement is identical to the text it replaces.",
-        );
-    if (oldText.length === 0)
-        throw new SurfaceError(
-            "invalid_request",
-            "old_string is empty; name the text to replace, or write the whole file with write_vault_file.",
-        );
-    const occurrences = content.split(oldText).length - 1;
-    if (occurrences === 0)
-        throw new SurfaceError(
-            "invalid_request",
-            `This text does not appear in ${JSON.stringify(path)}.`,
-        );
-    if (occurrences > 1 && !all)
-        throw new SurfaceError(
-            "invalid_request",
-            `This text appears ${String(occurrences)} times in ${JSON.stringify(path)}. Add surrounding context to make it unique, or replace every occurrence.`,
-        );
-    return all
-        ? content.replaceAll(oldText, () => newText)
-        : content.replace(oldText, () => newText);
 }
 
 function formatFileRead(read: FileRead): readonly SessionOutputBlock[] {
