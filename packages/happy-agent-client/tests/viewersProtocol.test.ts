@@ -1,5 +1,5 @@
 import { Value } from "@sinclair/typebox/value";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HappyAgentApiError } from "../sources/HappyAgentApiError.js";
 import { HappyAgentClient } from "../sources/HappyAgentClient.js";
@@ -15,6 +15,10 @@ const streamId = "k8m2q9w1e5r7y3u6i0o2p4s1";
 const agent = { type: "agent", id: "a12345678901234567890123" } as const;
 const surface = { type: "surface", id: "s12345678901234567890123" } as const;
 const cursor = "01900000-0000-7000-8000-000000000001";
+
+afterEach(() => {
+    vi.useRealTimers();
+});
 
 function sseResponse(...frames: string[]): Response {
     const body = new ReadableStream<Uint8Array<ArrayBuffer>>({
@@ -49,6 +53,17 @@ describe("viewers protocol", () => {
             false,
         );
         expect(Value.Check(putViewersRequestSchema, { targets: [], extra: 1 })).toBe(false);
+        // Agent IDs follow Agent Base: 2 to 32 characters.
+        for (const [id, valid] of [
+            ["ab", true],
+            ["a".repeat(32), true],
+            ["a", false],
+            ["a".repeat(33), false],
+            ["1abc", false],
+        ] as const)
+            expect(Value.Check(putViewersRequestSchema, { targets: [{ type: "agent", id }] })).toBe(
+                valid,
+            );
         expect(Value.Check(putViewersRequestSchema, {})).toBe(false);
     });
 
@@ -115,22 +130,34 @@ describe("viewers protocol", () => {
         expect(error).toMatchObject({ status: 404, code: "not_found" });
     });
 
-    it("passes viewers.updated frames through updates() without moving the cursor", async () => {
+    it("passes viewers.updated frames through updates() and reconnects after the last event", async () => {
+        vi.useFakeTimers();
         const frame: ViewersUpdatedFrame = {
             target: agent,
             viewer: { userId: "bob", here: true, lastSeenAt: 1_755_400_000_000 },
         };
         const event = { cursor, occurredAt: 1, payload: {}, type: "config.updated" };
         const later = { ...event, cursor: "01900000-0000-7000-8000-000000000002" };
+        const requests: string[] = [];
+        const responses = [
+            sseResponse(
+                `event: hello\ndata: ${JSON.stringify({ connectedAt: 1, cursor, gap: false, resumed: false, streamId })}\n\n`,
+                `id: ${later.cursor}\nevent: config.updated\ndata: ${JSON.stringify(later)}\n\n`,
+                `event: viewers.updated\ndata: ${JSON.stringify(frame)}\n\n`,
+            ),
+            sseResponse(
+                `event: hello\ndata: ${JSON.stringify({ connectedAt: 2, cursor: later.cursor, gap: false, resumed: true, streamId: "n8m2q9w1e5r7y3u6i0o2p4s2" })}\n\n`,
+            ),
+        ];
         const client = new HappyAgentClient({
             endpoint: "http://agent.local",
             token: "t",
-            fetch: async () =>
-                sseResponse(
-                    `event: hello\ndata: ${JSON.stringify({ connectedAt: 1, cursor, gap: false, resumed: false, streamId })}\n\n`,
-                    `event: viewers.updated\ndata: ${JSON.stringify(frame)}\n\n`,
-                    `id: ${later.cursor}\nevent: config.updated\ndata: ${JSON.stringify(later)}\n\n`,
-                ),
+            fetch: async (input) => {
+                requests.push(input.toString());
+                const response = responses.shift();
+                if (response === undefined) throw new Error("Unexpected reconnect.");
+                return response;
+            },
         });
         const controller = new AbortController();
         const updates = client.updates({ signal: controller.signal });
@@ -138,14 +165,29 @@ describe("viewers protocol", () => {
             done: false,
             value: { kind: "connected", cursor, streamId },
         });
-        await expect(updates.next()).resolves.toEqual({
-            done: false,
-            value: { kind: "viewers", frame },
-        });
         await expect(updates.next()).resolves.toMatchObject({
             done: false,
             value: { kind: "event", cursor: later.cursor },
         });
+        await expect(updates.next()).resolves.toEqual({
+            done: false,
+            value: { kind: "viewers", frame },
+        });
+        // The stream ended after the viewer frame; the reconnect resumes after the last event.
+        await expect(updates.next()).resolves.toEqual({
+            done: false,
+            value: { kind: "disconnected", cursor: later.cursor },
+        });
+        const reconnected = updates.next();
+        await vi.advanceTimersByTimeAsync(100);
+        await expect(reconnected).resolves.toMatchObject({
+            done: false,
+            value: { kind: "connected", cursor: later.cursor },
+        });
+        expect(requests).toEqual([
+            "http://agent.local/v0/events/stream",
+            `http://agent.local/v0/events/stream?after=${later.cursor}`,
+        ]);
         controller.abort();
         await expect(updates.next()).resolves.toEqual({ done: true, value: undefined });
     });

@@ -15117,7 +15117,8 @@ exist only in team mode. In standalone mode, and on older daemons, every viewers
 `streamId`.
 
 **Targets.** A target is `{ "type": "agent", "id": "..." }` for an agent session, by its agent
-ID, or `{ "type": "surface", "id": "..." }` for a Surface of any type, by its Surface ID.
+ID, or `{ "type": "surface", "id": "..." }` for a Surface of any type, by its Surface ID. An agent
+ID is 2 to 32 lowercase letters and digits starting with a letter.
 
 **Viewers.** A viewer is `{ "userId": "...", "here": true, "lastSeenAt": 1755400000000 }`.
 `here` is true while at least one event stream of that person currently views the target.
@@ -15126,7 +15127,8 @@ it is the daemon's current time.
 
 **Storage.** Who is here is held in memory and ends with the daemon process. Each person's
 `lastSeenAt` for each target is durable: it is stored when they arrive, when they leave, and at
-most once a minute while they stay. Permanently deleting an agent deletes its stored viewers.
+most once a minute while they stay. Permanently deleting an agent deletes its stored viewers and
+ends its live views without a `viewers.updated` frame.
 
 ### `PUT /v0/viewers/streams/:streamId`
 

@@ -9,12 +9,15 @@ import { timestampSchema } from "./common.js";
 import { surfaceIdSchema } from "./surfaces.js";
 import { userIdSchema } from "./userId.js";
 
-/** An agent session by its agent ID, or a Surface of any type by its Surface ID. */
+/**
+ * An agent session by its agent ID, or a Surface of any type by its Surface ID. Agent IDs have
+ * Agent Base's bounds: 2 to 32 lowercase letters and digits, opening with a letter.
+ */
 export const viewerTargetSchema = Type.Union([
     Type.Object(
         {
             type: Type.Literal("agent"),
-            id: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9]*$" }),
+            id: Type.String({ minLength: 2, maxLength: 32, pattern: "^[a-z][a-z0-9]*$" }),
         },
         { additionalProperties: false },
     ),
