@@ -53,8 +53,8 @@ export type Viewer = Static<typeof viewerSchema>;
 
 /**
  * Replaces everything one event stream views. `[]` means hidden, unfocused, idle, or closed. The
- * daemon also refuses two agent or Surface targets with the same type and ID that differ only in
- * ignored fields.
+ * daemon also refuses two targets of any type with the same type and ID that differ only in ignored
+ * fields, which `uniqueItems` cannot express.
  */
 export const putViewersRequestSchema = Type.Object(
     { targets: Type.Array(viewerRequestTargetSchema, { maxItems: 8, uniqueItems: true }) },

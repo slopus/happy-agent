@@ -15131,7 +15131,9 @@ it is the daemon's current time.
 **Storage.** Who is here is held in memory and ends with the daemon process. Each person's
 `lastSeenAt` for each target is durable: it is stored when they arrive, when they leave, and at
 most once a minute while they stay. Permanently deleting an agent deletes its stored viewers and
-ends its live views without a `viewers.updated` frame.
+ends its live views without a `viewers.updated` frame. A request that races the permanent deletion
+of one of its targets may answer that target with people here from before the deletion and
+history from after it; clients discard the target anyway.
 
 ### `PUT /v0/viewers/streams/:streamId`
 
@@ -15141,8 +15143,9 @@ that stream may use it; another person's, a closed, or an unknown stream returns
 `404 not_found`.
 
 Body: `{ "targets": [ { "type": "agent", "id": "..." } ] }`. It replaces everything this stream
-views. It holds 0 to 8 targets with no duplicates; two agent or Surface targets with the same
-`type` and `id` are duplicates. More targets, a duplicate, a target that is not an object with a
+views. It holds 0 to 8 targets with no duplicates; two targets with the same `type` and `id` are
+duplicates whatever other fields they carry, including targets of types the daemon does not know.
+More targets, a duplicate, a target that is not an object with a
 string `type` and a string `id`, a malformed agent or Surface ID, or a body field other than
 `targets` returns `400 invalid_request`.
 `targets: []` means the window is hidden, unfocused, idle, or closed.
