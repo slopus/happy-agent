@@ -1,4 +1,8 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { readPackageManifest } from "./release/readPackageManifest.js";
+import { replaceVersionConstant } from "./release/replaceVersionConstant.js";
 import { readRegistryLatestVersion } from "./release/readRegistryLatestVersion.js";
 import { assertReleaseBumpAllowed } from "./release/assertReleaseBumpAllowed.js";
 import { assertRegistryLatestMatchesManifest } from "./release/assertRegistryLatestMatchesManifest.js";
@@ -148,16 +152,38 @@ async function release(): Promise<void> {
         }
     }
 
+    // The version is set before validation, so tests that compare the manifest with a version
+    // constant check the very files the release commit will carry.
+    if (!retryingRelease) {
+        console.log(`Setting the ${releaseInput} version...`);
+        runCommand("pnpm", ["version", ...versionArguments.arguments], {
+            cwd: releasePackage.directory,
+        });
+        const constantPath = releasePackage.versionConstantPath;
+        if (constantPath !== undefined) {
+            const absolute = fileURLToPath(new URL(`../${constantPath}`, import.meta.url));
+            const version = readPackageManifest(releasePackage).version;
+            writeFileSync(
+                absolute,
+                replaceVersionConstant(readFileSync(absolute, "utf8"), version),
+            );
+        }
+    }
+
     console.log("Validating the release...");
     validateRelease(releasePackage, { tests: !versionArguments.beta });
 
     if (!retryingRelease) {
         console.log(`Creating the ${releaseInput} release commit and tag...`);
-        runCommand("pnpm", ["version", ...versionArguments.arguments], {
-            cwd: releasePackage.directory,
-        });
         const versionedManifest = readPackageManifest(releasePackage);
-        runCommand("git", ["add", releasePackage.manifestPath, "pnpm-lock.yaml"]);
+        runCommand("git", [
+            "add",
+            releasePackage.manifestPath,
+            "pnpm-lock.yaml",
+            ...(releasePackage.versionConstantPath === undefined
+                ? []
+                : [releasePackage.versionConstantPath]),
+        ]);
         runCommand("git", [
             "commit",
             "-m",

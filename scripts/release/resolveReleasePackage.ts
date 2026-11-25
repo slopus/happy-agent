@@ -45,6 +45,7 @@ const PACKAGES: Record<ReleasePackageKey, ReleasePackage> = {
             ["run", "test:scripts"],
             ["--filter", "@slopus/happy-providers", "test"],
         ],
+        versionConstantPath: "packages/happy-providers/sources/core/happyProvidersVersion.ts",
     },
     "happy-plugins": {
         buildArguments: ["--filter", "happy-plugins", "build"],

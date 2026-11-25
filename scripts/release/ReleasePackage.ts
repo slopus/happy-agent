@@ -13,5 +13,7 @@ export interface ReleasePackage {
     key: ReleasePackageKey;
     manifestPath: string;
     tagPrefix: string;
+    /** A source file whose exported version constant must equal the manifest's version. */
+    versionConstantPath?: string;
     testArguments: readonly (readonly string[])[];
 }
