@@ -45,7 +45,12 @@ export type ProviderAccountUsageCredits = Static<typeof providerAccountUsageCred
 /** The complete latest normalized account-usage reading from one vendor. */
 export const providerAccountUsageSchema = Type.Object({
     providerId: Type.String(),
-    vendor: Type.Union([Type.Literal("claude"), Type.Literal("codex"), Type.Literal("grok")]),
+    vendor: Type.Union([
+        Type.Literal("claude"),
+        Type.Literal("codex"),
+        Type.Literal("grok"),
+        Type.Literal("antigravity"),
+    ]),
     capturedAt: Type.Number(),
     planName: Nullable(Type.String()),
     exhausted: Type.Boolean(),
@@ -55,6 +60,10 @@ export const providerAccountUsageSchema = Type.Object({
         monthly: Nullable(providerAccountUsageWindowSchema),
         /** Claude's separate weekly Fable allowance. Omitted or null when unreported. */
         fableWeekly: Type.Optional(Nullable(providerAccountUsageWindowSchema)),
+        /** Antigravity's separate five-hour Claude and GPT allowance. Omitted or null when unreported. */
+        claudeGptFiveHour: Type.Optional(Nullable(providerAccountUsageWindowSchema)),
+        /** Antigravity's separate weekly Claude and GPT allowance. Omitted or null when unreported. */
+        claudeGptWeekly: Type.Optional(Nullable(providerAccountUsageWindowSchema)),
     }),
     credits: Nullable(providerAccountUsageCreditsSchema),
 });

@@ -1,4 +1,4 @@
-export type ProviderUsageVendor = "claude" | "codex" | "grok";
+export type ProviderUsageVendor = "claude" | "codex" | "grok" | "antigravity";
 
 /**
  * One rate-limit or spend window a vendor reports.
@@ -64,6 +64,12 @@ export interface ProviderUsage {
          * and vendors that never report it stay valid. Null when unreported.
          */
         fableWeekly?: ProviderUsageWindow | null;
+        /**
+         * Antigravity's separate five-hour and weekly Claude and GPT allowance.
+         * Optional so older readings and vendors that never report it stay valid.
+         */
+        claudeGptFiveHour?: ProviderUsageWindow | null;
+        claudeGptWeekly?: ProviderUsageWindow | null;
     };
     /** Spendable balance, or null when the vendor reports none. */
     credits: ProviderUsageCredits | null;

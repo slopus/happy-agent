@@ -1006,6 +1006,7 @@ function measuresWindow(usage: ProviderUsage): boolean {
 function stampWindows(usage: ProviderUsage): ProviderUsage {
     const stamp = (window: ProviderUsageWindow | null): ProviderUsageWindow | null =>
         window === null ? null : { ...window, capturedAt: window.capturedAt ?? usage.capturedAt };
+    const extra = usage.windows as Record<string, ProviderUsageWindow | null | undefined>;
     return {
         ...usage,
         windows: {
@@ -1015,7 +1016,13 @@ function stampWindows(usage: ProviderUsage): ProviderUsage {
             ...(usage.windows.fableWeekly === undefined
                 ? {}
                 : { fableWeekly: stamp(usage.windows.fableWeekly) }),
-        },
+            ...(extra["claudeGptFiveHour"] === undefined
+                ? {}
+                : { claudeGptFiveHour: stamp(extra["claudeGptFiveHour"]) }),
+            ...(extra["claudeGptWeekly"] === undefined
+                ? {}
+                : { claudeGptWeekly: stamp(extra["claudeGptWeekly"]) }),
+        } as ProviderUsage["windows"],
     };
 }
 
@@ -1058,6 +1065,8 @@ function mergeProviderUsage(
             weekly: carried(next.windows.weekly, previous.windows.weekly),
             monthly: carried(next.windows.monthly, previous.windows.monthly),
             ...carryNamedWindow(next.windows, previous.windows, "fableWeekly", carried),
+            ...carryNamedWindow(next.windows, previous.windows, "claudeGptFiveHour", carried),
+            ...carryNamedWindow(next.windows, previous.windows, "claudeGptWeekly", carried),
         },
         credits: next.credits ?? previous.credits,
     };

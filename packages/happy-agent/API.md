@@ -10844,12 +10844,15 @@ Response — `200`:
   failed, kept even while an older reading is still shown and cleared by the next success.
   `retryAt` is the epoch-millisecond instant before which the vendor asked not to be asked again,
   or `null`. `refreshing` is `true` while a read of this account is in flight.
-- A non-null `usage` keeps every normalized vendor value: the human-readable `planName`, current
+- A non-null `usage` keeps every normalized vendor value: `vendor` (`"claude"`, `"codex"`, `"grok"`, or `"antigravity"`), the human-readable `planName`, current
   `exhausted` state, five-hour, weekly, and monthly windows, optional `fableWeekly` for Claude's
-  separate Fable weekly allowance, and spendable `credits`. A window is `null` only when the vendor
-  did not report it. `fableWeekly` is omitted or `null` when the vendor has no Fable meter. Window
-  timestamps are epoch milliseconds, `durationMs` is milliseconds, monetary amounts are USD cents,
-  and percentages run from 0 to 100.
+  separate Fable weekly allowance, optional `claudeGptFiveHour` and `claudeGptWeekly` for
+  Antigravity's separate five-hour and weekly Claude and GPT allowance, and spendable `credits`.
+  For Antigravity, `fiveHour` and `weekly` hold the Gemini Models quota windows. A window is `null`
+  only when the vendor did not report it. `fableWeekly`, `claudeGptFiveHour`, and `claudeGptWeekly`
+  are omitted or `null` when the vendor does not report them. Window timestamps are epoch
+  milliseconds, `durationMs` is milliseconds, monetary amounts are USD cents, and percentages run
+  from 0 to 100.
 - Each window's optional `capturedAt` is when that window itself was last measured. A vendor that
   reports only some windows in band leaves the others as they were, and those keep their own older
   `capturedAt`, so a client can show how old each number is. The reading's `capturedAt` is when its

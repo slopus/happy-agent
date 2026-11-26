@@ -4155,11 +4155,13 @@ export class ConfigModule implements AgentModule {
         providerId: string,
         method?: ProviderUsageReadMethod,
     ): Promise<import("@slopus/happy-providers").ProviderUsage | null> {
+        const harnessEnv = this.configuration.values.harnesses[providerId]?.env;
         return await loadConfiguredProviderUsage({
             ...(method === undefined ? {} : { method }),
             environment: { ...process.env, ...this.#environment },
             providerId,
             providers: this.configuration.values.providers,
+            ...(harnessEnv === undefined ? {} : { harnessEnv }),
             ignoreEnabled: true,
             ...(ctx.lifetime === undefined ? {} : { signal: ctx.lifetime }),
         });
