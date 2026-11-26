@@ -59,6 +59,29 @@
                 "type": "null"
               }
             ]
+          },
+          "speed": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "const": "regular",
+                    "type": "string"
+                  },
+                  {
+                    "const": "fast",
+                    "type": "string"
+                  },
+                  {
+                    "const": "ultrafast",
+                    "type": "string"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object"
@@ -83,6 +106,37 @@
   "requiresAutoOrFullAccess": true,
   "returnType": {
     "properties": {
+      "accounts": {
+        "items": {
+          "properties": {
+            "credential": {
+              "anyOf": [
+                {
+                  "const": "codex_subscription",
+                  "type": "string"
+                },
+                {
+                  "const": "openai_api_key",
+                  "type": "string"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "providerId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "providerId",
+            "credential"
+          ],
+          "type": "object"
+        },
+        "maxItems": 256,
+        "type": "array"
+      },
       "controller": {
         "properties": {
           "effort": {
@@ -112,6 +166,29 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "speed": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "const": "regular",
+                    "type": "string"
+                  },
+                  {
+                    "const": "fast",
+                    "type": "string"
+                  },
+                  {
+                    "const": "ultrafast",
+                    "type": "string"
+                  }
+                ]
               },
               {
                 "type": "null"
@@ -167,6 +244,43 @@
                 "type": "null"
               }
             ]
+          },
+          "speed": {
+            "anyOf": [
+              {
+                "const": "regular",
+                "type": "string"
+              },
+              {
+                "const": "fast",
+                "type": "string"
+              },
+              {
+                "const": "ultrafast",
+                "type": "string"
+              }
+            ]
+          },
+          "speeds": {
+            "items": {
+              "anyOf": [
+                {
+                  "const": "regular",
+                  "type": "string"
+                },
+                {
+                  "const": "fast",
+                  "type": "string"
+                },
+                {
+                  "const": "ultrafast",
+                  "type": "string"
+                }
+              ]
+            },
+            "maxItems": 3,
+            "type": "array",
+            "uniqueItems": true
           }
         },
         "required": [
