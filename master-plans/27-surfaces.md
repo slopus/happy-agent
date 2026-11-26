@@ -11,6 +11,8 @@ An empty member array means nobody joined. The Todo API lives under
 `/v0/surfaces/todo`.
 Every Surface has a name and an optional image. Admin bots can create them
 through a tool specific to the Surface type, and can add or remove people.
+Any agent can create a document Surface, but only for the person it works for,
+or for nobody when it works for nobody.
 Surface, node, and bot images use one normalization function.
 
 The first Surface is Todo: a plain Wunderlist-style list with text,
