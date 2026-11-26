@@ -189,6 +189,11 @@ export const healthResponseSchema = Type.Object({
             artifactCovers: Type.Optional(Type.Boolean()),
             /** True when the daemon serves `POST /v0/search`, under Search. */
             search: Type.Optional(Type.Boolean()),
+            /**
+             * True when the daemon serves the routes under `/v0/agents/:agentId/side-questions`
+             * and marks the models that answer them, under Side questions.
+             */
+            sideQuestions: Type.Optional(Type.Boolean()),
             /** Passive legacy capability from older daemons; current daemons omit it. */
             chatUi: Type.Optional(Type.Unknown()),
             /** True when the daemon serves `GET /v0/usage/daily`, under Usage. */
@@ -476,6 +481,8 @@ export const modelDefinitionSchema = Type.Object({
     serviceTierOptions: Type.Optional(Type.Array(serviceTierOptionSchema)),
     /** Empty when the model has no service tiers. */
     serviceTiers: Type.Array(serviceTierSchema),
+    /** `true` when the model answers side questions; absent otherwise and from older daemons. */
+    sideQuestions: Type.Optional(Type.Boolean()),
 });
 export type ModelDefinition = Static<typeof modelDefinitionSchema>;
 

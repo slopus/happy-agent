@@ -21,6 +21,8 @@ import {
     ACP_BRIDGED_CALL_META,
     ACP_REFUSAL_REASON_META,
     type AcpConnection,
+    type AcpSideQuestion,
+    type AcpSideQuestionAnswer,
 } from "@/protocol/acp/AcpConnection.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
 import {
@@ -53,6 +55,8 @@ import { acpAcceptsConfigValue, acpConfigOptionId } from "@/protocol/acp/impl/ac
 export interface AcpSessionOptions extends AcpProviderOptions {
     readonly instructions: string;
     readonly tools: readonly SessionTool[];
+    /** Runs once, when the session is destroyed. */
+    readonly onDestroy?: () => void;
 }
 
 const PREVIOUS_PROMPT_GRACE_MS = 10_000;
@@ -183,7 +187,25 @@ export class AcpSession extends BaseSession {
         return result;
     }
 
+    /**
+     * Ask the foreign session a side question about this conversation without adding to it, as
+     * Claude Code's `/btw` does. A turn running in it goes on undisturbed. Resolves `undefined`
+     * when there is no live foreign session here to ask — none was opened since the daemon
+     * started, its agent process stopped, compaction left it, or the session was destroyed — or
+     * when the agent cannot answer side questions.
+     */
+    async askSideQuestion(question: AcpSideQuestion): Promise<AcpSideQuestionAnswer | undefined> {
+        const connection = this.#connection;
+        const sessionId = this.#acpSessionId;
+        if (this.#destroyed || connection === undefined || sessionId === undefined)
+            return undefined;
+        const ask = connection.conn.askSideQuestion;
+        if (ask === undefined) return undefined;
+        return await ask.call(connection.conn, { ...question, sessionId });
+    }
+
     destroy(): void {
+        if (!this.#destroyed) this.#options.onDestroy?.();
         this.#destroyed = true;
         this.#abandonTurn();
         this.#bridge?.close();

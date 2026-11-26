@@ -371,6 +371,11 @@ import type {
     InvokeSlashCommandRequest,
     InvokeSlashCommandResponse,
 } from "./protocol/slashCommands.js";
+import type {
+    AskSideQuestionRequest,
+    CancelSideQuestionResponse,
+    SideQuestionResponse,
+} from "./protocol/sideQuestions.js";
 import {
     networkIdSchema,
     type ArchiveWorkspaceRequest,
@@ -4336,6 +4341,49 @@ export class HappyAgentClient {
             method: "POST",
             path: `v0/agents/${encodeURIComponent(agentId)}/slash-commands/${encodeURIComponent(name)}`,
             json: { ...request, mode: requestedMode(request.mode) },
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/agents/:agentId/side-questions` — asks the agent's harness about its conversation
+     * without adding to it, and waits up to 20 seconds for the answer.
+     */
+    async askSideQuestion(
+        agentId: Cuid2,
+        request: AskSideQuestionRequest,
+        options: RequestOptions = {},
+    ): Promise<SideQuestionResponse> {
+        return await this.#json({
+            method: "POST",
+            path: `v0/agents/${encodeURIComponent(agentId)}/side-questions`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /** `GET /v0/agents/:agentId/side-questions/:sideQuestionId` — waits up to 20 seconds more. */
+    async waitSideQuestion(
+        agentId: Cuid2,
+        sideQuestionId: string,
+        options: RequestOptions = {},
+    ): Promise<SideQuestionResponse> {
+        return await this.#json({
+            method: "GET",
+            path: `v0/agents/${encodeURIComponent(agentId)}/side-questions/${encodeURIComponent(sideQuestionId)}`,
+            signal: options.signal,
+        });
+    }
+
+    /** `DELETE /v0/agents/:agentId/side-questions/:sideQuestionId` — stops answering it. */
+    async cancelSideQuestion(
+        agentId: Cuid2,
+        sideQuestionId: string,
+        options: RequestOptions = {},
+    ): Promise<CancelSideQuestionResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/agents/${encodeURIComponent(agentId)}/side-questions/${encodeURIComponent(sideQuestionId)}`,
             signal: options.signal,
         });
     }
