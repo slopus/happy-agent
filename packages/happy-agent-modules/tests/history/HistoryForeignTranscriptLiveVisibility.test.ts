@@ -35,7 +35,7 @@ import {
     MAX_HISTORY_TEXT_LENGTH,
 } from "../../sources/history/index.js";
 import { USER_MESSAGE_ORIGIN_METADATA } from "../../sources/impl/messageOrigin.js";
-import { providersOf } from "../support/fixtures.js";
+import { defaultMode, providersOf } from "../support/fixtures.js";
 import { moduleDatabase, type ModuleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks, resolveModuleRuntime } from "../support/moduleHooks.js";
 import { ScriptedProvider } from "../support/ScriptedProvider.js";
@@ -314,7 +314,7 @@ describe("Foreign harness live transcript visibility", () => {
                 const page = await history.runs(database.context, agentId);
                 const message = page.runs[0]?.messages[1];
                 if (message !== undefined) {
-                    const projected = messageResource(message);
+                    const projected = messageResource(message, { defaultMode });
                     runningSnapshots.push({
                         messageId: message.recordId,
                         content: projected.content,
@@ -397,7 +397,7 @@ describe("Foreign harness live transcript visibility", () => {
                 expect(page.runs).toHaveLength(1);
                 expect(page.runs[0]?.status).toBe("running");
                 expect(page.runs[0]?.messages).toHaveLength(2);
-                const projected = messageResource(page.runs[0]!.messages[1]!);
+                const projected = messageResource(page.runs[0]!.messages[1]!, { defaultMode });
                 liveMessageId = page.runs[0]!.messages[1]!.recordId;
                 expect(runningSnapshots[0]).toEqual({
                     messageId: liveMessageId,
@@ -438,7 +438,7 @@ describe("Foreign harness live transcript visibility", () => {
             await vi.waitFor(async () => {
                 const page = await world.history.runs(world.database.context, world.agentId);
                 expect(page.runs[0]?.status).toBe("running");
-                const projected = messageResource(page.runs[0]!.messages[1]!);
+                const projected = messageResource(page.runs[0]!.messages[1]!, { defaultMode });
                 expect(projected.id).toBe(liveMessageId);
                 expect(runningSnapshots[1]).toEqual({
                     messageId: liveMessageId,
@@ -490,7 +490,7 @@ describe("Foreign harness live transcript visibility", () => {
             await vi.waitFor(async () => {
                 const page = await world.history.runs(world.database.context, world.agentId);
                 expect(page.runs[0]?.status).toBe("running");
-                const projected = messageResource(page.runs[0]!.messages[1]!);
+                const projected = messageResource(page.runs[0]!.messages[1]!, { defaultMode });
                 expect(projected.id).toBe(liveMessageId);
                 expect(runningSnapshots[2]).toEqual({
                     messageId: liveMessageId,
@@ -553,7 +553,9 @@ describe("Foreign harness live transcript visibility", () => {
             expect(finalPage.runs).toHaveLength(1);
             expect(finalPage.runs[0]?.status).toBe("completed");
             expect(finalPage.runs[0]?.messages).toHaveLength(2);
-            const finalProjected = messageResource(finalPage.runs[0]!.messages[1]!);
+            const finalProjected = messageResource(finalPage.runs[0]!.messages[1]!, {
+                defaultMode,
+            });
             expect(finalProjected.id).toBe(liveMessageId);
             expect(finalProjected.content).toEqual([
                 expect.objectContaining({
@@ -668,7 +670,9 @@ describe("Foreign harness live transcript visibility", () => {
                 const livePage = await world.history.runs(world.database.context, world.agentId);
                 expect(livePage.runs[0]?.status).toBe("running");
                 expect(livePage.runs[0]?.messages).toHaveLength(2);
-                expect(messageResource(livePage.runs[0]!.messages[1]!).content).toEqual([
+                expect(
+                    messageResource(livePage.runs[0]!.messages[1]!, { defaultMode }).content,
+                ).toEqual([
                     expect.objectContaining({
                         type: "tool_call",
                         name: "edit",
@@ -691,7 +695,7 @@ describe("Foreign harness live transcript visibility", () => {
             expect(page.runs).toHaveLength(1);
             expect(page.runs[0]?.status).toBe("completed");
             const projectedMessages = page.runs[0]!.messages.map((message) =>
-                messageResource(message),
+                messageResource(message, { defaultMode }),
             );
             expect(projectedMessages.map((message) => message.role)).toEqual([
                 "user",
@@ -777,7 +781,8 @@ describe("Foreign harness live transcript visibility", () => {
             expect(totalBlocks).toBe(2 * MAX_HISTORY_BLOCKS_PER_MESSAGE + 1);
 
             const projectedContent = assistantMessages.flatMap(
-                (message) => messageResource(message).content as Record<string, unknown>[],
+                (message) =>
+                    messageResource(message, { defaultMode }).content as Record<string, unknown>[],
             );
             const toolCalls = projectedContent.filter((block) => block.type === "tool_call");
             expect(toolCalls).toHaveLength(nativeCallCount);
@@ -879,7 +884,7 @@ describe("Foreign harness live transcript visibility", () => {
                     MAX_HISTORY_MESSAGE_JSON_BYTES,
                 );
             }
-            expect(messageResource(assistantMessages[1]!).content).toEqual([
+            expect(messageResource(assistantMessages[1]!, { defaultMode }).content).toEqual([
                 { type: "text", text: threeMegabyteUtf8Chunk },
                 expect.objectContaining({
                     type: "tool_call",
@@ -1241,7 +1246,7 @@ describe("Foreign harness live transcript visibility", () => {
 
             expect(retryRun?.status).toBe("completed");
             expect(retryRun?.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
-            expect(messageResource(retryRun!.messages[1]!).content).toEqual([
+            expect(messageResource(retryRun!.messages[1]!, { defaultMode }).content).toEqual([
                 expect.objectContaining({
                     type: "tool_call",
                     name: "execute",
@@ -1252,27 +1257,27 @@ describe("Foreign harness live transcript visibility", () => {
 
             expect(failedRun?.status).toBe("failed");
             expect(failedRun?.messages.map((m) => m.role)).toEqual(["user", "assistant", "error"]);
-            expect(messageResource(failedRun!.messages[1]!).content).toEqual([
+            expect(messageResource(failedRun!.messages[1]!, { defaultMode }).content).toEqual([
                 { type: "text", text: "Partial before error." },
             ]);
 
             expect(abortedRun?.status).toBe("aborted");
             expect(abortedRun?.reason).toBe("abort");
             expect(abortedRun?.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
-            expect(messageResource(abortedRun!.messages[1]!).content).toEqual([
+            expect(messageResource(abortedRun!.messages[1]!, { defaultMode }).content).toEqual([
                 { type: "text", text: "Completed before abort." },
             ]);
 
             expect(preSteerRun?.status).toBe("aborted");
             expect(preSteerRun?.reason).toBe("steering");
             expect(preSteerRun?.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
-            expect(messageResource(preSteerRun!.messages[1]!).content).toEqual([
+            expect(messageResource(preSteerRun!.messages[1]!, { defaultMode }).content).toEqual([
                 { type: "text", text: "First step before steer." },
             ]);
 
             expect(steeredRun?.status).toBe("completed");
             expect(steeredRun?.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
-            expect(messageResource(steeredRun!.messages[1]!).content).toEqual([
+            expect(messageResource(steeredRun!.messages[1]!, { defaultMode }).content).toEqual([
                 { type: "text", text: "Answered steer." },
             ]);
 
@@ -1282,9 +1287,9 @@ describe("Foreign harness live transcript visibility", () => {
                 "service",
                 "assistant",
             ]);
-            expect(messageResource(overflowResetRun!.messages[2]!).content).toEqual([
-                { type: "text", text: "Recovered after context reset." },
-            ]);
+            expect(
+                messageResource(overflowResetRun!.messages[2]!, { defaultMode }).content,
+            ).toEqual([{ type: "text", text: "Recovered after context reset." }]);
 
             expect(overflowAfterLiveRun?.status).toBe("failed");
             expect(overflowAfterLiveRun?.messages.map((m) => m.role)).toEqual([
@@ -1292,9 +1297,9 @@ describe("Foreign harness live transcript visibility", () => {
                 "assistant",
                 "error",
             ]);
-            expect(messageResource(overflowAfterLiveRun!.messages[1]!).content).toEqual([
-                { type: "text", text: "Output before overflow." },
-            ]);
+            expect(
+                messageResource(overflowAfterLiveRun!.messages[1]!, { defaultMode }).content,
+            ).toEqual([{ type: "text", text: "Output before overflow." }]);
         } finally {
             world.database.close();
         }

@@ -1,4 +1,5 @@
 import { AgentKV, AgentProviders } from "@slopus/happy-agent-base";
+import type { MessageMode } from "@slopus/happy-agent-client";
 import type { BaseProvider, SessionEvent, SessionUserMessage } from "@slopus/happy-providers";
 
 import { InMemoryPersistence } from "./InMemoryPersistence.js";
@@ -8,6 +9,17 @@ export function providersOf(provider: BaseProvider): AgentProviders {
     const providers = new AgentProviders();
     providers.add("scripted", provider, "gym");
     return providers;
+}
+
+/** The mode a test projects onto a user message stored without one. */
+export function defaultMode(): MessageMode {
+    return {
+        providerId: "codex",
+        modelId: "openai/gpt-5.6-sol",
+        effort: "medium",
+        serviceTier: null,
+        permissionMode: "auto",
+    };
 }
 
 /** A store standing in for the one a collection shares between its agents. */

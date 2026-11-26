@@ -2947,13 +2947,23 @@ export class HistoryModule implements AgentModule {
                     : undefined);
             // A message sent from outside the API — a phone, another module — has no pending
             // row, but still runs with a composer selection; it may stamp that selection on
-            // its metadata the way the API does.
+            // its metadata the way the API does. One that stamps none is recorded with the
+            // selection Agent Base accepted it under, so every person's message carries a mode.
             const metadataMode = accepted.metadata?.["mode"];
+            const acceptedMode = {
+                providerId: scope.agent.provider,
+                modelId: scope.agent.model,
+                effort: scope.agent.effort,
+                serviceTier: scope.agent.tier ?? null,
+                permissionMode: scope.agent.permissionMode,
+            };
             const mode =
                 pending?.mode ??
                 (Value.Check(historyMessageModeSchema, metadataMode)
                     ? (metadataMode as HistoryMessageMode)
-                    : undefined);
+                    : Value.Check(historyMessageModeSchema, acceptedMode)
+                      ? (acceptedMode as HistoryMessageMode)
+                      : undefined);
             const happyMetadata = accepted.metadata?.["happy"];
             const remoteMessageId = Value.Check(happyMessageMetadataSchema, happyMetadata)
                 ? (happyMetadata as HappyMessageMetadata).remoteMessageId

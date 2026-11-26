@@ -1,5 +1,5 @@
 import { Type, type Static, type TSchema } from "@sinclair/typebox";
-import type { AgentSpawnPresentation } from "@slopus/happy-agent-client";
+import type { AgentSpawnPresentation, MessageMode } from "@slopus/happy-agent-client";
 
 import {
     MAX_HISTORY_RECORDED_TOOL_OUTPUT_LENGTH,
@@ -97,10 +97,19 @@ export function messageHiddenFromUser(message: HistoryMessage): boolean {
     return message.hideFromUser === true;
 }
 
+export interface MessageProjectionOptions extends MessageResourceOptions {
+    /**
+     * The mode shown on a user message stored without one, read only when such a message is
+     * projected. Earlier daemons accepted messages with none, and the public contract requires
+     * every user message to carry a mode.
+     */
+    readonly defaultMode: () => MessageMode;
+}
+
 /** Project one durable history message into the public message shape. */
 export function messageResource(
     message: HistoryMessage,
-    options: MessageResourceOptions = {},
+    options: MessageProjectionOptions,
 ): Record<string, unknown> {
     const role = historyRole(message.role);
     return {
@@ -141,7 +150,7 @@ export function messageResource(
             ? {
                   status: "accepted",
                   delivery: message.delivery ?? "queue",
-                  mode: message.mode ?? null,
+                  mode: message.mode ?? options.defaultMode(),
                   profile: decodeRequestProfile(message.profile),
                   runId: message.runId ?? null,
               }

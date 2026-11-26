@@ -9,6 +9,7 @@ import { messageResource } from "../../sources/api/ApiMessageProjection.js";
 import { FakeCompute } from "../compute/support/FakeCompute.js";
 import { computeToolset } from "../compute/support/computeTools.js";
 import { testConfig } from "../support/computeModule.js";
+import { defaultMode } from "../support/fixtures.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import { resolveModuleHooks } from "../support/moduleHooks.js";
 
@@ -111,7 +112,9 @@ describe("History tool presentations", () => {
                     "inference-spawn",
                 );
                 expect(stored).toBeDefined();
-                expect(messageResource(stored!, { omitToolData: true }).content).toEqual([
+                expect(
+                    messageResource(stored!, { defaultMode, omitToolData: true }).content,
+                ).toEqual([
                     {
                         type: "tool_call",
                         id: "callspawn",
@@ -308,7 +311,9 @@ describe("History tool presentations", () => {
             expect(await chatMedia.storedItem(ctx, "agent-a", "callpresent", 1)).toBeUndefined();
             expect(await chatMedia.storedItem(ctx, "agent-a", "callother", 0)).toBeUndefined();
             expect(
-                messageResource((await history.read(ctx, "agent-a")).messages[0]!.message),
+                messageResource((await history.read(ctx, "agent-a")).messages[0]!.message, {
+                    defaultMode,
+                }),
             ).toMatchObject({
                 content: [
                     {

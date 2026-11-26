@@ -1,5 +1,5 @@
 import { Value } from "@sinclair/typebox/value";
-import { toolPresentationSchema } from "@slopus/happy-agent-client";
+import { messageModeSchema, toolPresentationSchema } from "@slopus/happy-agent-client";
 import type { AgentSystemRef } from "@slopus/happy-agent-base";
 import { createRootContext } from "@steve.kite/stdlib";
 import { describe, expect, it, vi } from "vitest";
@@ -19,6 +19,7 @@ import {
 } from "../../sources/api/ApiMessageProjection.js";
 import { toolCallResource } from "../../sources/api/ApiToolPresentation.js";
 import { historyMessageSchema, type HistoryMessage } from "../../sources/history/index.js";
+import { defaultMode } from "../support/fixtures.js";
 
 describe("apiResourceVersion", () => {
     it("preserves retired tool calls as ordinary calls, including with omitted typed tool data", () => {
@@ -230,7 +231,9 @@ describe("messageResource", () => {
                 reviewedToolCalls(history),
                 toolResultPresentations(history),
             );
-            expect(live).toEqual(messageResource(history, { omitToolData: true }).content);
+            expect(live).toEqual(
+                messageResource(history, { defaultMode, omitToolData: true }).content,
+            );
             expect(live?.[0]).toMatchObject({ status, presentation, arguments: args });
             expect(Value.Check(toolPresentationSchema, live?.[0]?.presentation)).toBe(true);
             if (status !== "running") expect(live?.[0]?.result).toEqual({ output: "Result" });
@@ -269,12 +272,14 @@ describe("messageResource", () => {
             userId: "alice123",
             clientMetadata: { userId: "bob456" },
         };
-        expect(messageResource(message)).toMatchObject({
+        expect(messageResource(message, { defaultMode })).toMatchObject({
             metadata: { userId: "alice123" },
             clientMetadata: { userId: "bob456" },
             content: [{ type: "text", text: "Unchanged message." }],
         });
-        expect(messageResource({ ...message, role: "assistant" }).metadata).toEqual({});
+        expect(
+            messageResource({ ...message, role: "assistant" }, { defaultMode }).metadata,
+        ).toEqual({});
     });
 
     it("projects client-owned metadata separately on a user message", () => {
@@ -284,13 +289,16 @@ describe("messageResource", () => {
         };
 
         expect(
-            messageResource({
-                at: 100,
-                blocks: [{ type: "text", text: "Keep my metadata." }],
-                clientMetadata,
-                recordId: "message-client-metadata",
-                role: "user",
-            }),
+            messageResource(
+                {
+                    at: 100,
+                    blocks: [{ type: "text", text: "Keep my metadata." }],
+                    clientMetadata,
+                    recordId: "message-client-metadata",
+                    role: "user",
+                },
+                { defaultMode },
+            ),
         ).toEqual({
             id: "message-client-metadata",
             role: "user",
@@ -300,32 +308,84 @@ describe("messageResource", () => {
             clientMetadata,
             status: "accepted",
             delivery: "queue",
-            mode: null,
+            mode: defaultMode(),
             profile: null,
             runId: null,
         });
     });
 
+    it("projects a legacy user message stored without a mode with the default mode", () => {
+        const legacy = {
+            at: 100,
+            blocks: [{ type: "text" as const, text: "Sent before modes were recorded." }],
+            recordId: "legacy-user-message",
+            role: "user" as const,
+            runId: "legacy-run",
+        };
+        expect(Value.Check(historyMessageSchema, legacy)).toBe(true);
+
+        const projected = messageResource(legacy, { defaultMode });
+
+        expect(projected).toMatchObject({
+            role: "user",
+            status: "accepted",
+            delivery: "queue",
+            mode: defaultMode(),
+            runId: "legacy-run",
+        });
+        expect(Value.Check(messageModeSchema, projected["mode"])).toBe(true);
+    });
+
+    it("keeps the mode a user message was stored with", () => {
+        const mode = {
+            ...defaultMode(),
+            modelId: "openai/gpt-6.2-sol",
+            permissionMode: "read_only" as const,
+        };
+        expect(
+            messageResource(
+                {
+                    at: 100,
+                    blocks: [{ type: "text", text: "Read only, please." }],
+                    mode,
+                    recordId: "moded-user-message",
+                    role: "user",
+                },
+                {
+                    defaultMode: () => {
+                        throw new Error("A stored mode needs no default.");
+                    },
+                },
+            )["mode"],
+        ).toEqual(mode);
+    });
+
     it("projects an unsupported or removed request profile as null", () => {
         expect(
-            messageResource({
-                at: 100,
-                blocks: [{ type: "text", text: "Use the coding profile." }],
-                profile: "coding-agent-v3",
-                recordId: "message-profile",
-                role: "user",
-            }),
+            messageResource(
+                {
+                    at: 100,
+                    blocks: [{ type: "text", text: "Use the coding profile." }],
+                    profile: "coding-agent-v3",
+                    recordId: "message-profile",
+                    role: "user",
+                },
+                { defaultMode },
+            ),
         ).toMatchObject({ profile: null });
     });
 
     it("projects a durable system notice with its role intact", () => {
         expect(
-            messageResource({
-                at: 100,
-                blocks: [{ type: "text", text: "The workspace moved." }],
-                recordId: "system-notice",
-                role: "system",
-            }),
+            messageResource(
+                {
+                    at: 100,
+                    blocks: [{ type: "text", text: "The workspace moved." }],
+                    recordId: "system-notice",
+                    role: "system",
+                },
+                { defaultMode },
+            ),
         ).toEqual({
             id: "system-notice",
             role: "system",
@@ -337,23 +397,26 @@ describe("messageResource", () => {
 
     it("projects a compaction without model-context provenance", () => {
         expect(
-            messageResource({
-                at: 100,
-                blocks: [
-                    {
-                        type: "compaction",
-                        trigger: "automatic",
-                        status: "completed",
-                        tokensBefore: null,
-                        tokensAfter: null,
-                        failureReason: null,
-                        startedAt: 90,
-                        completedAt: 100,
-                    },
-                ],
-                recordId: "compaction-a",
-                role: "service",
-            }),
+            messageResource(
+                {
+                    at: 100,
+                    blocks: [
+                        {
+                            type: "compaction",
+                            trigger: "automatic",
+                            status: "completed",
+                            tokensBefore: null,
+                            tokensAfter: null,
+                            failureReason: null,
+                            startedAt: 90,
+                            completedAt: 100,
+                        },
+                    ],
+                    recordId: "compaction-a",
+                    role: "service",
+                },
+                { defaultMode },
+            ),
         ).toMatchObject({
             content: [{ type: "compaction" }],
         });
@@ -361,26 +424,29 @@ describe("messageResource", () => {
 
     it("projects a completed command with the same display-ready tool presentation", () => {
         expect(
-            messageResource({
-                at: 100,
-                blocks: [
-                    {
-                        type: "tool_call",
-                        callId: "calla",
-                        name: "exec_command",
-                        arguments: { cmd: "pnpm test" },
-                    },
-                    {
-                        type: "tool_result",
-                        callId: "calla",
-                        toolName: "exec_command",
-                        display: "Tool exec_command returned 9 characters.",
-                        output: "42 passed",
-                    },
-                ],
-                recordId: "message-a",
-                role: "assistant",
-            }),
+            messageResource(
+                {
+                    at: 100,
+                    blocks: [
+                        {
+                            type: "tool_call",
+                            callId: "calla",
+                            name: "exec_command",
+                            arguments: { cmd: "pnpm test" },
+                        },
+                        {
+                            type: "tool_result",
+                            callId: "calla",
+                            toolName: "exec_command",
+                            display: "Tool exec_command returned 9 characters.",
+                            output: "42 passed",
+                        },
+                    ],
+                    recordId: "message-a",
+                    role: "assistant",
+                },
+                { defaultMode },
+            ),
         ).toEqual({
             id: "message-a",
             role: "agent",
@@ -428,7 +494,7 @@ describe("messageResource", () => {
             role: "assistant" as const,
         };
 
-        expect(messageResource(historyMessage)).toMatchObject({
+        expect(messageResource(historyMessage, { defaultMode })).toMatchObject({
             metadata: { modelId: "openai/gpt-5.6-sol", providerId: "codex" },
             content: [
                 {
@@ -465,26 +531,29 @@ describe("messageResource", () => {
     });
 
     it("uses exactly the same completed tool-call shape for events and history", () => {
-        const historical = messageResource({
-            at: 100,
-            blocks: [
-                {
-                    type: "tool_call",
-                    callId: "calla",
-                    name: "exec_command",
-                    arguments: { cmd: "pnpm test" },
-                },
-                {
-                    type: "tool_result",
-                    callId: "calla",
-                    toolName: "exec_command",
-                    display: "Tool exec_command returned 9 characters.",
-                    output: "42 passed",
-                },
-            ],
-            recordId: "message-a",
-            role: "assistant",
-        });
+        const historical = messageResource(
+            {
+                at: 100,
+                blocks: [
+                    {
+                        type: "tool_call",
+                        callId: "calla",
+                        name: "exec_command",
+                        arguments: { cmd: "pnpm test" },
+                    },
+                    {
+                        type: "tool_result",
+                        callId: "calla",
+                        toolName: "exec_command",
+                        display: "Tool exec_command returned 9 characters.",
+                        output: "42 passed",
+                    },
+                ],
+                recordId: "message-a",
+                role: "assistant",
+            },
+            { defaultMode },
+        );
         const live = providerMessageContent([
             {
                 type: "toolCall",
@@ -547,7 +616,7 @@ describe("messageResource", () => {
             role: "assistant" as const,
         };
         expect(Value.Check(toolPresentationSchema, presentation)).toBe(true);
-        const historical = messageResource(historyMessage);
+        const historical = messageResource(historyMessage, { defaultMode });
         const live = providerMessageContent(
             [
                 {
@@ -573,7 +642,9 @@ describe("messageResource", () => {
 
         expect(live).toEqual(historical.content);
         expect(historical.content).toMatchObject([{ status: "completed", presentation }]);
-        expect(messageResource(historyMessage, { omitToolData: true }).content).toEqual([
+        expect(
+            messageResource(historyMessage, { defaultMode, omitToolData: true }).content,
+        ).toEqual([
             {
                 type: "tool_call",
                 id: "calledit",
@@ -662,7 +733,7 @@ describe("messageResource", () => {
             ],
         };
         const card = historyMessage.blocks[3]!.presentation;
-        const historical = messageResource(historyMessage);
+        const historical = messageResource(historyMessage, { defaultMode });
         const live = providerMessageContent(
             [
                 {
@@ -699,7 +770,9 @@ describe("messageResource", () => {
         // The published client's schemas accept exactly what the daemon serves.
         expect(Value.Check(toolPresentationSchema, media)).toBe(true);
         expect(Value.Check(toolPresentationSchema, card)).toBe(true);
-        expect(messageResource(historyMessage, { omitToolData: true }).content).toEqual([
+        expect(
+            messageResource(historyMessage, { defaultMode, omitToolData: true }).content,
+        ).toEqual([
             {
                 type: "tool_call",
                 id: "callmedia",
@@ -752,7 +825,9 @@ describe("messageResource", () => {
         expect(Value.Check(historyMessageSchema, historyMessage)).toBe(true);
 
         expect(toolResultPresentations(historyMessage).size).toBe(0);
-        expect(messageResource(historyMessage, { omitToolData: true }).content).toEqual([
+        expect(
+            messageResource(historyMessage, { defaultMode, omitToolData: true }).content,
+        ).toEqual([
             {
                 type: "tool_call",
                 id: "callstory",
@@ -846,7 +921,8 @@ describe("messageResource", () => {
         };
         expect(Value.Check(historyMessageSchema, historyMessage)).toBe(true);
 
-        const content = messageResource(historyMessage, { omitToolData: true }).content as {
+        const content = messageResource(historyMessage, { defaultMode, omitToolData: true })
+            .content as {
             presentation?: unknown;
         }[];
         const presentations = content.map((block) => block.presentation);
@@ -895,7 +971,7 @@ describe("messageResource", () => {
                 recordId: "message-a",
                 role: "assistant",
             },
-            { omitToolData: true },
+            { defaultMode, omitToolData: true },
         );
 
         expect(message.content).toEqual([

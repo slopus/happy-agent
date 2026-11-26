@@ -315,6 +315,15 @@ shutdown and does not claim that terminals or background processes have exited.
   which nothing else ever clears. The same rule applies to every sibling send path that stamps a
   mode on a message: the tier the mode claims is the tier the message must carry.
 
+- Every user message resource carries a complete `MessageMode`; the daemon never sends `null`.
+  Messages accepted by earlier daemons from outside the API (exported-bot guests without a last
+  mode, older phone and module paths) were stored without one, and the projection used to emit
+  `mode: null`, which every client had to special-case. `messageResource` now requires a
+  `defaultMode` thunk, so no call site can forget it, and ApiModule supplies the installation
+  default `GET /v0/config` reports (what a new agent gets when it names nothing, with the
+  provider's default tier). It is read only for such a message: the model catalog is computed on
+  each read, so it must stay off the per-message path. Stored rows are not rewritten.
+
 ## System bot identity
 
 - Every public bot projection includes the database-backed `systemKey`: a stable snake_case key for

@@ -58,6 +58,15 @@ identity later without making pending messages or accepted history unreadable; t
 projects as `null`. The profile is only a notice that Agent Base may need a fresh provider context,
 never feature state or model input.
 
+## Every person's message records the mode it was accepted under
+
+A person's message that arrived without a pending row or a stamped `mode`, such as an exported-bot
+guest's message in a conversation with no last mode, used to be stored with no mode, and the API
+then sent `mode: null` against a contract that requires one. Acceptance now falls back to the
+selection Agent Base accepted the message under (`scope.agent`: provider, model, effort, tier,
+permission mode), which is exactly what it ran with. A pending row or a stamped mode still wins.
+Only a selection without a model or effort, which cannot run, leaves the mode absent.
+
 ## Client metadata stays distinct from message provenance
 
 A client may attach opaque JSON to a person-authored message. Carry it through Agent Base's

@@ -11,6 +11,7 @@ import {
     diagnosticMessage,
     diagnosticText,
 } from "../support/credentialDiagnostic.js";
+import { defaultMode } from "../support/fixtures.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 
 describe("execution diagnostics are display-only history", () => {
@@ -27,7 +28,7 @@ describe("execution diagnostics are display-only history", () => {
                 diagnosticMessage.recordId,
             );
             expect(stored).toEqual(diagnosticMessage);
-            expect(messageResource(stored!)).toMatchObject({
+            expect(messageResource(stored!, { defaultMode })).toMatchObject({
                 id: diagnosticMessage.recordId,
                 role: "service",
                 content: [{ type: "text", text: diagnosticText }],

@@ -360,6 +360,67 @@ describe("HistoryModule durability", () => {
         }
     });
 
+    it("records a person's message that names no mode with the selection it was accepted under", async () => {
+        const events = new EventsModule();
+        const history = new HistoryModule(events);
+        const database = moduleDatabase(
+            [...events.migrations, ...history.migrations],
+            "history-accepted-mode-test",
+        );
+        await database.ready;
+        await resolveModuleHooks(database.context, events);
+        const hooks = await resolveModuleHooks(database.context, history);
+
+        const scope = {
+            agent: {
+                id: "agent-a",
+                provider: "codex",
+                model: "openai/gpt-5.6-sol",
+                effort: "high",
+                tier: undefined,
+                permissionMode: "workspace_write",
+            },
+        } as unknown as Parameters<NonNullable<typeof hooks.messageAcceptedTransact>>[1];
+        const stamped = {
+            providerId: "claude",
+            modelId: "anthropic/claude-opus-5-5",
+            effort: "medium",
+            serviceTier: null,
+            permissionMode: "auto",
+        };
+
+        try {
+            await hooks.messageAcceptedTransact!(database.context, scope, {
+                id: "accepted-unmoded",
+                kind: "steering",
+                message: { role: "user", content: [{ text: "From a guest.", type: "text" }] },
+                metadata: { ...USER_MESSAGE_ORIGIN_METADATA },
+                profile: null,
+            });
+            await hooks.messageAcceptedTransact!(database.context, scope, {
+                id: "accepted-moded",
+                kind: "send",
+                message: { role: "user", content: [{ text: "From a phone.", type: "text" }] },
+                metadata: { ...USER_MESSAGE_ORIGIN_METADATA, mode: stamped },
+                profile: null,
+            });
+
+            const page = await history.read(database.context, "agent-a");
+            expect(page.messages.map((record) => record.message.mode)).toEqual([
+                {
+                    providerId: "codex",
+                    modelId: "openai/gpt-5.6-sol",
+                    effort: "high",
+                    serviceTier: null,
+                    permissionMode: "workspace_write",
+                },
+                stamped,
+            ]);
+        } finally {
+            database.close();
+        }
+    });
+
     it("treats a reused record ID as a conflict instead of a replay no-op", async () => {
         const history = new HistoryModule();
         const database = moduleDatabase(history.migrations, "history-record-conflict-test");

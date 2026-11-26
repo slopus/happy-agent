@@ -407,6 +407,7 @@ import {
     settledToolCalls,
     toolResultPresentations,
 } from "./ApiMessageProjection.js";
+import { type MessageResourceOptions } from "./ApiToolPresentation.js";
 import { prepareLocalApiToken } from "./prepareLocalApiToken.js";
 import {
     agentArchivedAt,
@@ -3307,7 +3308,7 @@ export class ApiModule implements AgentModule {
                 this.#appendForAgent(agentId, "message.updated", {
                     agentId,
                     runId: message.runId ?? null,
-                    message: messageResource(message),
+                    message: this.#messageResource(message),
                 });
             }),
             this.#history.onAppend((_ctx, agentId, messages) => {
@@ -3361,7 +3362,7 @@ export class ApiModule implements AgentModule {
                             this.#journal.append("message.created", {
                                 agentId,
                                 runId: message.runId ?? null,
-                                message: messageResource(message),
+                                message: this.#messageResource(message),
                             });
                         }
                     },
@@ -4337,7 +4338,7 @@ export class ApiModule implements AgentModule {
                     if (failure === undefined) return;
                     this.#journal.append(
                         "message.created",
-                        { agentId, runId: ended.id, message: messageResource(failure) },
+                        { agentId, runId: ended.id, message: this.#messageResource(failure) },
                         event.occurredAt,
                     );
                 });
@@ -4380,7 +4381,7 @@ export class ApiModule implements AgentModule {
         compaction: Compaction,
         previous: Compaction | undefined,
     ): Promise<void> {
-        const message = messageResource(this.#compactions.historyMessage(compaction));
+        const message = this.#messageResource(this.#compactions.historyMessage(compaction));
         if (event.type === "compaction.message-created") {
             if (compaction.trigger === "manual") {
                 const run = await this.#history.run(ctx, compaction.agentId, compaction.runId);
@@ -4488,7 +4489,7 @@ export class ApiModule implements AgentModule {
                     {
                         agentId,
                         runId: requestedMessage.runId ?? underlyingRunId,
-                        message: messageResource(requestedMessage),
+                        message: this.#messageResource(requestedMessage),
                     },
                     event.occurredAt,
                 );
@@ -4517,7 +4518,7 @@ export class ApiModule implements AgentModule {
                     {
                         agentId,
                         runId: configuration.runId ?? runId,
-                        message: messageResource(configuration),
+                        message: this.#messageResource(configuration),
                     },
                     configuration.at,
                 );
@@ -4705,7 +4706,7 @@ export class ApiModule implements AgentModule {
             this.#appendForAgent(event.agentId, "message.updated", {
                 agentId: event.agentId,
                 runId,
-                message: messageResource(message),
+                message: this.#messageResource(message),
             });
         });
     }
@@ -4811,7 +4812,7 @@ export class ApiModule implements AgentModule {
         if (message === undefined) {
             throw new Error("An accepted message is missing from durable history.");
         }
-        const projected = messageResource(message);
+        const projected = this.#messageResource(message);
         const role = projected["role"];
         const fromUser = role === "user";
         const hidden = messageHiddenFromUser(message);
@@ -5289,7 +5290,7 @@ export class ApiModule implements AgentModule {
                 sendJson(response, 202, {
                     ...(await this.#focusedAgentResponse(ctx, agentId)),
                     run: await this.#runResource(ctx, run),
-                    message: messageResource(this.#compactions.historyMessage(compaction)),
+                    message: this.#messageResource(this.#compactions.historyMessage(compaction)),
                     cursor,
                 });
                 return true;
@@ -6012,7 +6013,7 @@ export class ApiModule implements AgentModule {
             const message =
                 accepted === undefined
                     ? pendingMessageResource(pending)
-                    : messageResource(accepted);
+                    : this.#messageResource(accepted);
             await this.#updateAgentMetadata(ctx, agentId, {
                 lastMode: body.mode,
                 initialMode: null,
@@ -6057,7 +6058,7 @@ export class ApiModule implements AgentModule {
         if (stored.failure.resolution !== undefined) {
             sendJson(response, 202, {
                 ...(await this.#focusedAgentResponse(ctx, agentId)),
-                message: messageResource(stored),
+                message: this.#messageResource(stored),
                 cursor,
             });
             return;
@@ -6160,14 +6161,14 @@ export class ApiModule implements AgentModule {
                     this.#journal.append("message.updated", {
                         agentId,
                         runId: resolved.runId ?? null,
-                        message: messageResource(resolved),
+                        message: this.#messageResource(resolved),
                     });
                 });
             });
         });
         sendJson(response, 202, {
             ...(await this.#focusedAgentResponse(ctx, agentId)),
-            message: messageResource(resolved),
+            message: this.#messageResource(resolved),
             cursor,
         });
     }
@@ -6214,7 +6215,7 @@ export class ApiModule implements AgentModule {
                         .filter((message) => !messageHiddenFromUser(message))
                         .flatMap((message) => {
                             const projected = projectMessageDiagnostics(
-                                messageResource(message, { omitToolData }),
+                                this.#messageResource(message, { omitToolData }),
                                 this.#canDiscloseCredentialSource(ctx),
                             );
                             return [projected];
@@ -9826,7 +9827,7 @@ export class ApiModule implements AgentModule {
             if (accepted.role !== "user") {
                 throw new ApiError(409, "conflict", "The message ID is already in use.");
             }
-            return messageResource(accepted);
+            return this.#messageResource(accepted);
         }
         const pending = (await this.#history.pending(ctx, agentId)).find(
             (message) => message.id === messageId,
@@ -11210,6 +11211,32 @@ export class ApiModule implements AgentModule {
         };
     }
 
+    #messageResource(
+        message: HistoryMessage,
+        options: MessageResourceOptions = {},
+    ): Record<string, unknown> {
+        return messageResource(message, {
+            ...options,
+            defaultMode: () => this.#defaultMessageMode(),
+        });
+    }
+
+    /**
+     * The mode of a user message stored without one, as earlier daemons stored some: the
+     * installation default `GET /v0/config` reports, what a new agent gets when it names nothing.
+     */
+    #defaultMessageMode(): MessageMode {
+        const values = this.#config.configuration.values;
+        const defaultModel = this.#config.models[0] ?? this.#config.offeredModels[0];
+        return {
+            providerId: defaultModel?.providerId ?? values.defaults.providerId ?? "",
+            modelId: defaultModel?.id ?? values.defaults.modelId,
+            effort: defaultModel?.defaultEffort ?? values.defaults.effort ?? "",
+            serviceTier: null,
+            permissionMode: values.defaults.permissionMode,
+        };
+    }
+
     async #sanitizedConfig(ctx: Context): Promise<Record<string, unknown>> {
         const values = this.#config.configuration.values;
         const { models, providers } = this.#sanitizedCatalog();
@@ -12489,20 +12516,23 @@ function boundedAdd(set: Set<string>, value: string, maximum: number): void {
 
 function pendingMessageResource(pending: HistoryPendingMessage): Record<string, unknown> {
     return {
-        ...messageResource({
-            recordId: pending.id,
-            role: "user",
-            blocks: pending.blocks,
-            at: pending.createdAt,
-            ...(pending.userId === undefined ? {} : { userId: pending.userId }),
-            ...(pending.clientMetadata === undefined
-                ? {}
-                : { clientMetadata: pending.clientMetadata }),
-            ...(pending.quickReply === undefined ? {} : { quickReply: pending.quickReply }),
-            delivery: pending.delivery,
-            mode: pending.mode,
-            profile: pending.profile ?? null,
-        }),
+        ...messageResource(
+            {
+                recordId: pending.id,
+                role: "user",
+                blocks: pending.blocks,
+                at: pending.createdAt,
+                ...(pending.userId === undefined ? {} : { userId: pending.userId }),
+                ...(pending.clientMetadata === undefined
+                    ? {}
+                    : { clientMetadata: pending.clientMetadata }),
+                ...(pending.quickReply === undefined ? {} : { quickReply: pending.quickReply }),
+                delivery: pending.delivery,
+                mode: pending.mode,
+                profile: pending.profile ?? null,
+            },
+            { defaultMode: () => pending.mode },
+        ),
         status: "pending",
         runId: null,
     };
