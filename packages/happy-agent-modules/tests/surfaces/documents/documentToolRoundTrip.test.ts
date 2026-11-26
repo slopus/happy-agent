@@ -177,9 +177,42 @@ const WRITTEN: [name: string, written: string, reads: string][] = [
     ["CRLF blank runs", "a\r\n\r\n\r\n\r\nb\r\n", "a\n\n\n\nb\n"],
     ["CRLF line ends", "a\r\n\r\nb\r\n", "a\n\nb\n"],
     ["trailing spaces on a line", "a   \n\nb \n", "a\n\nb\n"],
-    ["a two-space hard break", "a  \nb\n", "a\\\nb\n"],
-    ["a backslash hard break", "a\\\nb\n", "a\\\nb\n"],
-    ["a soft break joins the lines", "a\nb\n", "a b\n"],
+    [
+        "a newline inside a paragraph is a line break",
+        "first line\nsecond line\n",
+        "first line\nsecond line\n",
+    ],
+    ["trailing spaces before a newline add nothing", "a  \nb   \n", "a\nb\n"],
+    ["a backslash before a newline adds nothing", "a\\\nb\n", "a\nb\n"],
+    [
+        "an empty line inside a paragraph and a list item",
+        "a\n\\\nb\n\n- x\n  \\\n  y\n\nback\\\\\nslash\n",
+        "a\n\\\nb\n\n- x\n  \\\n  y\n\nback\\\\\nslash\n",
+    ],
+    ["an empty line that starts a paragraph", "\\\na\n", "\\\na\n"],
+    ["empty lines that end a paragraph", "a\n\\\n\\\n\nb\n", "a\n\\\n\\\n\nb\n"],
+    ["a paragraph that is one backslash is an empty paragraph", "a\n\n\\\n\nb\n", "a\n\n\n\nb\n"],
+    [
+        "a list item that is one backslash, with a paragraph beneath it",
+        "-\n  \\\n\n  beneath\n",
+        "-\n\nbeneath\n",
+    ],
+    ["a list item continued on the next line", "- a\n  b\n- c\n", "- a\n  b\n- c\n"],
+    [
+        "a quote, a divider and an image",
+        "> quoted\n> more\n\n---\n\n![a cat](https://img/cat.png)\n",
+        "> quoted\n> more\n\n---\n\n![a cat](https://img/cat.png)\n",
+    ],
+    [
+        "emphasis and a link across a line break",
+        "**a\nb** [c\nd](https://x.y)\n",
+        "**a\nb** [c\nd](https://x.y)\n",
+    ],
+    [
+        "a line break in a heading and a table cell cannot be written",
+        "# a\\\n\n| a |\n| --- |\n| 1 |\n",
+        "# a\\\\\n\n| a |\n| --- |\n| 1 |\n",
+    ],
     ["a code block keeps its blank lines", "```js\nx\n\n\n\ny\n```\n", "```js\nx\n\n\n\ny\n```\n"],
     ["a code block of only blank lines", "```\n\n\n\n```\n", "```\n\n\n\n```\n"],
     ["a code block between paragraphs", "a\n\n```\nx\n```\n\nb\n", "a\n\n```\nx\n```\n\nb\n"],
@@ -290,7 +323,9 @@ const WRITTEN: [name: string, written: string, reads: string][] = [
         "See [`run()`](https://example.com) and **`bold code`** and *a `b` c*.\n",
         "See [run()](https://example.com) and `bold code` and *a* `b` *c*.\n",
     ],
-    ["a quote", "> one\n>\n> two\n", "> one\n\n> two\n"],
+    ["a quote with an empty line", "> one\n>\n> two\n", "> one\n>\n> two\n"],
+    ["two quotes", "> one\n\n> two\n", "> one\n\n> two\n"],
+    ["a quote that starts and ends with an empty line", ">\n> q\n>\n", ">\n> q\n>\n"],
     ["a divider", "a\n\n---\n\nb\n", "a\n\n---\n\nb\n"],
     ["HTML stays text", "<b>bold</b>\n", "\\<b>bold\\</b>\n"],
 ];
@@ -322,7 +357,51 @@ const TYPED: [name: string, blocks: unknown[], reads: string][] = [
     ["an empty code block", [{ type: "codeBlock", content: [] }, p("a")], "```\n\n```\n\na\n"],
     ["an empty check item", [block("checkListItem"), p("a")], "- [ ]\n\na\n"],
     ["an empty quote", [block("quote"), p("a")], ">\n\na\n"],
-    ["a trailing line break", [p("a\n"), bullet("b\n\n"), p("c")], "a\n\n- b\n\nc\n"],
+    [
+        "line breaks that end a block",
+        [p("a\n"), bullet("b\n\n"), p("c")],
+        "a\n\\\n\n- b\n  \\\n  \\\n\nc\n",
+    ],
+    ["a line break", [p("first\nsecond")], "first\nsecond\n"],
+    [
+        "line breaks at the start and end of a paragraph and in a row",
+        [p("\na"), p("a\n"), p("a\n\n\nb"), p("\n")],
+        "\\\na\n\na\n\\\n\na\n\\\n\\\nb\n\n\n",
+    ],
+    [
+        "empty lines inside a list item and a quote",
+        [bullet("x\n\ny"), block("numberedListItem", "n\n"), block("quote", "q\n\nr")],
+        "- x\n  \\\n  y\n\n1. n\n   \\\n\n> q\n>\n> r\n",
+    ],
+    [
+        "code and bold text holding a line break",
+        [
+            {
+                ...p(),
+                content: [text("a\nb", { code: true }), text(" "), text("c\nd", { bold: true })],
+            },
+        ],
+        "`a`\n`b` **c\nd**\n",
+    ],
+    [
+        "a line break in a heading and a table cell",
+        [
+            block("heading", "a\nb", { level: 2 }),
+            {
+                type: "table",
+                content: {
+                    type: "tableContent",
+                    rows: [{ cells: [[text("x\ny")]] }, { cells: [[text("1")]] }],
+                },
+            },
+        ],
+        "## a b\n\n| x y |\n| --- |\n| 1 |\n",
+    ],
+    [
+        "a table row and its rule typed into one paragraph",
+        [p("| a |\n| --- |\n| 1 |"), p("a\n---"), p("a\n===")],
+        "| a |\n\\| --- |\n| 1 |\n\na\n\\---\n\na\n\\===\n",
+    ],
     ["a paragraph of one line break", [p("a"), p("\n"), p("b")], "a\n\n\n\nb\n"],
     [
         "text an underline splits",
@@ -337,8 +416,12 @@ const TYPED: [name: string, blocks: unknown[], reads: string][] = [
         "- a\n\n\n\n- b\n",
     ],
     ["spaced dashes", [p("---  -")], "\\---  -\n"],
-    ["a star after a line break", [p("a\n* b")], "a\\\n\\* b\n"],
-    ["spaced underscores after a line break", [p("a\n_ _ _")], "a\\\n_ _ \\_\n"],
+    ["a star after a line break", [p("a\n* b")], "a\n\\* b\n"],
+    [
+        "spaced underscores after a line break",
+        [p("a\n_ _ _"), p("a\n_ _ _\nb")],
+        "a\n_ _ \\_\n\na\n\\_ _ _\nb\n",
+    ],
     ["a heading that is a number sign", [block("heading", "#", { level: 2 })], "## \\#\n"],
     [
         "a code span with a pipe in a table cell",
@@ -422,7 +505,7 @@ const TYPED: [name: string, blocks: unknown[], reads: string][] = [
     ["a carriage return in text", [p("x\ry")], "x&#13;y\n"],
     ["leading and trailing spaces", [p("  a  ")], "&#32; a &#32;\n"],
     ["a paragraph of spaces", [p("a"), p("   "), p("b")], "a\n\n&#32; &#32;\n\nb\n"],
-    ["text that looks like a blank-line run", [p("a\n\n\nb")], "a\\\n\\\n\\\nb\n"],
+    ["text that looks like a blank-line run", [p("a\n\n\nb")], "a\n\\\n\\\nb\n"],
     [
         "a table with an empty header",
         [
@@ -742,19 +825,35 @@ describe("document tools round-trip Markdown", () => {
         );
     });
 
-    it("says when a line break at the end of a block is left out", async () => {
+    it("shows a line break that ends a block and keeps it through an edit elsewhere", async () => {
         const t = await desk();
         const surfaceId = await t.create();
         await t.type(surfaceId, [p("a\n"), p("b")]);
         const before = await t.blocks(surfaceId);
+        const read = (await t.call("read_document", { surfaceId })) as { omitted?: string };
+        expect(read).toMatchObject({ document: { text: "a\n\\\n\nb\n" } });
+        expect(read.omitted).toBeUndefined();
+        await t.update(surfaceId, 1, "a\n\\\n\nb, edited\n");
+        expect((await t.blocks(surfaceId))[0]).toEqual(before[0]);
+        // Taking the empty line out takes the line break out.
+        const written = await t.update(surfaceId, 2, "a\n\nb, edited\n");
+        expect(written).toMatchObject({ changed: true, document: { text: "a\n\nb, edited\n" } });
+        expect((await t.blocks(surfaceId))[0]!.content).toEqual([text("a")]);
+    });
+
+    it("says when line breaks cannot be shown", async () => {
+        const t = await desk();
+        const surfaceId = await t.create();
+        await t.type(surfaceId, [block("heading", "a\nb", { level: 2 }), p("\n"), p("c")]);
+        const before = await t.blocks(surfaceId);
         const read = await t.call("read_document", { surfaceId });
         expect(read).toMatchObject({
-            document: { text: "a\n\nb\n" },
-            omitted: expect.stringContaining("trailing line breaks"),
+            document: { text: "## a b\n\n\n\nc\n" },
+            omitted: expect.stringContaining("some line breaks"),
         });
-        // Editing another block leaves the line break where it was.
-        await t.update(surfaceId, 1, "a\n\nb, edited\n");
-        expect((await t.blocks(surfaceId))[0]).toEqual(before[0]);
+        // Editing another block leaves the line breaks where they were.
+        await t.update(surfaceId, 1, "## a b\n\n\n\nc, edited\n");
+        expect((await t.blocks(surfaceId)).slice(0, 2)).toEqual(before.slice(0, 2));
     });
 
     it("keeps a block that shows as nothing but is not an empty paragraph", async () => {

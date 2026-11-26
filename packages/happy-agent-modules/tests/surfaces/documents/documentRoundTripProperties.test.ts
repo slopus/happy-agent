@@ -37,6 +37,18 @@ const TEXTS = [
         ",",
     ),
     ..."http://a.b <http://a.b> * _".split(" "),
+    ...[
+        "\n| - |",
+        "| a |\n| - |",
+        "\n:-:",
+        "\n---",
+        "\n===",
+        "\n\\",
+        "\\\n",
+        "a\n\n\nb",
+        "\n ",
+        " \n",
+    ],
 ];
 const STYLES = [
     {},
@@ -75,7 +87,7 @@ const inline = (): Inline[] =>
               }
             : styled(),
     );
-/** Whether a block shows text in Markdown: line breaks that end it show as nothing. */
+/** Whether a block shows text in Markdown: text that is only line breaks shows as nothing. */
 const shows = (content: Inline[]) =>
     content.some((node) =>
         (node.type === "link" ? node.content : [node]).some(
@@ -180,6 +192,15 @@ const LINES = [
         "*a **b** c* d",
         "***a** b*",
         "**a ~~b~~**",
+        "\\",
+        "a\\",
+        "  \\",
+        "> a\n>\n> b",
+        "> a\n> \\",
+        ">\n> a",
+        "- a\n  \\\n  b",
+        "**a\nb**",
+        "`a\nb`",
     ],
 ];
 const markdown = (lineEnd = "\n") =>

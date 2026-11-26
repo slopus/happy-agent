@@ -187,7 +187,7 @@ describe("document Markdown", () => {
         expect(read(first)).toBe(first);
         expect(first).toContain("- [ ] open task\n- [x] done task\n- plain bullet");
         expect(first).toContain("2. Second\n   - nested bullet\n     - deeper\n3. Third");
-        expect(first).toContain("Intro with a hard\\\nbreak and *emphasis*.");
+        expect(first).toContain("Intro with a hard\nbreak and *emphasis*.");
         expect(first).toContain("| a_b | 1 \\| 2 |");
         expect(first).toContain("```ts\nconst a_b = `x`;\n```");
     });
