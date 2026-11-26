@@ -30,6 +30,7 @@ const VERSION_TIMEOUT_MS = 15_000;
 
 const models: readonly ForeignAgentModel[] = [
     model("gemini-4-carbon", "Gemini 4 Carbon", THREE, "medium"),
+    model("gemini-4-neon", "Gemini 4 Neon", [...THREE, "xhigh"], "medium"),
     model("gemini-4-argon", "Gemini 4 Argon", THREE, "medium"),
     model("gemini-3.8-flash", "Gemini 3.8 Flash", THREE, "high"),
     model("gemini-4-hydrogen", "Gemini 4 Hydrogen", [...THREE, "xhigh"], "medium"),
@@ -130,7 +131,7 @@ function happyAgyConnect(launch: AcpAgentLaunch, readOnly: boolean): AcpConnect 
  */
 function modelsFromSelector(values: readonly AcpSelectValue[]): readonly ForeignAgentModel[] {
     const grouped = new Map<string, { label: string; efforts: Set<SessionReasoningEffort> }>();
-    for (const { value, name } of values) {
+    for (const { value, name, meta } of values) {
         const effort = EFFORT_SUFFIXES.find((level) => value.endsWith(`-${level}`));
         const base = effort === undefined ? value : value.slice(0, -(effort.length + 1));
         const entry = grouped.get(base) ?? {
@@ -138,6 +139,9 @@ function modelsFromSelector(values: readonly AcpSelectValue[]): readonly Foreign
             efforts: new Set(),
         };
         if (effort !== undefined) entry.efforts.add(effort);
+        for (const advertised of advertisedEfforts(meta)) {
+            entry.efforts.add(advertised);
+        }
         grouped.set(base, entry);
     }
     return [...grouped].map(([base, { label, efforts }]) => {
@@ -152,6 +156,17 @@ function modelsFromSelector(values: readonly AcpSelectValue[]): readonly Foreign
                   : effortLevels[0]!;
         return model(base, curated?.name ?? label, effortLevels, defaultEffort);
     });
+}
+
+function advertisedEfforts(
+    meta: Readonly<Record<string, unknown>> | undefined,
+): readonly SessionReasoningEffort[] {
+    const raw = meta?.["efforts"];
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(
+        (level): level is SessionReasoningEffort =>
+            typeof level === "string" && (EFFORT_SUFFIXES as readonly string[]).includes(level),
+    );
 }
 
 /** The agent's label for a model, without the effort it appends to it. */
