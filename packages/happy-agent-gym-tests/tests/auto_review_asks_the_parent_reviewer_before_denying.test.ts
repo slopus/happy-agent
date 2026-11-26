@@ -51,10 +51,17 @@ describe("Auto review asks the parent's reviewer before denying", () => {
                 30_000,
             );
 
-            // The child's reviewer was offered the question and asked it once.
+            // The child's reviewer was offered the question, told to ask it before reading any
+            // history, and asked it once.
             const childReview = seen.reviews.find((request) => hasTool(request, "ask_parent"));
             expect(childReview).toBeDefined();
-            expect(childReview!.instructions).toContain("you have the `ask_parent` tool");
+            const { instructions } = childReview!;
+            expect(instructions).toContain("you have the `ask_parent` tool");
+            expect(instructions).toContain("use `read_agent_history`");
+            expect(instructions.indexOf("call `ask_parent` first")).toBeGreaterThan(0);
+            expect(instructions.indexOf("call `ask_parent` first")).toBeLessThan(
+                instructions.indexOf("use `read_agent_history`"),
+            );
             expect(seen.forks).toHaveLength(1);
             const fork = seen.forks[0]!;
             const forkPrompt = firstText(fork);

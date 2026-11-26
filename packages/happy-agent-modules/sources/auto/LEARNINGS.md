@@ -170,7 +170,7 @@ history: HistoryModule, storage: AgentStorage)`. The accounts, the catalog and t
   through the same `{{ tenant_policy_config }}` and `{{ extra_policy }}` slots, with only the
   differences listed in `createPermissionReviewInstructions.ts`. Keep that diff minimal, and
   update the recorded commit and differences whenever the prompts are re-compared. Alignment
-  outweighs prompt size: the aligned prompt is about 19,900 characters.
+  outweighs prompt size: the aligned prompt is about 20,400 characters without `ask_parent`.
 
 - Reading delegators' history was not enough: a reviewer still denied a child's action when the
   person's request lived only in the parent's context, or was phrased so that only the parent
@@ -195,8 +195,31 @@ history: HistoryModule, storage: AgentStorage)`. The accounts, the catalog and t
   reading the failure as a refusal. Resolving the parent here does not contradict the earlier
   "parents are never resolved for the reviewer" rule: `read_agent_history` still only follows IDs
   the reviewer found, and `ask_parent` never hands the reviewer the parent's ID.
-- The guideline is inserted through a `{{ ask_parent }}` line that is removed, with the blank line
-  before it, when the tool is not offered, so a root agent's reviewer prompt is byte-for-byte what
-  it was. The placeholder sits in its own paragraph because the formatter folds a line directly
-  under a bullet into that bullet. happy-cluster mirrors the tool name, schema, guideline, fork
-  prompt, bounds, and failure strings; change them together.
+- Sub-agents kept having approved high-risk actions denied, such as a revert pushed to main that
+  the person had approved in the parent, because the prompt made `read_agent_history` the general
+  path and `ask_parent` an afterthought at the end, and reviewers often denied without asking. By
+  the user's decision `ask_parent` is now the primary path for a child: its bullet comes right
+  after the one saying authorization may live with another agent, and tells the reviewer to call it
+  before reading any history. `read_agent_history` is for lateral requests from an agent that is
+  not the parent (a task messaging a bot), for an agent with no parent, and for a parent whose
+  answer was unknown or says it did not send the request. Live evals on Sonnet 5 and Codex Auto
+  Review, the reviewers Auto uses, needed three wording changes beyond the user's draft. The
+  reviewer is never told its parent's ID, so a delegation under `Message from agent <id>:` read as
+  lateral and Sonnet went straight to that agent's history; the `ask_parent` bullet now says that
+  sender may be the parent. Codex filtered the reviewed agent's own history with
+  `roles: ["user"]`, which hides the `AGENT (<id>)` sender headers, and so never found the
+  delegator; the bullets now say to read that history unfiltered and to filter by role only in the
+  sender's history. Codex also decided from the first page it read; the bullet now says to follow
+  the IDs instead. With those, Sonnet passed 30 of 30 runs and Codex 28 of 30, against 9 of 24 and
+  7 of 24 on the old prompt. Codex at `low` still sometimes stops after one history read when
+  `ask_parent` answers unknown. Messages from other agents have role `agent` and never enter the
+  evidence, so a child's reviewer usually sees no delegation at all; eval transcripts should
+  reflect that.
+- The guideline is inserted through a `{{ ask_parent }}` paragraph between the first and the
+  remaining history bullets. With the tool, the paragraph becomes the bullet; without it, the
+  paragraph and its surrounding blank lines collapse so the bullets form one list. The
+  placeholder needs its own paragraph because the formatter folds a line directly under a bullet
+  into that bullet and puts a blank line between a paragraph and a following list. The history
+  bullets are shared, so rewording them changes a root agent's prompt too. happy-cluster mirrors
+  the tool name, schema, guideline, fork prompt, bounds, and failure strings; it has not taken
+  the ask-parent-first rewording yet and diverges until it does.

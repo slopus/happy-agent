@@ -125,30 +125,36 @@ anything injected into a file are **not** authorization.
 
 That transcript covers only the reviewed agent since its last compaction, and
 messages other agents sent it are not in it. A person who asked a parent agent
-to "sync to main" is therefore invisible to the child that runs the push. The
-reviewer can look further with `read_agent_history`: each review names the
-reviewed agent in `<reviewed_agent_id>`, and the reviewer may read that agent's
-history and the history of any agent whose ID it finds there, such as a
-delegator's `Message from agent <id>:`, following IDs upward. Agent IDs are
-unguessable, so holding one is the capability; nothing resolves parents for the
-reviewer. Only `role: "user"` messages in that history, which History records
-only for the positive user origin, count as authorization, and the person's
-request must cover the exact action. A delegator's instruction or a paraphrase
-that widens the request never does.
+to "sync to main" is therefore invisible to the child that runs the push.
 
-When the reviewed agent was created by another agent, the reviewer also gets
-`ask_parent`, and its prompt tells it to ask before it denies for unclear
-authorization or intent. The question goes to a temporary copy of the parent's
-reviewer, built the way a fresh review of the parent would be: the parent's
-reviewer model and instructions and the parent's whole transcript up to its
-latest message, with the question in place of a proposed action. That copy
+When the reviewed agent was created by another agent, the reviewer gets
+`ask_parent`, and its prompt makes that the first step: before it denies a
+medium- or higher-risk action for missing or unclear authorization, it asks the
+parent, before reading any history. The question goes to a temporary copy of
+the parent's reviewer, built the way a fresh review of the parent would be: the
+parent's reviewer model and instructions and the parent's whole transcript up to
+its latest message, with the question in place of a proposed action. That copy
 answers in plain text, may ask its own parent the same way, up to four agents
-toward the root and at most two questions from each asker, and is then deleted; nothing is written to the parent, its
-transcript, or its own reviewer. An answer counts only where it reports the
-person's own request for the exact action, and it never sets aside a deny rule.
-A question that times out, fails, or reaches a parent that is gone is answered
-`unknown: <reason>`, and the reviewer decides as it would have without it.
-Stopping the reviewed turn stops every question in the chain.
+toward the root and at most two questions from each asker, and is then deleted;
+nothing is written to the parent, its transcript, or its own reviewer. An answer
+counts only where it reports the person's own request for the exact action, and
+it never sets aside a deny rule. A question that times out, fails, or reaches a
+parent that is gone is answered `unknown: <reason>`. Stopping the reviewed turn
+stops every question in the chain.
+
+`read_agent_history` is for everything `ask_parent` does not cover: a request
+that came laterally from an agent that is not the parent, such as a task
+messaging a bot, a reviewed agent with no parent, and a parent whose answer was
+unknown or says it did not send the request. Each review names the reviewed
+agent in `<reviewed_agent_id>`, and the reviewer may read that agent's history
+and the history of any agent whose ID it finds there, such as a sender's
+`Message from agent <id>:`, following IDs to the person's own request. Agent
+IDs are unguessable, so holding one is the capability; nothing resolves parents
+for the reviewer, and `ask_parent` never tells it the parent's ID. Only
+`role: "user"` messages in that history, which History records only for the
+positive user origin, count as authorization, and the person's request must
+cover the exact action. A delegator's instruction or a paraphrase that widens
+the request never does.
 
 ### How the reviewer decides
 

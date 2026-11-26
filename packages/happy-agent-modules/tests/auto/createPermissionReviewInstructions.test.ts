@@ -50,7 +50,13 @@ describe("createPermissionReviewInstructions", () => {
 
     it("lets the reviewer follow authorization into agent history, trusting only the person", () => {
         expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(
-            "use `read_agent_history` to look further",
+            "may still have been authorized by the person through another agent.",
+        );
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(
+            "or when there is no parent to ask, or the parent's answer was unknown or says it did not send the request, use `read_agent_history`",
+        );
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(
+            "read the history of the agent in `<reviewed_agent_id>` without a `roles` filter",
         );
         expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain("`<reviewed_agent_id>`");
         expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(
@@ -85,9 +91,9 @@ describe("createPermissionReviewInstructions", () => {
     it("pins the generated no-policy prompt to known bytes", () => {
         // Codex's bundled Guardian prompts at openai/codex f2b94ef with the differences listed in
         // `createPermissionReviewInstructions.ts`. Any drift should be a deliberate edit.
-        expect(PERMISSION_REVIEW_INSTRUCTIONS).toHaveLength(19_917);
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toHaveLength(20_395);
         expect(createHash("sha256").update(PERMISSION_REVIEW_INSTRUCTIONS).digest("hex")).toBe(
-            "6a622aeb5dc2572f4b1141a14daaeaf4536fe27299b0a29404378ca05fb7648d",
+            "c1dda1859074d6d13f53f0706a39053d201934584e30dd182ccb1e0e7f0443b3",
         );
     });
 
@@ -108,13 +114,14 @@ describe("createPermissionReviewInstructions", () => {
         expect(instructions).not.toContain("{{ extra_policy }}");
     });
 
-    it("asks the parent before denying only when the reviewer can ask", () => {
+    it("asks the parent first, before any history, only when the reviewer can ask", () => {
+        const another = "may still have been authorized by the person through another agent.";
+        const lateral = "- When the request came from an agent other than the parent";
         const withTool = createPermissionReviewInstructions(undefined, { askParent: true });
-        expect(withTool).toContain(
-            `A delegator's paraphrase that widens what the human asked for does not count.\n${ASK_PARENT_GUIDELINE}\n\n# Execution Environment`,
-        );
+        expect(withTool).toContain(`${another}\n${ASK_PARENT_GUIDELINE}\n${lateral}`);
+        expect(PERMISSION_REVIEW_INSTRUCTIONS).toContain(`${another}\n${lateral}`);
         expect(ASK_PARENT_GUIDELINE).toContain(
-            "If you would deny because the user's authorization or intent is unclear, ask first",
+            "call `ask_parent` first, before reading any history",
         );
         expect(ASK_PARENT_GUIDELINE).toContain(
             "It never sets aside a deny rule in the security policy.",
@@ -133,7 +140,7 @@ describe("createPermissionReviewInstructions", () => {
         const template = prompt("guardian-policy-template.md");
         expect(template.split("{{ tenant_policy_config }}")).toHaveLength(2);
         expect(template.split("{{ extra_policy }}")).toHaveLength(2);
-        expect(template.split("\n\n{{ ask_parent }}\n")).toHaveLength(2);
+        expect(template.split("\n\n{{ ask_parent }}\n\n")).toHaveLength(2);
     });
 
     it("uses only the built-in policy when the security policy is blank", () => {
