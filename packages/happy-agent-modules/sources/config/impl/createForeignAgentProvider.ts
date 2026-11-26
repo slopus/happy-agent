@@ -10,6 +10,7 @@ import {
     type ForeignAgent,
     type ForeignAgentStart,
     type ProviderUsage,
+    type SessionSystemMessage,
 } from "@slopus/happy-providers";
 import type { Context } from "@steve.kite/stdlib";
 
@@ -120,7 +121,9 @@ export function happyHarnessAccepts(
  *
  * The agent runs in the Happy agent's own folder — the one its compute is configured with — under
  * the permission mode the Happy agent is in when each turn starts. Whatever its own permission
- * system asks and that mode leaves open is decided through `askPermission`. Its session
+ * system asks and that mode leaves open is decided through `askPermission`, and a turn it starts
+ * on its own, such as after a background command finished, runs the agent again through `wake` so
+ * that turn is shown. Its session
  * records live in a private directory per harness and account, so two accounts never continue
  * each other's foreign sessions.
  */
@@ -129,6 +132,7 @@ export function createForeignAgentProvider(
     agentHome: string,
     onAccountUsage?: (usage: ProviderUsage) => void,
     askPermission?: ForeignAgentPermissionAsker,
+    wake?: ForeignAgentWaker,
 ): AcpProvider {
     const directory = foreignAgentDirectory(agentHome, route);
     return new AcpProvider({
@@ -150,6 +154,9 @@ export function createForeignAgentProvider(
                           AcpTurnEnvironment["askPermission"]
                       >,
                   }),
+            ...(wake === undefined
+                ? {}
+                : { wake: (notice: SessionSystemMessage) => wake(ctx, notice) }),
         }),
         profile: route.agent.profile,
     });
@@ -188,6 +195,9 @@ export type ForeignAgentPermissionAsker = (
     question: AcpPermissionQuestion,
     signal: AbortSignal,
 ) => Promise<HarnessPermissionDecision>;
+
+/** Runs `ctx`'s agent again with `notice`, for a turn its foreign agent started on its own. */
+export type ForeignAgentWaker = (ctx: Context, notice: SessionSystemMessage) => void;
 
 /** The private directory one route keeps its state in. */
 export function foreignAgentDirectory(agentHome: string, route: ForeignAgentRoute): string {
