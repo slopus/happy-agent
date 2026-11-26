@@ -1,4 +1,5 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import { Type, type Static } from "@sinclair/typebox";
 
 /**
  * The agent side of ACP that {@link AcpSession} drives. An ACP server process provides it over
@@ -58,6 +59,61 @@ export const ACP_BRIDGED_CALL_META = "happy/bridgedCall";
  * driver that can pass a reason on to its model.
  */
 export const ACP_REFUSAL_REASON_META = "happy/refusalReason";
+
+/**
+ * Extension notification an agent sends when it starts a turn on its own while no prompt is open,
+ * such as Claude Code answering a background command that just finished: `{ sessionId }`. Every
+ * update until the matching {@link ACP_TURN_ENDED} belongs to that turn. Agents that never start
+ * a turn on their own never send it.
+ */
+export const ACP_TURN_STARTED = "_happy/turn_started";
+
+/**
+ * Extension notification that ends a turn announced with {@link ACP_TURN_STARTED}, in the shape
+ * of {@link acpTurnEndedSchema}: how it stopped and what it used, or why it failed.
+ */
+export const ACP_TURN_ENDED = "_happy/turn_ended";
+
+export const acpTurnEndedSchema = Type.Union([
+    Type.Object({
+        sessionId: Type.String(),
+        stopReason: Type.Union([
+            Type.Literal("end_turn"),
+            Type.Literal("max_tokens"),
+            Type.Literal("max_turn_requests"),
+            Type.Literal("refusal"),
+            Type.Literal("cancelled"),
+        ]),
+        usage: Type.Optional(
+            Type.Object({
+                inputTokens: Type.Number(),
+                outputTokens: Type.Number(),
+                totalTokens: Type.Number(),
+                cachedReadTokens: Type.Optional(Type.Number()),
+                cachedWriteTokens: Type.Optional(Type.Number()),
+            }),
+        ),
+    }),
+    Type.Object({ sessionId: Type.String(), error: Type.String() }),
+]);
+
+export type AcpTurnEnded = Static<typeof acpTurnEndedSchema>;
+
+/**
+ * Extension notification an agent sends whenever the work it keeps running after its turns
+ * changes, in the shape of {@link acpBackgroundWorkSchema}: `running` is how many of its own
+ * background tasks are running now — commands, monitors, subagents or workflows that outlived the
+ * tool call that started them, such as Claude Code's `run_in_background` commands. Each
+ * notification replaces the last; agents that never send it have no background work Happy sees.
+ */
+export const ACP_BACKGROUND_WORK = "_happy/background_work";
+
+export const acpBackgroundWorkSchema = Type.Object({
+    sessionId: Type.String(),
+    running: Type.Integer({ minimum: 0 }),
+});
+
+export type AcpBackgroundWork = Static<typeof acpBackgroundWorkSchema>;
 
 /** Start a foreign agent working in `cwd` that reports to `client`. */
 export type AcpConnect = (cwd: string, client: acp.Client) => Promise<AcpConnection>;

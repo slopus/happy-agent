@@ -38,8 +38,10 @@ import {
     foreignAgentRoutes,
     happyHarnessAccepts,
     isForeignAgentProvider,
+    type ForeignAgentBackgroundWorkReporter,
     type ForeignAgentConfiguredProvider,
     type ForeignAgentPermissionAsker,
+    type ForeignAgentWaker,
 } from "./createForeignAgentProvider.js";
 import { foreignAgentModels } from "./foreignAgentModels.js";
 import { CredentialDiagnosticSources } from "./credentialDiagnosticSanitizer.js";
@@ -610,6 +612,8 @@ export function agentProviders(
     accountFailures?: ProviderAccountFailures,
     askHarnessPermission?: ForeignAgentPermissionAsker,
     readConfiguration: () => HappyAgentConfiguration = () => configuration,
+    wakeForeignAgent?: ForeignAgentWaker,
+    reportForeignBackgroundWork?: ForeignAgentBackgroundWorkReporter,
 ): AgentProviders {
     const providers = new AgentProviders();
     const retryLimit = configuration.values.settings.inferenceMaxRetries;
@@ -668,6 +672,8 @@ export function agentProviders(
                                   configuration.paths.agentHome,
                                   onAccountUsage,
                                   askHarnessPermission,
+                                  wakeForeignAgent,
+                                  reportForeignBackgroundWork,
                               )
                             : await createProvider(
                                   id,

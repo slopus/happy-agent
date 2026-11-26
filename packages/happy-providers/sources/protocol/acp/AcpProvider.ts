@@ -2,6 +2,7 @@ import type { Context } from "@steve.kite/stdlib";
 
 import { BaseProvider } from "@/core/BaseProvider.js";
 import type { ProviderModality } from "@/core/ProviderModality.js";
+import type { SessionSystemMessage } from "@/core/SessionContext.js";
 import type { SessionOptions } from "@/core/SessionOptions.js";
 import type { SessionReasoningEffort } from "@/core/SessionRunRequest.js";
 import type { AcpConnect } from "@/protocol/acp/AcpConnection.js";
@@ -51,6 +52,20 @@ export interface AcpTurnEnvironment {
         question: AcpPermissionQuestion,
         signal: AbortSignal,
     ) => Promise<AcpPermissionAnswer | AcpPermissionRefusal>;
+    /**
+     * Deliver `notice` to the agent as a hidden system message so it runs again. Called once for
+     * each turn the foreign agent starts on its own, such as after a background command finished;
+     * the run it starts shows that turn. Without it, such a turn is shown only if something else
+     * runs the agent while it is still held.
+     */
+    readonly wake?: (notice: SessionSystemMessage) => void;
+    /**
+     * Report how many background tasks the foreign agent is running now: work it keeps going after
+     * its turn ended, such as a background command or subagent. Called with each new count, and
+     * with 0 once that work is gone with the agent's process or its session. Without it, such work
+     * is not reported anywhere.
+     */
+    readonly backgroundWork?: (running: number) => void;
 }
 
 /** One ACP session configuration option to set before a prompt. */

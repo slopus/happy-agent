@@ -555,3 +555,7 @@ agent's running run as `aborted/abort` when Events is not answering it, announce
 `run.finished`, and bumps the agent's version. A manual compaction's run is skipped, since the
 abort already cancelled the compaction and Compactions ends that run. A failure here is logged;
 the stop was already accepted.
+
+## A foreign harness's background tasks count as running processes
+
+A Claude Code conversation looked finished while a background command or subagent it had started was still running: those run inside Claude Code's own process, so the agent was idle with no processes. Keeping the turn open until they end was rejected, because a drain and an agent swap wait for open turns and a dev server never ends. The API now adds the count Config reports through `onForeignAgentBackgroundWork` to the agent's `processes.running`, in snapshots and in `agent.updated`. The tasks have no process objects, so neither the `process.*` events nor the activity endpoint list them, and a process `DELETE` cannot stop them. Aborting a run in progress ends them with the harness; aborting or archiving an idle agent does not reach them. The count is kept only in memory, because the tasks end with the daemon. Each agent has at most one announcement pending, which reads the latest count when it runs, so a burst of changes costs a few updates. A failed announcement is tried again up to eight times, and one for an agent deleted meanwhile is dropped.

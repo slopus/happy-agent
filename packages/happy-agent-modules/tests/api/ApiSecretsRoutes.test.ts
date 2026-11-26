@@ -327,6 +327,7 @@ async function secretsApiFixture() {
     );
     const config = {
         onDefaultModelChanged: () => () => undefined,
+        onForeignAgentBackgroundWork: () => () => undefined,
         onProviderServiceTiersChanged: () => () => undefined,
         configuration: {
             paths: { agentHome: directory, tokenPath: join(directory, "api-token") },

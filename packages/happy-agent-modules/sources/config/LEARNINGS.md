@@ -653,6 +653,10 @@ A chat UI action sets the default model through `setDefaultModel`, not through t
 nothing told clients it changed. Config now calls `onDefaultModelChanged` listeners after the
 write, and the API announces `config.updated` from there for every caller.
 
+## A foreign agent's own turn wakes the agent
+
+Claude Code starts a turn by itself when a background command it started finishes. That turn's output arrived after the prompt had ended, when no Happy run was reading, and was dropped, and Agent Base had no reason to run the agent again. A foreign agent provider's turn environment now carries `wake`, which config answers by sending the provider's hidden system notice to the agent through the agent system handed to its `beforeStart`. Config sends it itself rather than through a listener another module registers, because it already builds the providers and needs nothing but the agent system to deliver a message.
+
 ## A harness's permission ask reaches the reviewer, then the person
 
 Foreign-agent providers are built in config, but reviewing belongs to permissions and asking the
@@ -685,3 +689,7 @@ credentials. It now reports three things and keeps nothing:
   `expires_at`, and Claude's `expiresAt` from the macOS keychain or `.credentials.json`. Grok and
   Claude record no renewal time, so their file's modification time stands in. An API key or a
   missing credential has no login. A setup token has one whose times are unknown.
+
+## A foreign agent's background tasks reach the API as a count
+
+A Claude Code conversation looked finished while a background command or subagent it had started was still running, because those run inside Claude Code's own process and Happy never saw them. A foreign agent provider's turn environment now carries `backgroundWork`, the number of such tasks running now, and config passes each change to its `onForeignAgentBackgroundWork` listeners together with the agent the context names, as it passes account usage on. It is a listener rather than something config does itself, because only the API has anything to show it on. A context that names no agent reports nothing, and a listener that throws does not keep the count from the others.

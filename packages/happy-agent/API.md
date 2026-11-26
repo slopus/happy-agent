@@ -7790,7 +7790,17 @@ Fields:
   are running right now (`running`). Changes to either count are `agent.updated` events. The
   subagents themselves are listed by `GET /v0/agents/:agentId/activity`.
 - `processes` — how many background processes started by this agent are running right now.
-  Process lifecycle detail travels in the `process.*` events and the activity endpoint.
+  Process lifecycle detail travels in the `process.*` events and the activity endpoint. For an
+  agent whose turns run in a foreign harness that reports the work it keeps running, such as
+  Claude Code, the count also includes that harness's own background tasks — its background
+  commands, monitors, subagents and workflows — from the moment each one runs in the background,
+  during a turn or after it, until it ends. Those tasks have no process objects: they appear in
+  neither the `process.*` events nor the activity endpoint, and
+  `DELETE /v0/agents/:agentId/processes/:processId` cannot stop them. Aborting a run in progress
+  ends them together with the harness. Aborting an idle agent does not reach them, and neither
+  does archiving it or the workspace, project or bot it belongs to, since archiving stops work by
+  the same abort. A change to their number is an `agent.updated` event like any other change to
+  this count.
 - `pendingQuestionId` — the ID of the open question when the run is waiting on the person, or
   `null`. See "Questions" below.
 - `unread` — set when the agent finished work the user has not looked at: why (`reason`) and
@@ -10351,7 +10361,9 @@ added to public history and does not queue a new conversation message.
 
 Aborting an idle agent still kills and records a notice for its background processes, as well as
 aborting any active descendant runs and their processes. It is a no-op only when the complete
-subtree has no active run and no running background process.
+subtree has no active run and no running background process. A foreign harness's own background
+tasks, which the agent object's `processes` count includes, are not among them: an idle agent's
+abort does not reach the harness.
 
 ### `POST /v0/agents/:agentId/compact`
 
@@ -10636,7 +10648,8 @@ final process object; `404` when the agent has no such process.
 
 Everything the agent has set in motion, in one snapshot: every subagent it ever spawned and
 every background process it ever ran, each with its current state. This is the drill-down
-behind the `subagents` and `processes` counts on the agent object.
+behind the `subagents` and `processes` counts on the agent object, except for a foreign
+harness's own background tasks, which `processes` counts without listing them here.
 
 Response — `200`:
 
