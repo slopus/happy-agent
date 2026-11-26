@@ -17,12 +17,18 @@ export type OmittedContent =
     | "alignment"
     | "toggles"
     | "nesting"
-    | "trailing line breaks"
+    | "some line breaks"
     | "some formatting";
 
 type Text = { type: "text"; text: string; styles?: Record<string, unknown> };
 type Link = { type: "link"; href: string; content: Text[] };
-type Context = { omitted: Set<OmittedContent>; table: boolean; singleLine: boolean };
+type Context = {
+    omitted: Set<OmittedContent>;
+    table: boolean;
+    singleLine: boolean;
+    /** A quote writes an empty line as its mark alone, so its empty lines stay empty here. */
+    quote?: boolean;
+};
 
 const LIST_TYPES = new Set([
     "bulletListItem",
@@ -148,7 +154,14 @@ function ownMarkdown(block: DocumentBlock, number: number, omitted: Set<OmittedC
         case "checkListItem":
             return prefixed(`- [${props["checked"] === true ? "x" : " "}] `, lines());
         case "quote":
-            return lines().map((line) => (line === "" ? ">" : `> ${line}`));
+            return inlineMarkdown(block.content, {
+                omitted,
+                table: false,
+                singleLine: false,
+                quote: true,
+            })
+                .split("\n")
+                .map((line) => (line === "" ? ">" : `> ${line}`));
         case "codeBlock": {
             const code = plainText(block.content);
             const fence = "`".repeat(Math.max(3, longestRun(code, "`") + 1));
@@ -229,7 +242,12 @@ function inlineMarkdown(content: unknown, context: Context): string {
         const markdown = escapeLines(renderInline(runs, context, level), context);
         if (level === "noEmphasis" || level === "plain") context.omitted.add("some formatting");
         // A table row gives up the `\` of every `\|` when it is cut into cells.
-        const read = context.table ? markdown.replaceAll("\\|", "|") : markdown;
+        const read = context.table
+            ? markdown.replaceAll("\\|", "|")
+            : context.quote === true
+              ? // The quote mark carries an empty line; read alone, it is a line of one backslash.
+                markdown.replace(/^$/gm, "\\")
+              : markdown;
         if (sameInline(parseInlineMarkdown(read), expected(runs, level))) return markdown;
     }
     return escapeLines(escapeText(plainText(content), context, false), context);
@@ -248,23 +266,64 @@ function normalizeInline(content: unknown, context: Context): (Text | Link)[] {
         const kept: Record<string, true> = {};
         for (const key of ["bold", "italic", "strike", "code"])
             if (styles[key] === true) kept[key] = true;
-        const value = context.singleLine ? node.text.replaceAll("\n", " ") : node.text;
-        return { type: "text", text: value, styles: kept };
+        return { type: "text", text: node.text, styles: kept };
     };
     const out: (Text | Link)[] = [];
+    const plain = (breaks: number) => {
+        if (breaks > 0) out.push({ type: "text", text: "\n".repeat(breaks), styles: {} });
+    };
     for (const node of content as (Text | Link)[]) {
-        if (node?.type === "link")
-            out.push({
-                type: "link",
-                href: node.href,
-                content: sharedWhitespace(
-                    splitEdges(node.content.map(text).filter((child) => child.text !== "")),
-                ) as Text[],
-            });
-        else if (node?.type === "text" && node.text !== "") out.push(text(node));
+        if (node?.type === "link") {
+            const linked = node.content.map(text).filter((child) => child.text !== "");
+            // The editor keeps a line break beside a link inside it. It is not the link's text.
+            plain(dropEdgeBreaks(linked, "start"));
+            const after = dropEdgeBreaks(linked, "end");
+            if (linked.length > 0)
+                out.push({
+                    type: "link",
+                    href: node.href,
+                    content: sharedWhitespace(splitEdges(linked)) as Text[],
+                });
+            plain(after);
+        } else if (node?.type === "text" && node.text !== "") out.push(text(node));
     }
-    if (dropTrailingBreaks(out)) context.omitted.add("trailing line breaks");
-    return mergeRuns(sharedWhitespace(splitEdges(mergeRuns(out))));
+    return mergeRuns(sharedWhitespace(splitEdges(mergeRuns(lineBreaks(out, context)))));
+}
+
+/**
+ * A line break is a newline in the Markdown, where Markdown has a place for one. A heading and
+ * a table cell are one line, so a break inside them reads as a space and one at their edge as
+ * nothing. Text that is only line breaks reads as no text, except in a quote, whose mark shows
+ * each empty line. Code cannot hold a newline, so it ends before a break and starts again after.
+ */
+function lineBreaks(nodes: (Text | Link)[], context: Context): (Text | Link)[] {
+    const texts = nodes.flatMap((node) => (node.type === "link" ? node.content : [node]));
+    if (!texts.some((node) => node.text.includes("\n"))) return nodes;
+    if (context.singleLine) {
+        context.omitted.add("some line breaks");
+        dropEdgeBreaks(nodes, "start");
+        dropEdgeBreaks(nodes, "end");
+        const spaced = (node: Text): Text => ({ ...node, text: node.text.replaceAll("\n", " ") });
+        return nodes.map((node) =>
+            node.type === "link" ? { ...node, content: node.content.map(spaced) } : spaced(node),
+        );
+    }
+    if (context.quote !== true && texts.every((node) => /^\n*$/.test(node.text))) {
+        context.omitted.add("some line breaks");
+        return [];
+    }
+    return nodes.flatMap((node): (Text | Link)[] =>
+        node.type === "text" && node.styles?.["code"] === true
+            ? node.text
+                  .split(/(\n+)/)
+                  .filter((part) => part !== "")
+                  .map((part) =>
+                      part.startsWith("\n")
+                          ? { ...node, text: part, styles: {} }
+                          : { ...node, text: part },
+                  )
+            : [node],
+    );
 }
 
 /**
@@ -293,25 +352,24 @@ function splitEdges(nodes: (Text | Link)[]): (Text | Link)[] {
     });
 }
 
-/**
- * A line break that ends a block shows as nothing in Markdown: a `\` there is a backslash, not a
- * break. Leave such breaks out, so a block reads as text that parses back to the same block.
- */
-function dropTrailingBreaks(nodes: (Text | Link)[]): boolean {
-    let dropped = false;
-    for (let last = nodes.at(-1); last !== undefined; last = nodes.at(-1)) {
-        if (last.type === "link") {
-            dropped = dropTrailingBreaks(last.content) || dropped;
-            if (last.content.length > 0) break;
+/** Take the line breaks off one end of a block's content, and say how many there were. */
+function dropEdgeBreaks(nodes: (Text | Link)[], end: "start" | "end"): number {
+    let dropped = 0;
+    const edge = () => (end === "start" ? nodes[0] : nodes.at(-1));
+    for (let node = edge(); node !== undefined; node = edge()) {
+        if (node.type === "link") {
+            dropped += dropEdgeBreaks(node.content, end);
+            if (node.content.length > 0) break;
         } else {
-            const kept = last.text.replace(/\n+$/, "");
-            dropped ||= kept !== last.text;
+            const kept = node.text.replace(end === "start" ? /^\n+/ : /\n+$/, "");
+            dropped += node.text.length - kept.length;
             if (kept !== "") {
-                nodes[nodes.length - 1] = { ...last, text: kept };
+                nodes[end === "start" ? 0 : nodes.length - 1] = { ...node, text: kept };
                 break;
             }
         }
-        nodes.pop();
+        if (end === "start") nodes.shift();
+        else nodes.pop();
     }
     return dropped;
 }
@@ -623,18 +681,19 @@ function escapeText(text: string, context: Context, inLink: boolean): string {
 }
 
 /**
- * Turn hard breaks into `\` line ends and protect every line from block syntax. A heading's text
- * and a table cell cannot start a block, so there only the whitespace at their ends is kept.
+ * Protect every line from block syntax. A line break is a newline, and an empty line inside the
+ * text is a line holding only a backslash, because a blank line would end the block. A heading's
+ * text and a table cell are one line and cannot start a block, so there only the whitespace at
+ * their ends is kept.
  */
 function escapeLines(markdown: string, context: Context): string {
     const lines = markdown.split("\n");
+    if (context.singleLine) return lines.map((line) => escapeLine(line, false)).join(" ");
     return lines
-        .map((line, index) => {
-            let escaped = escapeLine(line, !context.singleLine);
-            if (index < lines.length - 1) escaped = `${escaped}\\`;
-            return escaped;
-        })
-        .join(context.singleLine ? " " : "\n");
+        .map((line) =>
+            line === "" && lines.length > 1 && context.quote !== true ? "\\" : escapeLine(line),
+        )
+        .join("\n");
 }
 
 /**
@@ -657,7 +716,9 @@ function escapeStart(rest: string): string {
         /^#{1,6}(\s|$)/.test(rest) ||
         rest.startsWith(">") ||
         /^[-+*](\s|$)/.test(rest) ||
-        /^(?:=+[ \t]*|-[- \t]*)$/.test(rest) ||
+        /^(?:=+[ \t]*|-[- \t]*|_[_ \t]*)$/.test(rest) ||
+        // The rule beneath a table's first row: after a line of text it would make both a table.
+        (/[|:]/.test(rest) && /^[|:\- \t]*-[|:\- \t]*$/.test(rest)) ||
         rest.startsWith("~~~")
     )
         return `\\${rest}`;

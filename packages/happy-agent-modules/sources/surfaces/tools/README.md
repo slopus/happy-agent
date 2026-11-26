@@ -16,7 +16,9 @@ small change costs a few tokens instead of the document twice. A write applies
 only the difference from that version, so people's concurrent edits survive, and it is refused
 with an explanation when the document holds content Markdown cannot represent. Blank lines are
 content: blocks are one blank line apart and every two more blank lines are an empty paragraph,
-so an agent removes or adds empty paragraphs by writing fewer or more of them. Reads skip review;
+so an agent removes or adds empty paragraphs by writing fewer or more of them. A newline inside
+a paragraph, list item, or quote is a line break, and an empty line there is a line holding only
+a backslash; a quote shows it as its mark alone. Reads skip review;
 writes require shared-data Auto review without filesystem elevation.
 
 `create_document_surface` is in the document array, so every agent can make a document. An agent

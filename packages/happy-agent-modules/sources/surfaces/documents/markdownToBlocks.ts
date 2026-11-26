@@ -18,6 +18,7 @@ export type MarkdownBlock = {
 
 const markdown = new MarkdownIt("commonmark", { html: false }).enable(["table", "strikethrough"]);
 const CHECKBOX = /^\[( |x|X)\](?:[ \t]|$)/;
+const LIST_ITEMS = new Set(["bulletListItem", "numberedListItem", "checkListItem"]);
 const CONTAINERS = new Set(["blockquote_open", "bullet_list_open", "ordered_list_open"]);
 
 /**
@@ -27,6 +28,9 @@ const CONTAINERS = new Set(["blockquote_open", "bullet_list_open", "ordered_list
  * Blank lines carry empty paragraphs, the way `blocksToMarkdown` writes them: blocks are a blank
  * line apart and an empty paragraph is an empty block, so every two blank lines beyond the first
  * between two blocks are one empty paragraph. One stray blank line is nobody's paragraph.
+ *
+ * A newline inside a paragraph, quote, or list item is a line break, and a line holding only a
+ * backslash is an empty line there. Trailing spaces or a backslash before a newline add nothing.
  */
 export function markdownToBlocks(input: string): MarkdownBlock[] {
     const source = input.replace(/\r\n?/g, "\n");
@@ -73,7 +77,7 @@ export function markdownToBlocks(input: string): MarkdownBlock[] {
                     visible.length === 1 && visible[0]!.type === "image" ? visible[0]! : undefined;
                 result.push(
                     image === undefined
-                        ? { type: "paragraph", content: inline(children) }
+                        ? { type: "paragraph", content: textLines(tokens[index + 1]) }
                         : {
                               type: "image",
                               props: {
@@ -95,11 +99,14 @@ export function markdownToBlocks(input: string): MarkdownBlock[] {
                 result.push({ type: "divider" });
                 index += 1;
             } else if (token.type === "blockquote_open") {
+                const whole = quote(token);
+                if (whole !== undefined) {
+                    result.push(whole);
+                    continue;
+                }
                 index += 1;
                 const inner = blocks("blockquote_close");
                 index += 1;
-                // A quote mark with nothing after it is a quote block nobody has typed into yet.
-                if (inner.length === 0) result.push({ type: "quote" });
                 for (const block of inner)
                     result.push(block.type === "paragraph" ? { ...block, type: "quote" } : block);
             } else if (token.type === "bullet_list_open" || token.type === "ordered_list_open") {
@@ -109,6 +116,41 @@ export function markdownToBlocks(input: string): MarkdownBlock[] {
             } else index += 1;
         }
         return result;
+    };
+    /**
+     * A quote that holds only text is one block: each of its lines is a line of the quote, and
+     * a line that is the quote mark alone is an empty line. `undefined` when it holds any other
+     * kind of block, which the editor's quote cannot.
+     */
+    const quote = (open: Token): MarkdownBlock | undefined => {
+        const paragraphs: Token[] = [];
+        let at = index + 1;
+        for (; tokens[at] !== undefined && tokens[at]!.type !== "blockquote_close"; at += 3) {
+            const text = tokens[at + 1];
+            if (tokens[at]!.type !== "paragraph_open" || text?.map == null) return undefined;
+            const shown = (text.children ?? []).filter((child) => child.type !== "softbreak");
+            if (shown.length === 1 && shown[0]!.type === "image") return undefined;
+            paragraphs.push(text);
+        }
+        const [start, limit] = open.map ?? [line, line];
+        // The quote ends at its last line that holds anything; blank lines after it are a gap.
+        let end = Math.max(limit, ...paragraphs.map((text) => text.map![1]));
+        while (end > start + 1 && /^[ \t]*$/.test(lines[end - 1]!)) end -= 1;
+        const own = lines
+            .slice(start, end)
+            .map((text) => text.replace(/^[ \t]*(?:>[ \t]?)?/, "").trim());
+        const parsed = paragraphs.flatMap((text) =>
+            text.content.split("\n").map((part) => part.trim()),
+        );
+        // Inside other containers the lines carry marks that are not this quote's.
+        if (own.filter((text) => text !== "").join("\n") !== parsed.join("\n")) return undefined;
+        // Read as one text, the way a paragraph with these lines reads.
+        const content = parseInlineMarkdown(
+            own.map((text) => (text === "" ? "\\" : text)).join("\n"),
+        );
+        index = at + 1;
+        line = end;
+        return content.length === 0 ? { type: "quote" } : { type: "quote", content };
     };
     const list = (ordered: boolean): MarkdownBlock[] => {
         const close = ordered ? "ordered_list_close" : "bullet_list_close";
@@ -125,7 +167,15 @@ export function markdownToBlocks(input: string): MarkdownBlock[] {
             // Only a paragraph is the item's own text; an item may start with a nested block.
             const own = first?.type === "paragraph";
             const content = own && Array.isArray(first.content) ? first.content : [];
-            const children = first === undefined || own ? rest : [first, ...rest];
+            const beneath = first === undefined || own ? rest : [first, ...rest];
+            // An item whose own line is empty has no text for another kind of block to sit
+            // beneath, and reads with that block after it. It is stored the way it reads.
+            const apart =
+                own &&
+                content.length === 0 &&
+                beneath.length > 0 &&
+                !LIST_ITEMS.has(beneath[0]!.type);
+            const children = apart ? [] : beneath;
             items.push(
                 checkbox === null
                     ? { type: ordered ? "numberedListItem" : "bulletListItem", content, children }
@@ -136,6 +186,7 @@ export function markdownToBlocks(input: string): MarkdownBlock[] {
                           children,
                       },
             );
+            if (apart) items.push(...beneath);
         }
         index += 1;
         return items;
@@ -162,7 +213,21 @@ export function markdownToBlocks(input: string): MarkdownBlock[] {
 
 /** Parse one block's inline Markdown into styled text and links. */
 export function parseInlineMarkdown(source: string): MarkdownInline[] {
-    return inline(markdown.parseInline(source, {})[0]?.children);
+    return textLines(markdown.parseInline(source, {})[0]);
+}
+
+/**
+ * The inline content of a block whose text may span lines. A line holding only a backslash is
+ * an empty line. Markdown already reads it that way wherever a line follows; on the last line
+ * the backslash would be text, so it is taken out here.
+ */
+function textLines(token: Token | undefined): MarkdownInline[] {
+    const children = token?.children ?? [];
+    const last = children.at(-1);
+    const ends = token?.content.split("\n").at(-1)?.trim() === "\\";
+    return inline(
+        ends && last?.type === "text" && last.content === "\\" ? children.slice(0, -1) : children,
+    );
 }
 
 function inline(tokens: Token[] | null | undefined): MarkdownInline[] {
@@ -187,9 +252,8 @@ function inline(tokens: Token[] | null | undefined): MarkdownInline[] {
                 else push(token.content);
                 break;
             case "softbreak":
-                push(" ");
-                break;
             case "hardbreak":
+                // Every newline inside a block is a line break, however the line before it ends.
                 push("\n");
                 break;
             case "strong_open":

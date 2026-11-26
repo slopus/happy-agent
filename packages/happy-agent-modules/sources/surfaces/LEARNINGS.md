@@ -232,8 +232,7 @@ empty check item became a bullet reading `[ ]`; an empty bullet took the text of
 nested beneath it; and a bold run ending in a space made its whole block read without
 formatting, which an agent edit then removed for good. The rule the module now holds is that
 the Markdown a document reads as parses back to the same blocks. Code is code alone and plain
-text inside a link. A line break that ends a block is left out and named in what the read
-omits. Formatted runs are joined before escaping and keep whitespace outside their delimiters.
+text inside a link. Formatted runs are joined before escaping and keep whitespace outside their delimiters.
 Empty quotes, check items, and nested list items read and write as themselves. A seeded
 property test generates editor documents, Markdown, and edits and holds all three directions
 to this; set `DOCUMENT_ROUND_TRIP_SEED` and `DOCUMENT_ROUND_TRIP_RUNS` to search further. One
@@ -250,6 +249,22 @@ chosen. A list item without text is its marker alone and an empty nested paragra
 line, because trailing spaces show as nothing but an exact replacement must match them. Spaces
 at the edge of code stay inside its code span. A carriage return in text is written as a
 character reference.
+
+## A newline inside a block is a line break
+
+Documents followed CommonMark for line breaks: a newline inside a paragraph joined the two lines
+with a space, and a line break was a backslash before the newline. The cloud's documents read
+every newline inside a block as a line break, so the same Markdown meant different documents in
+the two products. Kirill decided "align, do what cloud does". A newline inside a paragraph, list
+item, or quote is now a line break, read and written as a bare newline. Trailing spaces or a
+backslash before the newline add nothing. An empty line inside a block, between two breaks or
+at either end, is a line holding only a backslash, because a blank line would end the block; a
+quote writes it as its mark alone, and a backslash a person typed is written escaped. So a line
+break that ends a block now shows, where it used to be left out. A heading and a table cell are
+one line: a break inside them reads as a space and the read says some line breaks are not
+shown, as it does for a block that holds nothing but line breaks, which reads as empty. The
+editor keeps a line break beside a link inside the link; it is written outside it. The
+`update_document` description says how line breaks are written.
 
 ## Calendars expand recurrence on the daemon, from series records
 
