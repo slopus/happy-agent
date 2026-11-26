@@ -215,6 +215,18 @@ history: HistoryModule, storage: AgentStorage)`. The accounts, the catalog and t
   `ask_parent` answers unknown. Messages from other agents have role `agent` and never enter the
   evidence, so a child's reviewer usually sees no delegation at all; eval transcripts should
   reflect that.
+- Scripted gym inference cannot show how a real reviewer reads the prompt, so the user asked
+  for the real-model eval to be kept, but run only when working on this area: after any change to
+  the reviewer prompt, `ask_parent`, or how the reviewer reads history. It is
+  `tests/auto/autoReviewPrompt.live.test.ts` with its scenarios in `tests/auto/reviewerEval/`, and
+  it runs only through `pnpm --filter @slopus/happy-agent-modules eval:auto-review`, which sets
+  `HAPPY_AGENT_AUTO_REVIEW_EVAL=1`. It reviews each scenario on the reviewer routes Auto would
+  pick for this installation's own Claude and Codex accounts, resolved through the configuration
+  at runtime, with `ask_parent`, `read_agent_history` and the shell answered from the scenario. It
+  writes a report to `.context/auto-review-eval/` and fails only when a review could not run; pass
+  rates vary by run, so compare them by eye. Baseline when the prompt was made ask-parent-first:
+  Sonnet 5 passed 30 of 30 and Codex Auto Review 28 of 30 in development, with Codex's misses in
+  the unknown-answer fallback (s3), and both passed 24 of 24 in the suite's first run.
 - The guideline is inserted through a `{{ ask_parent }}` paragraph between the first and the
   remaining history bullets. With the tool, the paragraph becomes the bullet; without it, the
   paragraph and its surrounding blank lines collapse so the bullets form one list. The

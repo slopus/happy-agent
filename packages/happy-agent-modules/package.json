@@ -53,6 +53,7 @@
         "build": "node --eval \"import('node:fs/promises').then(({ rm }) => rm('dist', { force: true, recursive: true }))\" && tsc -p tsconfig.build.json && node --eval \"import('node:fs/promises').then(({ cp }) => cp('sources/auto/prompts', 'dist/auto/prompts', { recursive: true }))\" && node --eval \"import('node:fs/promises').then(({ cp }) => cp('sources/bots/assets', 'dist/bots/assets', { recursive: true }))\" && pnpm build:menu-bar",
         "build:menu-bar": "node scripts/build-menu-bar.mjs",
         "check": "tsc --noEmit",
+        "eval:auto-review": "HAPPY_AGENT_AUTO_REVIEW_EVAL=1 vitest run --config vitest.live.config.ts tests/auto/autoReviewPrompt.live.test.ts",
         "test": "vitest run --passWithNoTests",
         "test:live:happy-server": "vitest run --config vitest.live.config.ts tests/runtime/happyMobileMultiplex.live.test.ts",
         "test:live:workos-staging": "vitest run --config vitest.live.config.ts tests/cloud/CloudStaging.live.test.ts"
