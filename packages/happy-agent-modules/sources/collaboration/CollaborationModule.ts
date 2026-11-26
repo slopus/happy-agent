@@ -64,7 +64,7 @@ import {
     type AgentOptionsUsageWindow,
 } from "./impl/agentOptions.js";
 import type { ProviderUsageModule } from "../providerUsage/index.js";
-import type { ProviderUsage } from "@slopus/happy-providers";
+import type { ProviderUsage, ProviderUsageWindow } from "@slopus/happy-providers";
 import { agentOptionsTool } from "./tools/agent_options.js";
 import { collaborationMigrations } from "./CollaborationMigrations.js";
 import { archiveAgentTool } from "./tools/archive_agent.js";
@@ -1204,12 +1204,15 @@ export class CollaborationModule implements AgentModule {
  */
 function vendorUsageWindows(usage: ProviderUsage | null, now: number): AgentOptionsUsageWindow[] {
     if (usage === null) return [];
+    const extra = usage.windows as Record<string, ProviderUsageWindow | null | undefined>;
     const named = [
         ["", "5-hour", usage.windows.fiveHour],
         ["", "weekly", usage.windows.weekly],
         ["", "monthly", usage.windows.monthly],
         // Fable's own allowance stops only Fable.
         ["Fable", "weekly", usage.windows.fableWeekly ?? null],
+        ["Claude & GPT", "5-hour", extra["claudeGptFiveHour"] ?? null],
+        ["Claude & GPT", "weekly", extra["claudeGptWeekly"] ?? null],
     ] as const;
     return named.flatMap(([scope, window, value]) =>
         value === null

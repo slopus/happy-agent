@@ -304,7 +304,7 @@ To let a Happy agent start Antigravity sessions on the user's Google account:
    starts it with
    `model = "antigravity/gemini-3.8-flash"`.
 
-The quota is shown to agents only; the app's usage panel does not show Antigravity yet.
+Account quota from `agy -p /usage` is also exposed through `GET /v0/usage` and `provider.usage.updated`.
 
 ## Generic ACP agents
 

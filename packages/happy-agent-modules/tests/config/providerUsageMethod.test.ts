@@ -186,4 +186,51 @@ describe("provider usage method", () => {
         expect(config.hasProviderUsageSource("off")).toBe(false);
         expect(config.hasProviderUsageSource("missing")).toBe(false);
     });
+
+    it("reads Antigravity quota windows and treats epoch-zero resets as unset", async () => {
+        const binDir = await directory();
+        const agyPath = join(binDir, "fake-agy");
+        await writeFile(
+            agyPath,
+            [
+                "#!/bin/sh",
+                "cat <<'EOF'",
+                "Gemini Models\tWeekly Limit Remaining\t24%\t2026-12-01T00:54:20Z",
+                "Gemini Models\tFive Hour Limit Remaining\t64%\t2026-11-26T06:51:07Z",
+                "Claude and GPT models\tWeekly Limit Remaining\t100%\t1970-01-01T00:00:00Z",
+                "Claude and GPT models\tFive Hour Limit Remaining\t100%\t1970-01-01T00:00:00Z",
+                "EOF",
+            ].join("\n"),
+            { mode: 0o755 },
+        );
+        const config = await testConfigRootedAt(
+            await directory(),
+            [
+                "[harnesses.antigravity]",
+                "enabled = true",
+                `env = { AGY_BIN = ${JSON.stringify(agyPath)} }`,
+                "[harnesses.custom_agy]",
+                'type = "antigravity"',
+                "enabled = true",
+                'command = "custom-acp"',
+            ].join("\n"),
+        );
+
+        expect(config.hasProviderUsageSource("antigravity")).toBe(true);
+        expect(config.hasProviderUsageSource("custom_agy")).toBe(false);
+
+        const usage = await config.readProviderUsage(createRootContext(), "antigravity");
+        expect(usage).toMatchObject({
+            providerId: "antigravity",
+            vendor: "antigravity",
+            exhausted: false,
+            windows: {
+                fiveHour: { usedPercent: 36, resetsAt: Date.parse("2026-11-26T06:51:07Z") },
+                weekly: { usedPercent: 76, resetsAt: Date.parse("2026-12-01T00:54:20Z") },
+                monthly: null,
+                claudeGptFiveHour: { usedPercent: 0, resetsAt: null, startsAt: null },
+                claudeGptWeekly: { usedPercent: 0, resetsAt: null, startsAt: null },
+            },
+        });
+    });
 });

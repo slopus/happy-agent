@@ -197,4 +197,66 @@ describe("provider-account usage protocol", () => {
             }),
         ).toBe(false);
     });
+
+    it("accepts Antigravity dual-scope quota windows", () => {
+        const antigravityUsage = {
+            providerId: "antigravity",
+            vendor: "antigravity" as const,
+            capturedAt: 1_755_400_000_000,
+            planName: null,
+            exhausted: false,
+            windows: {
+                fiveHour: {
+                    usedPercent: 10,
+                    resetsAt: 1_755_412_000_000,
+                    startsAt: 1_755_394_000_000,
+                    durationMs: 18_000_000,
+                    capturedAt: 1_755_400_000_000,
+                },
+                weekly: {
+                    usedPercent: 76,
+                    resetsAt: 1_755_900_000_000,
+                    startsAt: 1_755_295_200_000,
+                    durationMs: 604_800_000,
+                    capturedAt: 1_755_400_000_000,
+                },
+                monthly: null,
+                claudeGptFiveHour: {
+                    usedPercent: 0,
+                    resetsAt: null,
+                    startsAt: null,
+                    durationMs: 18_000_000,
+                    capturedAt: 1_755_400_000_000,
+                },
+                claudeGptWeekly: {
+                    usedPercent: 0,
+                    resetsAt: null,
+                    startsAt: null,
+                    durationMs: 604_800_000,
+                    capturedAt: 1_755_400_000_000,
+                },
+            },
+            credits: null,
+        };
+        const antigravityState = {
+            providerId: "antigravity",
+            usage: antigravityUsage,
+            checkedAt: 1_755_400_000_100,
+            error: null,
+            refreshedAt: 1_755_400_000_000,
+            refreshError: null,
+            retryAt: null,
+            refreshing: false,
+        };
+
+        expect(
+            Value.Check(providerUsageEntrySchema, {
+                ...antigravityState,
+                type: "antigravity",
+                enabled: true,
+                models: [],
+            }),
+        ).toBe(true);
+        expect(Value.Check(providerUsageUpdatedPayloadSchema, antigravityState)).toBe(true);
+    });
 });

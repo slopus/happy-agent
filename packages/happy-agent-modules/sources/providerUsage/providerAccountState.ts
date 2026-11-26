@@ -41,10 +41,13 @@ export function providerAccountState(
 }
 
 export function windowsOf(usage: ProviderUsage): (ProviderUsageWindow | null)[] {
+    const extra = usage.windows as Record<string, ProviderUsageWindow | null | undefined>;
     return [
         usage.windows.fiveHour,
         usage.windows.weekly,
         usage.windows.monthly,
         usage.windows.fableWeekly ?? null,
+        extra["claudeGptFiveHour"] ?? null,
+        extra["claudeGptWeekly"] ?? null,
     ];
 }

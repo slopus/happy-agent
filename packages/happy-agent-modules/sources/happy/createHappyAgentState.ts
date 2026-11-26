@@ -135,11 +135,19 @@ export function happyAgentStateContent(state: HappyAgentState | null): string {
 /** Converts provider-neutral quota windows to the open window ids understood by Happy. */
 function toHappyUsageLimits(usage: ProviderUsage | null | undefined): HappyUsageLimits | undefined {
     if (usage === null || usage === undefined) return undefined;
+    const extra = usage.windows as Record<string, ProviderUsageWindow | null | undefined>;
     const windows: HappyUsageLimitWindow[] = [];
     addUsageWindow(windows, "five_hour", usage.windows.fiveHour);
     addUsageWindow(windows, "seven_day", usage.windows.weekly);
     addUsageWindow(windows, "monthly", usage.windows.monthly);
     addUsageWindow(windows, "seven_day_fable", usage.windows.fableWeekly, "Fable 7-day");
+    addUsageWindow(
+        windows,
+        "five_hour_claude_gpt",
+        extra["claudeGptFiveHour"],
+        "Claude/GPT 5-hour",
+    );
+    addUsageWindow(windows, "seven_day_claude_gpt", extra["claudeGptWeekly"], "Claude/GPT 7-day");
     if (windows.length === 0) return undefined;
     return { capturedAt: usage.capturedAt, windows };
 }

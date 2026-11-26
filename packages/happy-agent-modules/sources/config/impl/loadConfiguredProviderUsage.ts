@@ -10,12 +10,14 @@ import {
 } from "@slopus/happy-providers";
 
 import type { HappyAgentConfigValues } from "../ConfigModule.js";
+import { antigravityProviderUsage, readAntigravityUsage } from "./harnessUsage.js";
 import { readClaudeSettingsEnvironment } from "./readClaudeSettingsEnvironment.js";
 
 export interface LoadConfiguredProviderUsageOptions {
     readonly environment: NodeJS.ProcessEnv;
     readonly providerId: string;
     readonly providers: HappyAgentConfigValues["providers"];
+    readonly harnessEnv?: Readonly<Record<string, string>>;
     readonly ignoreEnabled?: boolean;
     readonly signal?: AbortSignal;
     /** How to read an account whose vendor offers more than one way. */
@@ -45,6 +47,9 @@ export function hasConfiguredProviderUsageSource(
 ): boolean {
     const provider = providers[providerId];
     if (provider === undefined) return false;
+    if (provider.type === "antigravity") {
+        return provider.apiKey === undefined && provider.command === undefined;
+    }
     if (provider.type !== "codex" && provider.type !== "claude" && provider.type !== "grok") {
         return false;
     }
@@ -135,6 +140,19 @@ export async function loadConfiguredProviderUsage(
             providerId: options.providerId,
             ...providerFetch,
         });
+    }
+    if (provider.type === "antigravity") {
+        if (provider.apiKey !== undefined || provider.command !== undefined) return null;
+        try {
+            const windows = await readAntigravityUsage(
+                { ...env, ...options.harnessEnv },
+                options.signal,
+            );
+            return antigravityProviderUsage(options.providerId, windows);
+        } catch (error: unknown) {
+            if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return null;
+            throw error;
+        }
     }
 
     // Bedrock usage belongs to AWS billing; Bedrock exposes no coding-account quota endpoint.
