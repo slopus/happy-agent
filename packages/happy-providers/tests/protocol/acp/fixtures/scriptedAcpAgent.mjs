@@ -11,7 +11,9 @@
 // the option it got; "needs agy command" asks before one of Antigravity's own commands;
 // "needs agy mcp permission" asks before calling happy_secret through
 // call_mcp_tool, as Antigravity 1.5.15 does ("unknown tool" names a tool Happy does not serve);
-// anything else is echoed back.
+// "background" answers and then starts a turn of its own, announced with "_happy/turn_started"
+// and "_happy/turn_ended", as Claude Code does when a background command finishes; anything else
+// is echoed back.
 //
 // Started as Antigravity is, with --agent, --add-dir and --log-file, it logs the agent file it
 // finds when a session opens and writes a log, where SCRIPTED_AGY_FALLBACK makes it report that
@@ -268,6 +270,9 @@ class ScriptedAgent {
             await this.#say(params.sessionId, `secret=${result.content[0].text}`);
             return { stopReason: "end_turn" };
         }
+        if (text.includes("background")) {
+            setTimeout(() => void this.#backgroundTurn(params.sessionId), 50);
+        }
         await this.#say(params.sessionId, `echo:${text}`);
         return {
             stopReason: "end_turn",
@@ -278,6 +283,18 @@ class ScriptedAgent {
     async cancel(params) {
         log({ method: "cancel", sessionId: params.sessionId });
         this.#cancelled.get(params.sessionId)?.();
+    }
+
+    // Sent in one burst, without waiting between them, as an agent writing to stdout would.
+    async #backgroundTurn(sessionId) {
+        log({ method: "backgroundTurn", sessionId });
+        void this.#conn.extNotification("_happy/turn_started", { sessionId });
+        void this.#say(sessionId, "background:done");
+        await this.#conn.extNotification("_happy/turn_ended", {
+            sessionId,
+            stopReason: "end_turn",
+            usage: { inputTokens: 20, outputTokens: 4, totalTokens: 24 },
+        });
     }
 
     async #say(sessionId, text) {

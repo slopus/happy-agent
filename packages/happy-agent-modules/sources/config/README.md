@@ -170,6 +170,8 @@ registered with `onHarnessPermission` — the user-input module, which puts it t
 nothing to decide it, the ask is refused. Antigravity is the exception: it runs with none of its
 own tools, only Happy's over MCP, which Happy's sandbox and reviewer decide like any Happy agent's.
 
+A foreign agent may also start a turn on its own, as Claude Code does when a background command finishes. The route's turn environment then wakes the agent it runs as: config sends the provider's hidden system notice with `hideFromUser` through the agent system it was started with, on a context of its own, because the turn that ran the agent is long over. The run that notice starts shows the foreign agent's turn.
+
 An agent on any harness may start sub-agents and subtasks on every enabled harness; there is no
 per-harness reach setting. `harnessUsage` reads Antigravity's quota from `agy -p /usage` (`impl/harnessUsage.ts`), at most
 every five minutes per account, for `agent_options({ usage: true })` to show.
