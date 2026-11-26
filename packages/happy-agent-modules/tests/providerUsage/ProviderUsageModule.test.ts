@@ -235,6 +235,7 @@ describe("ProviderUsageModule", () => {
             "claude",
             "codex",
             "grok",
+            "antigravity",
         ]);
         await harness.module.refresh(harness.ctx, "codex");
         expect(harness.entry("codex")).toMatchObject({
@@ -543,6 +544,7 @@ describe("ProviderUsageModule", () => {
             skipped: [
                 { providerId: "bedrock", reason: "no_usage_source" },
                 { providerId: "codex", reason: "fresh", until: readAt + 300_000 },
+                { providerId: "antigravity", reason: "no_usage_source" },
             ],
         });
         // Both are now being read, so asking again starts nothing new.
@@ -552,6 +554,7 @@ describe("ProviderUsageModule", () => {
                 { providerId: "bedrock", reason: "no_usage_source" },
                 { providerId: "claude", reason: "in_flight" },
                 { providerId: "grok", reason: "in_flight" },
+                { providerId: "antigravity", reason: "no_usage_source" },
             ],
         });
         // Once codex's read settles, a demand fresher than a minute is raised to one minute.

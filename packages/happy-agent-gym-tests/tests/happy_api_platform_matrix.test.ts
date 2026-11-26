@@ -202,7 +202,8 @@ describe("Happy Agent platform API matrix", () => {
                     typeof model.autoCompactWindow === "number" &&
                     typeof model.contextWindow === "number"
                 ) {
-                    expect(model.autoCompactWindow).toBeLessThan(model.contextWindow);
+                    // A foreign agent compacts its own context, so its window is the whole one.
+                    expect(model.autoCompactWindow).toBeLessThanOrEqual(model.contextWindow);
                 }
             }
             for (const provider of Object.values(config.providers)) {

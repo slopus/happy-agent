@@ -91,6 +91,7 @@ import {
     foreignAgentRouteForModel,
     foreignAgentRoutes,
     foreignAgentStart,
+    isForeignAgentProvider,
 } from "./impl/createForeignAgentProvider.js";
 import {
     describeCredentialRefreshFailure,
@@ -3242,10 +3243,15 @@ export class ConfigModule implements AgentModule {
     /** A configuration-file setting is explicit and always outranks automatic discovery. */
     configuredProviderOverride(providerId: string): boolean | undefined {
         let explicitDefault: boolean | undefined;
-        // Writing a harness table for an agent with its own login is an explicit choice.
+        // Writing a harness table for an agent with its own login is an explicit choice; a
+        // built-in harness nobody wrote one for is not.
         const harness = this.configuration.values.harnesses[providerId];
         let explicitProvider: boolean | undefined =
-            harness !== undefined && isOwnLoginHarness(harness) ? harness.enabled : undefined;
+            harness !== undefined &&
+            isOwnLoginHarness(harness) &&
+            this.configuration.provenance[`harnesses.${providerId}`] !== undefined
+                ? harness.enabled
+                : undefined;
         const sources = [
             this.configuration.sources.global.values,
             normalizeSourceValues(this.#runtimeValues),
@@ -3723,6 +3729,9 @@ export class ConfigModule implements AgentModule {
     ): Promise<"available" | "missing"> {
         const configured = this.configuration.values.providers[providerId];
         if (configured === undefined || configured.type === "smart") return "missing";
+        // An agent with its own login keeps it where only the agent can tell; the provider CLIs
+        // report Antigravity's sign-in instead.
+        if (isForeignAgentProvider(configured)) return "missing";
         if (configured.type === "bedrock") {
             return (await this.#hasLocalBedrockCredential(configured)) ? "available" : "missing";
         }
@@ -5241,6 +5250,7 @@ const BUILT_IN_HARNESS_NAMES: Readonly<Record<string, string>> = {
 function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigValues {
     const merged = structuredClone(DEFAULT_VALUES) as MutableResolvedValues;
     const explicitProviderEnabled = new Set<string>();
+    const writtenHarnesses = new Set<string>();
     let teamWorkOSConfigured = false;
     for (const partial of partials) {
         if (partial.profile !== undefined) merged.profile = { ...partial.profile };
@@ -5348,6 +5358,7 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         }
         if (partial.harnesses !== undefined) {
             merged.harnesses = mergeHarnesses(merged.harnesses, partial.harnesses);
+            for (const id of Object.keys(partial.harnesses)) writtenHarnesses.add(id);
         }
         if (partial.settings !== undefined) {
             Object.assign(merged.settings, normalizeSettings(partial.settings));
@@ -5363,7 +5374,8 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
         }
     }
     // An agent with its own login is offered as an account named after its harness. A generated
-    // enablement the daemon stored for that account still decides whether it is on.
+    // enablement the daemon stored for that account still decides whether it is on. A built-in
+    // harness nobody wrote a table for leaves its account to the scan, like the vendors' sign-ins.
     for (const [id, harness] of Object.entries(merged.harnesses)) {
         if (!isOwnLoginHarness(harness)) continue;
         const existing = merged.providers[id];
@@ -5392,7 +5404,7 @@ function mergeValues(...partials: readonly PartialValues[]): HappyAgentConfigVal
                     : harness.enabled,
             type: harness.type,
         } as Static<typeof providerSchema>;
-        explicitProviderEnabled.add(id);
+        if (writtenHarnesses.has(id)) explicitProviderEnabled.add(id);
     }
     for (const [id, provider] of Object.entries(merged.providers)) {
         if (!explicitProviderEnabled.has(id)) {
@@ -6279,7 +6291,8 @@ function calculateProvenance(...sources: readonly PartialValues[]): Record<strin
                 section === "features" ||
                 section === "observation" ||
                 section === "profile" ||
-                section === "workspace"
+                section === "workspace" ||
+                section === "harnesses"
             ) {
                 for (const key of Object.keys(source[section] ?? {})) {
                     result[`${normalizedSection}.${fieldNames[section]?.[key] ?? key}`] = name;

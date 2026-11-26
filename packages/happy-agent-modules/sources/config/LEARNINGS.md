@@ -685,3 +685,14 @@ credentials. It now reports three things and keeps nothing:
   `expires_at`, and Claude's `expiresAt` from the macOS keychain or `.credentials.json`. Grok and
   Claude record no renewal time, so their file's modification time stands in. An API key or a
   missing credential has no login. A setup token has one whose times are unknown.
+
+## Antigravity is a built-in account that a written table decides
+
+Antigravity's account used to exist only when `[harnesses.antigravity]` was written. Providers are
+read at startup, so onboarding could install and sign in agy but had no account to turn on. The
+`antigravity` harness is now one of `DEFAULT_HARNESSES`, so its account always exists, and it is
+off until a scan discovery turns it on, as the vendors' built-in accounts are. A table only counts
+as an explicit choice when some layer actually wrote it. `mergeValues` and
+`configuredProviderOverride` both check that (the latter through `harnesses.<id>` provenance), so
+the default never pins the account on. The local scan reports own-login accounts' credentials as
+missing instead of erroring, because only the agent can read its own login.

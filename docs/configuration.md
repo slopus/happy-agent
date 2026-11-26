@@ -756,7 +756,10 @@ own loop on every provider, exists by default. `[harnesses.claude_code]` runs Cl
 (through the Claude Agent SDK) and `[harnesses.codex_cli]` runs Codex itself (through
 `codex app-server`) on the `claude` or `codex` providers they list, by default all of that type.
 `[harnesses.antigravity]`, `[harnesses.opencode]`, and any `type = "acp"` harness with a `command`
-are agents with their own login, each offered as an account named after its harness. Every
+are agents with their own login, each offered as an account named after its harness.
+Antigravity is also built in: without a table its account stays off until Happy finds `agy` signed
+in, as after signing in from the desktop's setup, and then turns on like the vendors' own sign-ins.
+A `[harnesses.antigravity]` table decides instead, on or with `enabled = false` off. Every
 harness accepts `enabled`, `include_models`, and `exclude_models`; `happy`, `claude_code`, and
 `codex_cli` accept `providers`; the agents with their own login accept `name`, `hidden`,
 `command`, `args`, and `api_key`, and `acp` harnesses `env`. Their models are the ones each agent

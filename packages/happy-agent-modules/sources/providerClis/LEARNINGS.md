@@ -45,6 +45,22 @@ waits 60 seconds for a pasted code, and then gives up. The module starts that pr
 and bounds the wait to the program's own timeout, so the desktop shows the page and accepts the
 code within that minute.
 
+## Signing in to Antigravity has to turn its account on
+
+Kirill found that Antigravity could be set up only through the chief or by hand. agy installed and
+signed in fine from onboarding, but no Antigravity account existed unless someone wrote
+`[harnesses.antigravity]` into `happy.toml` and restarted. The provider scan that runs after a
+sign-in had nothing to turn on, and `providerId` stayed `null`. Even with the table written, the
+account was never matched to the CLI, because the provider registry files agents with their own
+login as `foreign` rather than `antigravity`.
+
+Antigravity is now a built-in account like Grok's: it starts off, and a written table still decides
+it. The scan cannot read agy's keyring, so this module's own check is the discovery. Whenever that
+check finds agy signed in, after a sign-in or on a refresh, the module calls
+`ProviderScanModule.recordDiscovery`. That turns the account on live, under the scan's rules: an
+explicit setting or `auto_enable = false` still wins. Matching an account to its CLI uses the
+configured type whenever the registry says `foreign`.
+
 ## A sign-in is replaced only when the new one succeeds
 
 Signing an account in again must never leave it worse off. Each attempt gets a fresh folder, the

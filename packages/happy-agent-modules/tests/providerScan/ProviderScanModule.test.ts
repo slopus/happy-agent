@@ -149,6 +149,34 @@ describe("ProviderScanModule", () => {
         });
     });
 
+    it("turns the built-in Antigravity account on when its sign-in is found, unless a table decides", async () => {
+        const installationRoot = await root();
+        const config = await testConfigRootedAt(installationRoot, isolatedProvidersToml());
+        const scan = new ProviderScanModule(config);
+        const opened = await scan.open(createRootContext());
+        expect(opened.providers).toContainEqual({
+            credentials: "missing",
+            enabled: false,
+            enablement: "default",
+            providerId: "antigravity",
+            remembered: false,
+        });
+
+        await scan.recordDiscovery(createRootContext(), "antigravity");
+        expect(config.isProviderEnabled("antigravity")).toBe(true);
+        const restarted = await testConfigRootedAt(installationRoot, isolatedProvidersToml());
+        await new ProviderScanModule(restarted).open(createRootContext());
+        expect(restarted.isProviderEnabled("antigravity")).toBe(true);
+
+        const turnedOff = await testConfigRootedAt(
+            installationRoot,
+            `${isolatedProvidersToml()}\n[harnesses.antigravity]\nenabled = false`,
+        );
+        const off = new ProviderScanModule(turnedOff);
+        await off.recordDiscovery(createRootContext(), "antigravity");
+        expect(turnedOff.isProviderEnabled("antigravity")).toBe(false);
+    });
+
     it("keeps a remembered provider disabled until its startup scan completes", async () => {
         const installationRoot = await root();
         const happyHome = join(installationRoot, "happy");

@@ -67,6 +67,28 @@ case "$*" in
 esac
 `;
 
+/**
+ * A stand-in agy. Like the real one it has no sign-in command: a prompt while signed out prints
+ * Google's page and waits for a pasted code, and `good-code` leaves its token file behind.
+ */
+const AGY = `#!/bin/sh
+token="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
+case "$*" in
+  "--version") echo "agy 1.5.15" ;;
+  "models")
+    if [ -s "$token" ]; then echo "gemini-3.8-flash"; else echo "Please sign in." >&2; exit 1; fi ;;
+  "-p Reply with OK.")
+    echo "Authentication required. Please visit the URL to log in:"
+    echo "  https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071&state=stub"
+    printf "Enter the authorization code: "
+    read code
+    if [ "$code" = "good-code" ]; then
+      mkdir -p "$(dirname "$token")"; echo "token" > "$token"; echo "OK"
+    else echo "Sign-in failed." >&2; exit 1; fi ;;
+  *) exit 2 ;;
+esac
+`;
+
 async function executable(path: string, content: string): Promise<void> {
     await mkdir(join(path, ".."), { recursive: true });
     await writeFile(path, content);
@@ -78,7 +100,9 @@ function jwt(claims: object): string {
     return `${part({ alg: "none" })}.${part(claims)}.signature`;
 }
 
-async function start(): Promise<{ gym: AgentGym; home: string }> {
+async function start(
+    options: { readonly liveProviders?: readonly string[] } = {},
+): Promise<{ gym: AgentGym; home: string }> {
     const root = await mkdtemp(join(tmpdir(), "provider-clis-"));
     folders.add(root);
     const home = join(root, "home");
@@ -110,6 +134,7 @@ async function start(): Promise<{ gym: AgentGym; home: string }> {
             HOME: home,
             PATH: `${stubs}:/usr/bin:/bin`,
         },
+        ...(options.liveProviders === undefined ? {} : { liveProviders: options.liveProviders }),
         timeoutMs: 20_000,
     });
     running.add(gym);
@@ -118,6 +143,7 @@ async function start(): Promise<{ gym: AgentGym; home: string }> {
 
 type ProviderCli = {
     id: string;
+    providerId: string | null;
     installation: {
         status: string;
         path: string | null;
@@ -271,6 +297,66 @@ describe("Provider CLIs API", () => {
                 account: { email: "ada@example.com", plan: "Plus" },
                 methods: ["browser", "device"],
             });
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
+        "signs Antigravity in with a pasted code and turns its account on",
+        async () => {
+            // The real account, not a scripted one, so the daemon offers Antigravity's own models.
+            const { gym, home } = await start({ liveProviders: ["antigravity"] });
+            await executable(join(home, ".local", "bin", "agy"), AGY);
+            type Config = {
+                config: {
+                    providers: Record<
+                        string,
+                        { type: string; enabled: boolean; models: { id: string }[] }
+                    >;
+                };
+            };
+            const before = ((await gym.http.ok("GET", "/v0/config")) as Config).config;
+            expect(before.providers["antigravity"]).toMatchObject({
+                type: "antigravity",
+                enabled: false,
+            });
+
+            const { providerCli } = (await gym.http.ok("GET", "/v0/provider-clis/antigravity")) as {
+                providerCli: ProviderCli;
+            };
+            expect(providerCli).toMatchObject({
+                providerId: "antigravity",
+                installation: { status: "installed", version: "1.5.15" },
+                signIn: { status: "signed_out", methods: ["browser"] },
+            });
+
+            await gym.http.ok("POST", "/v0/provider-clis/antigravity/sign-in", {});
+            const waiting = await waitForCli(
+                gym,
+                "antigravity",
+                (cli) => cli.operation?.status === "waiting",
+                "Google's sign-in page",
+            );
+            expect(waiting.operation?.authorization).toMatchObject({
+                url: "https://accounts.google.com/o/oauth2/auth?access_type=offline&client_id=1071&state=stub",
+                acceptsCode: true,
+            });
+            await gym.http.ok("POST", "/v0/provider-clis/antigravity/sign-in/code", {
+                code: "good-code",
+            });
+            const signedIn = await waitForCli(
+                gym,
+                "antigravity",
+                (cli) => cli.operation?.status === "succeeded",
+                "the Antigravity sign-in to finish",
+            );
+            expect(signedIn.signIn.status).toBe("signed_in");
+
+            const after = ((await gym.http.ok("GET", "/v0/config")) as Config).config;
+            expect(after.providers["antigravity"]?.enabled).toBe(true);
+            expect(after.providers["antigravity"]?.models.map((model) => model.id)).toContain(
+                "antigravity/gemini-3.8-flash",
+            );
         },
         TEST_TIMEOUT_MS,
     );

@@ -72,6 +72,16 @@ export class ProviderScanModule implements AgentModule {
         return await this.scan(ctx);
     }
 
+    /**
+     * Count a sign-in the local scan cannot see, such as Antigravity's own login that the provider
+     * CLIs check, as a discovery: the account is remembered and enabled under the scan's rules.
+     */
+    async recordDiscovery(ctx: Context, providerId: string): Promise<void> {
+        await this.#load(ctx);
+        this.#assertProvider(providerId);
+        await this.#remember(ctx, providerId);
+    }
+
     /** Persist a complete batch of explicit provider enablement changes. */
     async setOverrides(
         ctx: Context,

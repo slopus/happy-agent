@@ -50,6 +50,11 @@ export interface ProviderCliDefinition {
     readonly signIn: Readonly<Partial<Record<ProviderCliSignInMethod, ProviderCliSignInFlow>>>;
     /** Sign-in methods in the order the daemon prefers them. */
     readonly methods: readonly ProviderCliSignInMethod[];
+    /**
+     * The provider scan cannot see this sign-in, so the program's own check finding it signed in
+     * is what discovers its account.
+     */
+    readonly signInDiscoversAccount?: boolean;
 }
 
 export function homeOf(machine: ProviderCliMachine): string {
@@ -351,6 +356,8 @@ const antigravity: ProviderCliDefinition = {
         },
     },
     methods: ["browser"],
+    // agy keeps its sign-in in the OS keyring, which only agy itself reads.
+    signInDiscoversAccount: true,
 };
 
 /** Every supported assistant, in display order. */

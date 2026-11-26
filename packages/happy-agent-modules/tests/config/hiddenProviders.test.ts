@@ -100,7 +100,10 @@ describe("hidden providers", () => {
     it("keeps every route usable when every provider is hidden", async () => {
         const ids = ["bedrock", "claude", "codex", "grok"];
         const config = await configuration(
-            ids.map((id) => `[providers.${id}]\nenabled = true\nhidden = true`).join("\n"),
+            [
+                ...ids.map((id) => `[providers.${id}]\nenabled = true\nhidden = true`),
+                "[harnesses.antigravity]\nhidden = true",
+            ].join("\n"),
         );
         expect(config.visibleModels).toEqual([]);
         expect(config.models.length).toBeGreaterThan(0);

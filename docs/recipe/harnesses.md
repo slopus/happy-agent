@@ -75,6 +75,12 @@ env = { GOOSE_PROVIDER = "openai" }
 `[harnesses.happy]` exists by default. Give it `providers = [...]` to keep Happy's own loop to
 those accounts, or `enabled = false` to leave only foreign agents.
 
+Antigravity is built in too. Without a table, its account stays off until Happy finds `agy`
+signed in, for example after the person installs and signs in to Antigravity from the desktop's
+setup, and then turns on without a restart, the way Claude, Codex, and Grok do. Write
+`[harnesses.antigravity]` only to change it: the table turns it on for good, and
+`enabled = false` keeps it off.
+
 Claude Code uses the account's `oauth_token`, `api_key`, `auth_token`, or `config_dir`, or the
 machine's Claude Code login for the built-in `claude`. Codex CLI uses the account's `api_key`, or
 the folder holding its `auth_file` (which must be named `auth.json`) as `CODEX_HOME`, or

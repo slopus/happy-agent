@@ -24,6 +24,11 @@ but the independent account-enabled state still controls smart routing and quota
 field or mutation; changing it requires a daemon restart. See the
 [configuration guide](../../../../docs/configuration.md#hiding-providers).
 
+Agents with their own login, such as the built-in Antigravity account, keep that login where only
+the agent can read it, so the scan reports their credentials missing. `recordDiscovery(ctx,
+providerId)` lets the provider CLIs module, which runs `agy`'s own check, count a sign-in it found
+as a discovery: the account is remembered and enabled exactly as if the scan had found it.
+
 `scan(ctx)` joins a scan already in progress. `setOverrides(ctx, providers)` validates the whole
 batch before applying it; a disable closes the provider gate and aborts live inference, compaction,
 and verification. `verify(ctx, providerId, level)` supports local credentials, the vendor's

@@ -32,6 +32,9 @@ program has to answer `--version` to count as installed.
 Each assistant has its own check. Claude reads `claude auth status --json`. Codex runs
 `codex login status` and reads the email and plan from the token claims in `~/.codex/auth.json`.
 Grok reads `~/.grok/auth.json`. Antigravity checks its token file and falls back to `agy models`.
+The provider scan cannot see Antigravity's sign-in, because agy keeps it in the OS keyring, so
+whenever this check finds agy signed in the module records a discovery of the built-in
+`antigravity` account with the provider scan, which turns it on under the scan's usual rules.
 The global sign-in uses each vendor's normal home folder, so an existing sign-in is reused rather
 than repeated.
 

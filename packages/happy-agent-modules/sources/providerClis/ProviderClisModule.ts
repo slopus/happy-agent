@@ -523,6 +523,7 @@ export class ProviderClisModule implements AgentModule {
         });
         await this.#checkSignIn(id);
         if (this.#entry(id).signIn.status === "signed_in") {
+            await this.#recordDiscovery(ctx, id);
             await this.#scanProviders(ctx);
             this.#finish(ctx, id, args.operationId, "succeeded", null);
             return;
@@ -589,6 +590,19 @@ export class ProviderClisModule implements AgentModule {
         }
     }
 
+    /** Tell the provider scan about a sign-in only the program's own check can see. */
+    async #recordDiscovery(ctx: Context, id: ProviderCliId): Promise<void> {
+        if (definition(id).signInDiscoversAccount !== true) return;
+        if (this.#entry(id).signIn.status !== "signed_in") return;
+        const providerId = this.#providerIdFor(id);
+        if (providerId === null) return;
+        try {
+            await this.#providerScan.recordDiscovery(ctx, providerId);
+        } catch (error: unknown) {
+            ctx.log.warn("Recording a provider CLI sign-in as a discovery failed.", {}, error);
+        }
+    }
+
     async #refresh(ctx: Context, id: ProviderCliId): Promise<void> {
         if (activeOperation(this.#entry(id)) !== undefined) return;
         const running = this.#refreshes.get(id);
@@ -597,6 +611,7 @@ export class ProviderClisModule implements AgentModule {
             const before = JSON.stringify([this.#entry(id).installation, this.#entry(id).signIn]);
             await this.#discover(id);
             await this.#checkSignIn(id);
+            await this.#recordDiscovery(ctx, id);
             const entry = this.#entry(id);
             const after = JSON.stringify([entry.installation, entry.signIn]);
             const first = !entry.discovered;
@@ -768,8 +783,14 @@ export class ProviderClisModule implements AgentModule {
     /** The configured built-in account this assistant's sign-in serves. */
     #providerIdFor(id: ProviderCliId): string | null {
         const ids = this.#config.providerIds;
-        if (ids.includes(id) && this.#config.providers.typeOf(id) === id) return id;
-        return ids.find((providerId) => this.#config.providers.typeOf(providerId) === id) ?? null;
+        // The registry files every agent with its own login as "foreign"; its configured type
+        // names the agent.
+        const serves = (providerId: string) => {
+            const type = this.#config.providers.typeOf(providerId);
+            return (type === "foreign" ? this.#config.providerType(providerId) : type) === id;
+        };
+        if (ids.includes(id) && serves(id)) return id;
+        return ids.find(serves) ?? null;
     }
 }
 

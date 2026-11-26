@@ -83,8 +83,13 @@ export const harnessSchema = Type.Object(
 );
 export type Harness = Static<typeof harnessSchema>;
 
+/**
+ * Harnesses every installation has. Antigravity is built in like the vendors' own sign-ins: its
+ * account stays off until agy is found signed in, unless a `[harnesses.antigravity]` table decides.
+ */
 export const DEFAULT_HARNESSES: Readonly<Record<string, Harness>> = {
     happy: { enabled: true, type: "happy" },
+    antigravity: { enabled: true, type: "antigravity" },
 };
 
 const HARNESS_SETTINGS = new Set(Object.keys(harnessInputSchema.properties));

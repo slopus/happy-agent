@@ -360,6 +360,7 @@ describe("Happy Agent onboarding and usage matrix", () => {
                 "codex",
                 "grok",
                 "gym",
+                "antigravity",
             ]);
             const claude = providers.find((provider) => provider.providerId === "claude");
             const regularTier = [{ id: null, label: "Regular" }];
