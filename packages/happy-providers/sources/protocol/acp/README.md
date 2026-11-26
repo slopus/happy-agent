@@ -103,6 +103,10 @@ session and reads the agent's model selector, so the catalog lists the models th
 actually offers. A profile option may name an ACP `category` instead of an exact ID, for agents
 that call their model selector something else.
 
+## Side questions
+
+A side question asks about the conversation without adding to it, as Claude Code's `/btw` does. ACP has no such request, so only a typed driver offers it, as the connection's optional `askSideQuestion`. `AcpSession.askSideQuestion` hands the question to its live foreign session and resolves `undefined` when there is none here: none was opened since the daemon started, the agent process stopped, or compaction left it. For that case `AcpProvider.askStoredSideQuestion` reads the stored session record and gives the stored session, with the config-option values a turn would set, to the vendor's `askStoredSideQuestion` option, which answers in a separate agent process without continuing or changing that session. `onSession` tells the caller about every session the provider opens, so a live one can be reached outside its runs.
+
 ## Files
 
 - `AcpProvider.ts` — the provider and the profile contract a vendor fills in.

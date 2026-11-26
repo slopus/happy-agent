@@ -263,6 +263,7 @@ import {
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { mutationIdOf } from "../impl/mutationEcho.js";
 import { RunMutationOwners } from "./RunMutationOwners.js";
+import { ApiSideQuestions } from "./ApiSideQuestions.js";
 import { decodeRequestProfile, requestProfilesForAgent } from "../impl/requestProfile.js";
 import {
     PermissionsModule,
@@ -432,6 +433,8 @@ import {
 } from "./ApiResourceProjection.js";
 import {
     abortBodySchema,
+    sideQuestionBodySchema,
+    sideQuestionModeSchema,
     failureSwitchBodySchema,
     agentCreateBodySchema,
     apiIdSchema,
@@ -754,6 +757,7 @@ export class ApiModule implements AgentModule {
     readonly #daemonStartedAt = Date.now();
     readonly #mutationIds = new AsyncLocalStorage<MutationScope>();
     readonly #runMutations = new RunMutationOwners();
+    readonly #sideQuestions = new ApiSideQuestions();
     readonly #backgroundScope = new AsyncResource("happy-agent-api");
     /** Agents whose usage-driven metadata refresh is already scheduled. */
     readonly #pendingUsageMetadataAgents = new Set<string>();
@@ -5208,6 +5212,18 @@ export class ApiModule implements AgentModule {
             sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentMatch[1] as string));
             return true;
         }
+        const sideQuestion = /^\/v0\/agents\/([a-z][a-z0-9]*)\/side-questions(?:\/([^/]+))?$/.exec(
+            url.pathname,
+        );
+        if (sideQuestion !== null) {
+            return await this.#handleSideQuestion(
+                ctx,
+                request,
+                response,
+                sideQuestion[1] as string,
+                sideQuestion[2],
+            );
+        }
         const action =
             /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|actions|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity)$/.exec(
                 url.pathname,
@@ -5833,6 +5849,87 @@ export class ApiModule implements AgentModule {
         await this.#assertUserControlledAgent(ctx, agentId);
         const body = await bodyAs(request, messageSendBodySchema, "agent message");
         sendJson(response, 202, await this.#sendUserMessage(ctx, agentId, body));
+    }
+
+    /**
+     * `POST /v0/agents/:agentId/side-questions`, and `GET` and `DELETE` of one of them. The
+     * question goes to the harness the agent's mode selects, and nothing of it reaches the
+     * conversation. Answering outlives each request, so it runs in a context of its own; a
+     * question belongs to the team member who asked it.
+     */
+    async #handleSideQuestion(
+        ctx: Context,
+        request: IncomingMessage,
+        response: ServerResponse,
+        agentId: string,
+        id: string | undefined,
+    ): Promise<boolean> {
+        const owner = teamUser(ctx)?.id;
+        if (id === undefined) {
+            if (request.method !== "POST") return false;
+            // Asking changes nothing about the agent, so an archived one is asked too and stays
+            // archived.
+            await this.#assertUserControlledAgent(ctx, agentId, true);
+            const body = await bodyAs(request, sideQuestionBodySchema, "side question");
+            const mode = await this.#agentMode(ctx, agentId);
+            const notRunning = new ApiError(
+                409,
+                "harness_not_running",
+                "There is no conversation to answer from yet. Send a message first.",
+            );
+            if (!Value.Check(sideQuestionModeSchema, mode)) throw notRunning;
+            const answering = detach(ctx).named("side-question");
+            const sideQuestion = await this.#sideQuestions.ask(
+                agentId,
+                owner,
+                async (signal) => {
+                    try {
+                        const outcome = await this.#config.askSideQuestion(
+                            answering,
+                            agentId,
+                            mode,
+                            { question: body.question, history: body.history ?? [], signal },
+                        );
+                        if (outcome.status === "unsupported") {
+                            throw unsupported("This chat's model can't answer side questions.");
+                        }
+                        if (outcome.status === "harness_not_running") throw notRunning;
+                        return outcome.answer;
+                    } catch (error) {
+                        // The harness's own words go to the log; a person sees the error's message.
+                        if (!(error instanceof ApiError) && !signal.aborted) {
+                            const cause = error instanceof Error ? (error.cause ?? error) : error;
+                            answering.log.warn(
+                                `A side question for agent ${agentId} failed: ${String(cause)}`,
+                            );
+                        }
+                        throw error;
+                    }
+                },
+                response,
+            );
+            this.#sideQuestions.deliver(response, agentId, owner, sideQuestion, () =>
+                sendJson(response, 200, { sideQuestion }),
+            );
+            return true;
+        }
+        if (request.method === "GET") {
+            await this.#assertUserControlledAgent(ctx, agentId, true);
+            const sideQuestion = await this.#sideQuestions.wait(agentId, owner, id);
+            if (sideQuestion === undefined) {
+                throw notFound("The side question is no longer available. Ask it again.");
+            }
+            this.#sideQuestions.deliver(response, agentId, owner, sideQuestion, () =>
+                sendJson(response, 200, { sideQuestion }),
+            );
+            return true;
+        }
+        if (request.method === "DELETE") {
+            await this.#assertUserControlledAgent(ctx, agentId, true);
+            sendJson(response, 200, { cancelled: this.#sideQuestions.cancel(agentId, owner, id) });
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -11201,6 +11298,7 @@ export class ApiModule implements AgentModule {
                       }),
                 ...(this.#nodeSearch === undefined ? {} : { search: true }),
                 dailyUsage: true,
+                sideQuestions: true,
             },
             version: {
                 protocol: API_PROTOCOL_VERSION,
@@ -11282,6 +11380,9 @@ export class ApiModule implements AgentModule {
                 defaultEffort: route.defaultEffort,
                 serviceTiers: [...(route.serviceTiers ?? [])],
                 serviceTierOptions: [...route.serviceTierOptions],
+                ...(this.#config.answersSideQuestions(route.providerId, route.id)
+                    ? { sideQuestions: true as const }
+                    : {}),
             };
             const existing = models[route.id];
             if (
@@ -12000,6 +12101,8 @@ interface ApiModelDefinition {
     readonly defaultEffort: string;
     readonly serviceTiers: string[];
     readonly serviceTierOptions: ServiceTierOption[];
+    /** The model answers side questions. */
+    readonly sideQuestions?: true;
 }
 
 interface ApiProviderDefinition {

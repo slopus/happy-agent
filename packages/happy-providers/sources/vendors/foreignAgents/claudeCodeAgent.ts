@@ -4,7 +4,10 @@ import {
     type ForeignAgent,
     type ForeignAgentModel,
 } from "@/vendors/foreignAgents/ForeignAgent.js";
-import { claudeAgentConnect } from "@/vendors/claudeAgent/claudeAgentConnect.js";
+import {
+    claudeAgentConnect,
+    claudeAgentStoredSideQuestion,
+} from "@/vendors/claudeAgent/claudeAgentConnect.js";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
@@ -24,6 +27,8 @@ export const claudeCodeAgent: ForeignAgent = {
     modelPrefix: "claude-code",
     label: "Claude Code",
     connect: (start) => claudeAgentConnect(start.env, start.onAccountUsage),
+    askStoredSideQuestion: (start) => (question) =>
+        claudeAgentStoredSideQuestion(start.env, question, start.onAccountUsage),
     models,
     modelsFromSelector: (values) =>
         foreignModelsWithEfforts("claude-code", values, (value, name) => ({
