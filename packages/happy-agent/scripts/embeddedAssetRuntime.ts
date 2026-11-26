@@ -41,7 +41,7 @@ export function materializeEmbeddedFiles(name: string, files: readonly EmbeddedF
     }
     const key = groupKey(name, files);
     const resolved = key === undefined ? undefined : resolvedGroups.get(key);
-    if (resolved !== undefined) return resolved;
+    if (resolved !== undefined && isIntactGroup(resolved, files)) return resolved;
     const root = materializeGroup(name, files);
     if (key !== undefined) resolvedGroups.set(key, root);
     return root;
@@ -84,7 +84,7 @@ function materializeGroup(name: string, files: readonly EmbeddedFile[]): string 
     }
     const identity = `${name}-${hash.digest("hex").slice(0, 24)}`;
     const cached = materializedRoots.get(identity);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined && isIntactGroup(cached, assets)) return cached;
 
     const userId = typeof process.getuid === "function" ? process.getuid() : 0;
     const userRoot =
@@ -108,6 +108,24 @@ function materializeGroup(name: string, files: readonly EmbeddedFile[]): string 
 
     materializedRoots.set(identity, groupRoot);
     return groupRoot;
+}
+
+/**
+ * Checks, without reading them, that a group extracted earlier still has every file. The cache
+ * lives in a temporary folder that something outside the agent can delete while the agent runs;
+ * returning the remembered path then failed every later spawn from it until a restart. Only a
+ * regular file this user owns counts, as when the group was first extracted.
+ */
+function isIntactGroup(root: string, files: readonly { relativePath: string }[]): boolean {
+    const userId = typeof process.getuid === "function" ? process.getuid() : undefined;
+    return files.every((file) => {
+        try {
+            const status = lstatSync(join(root, file.relativePath));
+            return status.isFile() && (userId === undefined || status.uid === userId);
+        } catch {
+            return false;
+        }
+    });
 }
 
 function requiredSource(file: EmbeddedFile): string {

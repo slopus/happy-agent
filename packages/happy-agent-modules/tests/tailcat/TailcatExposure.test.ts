@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createRootContext, withLogger, type Logger } from "@steve.kite/stdlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { startTailcatExposure } from "../../sources/tailcat/impl/startTailcatExposure.js";
 import { tailcatPipeCommand } from "../../sources/tailcat/impl/tailcatPipeCommand.js";
@@ -78,6 +78,39 @@ describe("Tailcat exposure", () => {
         expect(exposure.address).toBe("tcStableTailcatAddress123");
 
         await exposure.close();
+    });
+
+    it("reopens Tailcat from where it resolves at that time", async () => {
+        // Release binaries extract Tailcat to a temporary folder. When that folder was deleted
+        // while the exposure lived, reopening from the path kept at the first start failed with
+        // ENOENT until the agent restarted.
+        const root = await temporaryRoot();
+        const fake = await fakeTailcat(root, true);
+        const extractedAgain = join(root, "extracted-again-tailcat");
+        await copyFile(fake, extractedAgain);
+        await chmod(extractedAgain, 0o755);
+        vi.stubEnv("HAPPY_AGENT_TAILCAT_PATH", fake);
+        let exposure: Awaited<ReturnType<typeof startTailcatExposure>> | undefined;
+        try {
+            exposure = await startTailcatExposure(
+                createRootContext().named("tailcat-resolve-again"),
+                { host: "127.0.0.1", port: 9 },
+                tailcatPaths(root),
+                24_783,
+                { restartDelayMs: 200, startupTimeoutMs: 5_000, stopGraceMs: 50 },
+            );
+            // The first Tailcat exits at once; its file is deleted and Tailcat resolves elsewhere.
+            vi.stubEnv("HAPPY_AGENT_TAILCAT_PATH", extractedAgain);
+            await rm(fake);
+
+            await waitFor(
+                async () => Number(await readFile(join(root, "tailcat-runs"), "utf8")) >= 3,
+            );
+            expect(exposure.address).toBe("tcStableTailcatAddress123");
+        } finally {
+            await exposure?.close();
+            vi.unstubAllEnvs();
+        }
     });
 });
 

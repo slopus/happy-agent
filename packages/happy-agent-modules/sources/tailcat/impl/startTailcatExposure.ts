@@ -42,8 +42,11 @@ export async function startTailcatExposure(
 ): Promise<TailcatExposure> {
     await mkdir(paths.home, { mode: 0o700, recursive: true });
     await chmod(paths.home, 0o700);
-    const executable = options.executable ?? resolveTailcatExecutable();
-    await ensureTailcatKey(executable, paths, options.startupTimeoutMs ?? 60_000);
+    // Without an explicit path every start finds Tailcat again: release binaries extract it to a
+    // temporary folder that can be deleted while the exposure lives.
+    const configured = options.executable;
+    const executable = configured === undefined ? resolveTailcatExecutable : () => configured;
+    await ensureTailcatKey(executable(), paths, options.startupTimeoutMs ?? 60_000);
     const exposure = new SupervisedTailcatExposure(
         ctx,
         executable,
@@ -62,7 +65,7 @@ export async function startTailcatExposure(
 
 class SupervisedTailcatExposure implements TailcatExposure {
     readonly #ctx: Context;
-    readonly #executable: string;
+    readonly #executable: () => string;
     readonly #paths: TailcatExposurePaths;
     readonly #pipe: TailcatPipeCommand;
     readonly #port: number;
@@ -79,7 +82,7 @@ class SupervisedTailcatExposure implements TailcatExposure {
 
     constructor(
         ctx: Context,
-        executable: string,
+        executable: () => string,
         paths: TailcatExposurePaths,
         port: number,
         pipe: TailcatPipeCommand,
@@ -105,7 +108,7 @@ class SupervisedTailcatExposure implements TailcatExposure {
 
     async open(): Promise<this> {
         this.#current = await spawnTailcat(
-            this.#executable,
+            this.#executable(),
             this.#paths.keyPath,
             this.#paths.addressPath,
             this.#pipe,
@@ -155,7 +158,7 @@ class SupervisedTailcatExposure implements TailcatExposure {
             if (this.#stopped) return;
             try {
                 const restarted = await spawnTailcat(
-                    this.#executable,
+                    this.#executable(),
                     this.#paths.keyPath,
                     this.#paths.addressPath,
                     this.#pipe,
