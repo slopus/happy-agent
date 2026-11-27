@@ -2643,42 +2643,53 @@ export class HistoryModule implements AgentModule {
      * Messages people and agents wrote with a text block holding every query word, best BM25
      * first, snippeted from that block, among the conversations in `agentIds` only. The caller
      * decides which conversations the person may see; a message outside them is never read.
+     * A conversation contributes at most `perAgent` messages, its best ones, and each hit counts
+     * how many of its conversation's messages matched among the index rows looked through.
      */
     async searchMessages(
         ctx: Context,
         q: string,
         agentIds: ReadonlySet<string>,
         limit: number,
-    ): Promise<Omit<SearchHit<"message">, "workspaceId" | "projectId">[]> {
+        perAgent = Number.POSITIVE_INFINITY,
+    ): Promise<
+        (Omit<SearchHit<"message">, "workspaceId" | "projectId"> & { agentMatchCount: number })[]
+    > {
         const words = searchQueryWords(q);
         if (words.length === 0) return [];
         return await ctx.inTx(async (txCtx) => {
-            const hits: Omit<SearchHit<"message">, "workspaceId" | "projectId">[] = [];
-            for (const found of await queryHistoryWords(
-                txCtx,
-                searchWordMatch(words),
-                HISTORY_WORDS_SCAN,
-            )) {
+            const found = (
+                await queryHistoryWords(txCtx, searchWordMatch(words), HISTORY_WORDS_SCAN)
+            ).filter((row) => agentIds.has(row.agentId));
+            const matched = new Map<string, number>();
+            for (const row of found) matched.set(row.agentId, (matched.get(row.agentId) ?? 0) + 1);
+            const taken = new Map<string, number>();
+            const hits: (Omit<SearchHit<"message">, "workspaceId" | "projectId"> & {
+                agentMatchCount: number;
+            })[] = [];
+            for (const row of found) {
                 if (hits.length > limit) break;
-                if (!agentIds.has(found.agentId)) continue;
-                const message = await this.message(txCtx, found.agentId, found.recordId);
+                if ((taken.get(row.agentId) ?? 0) >= perAgent) continue;
+                const message = await this.message(txCtx, row.agentId, row.recordId);
                 const role = message === undefined ? null : historyWordRole(message);
                 if (message === undefined || role === null) continue;
-                const block = message.blocks[found.block];
+                const block = message.blocks[row.block];
                 const text =
-                    found.block === WHOLE_MESSAGE
+                    row.block === WHOLE_MESSAGE
                         ? historyWordText(message)
                         : block?.type === "text"
                           ? block.text
                           : "";
+                taken.set(row.agentId, (taken.get(row.agentId) ?? 0) + 1);
                 hits.push({
                     type: "message",
                     key: `message:${message.recordId}`,
-                    agentId: found.agentId,
+                    agentId: row.agentId,
                     messageId: message.recordId,
                     role,
                     snippet: searchLineAt(text, firstSearchWordIndex(text, words) ?? 0).snippet,
                     createdAt: message.at ?? 0,
+                    agentMatchCount: matched.get(row.agentId)!,
                 });
             }
             return hits;

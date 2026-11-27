@@ -198,9 +198,11 @@ than being silently truncated or stored.
 
 ## Message search
 
-`searchMessages(ctx, q, agentIds, limit)` is the message provider of the node's search: messages
-holding every query word, best BM25 first and snippeted from the line with the first match, among
-the conversations in `agentIds` only.
+`searchMessages(ctx, q, agentIds, limit, perAgent?)` is the message provider of the node's search:
+messages holding every query word, best BM25 first and snippeted from the line with the first
+match, among the conversations in `agentIds` only. With `perAgent`, a conversation contributes at
+most that many of its best messages, and every hit carries `agentMatchCount`, how many of its
+conversation's messages matched among the thousand index rows one search looks through.
 The node search module decides which conversations the caller may see; a message outside them is
 never read, so its text cannot reach a snippet. Only what people wrote (`"user"`) and what agents
 wrote (`"agent"`: assistant messages and `role: "agent"` deliveries) is searched, by its text

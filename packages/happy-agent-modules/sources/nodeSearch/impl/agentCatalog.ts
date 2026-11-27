@@ -19,6 +19,8 @@ export interface AgentCatalogEntry {
     readonly username: string | null;
     readonly kind: "chat" | "task" | "subtask" | "bot";
     readonly archived: boolean;
+    /** The conversation it was created under, as `GET /v0/agents` reports it. */
+    readonly parentAgentId: string | null;
     /** The task whose members may find it: a task's agent and every subtask below it. */
     readonly taskId: string | null;
     /** The workspace holding the conversation; a project's root workspace has its ID. */
@@ -123,6 +125,7 @@ export async function buildAgentCatalog(
             username?: string;
             taskId: string | null;
             archived?: boolean;
+            parentAgentId: string | null;
             placement: Placement;
         },
         config: AgentConfig,
@@ -138,6 +141,7 @@ export async function buildAgentCatalog(
             kind: found.kind,
             archived:
                 found.archived === true || typeof config.metadata?.["archivedAt"] === "number",
+            parentAgentId: found.parentAgentId,
             taskId: found.taskId,
             ...placement,
         });
@@ -147,7 +151,11 @@ export async function buildAgentCatalog(
             // A child that is not a subtask is a hidden subagent.
             if (child === undefined || !subtasks.isSubtask(child)) continue;
             seen.add(childId);
-            await visit(childId, { kind: "subtask", taskId: found.taskId, placement }, child);
+            await visit(
+                childId,
+                { kind: "subtask", taskId: found.taskId, parentAgentId: agentId, placement },
+                child,
+            );
         }
     };
     for (const root of roots) {
@@ -164,6 +172,8 @@ export async function buildAgentCatalog(
                 ...(root.username === undefined ? {} : { username: root.username }),
                 taskId: root.taskId ?? null,
                 ...(root.archived === undefined ? {} : { archived: root.archived }),
+                // A subtask attached to a workspace is a root here, but still has its parent.
+                parentAgentId: await agents.parentOf(ctx, root.agentId),
                 placement: { workspaceId: null, projectId: null },
             },
             config,

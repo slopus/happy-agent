@@ -95,6 +95,7 @@ describe("history message search", () => {
                 role: "user",
                 snippet: "Ship the zeppelin on Friday",
                 createdAt: 111,
+                agentMatchCount: 1,
             },
         ]);
         expect(
@@ -125,6 +126,44 @@ describe("history message search", () => {
         expect(await keys(history, ctx, "zeppelin", ["agent-a", "agent-b"])).toEqual([
             "message:n1",
         ]);
+    });
+
+    it("takes at most a few messages from each conversation, counting all it matched", async () => {
+        const { history, ctx, record } = await fixture("history-message-search-per-agent");
+        // One long conversation matches many times, and better than the short one.
+        await record(
+            "agent-long",
+            Array.from({ length: 40 }, (_, index) =>
+                text(`long${index}`, "user", `zeppelin zeppelin zeppelin ${index}`),
+            ),
+        );
+        await record("agent-short", [text("short", "user", "a zeppelin among many other words")]);
+        await record("agent-hidden", [text("hidden", "user", "zeppelin zeppelin zeppelin")]);
+
+        const capped = await history.searchMessages(
+            ctx,
+            "zeppelin",
+            new Set(["agent-long", "agent-short"]),
+            4,
+            3,
+        );
+        expect(capped.map((hit) => [hit.agentId, hit.agentMatchCount])).toEqual([
+            ["agent-long", 40],
+            ["agent-long", 40],
+            ["agent-long", 40],
+            ["agent-short", 1],
+        ]);
+        // Without a cap the long conversation fills every place.
+        expect(
+            (
+                await history.searchMessages(
+                    ctx,
+                    "zeppelin",
+                    new Set(["agent-long", "agent-short"]),
+                    4,
+                )
+            ).map((hit) => hit.agentId),
+        ).toEqual(Array.from({ length: 5 }, () => "agent-long"));
     });
 
     it("finds a finished answer by words from different blocks, indexing it as one row", async () => {
