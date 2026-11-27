@@ -744,8 +744,9 @@ describe("AcpSession", () => {
             "happy-instructions",
         );
 
-        // A Happy tool call goes ahead in every mode; anything of agy's own is refused unasked.
-        for (const mode of ["read_only", "auto", "full_access"] as const) {
+        // A Happy tool call goes ahead in every mode; anything of agy's own is refused unasked. The
+        // ask is the frame agy 1.5.18 sends for call_mcp_tool, captured live.
+        for (const mode of ["read_only", "workspace_write", "auto", "full_access"] as const) {
             h.setPermissionMode(mode);
             h.user("needs agy mcp permission");
             expect(text(await h.run(session)), mode).toBe("permission=allow");

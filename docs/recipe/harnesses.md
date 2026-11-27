@@ -244,7 +244,9 @@ You are working as an agent inside Happy. ...
 - **Asks.** agy runs in its `default` mode for every Happy mode. It asks before each MCP call
   (`kind: execute`, title `MCP Tool <name>`, input `{ ServerName: "happy", ToolName, Arguments }`);
   Happy approves each at once and decides the call itself when it runs. Anything else agy asks
-  about is refused without asking anyone.
+  about is refused without asking anyone. Happy Agent 2026.11.10, 2026.11.11-preview.1 and older
+  do not recognize this ask and put every Happy tool call to the person in Auto and Workspace
+  write; 2026.11.11-preview.2 and newer approve it.
 - **Fallback.** An agent file agy cannot load makes it log `Agent "<name>" not found, falling back
 to default` and continue with all of its own tools. Happy reads agy's log after each session opens
   and stops such a session with "Antigravity did not load Happy's agent and would have used its own

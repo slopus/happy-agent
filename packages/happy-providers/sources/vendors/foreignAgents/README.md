@@ -48,7 +48,11 @@ which Happy cannot hold to that.
 agy 1.5.15 loads MCP tools lazily: its model sees only their names under `<mcp_servers>` and is
 told to read schema files with tools it no longer has, and every call goes through agy's own
 `call_mcp_tool`, which asks first with `{ ServerName, ToolName, Arguments }` titled
-`MCP Tool <name>`. 1.5.10 declared tools directly as `mcp_happy_<tool>` up to about 60 KB and
+`MCP Tool <name>`; 1.5.18 also sends `name: "call_mcp_tool"`, the same input again as `args`, and
+`sessionUpdate`. happy-providers 0.0.66 (Happy Agent 2026.11.11-preview.2) is the first to
+recognize agy's `call_mcp_tool` ask. 0.0.65, which stable 2026.11.10 and 2026.11.11-preview.1
+ship, skipped an ask only for `happy/bridgedCall` metadata, which agy never sends, so there every
+Happy tool call agy made reached the person in Auto and Workspace write. 1.5.10 declared tools directly as `mcp_happy_<tool>` up to about 60 KB and
 dropped the rest; both forms are recognized. Its profile sets `toolDeclarationBudget`, so the
 bridge declares the up-front tools first and always offers `call_tool`, which describes any Happy
 tool and runs those left out. agy's monitors (`agy_tool_safety`, a Flash-Lite call, and a blocking

@@ -10,7 +10,8 @@
 // bridged happy_secret call (with "only always", offering no one-time allow), then replies with
 // the option it got; "needs agy command" asks before one of Antigravity's own commands;
 // "needs agy mcp permission" asks before calling happy_secret through
-// call_mcp_tool, as Antigravity 1.5.15 does ("unknown tool" names a tool Happy does not serve);
+// call_mcp_tool in the frame Antigravity 1.5.18 sends ("unknown tool" names a tool Happy does not
+// serve);
 // anything else is echoed back.
 //
 // Started as Antigravity is, with --agent, --add-dir and --log-file, it logs the agent file it
@@ -172,25 +173,28 @@ class ScriptedAgent {
             writeFileSync(stubbornFile, "");
             await new Promise(() => undefined);
         }
-        // Antigravity 1.5.15 asks before its own call_mcp_tool, and before any command of its own.
+        // Antigravity asks before its own call_mcp_tool, and before any command of its own. 1.5.18
+        // names the operation and repeats its input as `args` (captured live, sanitized).
         if (text.includes("needs agy")) {
             const mcp = text.includes("needs agy mcp permission");
+            const input = mcp
+                ? {
+                      Arguments: { why: "test" },
+                      ServerName: "happy",
+                      ToolName: text.includes("unknown tool") ? "not_a_tool" : "happy_secret",
+                  }
+                : { CommandLine: "ls -la", toolSummary: "List files" };
             const answer = await this.#conn.requestPermission({
                 sessionId: params.sessionId,
                 toolCall: {
+                    sessionUpdate: "tool_call",
                     toolCallId: `call_${Date.now()}`,
-                    kind: "execute",
+                    name: mcp ? "call_mcp_tool" : "run_command",
+                    args: input,
                     status: "pending",
+                    kind: "execute",
                     title: mcp ? "MCP Tool happy_secret" : "ls -la",
-                    rawInput: mcp
-                        ? {
-                              ServerName: "happy",
-                              ToolName: text.includes("unknown tool")
-                                  ? "not_a_tool"
-                                  : "happy_secret",
-                              Arguments: { why: "test" },
-                          }
-                        : { CommandLine: "ls -la", toolSummary: "List files" },
+                    rawInput: input,
                 },
                 options: [
                     { optionId: "allow", name: "Allow", kind: "allow_once" },

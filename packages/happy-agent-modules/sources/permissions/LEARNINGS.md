@@ -59,7 +59,10 @@ Happy now starts agy as a per-session custom agent whose only built-in tool is `
 reads, writes, runs commands and starts sub-agents only through Happy's tools over MCP, which run
 in Happy's sandbox under Happy's mode and reviewer exactly like Happy's own loop. agy runs in its
 `default` mode for every Happy mode, its asks about Happy tools are approved because Happy decides
-the call when it runs, and anything else it asks about is refused unasked. Describe a harness's
+the call when it runs, and anything else it asks about is refused unasked. That approval needs
+happy-providers 0.0.66 or newer (Happy Agent 2026.11.11-preview.2): 0.0.65, which stable
+2026.11.10 and 2026.11.11-preview.1 ship, recognized only `happy/bridgedCall` metadata, which agy never sends, so a user
+on it saw a question for every Happy tool call in Auto and Workspace write. Describe a harness's
 own checks only from evidence: its model decisions vary on the same action, and an ask carries
 the command without its reason.
 

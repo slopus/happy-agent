@@ -34,7 +34,8 @@ Agent Base ── run(context) ──▶ AcpSession ── ACP over stdio ──
   of a bridged Happy tool is allowed in every mode, because Happy decides that call under the
   conversation's own mode, sandbox and reviewer when it runs. The ask is recognized by
   `happy/bridgedCall` metadata from a first-party driver, by Antigravity's `mcp_happy_<tool>`
-  function name, or by its `call_mcp_tool` input `{ ServerName: "happy", ToolName, Arguments }`;
+  function name, or by its `call_mcp_tool` input `{ ServerName: "happy", ToolName, Arguments }`
+  (since 0.0.66; 0.0.65 recognized only the metadata, which Antigravity never sends);
   an ask about `call_tool` is judged as the tool it names, and one that only reads a description
   passes. Other `session/request_permission` asks are answered from the Happy mode: Read only
   refuses, Full access allows, and otherwise the turn environment's `askPermission` decides: in
