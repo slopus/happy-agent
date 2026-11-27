@@ -263,8 +263,22 @@ quote writes it as its mark alone, and a backslash a person typed is written esc
 break that ends a block now shows, where it used to be left out. A heading and a table cell are
 one line: a break inside them reads as a space and the read says some line breaks are not
 shown, as it does for a block that holds nothing but line breaks, which reads as empty. The
-editor keeps a line break beside a link inside the link; it is written outside it. The
-`update_document` description says how line breaks are written.
+editor reports a line break beside a link, or between two links to one place, as part of one
+link's text, so a link is written once on each line it covers. The `update_document` description
+says how line breaks are written.
+
+## Spaces at the edges of a line are left out
+
+Spaces at the start or end of a block's text, or of a line inside it, were written as `&#32;`
+so that reading the Markdown back gave the same spaces. Nobody sees those spaces, an agent had
+to copy the character references to make an exact replacement, and the cloud's documents leave
+them out. Kirill decided the two products read the same. A line now reads without the spaces
+at its edges, a paragraph holding only spaces reads as an empty paragraph, and a line of only
+spaces inside a block reads as an empty line. Spaces inside a line stay, including every space
+between two formatted runs, because dropping one would join words. Code keeps its spaces. The
+stored document keeps its edge spaces until an agent rewrites that block: a block the agent
+left alone is matched by its Markdown and never rewritten. A paragraph of only spaces can be
+removed like any empty paragraph.
 
 ## Calendars expand recurrence on the daemon, from series records
 

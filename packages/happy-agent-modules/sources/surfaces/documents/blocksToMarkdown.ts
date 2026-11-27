@@ -183,8 +183,9 @@ function ownMarkdown(block: DocumentBlock, number: number, omitted: Set<OmittedC
             const name = String(props["name"] || url);
             if (url === "")
                 return [
-                    escapeLine(
-                        escapeText(name, { omitted, table: false, singleLine: true }, false),
+                    escapeLines(
+                        escapeText(name, { omitted, table: false, singleLine: false }, false),
+                        { omitted, table: false, singleLine: false },
                     ),
                 ];
             return [
@@ -268,33 +269,103 @@ function normalizeInline(content: unknown, context: Context): (Text | Link)[] {
             if (styles[key] === true) kept[key] = true;
         return { type: "text", text: node.text, styles: kept };
     };
-    const out: (Text | Link)[] = [];
-    const plain = (breaks: number) => {
-        if (breaks > 0) out.push({ type: "text", text: "\n".repeat(breaks), styles: {} });
-    };
+    const raw: (Text | Link)[] = [];
     for (const node of content as (Text | Link)[]) {
-        if (node?.type === "link") {
-            const linked = node.content.map(text).filter((child) => child.text !== "");
-            // The editor keeps a line break beside a link inside it. It is not the link's text.
-            plain(dropEdgeBreaks(linked, "start"));
-            const after = dropEdgeBreaks(linked, "end");
-            if (linked.length > 0)
-                out.push({
-                    type: "link",
-                    href: node.href,
-                    content: sharedWhitespace(splitEdges(linked)) as Text[],
-                });
-            plain(after);
-        } else if (node?.type === "text" && node.text !== "") out.push(text(node));
+        const last = raw.at(-1);
+        // Stored, two links to one place with nothing between them are one link.
+        if (node?.type === "link" && last?.type === "link" && last.href === node.href)
+            last.content.push(...node.content.map(text));
+        else if (node?.type === "link")
+            raw.push({ type: "link", href: node.href, content: node.content.map(text) });
+        else if (node?.type === "text" && node.text !== "") raw.push(text(node));
+    }
+    const out: (Text | Link)[] = [];
+    // One line has no line breaks to keep, so its breaks are spaces before its edges are found.
+    for (const node of trimLines(context.singleLine ? lineBreaks(raw, context) : splitCode(raw))) {
+        if (node.type !== "link") {
+            out.push(node);
+            continue;
+        }
+        // The editor reports a line break beside a link, or between two links to one place, as
+        // part of one link's text. Each line is written as its own link, which reads back the same.
+        const lines: (Text[] | string)[] = [[]];
+        for (const child of node.content)
+            for (const part of context.singleLine ? [child.text] : child.text.split(/(\n+)/)) {
+                if (part.startsWith("\n") && !context.singleLine) lines.push(part, []);
+                else if (part !== "") (lines.at(-1) as Text[]).push({ ...child, text: part });
+            }
+        for (const line of lines) {
+            if (typeof line === "string") out.push({ type: "text", text: line, styles: {} });
+            else if (line.length > 0)
+                out.push({ ...node, content: sharedWhitespace(splitEdges(line)) as Text[] });
+        }
     }
     return mergeRuns(sharedWhitespace(splitEdges(mergeRuns(lineBreaks(out, context)))));
+}
+
+/** Code cannot hold a newline, so it ends before a line break and starts again after it. */
+function splitCode(nodes: (Text | Link)[]): (Text | Link)[] {
+    return nodes.flatMap((node): (Text | Link)[] =>
+        node.type === "text" && node.styles?.["code"] === true
+            ? node.text
+                  .split(/(\n+)/)
+                  .filter((part) => part !== "")
+                  .map((part) =>
+                      part.startsWith("\n")
+                          ? { ...node, text: part, styles: {} }
+                          : { ...node, text: part },
+                  )
+            : [node],
+    );
+}
+
+/**
+ * Spaces at the start and end of each line of a block's text show as nothing, and Markdown
+ * drops them when it reads a line. They are left out, so a line reads as the text a person
+ * sees. A link's text is part of its line. Code keeps its spaces: there they show.
+ */
+function trimLines(nodes: (Text | Link)[]): (Text | Link)[] {
+    const copies = nodes.map((node) =>
+        node.type === "link"
+            ? { ...node, content: node.content.map((child) => ({ ...child })) }
+            : { ...node },
+    );
+    const texts = copies.flatMap((node) => (node.type === "link" ? node.content : [node]));
+    const pass = (from: "start" | "end") => {
+        const edge = from === "start" ? /^[^\S\n]+/ : /[^\S\n]+$/;
+        let open = true;
+        for (const node of from === "start" ? texts : texts.toReversed()) {
+            if (node.styles?.["code"] === true) {
+                open = false;
+                continue;
+            }
+            const parts = node.text.split("\n");
+            const order = parts.map((_, at) => (from === "start" ? at : parts.length - 1 - at));
+            order.forEach((at, step) => {
+                // A line break puts the next part at the edge of a new line.
+                if (step > 0) open = true;
+                if (open) parts[at] = parts[at]!.replace(edge, "");
+                if (parts[at] !== "") open = false;
+            });
+            node.text = parts.join("\n");
+        }
+    };
+    pass("start");
+    pass("end");
+    return copies
+        .map((node) =>
+            node.type === "link"
+                ? { ...node, content: node.content.filter((child) => child.text !== "") }
+                : node,
+        )
+        .filter((node) => (node.type === "link" ? node.content.length > 0 : node.text !== ""));
 }
 
 /**
  * A line break is a newline in the Markdown, where Markdown has a place for one. A heading and
  * a table cell are one line, so a break inside them reads as a space and one at their edge as
  * nothing. Text that is only line breaks reads as no text, except in a quote, whose mark shows
- * each empty line. Code cannot hold a newline, so it ends before a break and starts again after.
+ * each empty line.
  */
 function lineBreaks(nodes: (Text | Link)[], context: Context): (Text | Link)[] {
     const texts = nodes.flatMap((node) => (node.type === "link" ? node.content : [node]));
@@ -312,18 +383,7 @@ function lineBreaks(nodes: (Text | Link)[], context: Context): (Text | Link)[] {
         context.omitted.add("some line breaks");
         return [];
     }
-    return nodes.flatMap((node): (Text | Link)[] =>
-        node.type === "text" && node.styles?.["code"] === true
-            ? node.text
-                  .split(/(\n+)/)
-                  .filter((part) => part !== "")
-                  .map((part) =>
-                      part.startsWith("\n")
-                          ? { ...node, text: part, styles: {} }
-                          : { ...node, text: part },
-                  )
-            : [node],
-    );
+    return nodes;
 }
 
 /**
@@ -683,34 +743,24 @@ function escapeText(text: string, context: Context, inLink: boolean): string {
 /**
  * Protect every line from block syntax. A line break is a newline, and an empty line inside the
  * text is a line holding only a backslash, because a blank line would end the block. A heading's
- * text and a table cell are one line and cannot start a block, so there only the whitespace at
- * their ends is kept.
+ * text and a table cell are one line and cannot start a block.
  */
 function escapeLines(markdown: string, context: Context): string {
-    const lines = markdown.split("\n");
-    if (context.singleLine) return lines.map((line) => escapeLine(line, false)).join(" ");
+    // A line never carries the spaces at its edges, whichever way its text got here.
+    const lines = markdown.split("\n").map((line) => line.replace(/^[^\S\n]+|[^\S\n]+$/g, ""));
+    if (context.singleLine) return lines.join(" ");
     return lines
         .map((line) =>
-            line === "" && lines.length > 1 && context.quote !== true ? "\\" : escapeLine(line),
+            line === ""
+                ? lines.length > 1 && context.quote !== true
+                    ? "\\"
+                    : ""
+                : escapeStart(line),
         )
         .join("\n");
 }
 
-/**
- * Keep a line from starting a heading, quote, list, fence, rule, or setext underline, and keep
- * its leading and trailing whitespace, which Markdown would otherwise drop.
- */
-function escapeLine(line: string, startsBlock = true): string {
-    if (line === "") return line;
-    const indent = /^[ \t]*/.exec(line)![0];
-    const rest = startsBlock ? escapeStart(line.slice(indent.length)) : line.slice(indent.length);
-    let out = indent === "" ? rest : `${whitespaceEntity(indent[0]!)}${indent.slice(1)}${rest}`;
-    const trailing = /[ \t]+$/.exec(out);
-    if (trailing !== null && out.length > trailing[0].length)
-        out = `${out.slice(0, out.length - 1)}${whitespaceEntity(out.at(-1)!)}`;
-    return out;
-}
-
+/** Keep a line from starting a heading, quote, list, fence, rule, table, or setext underline. */
 function escapeStart(rest: string): string {
     if (
         /^#{1,6}(\s|$)/.test(rest) ||
@@ -724,10 +774,6 @@ function escapeStart(rest: string): string {
         return `\\${rest}`;
     const ordered = /^(\d{1,9})([.)])(\s|$)/.exec(rest);
     return ordered === null ? rest : `${ordered[1]}\\${rest.slice(ordered[1]!.length)}`;
-}
-
-function whitespaceEntity(char: string): string {
-    return char === "\t" ? "&#9;" : "&#32;";
 }
 
 function plainText(content: unknown): string {

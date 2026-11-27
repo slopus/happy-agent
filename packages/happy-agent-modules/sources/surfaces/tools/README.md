@@ -18,7 +18,8 @@ with an explanation when the document holds content Markdown cannot represent. B
 content: blocks are one blank line apart and every two more blank lines are an empty paragraph,
 so an agent removes or adds empty paragraphs by writing fewer or more of them. A newline inside
 a paragraph, list item, or quote is a line break, and an empty line there is a line holding only
-a backslash; a quote shows it as its mark alone. Reads skip review;
+a backslash; a quote shows it as its mark alone. Spaces at the edges of a line show as
+nothing and are left out; a block keeps them until an agent rewrites it. Reads skip review;
 writes require shared-data Auto review without filesystem elevation.
 
 `create_document_surface` is in the document array, so every agent can make a document. An agent
