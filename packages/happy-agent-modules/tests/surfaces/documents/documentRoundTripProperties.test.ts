@@ -87,11 +87,13 @@ const inline = (): Inline[] =>
               }
             : styled(),
     );
-/** Whether a block shows text in Markdown: text that is only line breaks shows as nothing. */
+/** Whether a block shows text in Markdown: spaces and line breaks alone show as nothing. */
 const shows = (content: Inline[]) =>
     content.some((node) =>
-        (node.type === "link" ? node.content : [node]).some(
-            (run) => run.text.replace(/\n+$/, "") !== "",
+        (node.type === "link" ? node.content : [node]).some((run) =>
+            run.styles["code"] === true
+                ? run.text.replaceAll("\n", "") !== ""
+                : run.text.trim() !== "",
         ),
     );
 
@@ -220,6 +222,9 @@ function write(state: Uint8Array, text: string): { state: Uint8Array; changed: b
     return { state: Y.encodeStateAsUpdate(doc), changed: change !== undefined };
 }
 const created = (text: string) => readDocument(markdownToUpdate(text) ?? EMPTY).text;
+/** Whether the Markdown writes a space as a character reference, which nobody should have to read. */
+const spelled = (text: string) => /&#(?:32|9);/.test(text);
+
 /** Whether a line outside a code block ends in a space or a tab, which nobody reading it sees. */
 function trailing(text: string): boolean {
     let fence: string | undefined;
@@ -247,7 +252,7 @@ describe("document Markdown round trips", () => {
             const state = Y.encodeStateAsUpdate(doc);
             const { text, outsideModel } = readDocument(state);
             const again = write(state, text);
-            if (outsideModel || again.changed || trailing(text))
+            if (outsideModel || again.changed || trailing(text) || spelled(text))
                 failures.push(
                     `${JSON.stringify(blocks)} read ${JSON.stringify(text)}, then ${JSON.stringify(readDocument(again.state).text)}`,
                 );

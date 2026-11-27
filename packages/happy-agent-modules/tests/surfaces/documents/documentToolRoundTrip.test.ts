@@ -140,6 +140,7 @@ const text = (value: string, styles: Record<string, unknown> = {}) => ({
     text: value,
     styles,
 });
+const link = (value: string) => ({ type: "link", href: "https://x.y", content: [text(value)] });
 const block = (type: string, value = "", props: Record<string, unknown> = {}, children = []) => ({
     type,
     props,
@@ -204,9 +205,9 @@ const WRITTEN: [name: string, written: string, reads: string][] = [
         "> quoted\n> more\n\n---\n\n![a cat](https://img/cat.png)\n",
     ],
     [
-        "emphasis and a link across a line break",
+        "emphasis across a line break, and a link written once on each line",
         "**a\nb** [c\nd](https://x.y)\n",
-        "**a\nb** [c\nd](https://x.y)\n",
+        "**a\nb** [c](https://x.y)\n[d](https://x.y)\n",
     ],
     [
         "a line break in a heading and a table cell cannot be written",
@@ -328,6 +329,8 @@ const WRITTEN: [name: string, written: string, reads: string][] = [
     ["a quote that starts and ends with an empty line", ">\n> q\n>\n", ">\n> q\n>\n"],
     ["a divider", "a\n\n---\n\nb\n", "a\n\n---\n\nb\n"],
     ["HTML stays text", "<b>bold</b>\n", "\\<b>bold\\</b>\n"],
+    ["spaces written as character references at a block's edges", "&#32;a&#32;\n", "a\n"],
+    ["spaces only", "   ", ""],
 ];
 
 /** Documents as a person leaves them in the editor, and the literal Markdown they read as. */
@@ -503,8 +506,78 @@ const TYPED: [name: string, blocks: unknown[], reads: string][] = [
         "**~~x~~   *b***\n",
     ],
     ["a carriage return in text", [p("x\ry")], "x&#13;y\n"],
-    ["leading and trailing spaces", [p("  a  ")], "&#32; a &#32;\n"],
-    ["a paragraph of spaces", [p("a"), p("   "), p("b")], "a\n\n&#32; &#32;\n\nb\n"],
+    ["leading and trailing spaces", [p("  a  ")], "a\n"],
+    ["a paragraph of spaces is an empty paragraph", [p("a"), p("   "), p("b")], "a\n\n\n\nb\n"],
+    [
+        "spaces around a paragraph's lines",
+        [p("  leading"), p("trailing  "), p("    four spaces"), p("a\n  b  \nc"), p("x\r\ny")],
+        "leading\n\ntrailing\n\nfour spaces\n\na\nb\nc\n\nx\ny\n",
+    ],
+    [
+        "spaces around the text of a heading, list items and table cells",
+        [
+            block("heading", " T ", { level: 2 }),
+            bullet(" a "),
+            block("numberedListItem", " n"),
+            block("checkListItem", "c ", { checked: true }),
+            bullet("x\n\ny"),
+            {
+                type: "table",
+                content: {
+                    type: "tableContent",
+                    rows: [
+                        { cells: [[text(" a ")], [text("b ")]] },
+                        { cells: [[text(" 1")], [text("2")]] },
+                    ],
+                },
+            },
+        ],
+        "## T\n\n- a\n\n1. n\n\n- [x] c\n- x\n  \\\n  y\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n",
+    ],
+    [
+        "a mark that starts or ends with a space",
+        [
+            { ...p(), content: [text(" bold", { bold: true })] },
+            { ...p(), content: [text("a"), text(" b ", { bold: true }), text("c")] },
+            { ...p(), content: [text(" s ", { strike: true })] },
+            { ...p(), content: [text("i ", { italic: true }), text("next")] },
+        ],
+        "**bold**\n\na **b** c\n\n~~s~~\n\n*i* next\n",
+    ],
+    [
+        "a line of spaces inside a block is an empty line",
+        [p("a\n \nb"), block("quote", "q\n  \nr"), bullet(" \n ")],
+        "a\n\\\nb\n\n> q\n>\n> r\n\n-\n",
+    ],
+    [
+        "links to one place on two lines, and in a table cell",
+        [
+            { ...p(), content: [link("a"), text("\n "), link("b")] },
+            {
+                type: "table",
+                content: {
+                    type: "tableContent",
+                    rows: [{ cells: [[link("a"), text("\n "), link("b")]] }, { cells: [[]] }],
+                },
+            },
+        ],
+        "[a](https://x.y)\n[b](https://x.y)\n\n| [a ](https://x.y) [b](https://x.y) |\n| --- |\n|  |\n",
+    ],
+    [
+        "spaces between two marked runs stay",
+        [
+            { ...p(), content: [text("a ", { bold: true }), text(" b", { italic: true })] },
+            {
+                ...p(),
+                content: [text("a", { bold: true }), text(" "), text("b", { italic: true })],
+            },
+            {
+                ...p(),
+                content: [text(" a", { bold: true }), text("  "), text("b ", { code: true })],
+            },
+        ],
+        "**a**  *b*\n\n**a** *b*\n\n**a**  `b `\n",
+    ],
     ["text that looks like a blank-line run", [p("a\n\n\nb")], "a\n\\\n\\\nb\n"],
     [
         "a table with an empty header",
@@ -823,6 +896,30 @@ describe("document tools round-trip Markdown", () => {
         expect((await t.update(surfaceId, 1, "zero\n\none\n\ntwo\n")).document.text).toBe(
             "zero\n\none\n\ntwo\n",
         );
+    });
+
+    it("keeps the spaces at a block's edges until an agent rewrites that block", async () => {
+        const t = await desk();
+        const surfaceId = await t.create();
+        await t.type(surfaceId, [p("  a  "), p("   "), p("b "), bullet(" c\n d ")]);
+        const before = await t.blocks(surfaceId);
+        const read = await t.read(surfaceId);
+        expect(read.text).toBe("a\n\n\n\nb\n\n- c\n  d\n");
+        // Writing back what was read stores nothing, so every space is where it was.
+        const again = await t.update(surfaceId, read.seq, read.text);
+        expect(again).toMatchObject({ changed: false, document: { seq: read.seq } });
+        expect(await t.blocks(surfaceId)).toEqual(before);
+        // Only the block the agent rewrites is stored as the agent wrote it.
+        const written = await t.update(surfaceId, read.seq, "a\n\n\n\nb, edited\n\n- c\n  d\n");
+        expect(written).toMatchObject({ changed: true });
+        const after = await t.blocks(surfaceId);
+        expect(after.map((item) => item.content)).toEqual([
+            before[0]!.content,
+            before[1]!.content,
+            [text("b, edited")],
+            before[3]!.content,
+        ]);
+        expect(after.map((item) => item.id)).toEqual(before.map((item) => item.id));
     });
 
     it("shows a line break that ends a block and keeps it through an edit elsewhere", async () => {

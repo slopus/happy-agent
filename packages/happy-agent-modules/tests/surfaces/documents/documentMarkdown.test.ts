@@ -94,7 +94,6 @@ describe("document Markdown", () => {
             "`ticks` and ``double``",
             "<http://example.com> <tag> a<b",
             "&copy; &#169; &#xA9; & alone",
-            "   leading and trailing   ",
             "tab\tinside",
             "#",
             "Heading ending with #",
@@ -108,6 +107,11 @@ describe("document Markdown", () => {
             const blocks = documentBlocks(markdownToUpdate(markdown)!);
             expect(blocks[0]?.content, sample).toEqual([text(sample)]);
         }
+        // Spaces at the edges of a block's text show as nothing and are left out.
+        const edges = readDocument(
+            fromBlocks([{ type: "paragraph", content: [text("   leading and trailing   ")] }]),
+        ).text;
+        expect(edges).toBe("leading and trailing\n");
     });
 
     it("keeps formatting Markdown can write and names what it leaves out", () => {
