@@ -25,40 +25,52 @@ export async function* readSseFrames(
     // holds, with no stream plumbing of its own.
     const decoder = new TextDecoder();
     const reader = body.getReader();
-    let buffer = "";
+    // The normalized text after the last frame boundary, kept as the pieces it
+    // arrived in. A single event can run to tens of megabytes, so each chunk is
+    // normalized and searched on its own and the pieces are joined once, when
+    // the frame completes, rather than rescanning everything on every chunk.
+    let pending: string[] = [];
+    // A chunk that ends in a carriage return keeps it unresolved: the next
+    // chunk may begin with the newline that completes it, and deciding early
+    // would turn one line ending into two.
+    let heldCarriageReturn = false;
     try {
         for (;;) {
             const { done, value } = await reader.read();
             if (done) {
                 // A stream that ends without a trailing blank line still
                 // delivered a whole final frame.
-                const last = parseFrame(normalizeLineEndings(buffer));
+                const last = parseFrame(pending.join("") + (heldCarriageReturn ? "\n" : ""));
                 if (last !== undefined) yield last;
                 return;
             }
-            buffer = holdBackSplitLineEnding(buffer + decoder.decode(value, { stream: true }));
-            for (;;) {
-                const boundary = buffer.indexOf("\n\n");
-                if (boundary < 0) break;
-                const frame = parseFrame(buffer.slice(0, boundary));
-                buffer = buffer.slice(boundary + 2);
+            let text = decoder.decode(value, { stream: true });
+            if (heldCarriageReturn) text = `\r${text}`;
+            heldCarriageReturn = text.endsWith("\r");
+            text = normalizeLineEndings(heldCarriageReturn ? text.slice(0, -1) : text);
+            if (text.length === 0) continue;
+            let start = 0;
+            if (text.startsWith("\n") && pending.at(-1)?.endsWith("\n") === true) {
+                // The blank line ending this frame straddles the chunk boundary.
+                const frame = parseFrame(pending.join("").slice(0, -1));
+                pending = [];
+                start = 1;
                 if (frame !== undefined) yield frame;
             }
+            for (;;) {
+                const boundary = text.indexOf("\n\n", start);
+                if (boundary < 0) break;
+                const tail = text.slice(start, boundary);
+                const frame = parseFrame(pending.length === 0 ? tail : pending.join("") + tail);
+                pending = [];
+                start = boundary + 2;
+                if (frame !== undefined) yield frame;
+            }
+            if (start < text.length) pending.push(text.slice(start));
         }
     } finally {
         void reader.cancel().catch(() => undefined);
     }
-}
-
-/**
- * Normalizes line endings, keeping a trailing carriage return unresolved.
- *
- * The next chunk may begin with the newline that completes it, and deciding
- * early would turn one line ending into two.
- */
-function holdBackSplitLineEnding(buffer: string): string {
-    if (!buffer.endsWith("\r")) return normalizeLineEndings(buffer);
-    return `${normalizeLineEndings(buffer.slice(0, -1))}\r`;
 }
 
 function normalizeLineEndings(text: string): string {
