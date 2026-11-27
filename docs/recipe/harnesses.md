@@ -214,6 +214,7 @@ mcpServers:
       serverUrl: "http://127.0.0.1:<port>/<random>/mcp"
       headers: { "Authorization": "Bearer <token>" }
 tools: [search_web]
+excludeDefaultComponents: true
 ---
 
 # Happy
@@ -229,14 +230,15 @@ You are working as an agent inside Happy. ...
   under Happy's rules.
 - **MCP.** agy refuses an ACP-passed MCP server its agent file does not name ("server happy is not
   allowed in this context"), accepts only the list form of `mcpServers`, and expands no variables.
-  1.5.15 loads MCP tools lazily: the model sees only their names under `<mcp_servers>` and calls
-  them through `call_mcp_tool`. Happy's bridge always offers `call_tool`, which describes any Happy
+  1.5.15 loads MCP tools lazily: the model learns them from Happy's tool guide and calls them
+  through `call_mcp_tool`. Happy's bridge always offers `call_tool`, which describes any Happy
   tool and runs those past agy's declaration budget (about 48 KB), so `create_agent` and
   `create_subtask` stay reachable.
-- **Prompt.** The file's body replaces agy's identity, tool, sub-agent and skill sections. agy still
-  adds the person's OS, the `<mcp_servers>` list, artifacts, its guidelines and communication style.
-  Happy's instructions and a guide to its tools (tools every model gets up front written out with
-  their parameters, the rest one line each) are appended to agy's system prompt through ACP
+- **Prompt.** `excludeDefaultComponents: true` keeps out every section agy would add (artifacts,
+  the `<mcp_servers>` list and its schema-file instruction, guidelines, communication style,
+  messaging, user information, user rules and workspace skills), so the file's body is agy's
+  whole system prompt. Happy's instructions and a guide to its tools (tools every model gets up
+  front written out with their parameters, the rest one line each) are appended to it through ACP
   `_meta.antigravity.systemPrompt.append` on each new, resumed and loaded session. Notices Happy
   adds later (mode changes, collaborator reports, task names) reach agy only inside the next
   prompt, as `<system-reminder>`, `<agent-message>` or `<happy-tool-result>`; ACP has no other

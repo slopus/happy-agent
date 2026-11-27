@@ -30,13 +30,16 @@ Antigravity is started by `antigravityHappyOnly` as `agy acp --agent happy-<rand
 Each connection gets a private temporary folder holding a custom agent file,
 `.agents/agents/<name>/agent.md`, written just before each session opens: `mainAgent: true`,
 `inheritMcp: false`, `tools: [search_web]` (agy's only tool left), and `mcpServers` naming
-Happy's bridge with the session's URL and bearer header. agy refuses an ACP-passed MCP server its
-agent file does not name, expands no variables there, and accepts only the list form. The file's
-body replaces agy's identity, tool, sub-agent and skill sections of its system prompt; agy still
-adds the person's OS, its MCP server list, artifacts, behavioral guidelines and communication
-style. Happy's own instructions and a guide to its tools (`acpToolGuide`) are appended through
-ACP `_meta.antigravity.systemPrompt.append` on every new, resumed and loaded session, so the first
-prompt no longer carries them. agy reads the file when a session opens; one it cannot load makes it
+Happy's bridge with the session's URL and bearer header, and `excludeDefaultComponents: true`.
+agy refuses an ACP-passed MCP server its agent file does not name, expands no variables there, and
+accepts only the list form. `excludeDefaultComponents` keeps out every prompt section agy would
+add (artifacts, its MCP server list and the instruction to read schema files, guidelines,
+communication style, messaging, user information listing the workspace folders, which included
+the private folder holding the bridge token, user rules and workspace skills), about 1.7k tokens
+a turn, so the file's body is agy's whole system prompt. Its one rule worth keeping is folded into
+that body: never bypass access controls or the sandbox. Happy's own instructions and a guide to
+its tools (`acpToolGuide`) are appended through ACP `_meta.antigravity.systemPrompt.append` on
+every new, resumed and loaded session, so the first prompt no longer carries them. agy reads the file when a session opens; one it cannot load makes it
 log `Agent "<name>" not found, falling back to default` and continue with all of its own tools,
 so after every open the log is read and such a session is stopped. Anything agy asks about other
 than a Happy tool call is refused without asking anyone. The file, which holds the token, is
@@ -45,9 +48,10 @@ own tools. `connectReadOnly` starts the same agent with `tools: []`, not even we
 prompt saying it only reads, for Happy's permission reviewer; it refuses a configured `command`,
 which Happy cannot hold to that.
 
-agy 1.5.15 loads MCP tools lazily: its model sees only their names under `<mcp_servers>` and is
-told to read schema files with tools it no longer has, and every call goes through agy's own
-`call_mcp_tool`, which asks first with `{ ServerName, ToolName, Arguments }` titled
+agy 1.5.15 loads MCP tools lazily: its default prompt lists only their names under
+`<mcp_servers>` and tells the model to read schema files with tools it no longer has, which is why
+that section is excluded and Happy's tool guide describes the tools instead. Every call goes
+through agy's own `call_mcp_tool`, which asks first with `{ ServerName, ToolName, Arguments }` titled
 `MCP Tool <name>`; 1.5.18 also sends `name: "call_mcp_tool"`, the same input again as `args`, and
 `sessionUpdate`. happy-providers 0.0.66 (Happy Agent 2026.11.11-preview.2) is the first to
 recognize agy's `call_mcp_tool` ask. 0.0.65, which stable 2026.11.10 and 2026.11.11-preview.1

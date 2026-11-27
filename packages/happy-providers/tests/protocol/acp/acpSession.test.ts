@@ -729,6 +729,7 @@ describe("AcpSession", () => {
         expect(file).toContain("mainAgent: true");
         expect(file).toContain("inheritMcp: false");
         expect(file).toContain("tools: [search_web]");
+        expect(file).toContain("excludeDefaultComponents: true");
         expect(file).toMatch(/serverUrl: "http:\/\/127\.0\.0\.1:\d+\/[^"]+\/mcp"/u);
         expect(file).toMatch(/headers: \{"Authorization":"Bearer [^"]+"\}/u);
         expect(file).toContain("call_mcp_tool");
@@ -775,6 +776,7 @@ describe("AcpSession", () => {
 
         const file = h.log().find((entry) => entry.method === "agentFile")?.text as string;
         expect(file).toContain("tools: []\n");
+        expect(file).toContain("excludeDefaultComponents: true");
         expect(file).not.toContain("search_web");
         expect(file).toContain("you must not change anything");
         expect(file).toMatch(/serverUrl: "http:\/\/127\.0\.0\.1:\d+\/[^"]+\/mcp"/u);

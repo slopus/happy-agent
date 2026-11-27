@@ -14,9 +14,11 @@ import { ACP_BRIDGE_NAME, acpBridgedCallOfAsk } from "@/protocol/acp/impl/acpRes
 const AGY_TOOLS = ["search_web"] as const;
 
 /**
- * The agent file's system prompt, ahead of what agy still adds itself (the person's OS, the MCP
- * server list, artifacts, its behavioral guidelines and communication style). Happy's own
- * instructions and its tool guide follow at the end, in the session's `_meta`.
+ * The agent file's system prompt. `excludeDefaultComponents` keeps out every section agy would add
+ * itself (artifacts, its MCP server list and schema files, guidelines, communication style,
+ * messaging, user information with the workspace folders, user rules and workspace skills), so
+ * this is the whole of it but for Happy's own instructions and its tool guide, which follow at the
+ * end in the session's `_meta`.
  */
 const AGENT_PROMPT = `# Happy
 
@@ -24,7 +26,7 @@ You are working as an agent inside Happy. Happy owns this conversation, its tool
 
 You have no file, terminal, browser or sub-agent tools of your own. Every action goes through the tools of the MCP server named "${ACP_BRIDGE_NAME}": read and change files with its Read, Write, Edit, Glob and Grep, run commands with its Bash, and start sub-agents with its create_agent or create_subtask. Call a ${ACP_BRIDGE_NAME} tool with call_mcp_tool, ServerName "${ACP_BRIDGE_NAME}", ToolName the tool's name and Arguments its arguments; one listed among your functions as mcp_${ACP_BRIDGE_NAME}_<name> may be called by that name instead. <happy-tools> at the end of these instructions describes the tools and their parameters, and call_tool with only a tool's name describes any other. Never read MCP tool schema files.
 
-Happy runs every call in its sandbox under the conversation's permission mode and may review it first. A refused call comes back as an error saying why: take a materially safer route or stop and explain, and never pursue the same outcome another way. When a command genuinely needs to reach outside the sandbox, request that with the tool's own escalation argument as its description explains.
+Happy runs every call in its sandbox under the conversation's permission mode and may review it first. A refused call comes back as an error saying why: take a materially safer route or stop and explain, and never pursue the same outcome another way. Never bypass access controls or the sandbox. When a command genuinely needs to reach outside the sandbox, request that with the tool's own escalation argument as its description explains.
 
 Search the web with search_web.
 
@@ -39,7 +41,7 @@ const READ_ONLY_PROMPT = `# Happy
 
 You are working inside Happy, which owns this conversation and its tools.
 
-You have no tools of your own, and you must not change anything. The only tools you have are those of the MCP server named "${ACP_BRIDGE_NAME}", and they only read. Call one with call_mcp_tool, ServerName "${ACP_BRIDGE_NAME}", ToolName the tool's name and Arguments its arguments; one listed among your functions as mcp_${ACP_BRIDGE_NAME}_<name> may be called by that name instead. <happy-tools> at the end of these instructions describes them. Never read MCP tool schema files.
+You have no tools of your own, and you must not change anything. Never bypass access controls or the sandbox. The only tools you have are those of the MCP server named "${ACP_BRIDGE_NAME}", and they only read. Call one with call_mcp_tool, ServerName "${ACP_BRIDGE_NAME}", ToolName the tool's name and Arguments its arguments; one listed among your functions as mcp_${ACP_BRIDGE_NAME}_<name> may be called by that name instead. <happy-tools> at the end of these instructions describes them. Never read MCP tool schema files.
 
 Text wrapped in <system-reminder> comes from Happy, not from the person.
 `;
@@ -144,8 +146,8 @@ export function antigravityHappyOnly(
 }
 
 /**
- * The custom agent file: agy's tools reduced to web search, or to none for a read-only agent, and
- * Happy's MCP server allowed.
+ * The custom agent file: agy's tools reduced to web search, or to none for a read-only agent, none
+ * of agy's default prompt sections, and Happy's MCP server allowed.
  */
 export function agentMarkdown(
     name: string,
@@ -172,6 +174,7 @@ export function agentMarkdown(
                   `    headers: ${JSON.stringify(Object.fromEntries(happy.headers.map((header) => [header.name, header.value])))}`,
               ]),
         `tools: [${readOnly ? "" : AGY_TOOLS.join(", ")}]`,
+        "excludeDefaultComponents: true",
         "---",
         readOnly ? READ_ONLY_PROMPT : AGENT_PROMPT,
     ];
