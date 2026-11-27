@@ -224,9 +224,12 @@ export class ProviderScanModule implements AgentModule {
                 ? hostOf(configured.baseUrl)
                 : undefined;
         return {
-            label:
-                configured?.name ??
-                providerLabel(type ?? configured?.type ?? null, providerId, host),
+            label: verificationLabel(
+                configured?.name,
+                type ?? configured?.type ?? null,
+                providerId,
+                host,
+            ),
             modelId,
             type: type ?? configured?.type ?? null,
             ...(host === undefined ? {} : { host }),
@@ -512,15 +515,34 @@ function rejectWhenAborted(signal: AbortSignal): Promise<never> {
     });
 }
 
+/** Readable names of the provider types whose accounts a person names on top of the type. */
+const VENDOR_LABELS: Readonly<Record<string, string>> = {
+    bedrock: "Amazon Bedrock",
+    claude: "Claude",
+    codex: "Codex",
+    grok: "Grok",
+};
+
+/**
+ * The provider as a failure message names it. An account's name alone does not say which vendor
+ * it is: the built-in Claude, Codex, and Grok are all called "Current CLI", so a vendor account
+ * reads "Codex (Current CLI)". Any other provider is called by its name.
+ */
+function verificationLabel(
+    name: string | undefined,
+    type: string | null,
+    providerId: string,
+    host: string | undefined,
+): string {
+    const vendor = VENDOR_LABELS[type ?? providerId];
+    if (name === undefined || name === vendor) return providerLabel(type, providerId, host);
+    return vendor === undefined ? name : `${vendor} (${name})`;
+}
+
 function providerLabel(type: string | null, providerId: string, host: string | undefined): string {
-    const labels: Readonly<Record<string, string>> = {
-        bedrock: "Amazon Bedrock",
-        claude: "Claude",
-        codex: "Codex",
-        grok: "Grok",
-        openai_compatible: host ?? "The OpenAI-compatible endpoint",
-    };
-    return labels[type ?? providerId] ?? `Provider "${providerId}"`;
+    const key = type ?? providerId;
+    if (key === "openai_compatible") return host ?? "The OpenAI-compatible endpoint";
+    return VENDOR_LABELS[key] ?? `Provider "${providerId}"`;
 }
 
 function hostOf(url: string | undefined): string | undefined {

@@ -31,13 +31,17 @@ authenticated usage endpoint when one exists, and a minimal no-tool inference. A
 falls back to inference when the provider has no auth-only request. `verificationCandidates`
 chooses the inference models: it never uses a Fable model, orders the provider's enabled models
 cheapest first by a static relative cost rank by family (not prices), and picks the cheapest
-effort other than "off". Verification stops at the first model that answers and moves on only after
+effort other than "off". Both the rank and the Fable rule read the model's own name, the last
+segment of its ID, so a harness's model (`claude-code/haiku`, `antigravity/gemini-3.8-flash`) is
+ranked like the vendor's. Verification stops at the first model that answers and moves on only after
 a model-specific failure (`isModelSpecificFailure`: an unavailable model or an invalid request for
 it), trying at most three models within the same 30-second bound. A provider whose only enabled
 models are Fable fails with `no_model`. When every tried model failed for a reason of its own, the
 `model_unavailable` message says the credentials work and lists each model with its short reason;
-a failure every model would share keeps its own explanation, prefixed with the models tried. A
-successful verification is remembered, while a failure changes no earlier discovery. A failure
+a failure every model would share keeps its own explanation, prefixed with the models tried. An
+HTTP 404 is model-specific only when the vendor names the model; a bare 404 means a wrong endpoint
+and is never read as working credentials. A successful verification is remembered, while a failure
+changes no earlier discovery. A failure
 returns `failure: { kind, message }`: `describeVerificationFailure` classifies the problem
 (missing credentials, authentication, network, TLS, timeout, unavailable model, quota, provider
 error, no model, or unknown) and writes an actionable sentence that names only non-secret

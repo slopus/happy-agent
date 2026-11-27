@@ -144,7 +144,14 @@ describe("describeVerificationFailure", () => {
         [{ type: "server_overloaded" as const, diagnostics: { status: 529 } }, "provider_error"],
         [{ type: "empty_response" as const }, "provider_error"],
         [{ type: "network" as const }, "network"],
-        [{ type: "unclassified" as const, diagnostics: { status: 404 } }, "model_unavailable"],
+        [{ type: "unclassified" as const, diagnostics: { status: 404 } }, "unknown"],
+        [
+            {
+                type: "unclassified" as const,
+                diagnostics: { code: "model_not_found", status: 404 },
+            },
+            "model_unavailable",
+        ],
         [{ type: "unclassified" as const, diagnostics: { status: 418 } }, "unknown"],
     ])("classifies provider error %j as %s", (providerError, kind) => {
         expect(
@@ -155,6 +162,36 @@ describe("describeVerificationFailure", () => {
                 providerError,
             }).kind,
         ).toBe(kind);
+    });
+
+    it("treats a 404 as a model problem only when the vendor names the model", () => {
+        const bare: VerificationProblem = {
+            type: "session_error",
+            kind: "unknown",
+            message: "Not Found",
+            providerError: { type: "unclassified", diagnostics: { status: 404 } },
+        };
+        expect(isModelSpecificFailure(GATEWAY, bare)).toBe(false);
+        expect(describeVerificationFailure(GATEWAY, bare)).toEqual({
+            kind: "unknown",
+            message:
+                "llm.corp.example answered the test request with HTTP 404 (not found), so the endpoint address is probably wrong. Check the base URL configured for this provider. Details: Not Found",
+        });
+        expect(
+            describeVerificationFailure({ ...GATEWAY, label: "Corp Gateway" }, bare).message,
+        ).toMatch(/^Corp Gateway answered the test request at llm\.corp\.example with HTTP 404/u);
+
+        const named: VerificationProblem = {
+            type: "session_error",
+            kind: "unknown",
+            message: "model: claude-sonnet-9",
+            providerError: {
+                type: "unclassified",
+                diagnostics: { errorType: "not_found_error", status: 404 },
+            },
+        };
+        expect(isModelSpecificFailure(GATEWAY, named)).toBe(true);
+        expect(describeVerificationFailure(GATEWAY, named).kind).toBe("model_unavailable");
     });
 
     it("classifies the remaining verification problems", () => {

@@ -12,7 +12,7 @@ const MESSAGE_LIMIT = 500;
 export interface VerificationTarget {
     /** The provider registry type, such as `bedrock` or `openai_compatible`. */
     readonly type: string | null;
-    /** The person's name for the provider, or a readable name for its type. */
+    /** A readable name for the provider, such as `Codex (Current CLI)` or the person's name for it. */
     readonly label: string;
     /** The configured endpoint host, never a full URL. */
     readonly host?: string;
@@ -228,8 +228,11 @@ function classify(target: VerificationTarget, evidence: Evidence): Explained {
         };
     }
 
+    // A 404 is about the model only when the vendor says so. A bare 404 is what any server answers
+    // on a path it does not serve, before it reads a key, so it proves nothing about the model or
+    // the credentials.
     if (
-        evidence.status === 404 ||
+        (evidence.status === 404 && (has("model_not_found") || /\bmodel\b/u.test(text))) ||
         named("ResourceNotFoundException") ||
         /model.{0,80}(?:not found|does not exist|not available|not supported|isn't supported|is not enabled|invalid)|(?:access|permission).{0,40}\bmodel\b|model identifier is invalid|unknown model|no such model|on-demand throughput/u.test(
             text,
@@ -238,6 +241,14 @@ function classify(target: VerificationTarget, evidence: Evidence): Explained {
         return {
             kind: "model_unavailable",
             message: `Model ${target.modelId ?? "used for verification"} is not available to this ${target.type === "bedrock" ? "AWS account" : "account"}${target.region === undefined ? "" : ` in ${target.region}`}. ${target.type === "bedrock" ? "Request access to it under Model access in the Amazon Bedrock console, or choose another region." : "Check the model ID and endpoint, or allow the model for this account."}${suffix(details)}`,
+        };
+    }
+    if (evidence.status === 404) {
+        // An unnamed endpoint is already called by its host.
+        const where = target.label === target.host ? "" : at(target);
+        return {
+            kind: "unknown",
+            message: `${target.label} answered the test request${where} with HTTP 404 (not found), so the endpoint address is probably wrong. Check the base URL configured for this provider.${suffix(details)}`,
         };
     }
 
