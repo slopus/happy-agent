@@ -104,4 +104,5 @@ an attempt that failed leaves the next chat free to try.
 
 A name is never a failure. Every method answers with `undefined` rather than raising when the model
 declines, times out, or says nothing usable, and the message that would have been named is already
-on its way.
+on its way. Automatic initial naming then titles the chat with a bounded excerpt of the first
+message instead, recorded as generated so the second look may still replace it.

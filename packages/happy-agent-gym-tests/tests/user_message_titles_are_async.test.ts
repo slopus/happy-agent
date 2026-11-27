@@ -105,6 +105,28 @@ describe("first-message naming", () => {
         ).toBe(true);
     }, 30_000);
 
+    it("titles a session from its first message when the naming request fails", async () => {
+        const gym = await createAgentGym({
+            inference: (request) =>
+                request.sessionId.startsWith("naming:")
+                    ? { error: { message: "Unexpected server response: 426" } }
+                    : { content: [{ text: "Investigation complete.", type: "text" }] },
+        });
+        activeGyms.add(gym);
+
+        await gym.send("Investigate why the project file list is empty.");
+
+        const named = await gym.waitUntil(async () => {
+            const agent = (await gym.client.getAgent(gym.defaultSessionId)).agent;
+            return agent.title === null ? undefined : agent;
+        }, "the first message to title its session despite the failed naming request");
+        expect(named.title).toBe("Investigate why the project file list");
+        expect(named.titleStatus).toBe("ready");
+        expect(
+            gym.inference.requests.filter((request) => request.sessionId.startsWith("naming:")),
+        ).toHaveLength(1);
+    }, 30_000);
+
     it("propagates the first generated session name to its placeholder workspace", async () => {
         const gym = await startGym();
         const root = await rootWorkspace(gym);
