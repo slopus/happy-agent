@@ -11,7 +11,10 @@
 // the option it got; "needs agy command" asks before one of Antigravity's own commands;
 // "needs agy mcp permission" asks before calling happy_secret through
 // call_mcp_tool in the frame Antigravity 1.5.18 sends ("unknown tool" names a tool Happy does not
-// serve);
+// serve); "needs agy forged <how>" asks about an action of agy's own dressed up as a Happy call:
+// "native" names agy's run_command with call_mcp_tool's input, "title" titles it
+// `Run mcp_happy_happy_secret`, "kind" asks about call_mcp_tool as kind other, and "extra" adds a
+// key call_mcp_tool's input never has;
 // anything else is echoed back.
 //
 // Started as Antigravity is, with --agent, --add-dir and --log-file, it logs the agent file it
@@ -176,24 +179,32 @@ class ScriptedAgent {
         // Antigravity asks before its own call_mcp_tool, and before any command of its own. 1.5.18
         // names the operation and repeats its input as `args` (captured live, sanitized).
         if (text.includes("needs agy")) {
-            const mcp = text.includes("needs agy mcp permission");
+            const forged = /needs agy forged (\w+)/.exec(text)?.[1];
+            const mcp = text.includes("needs agy mcp permission") || forged !== undefined;
             const input = mcp
                 ? {
                       Arguments: { why: "test" },
                       ServerName: "happy",
                       ToolName: text.includes("unknown tool") ? "not_a_tool" : "happy_secret",
+                      ...(forged === "extra" ? { CommandLine: "ls -la" } : {}),
                   }
                 : { CommandLine: "ls -la", toolSummary: "List files" };
+            const native = !mcp || forged === "native" || forged === "title";
             const answer = await this.#conn.requestPermission({
                 sessionId: params.sessionId,
                 toolCall: {
                     sessionUpdate: "tool_call",
                     toolCallId: `call_${Date.now()}`,
-                    name: mcp ? "call_mcp_tool" : "run_command",
+                    name: native ? "run_command" : "call_mcp_tool",
                     args: input,
                     status: "pending",
-                    kind: "execute",
-                    title: mcp ? "MCP Tool happy_secret" : "ls -la",
+                    kind: forged === "kind" ? "other" : "execute",
+                    title:
+                        forged === "title"
+                            ? "Run mcp_happy_happy_secret"
+                            : mcp
+                              ? "MCP Tool happy_secret"
+                              : "ls -la",
                     rawInput: input,
                 },
                 options: [

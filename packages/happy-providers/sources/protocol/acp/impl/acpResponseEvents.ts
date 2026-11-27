@@ -1,4 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk";
+import { Type } from "@sinclair/typebox";
+import { Value } from "@sinclair/typebox/value";
 
 import type { SessionOutputBlock } from "@/core/SessionContext.js";
 import type { SessionEvent } from "@/core/SessionEvent.js";
@@ -185,51 +187,64 @@ function isBridgeToolCall(update: { title?: string | null; rawInput?: unknown })
 /** Arguments Antigravity adds to every MCP tool it declares; Happy's tools never take them. */
 const AGY_ADDED_ARGUMENTS = new Set(["toolSummary", "toolAction", "waitForPreviousTools"]);
 
+/** agy's own name for the operation that calls an MCP tool, and the kind it asks about it as. */
+const AGY_CALL_MCP_TOOL = "call_mcp_tool";
+const AGY_CALL_MCP_TOOL_KIND = "execute";
+
+/**
+ * The input of agy's `call_mcp_tool` asking to call a Happy tool, exactly: the server, the tool,
+ * its arguments, and the notes agy adds to every call. Anything else is not this operation.
+ */
+const agyCallMcpToolInputSchema = Type.Object(
+    {
+        ServerName: Type.Literal(ACP_BRIDGE_NAME),
+        ToolName: Type.String({ minLength: 1 }),
+        Arguments: Type.Record(Type.String(), Type.Unknown()),
+        explanation: Type.Optional(Type.String()),
+        toolSummary: Type.Optional(Type.String()),
+        toolAction: Type.Optional(Type.String()),
+        waitForPreviousTools: Type.Optional(Type.Boolean()),
+    },
+    { additionalProperties: false },
+);
+
 /**
  * The bridged Happy tool call a permission ask is about, or `"description"` for a `call_tool`
- * that runs nothing: one that only reads a tool's description, or names no tool. First-party drivers say so in `happy/bridgedCall`
- * metadata. Antigravity either names the function it is about to call, `mcp_happy_<tool>`, and
- * sends that call's input, or, when it loads MCP tools lazily, asks about its own
- * `call_mcp_tool` with `{ ServerName, ToolName, Arguments }`. A `call_tool` call is the call of
- * the tool it names.
+ * that runs nothing: one that only reads a tool's description, or names no tool. First-party
+ * drivers say so in `happy/bridgedCall` metadata. For Antigravity the operation's own `name` is
+ * authoritative, and the title is never read: either agy's `call_mcp_tool`, of kind `execute`,
+ * with exactly `{ ServerName: "happy", ToolName, Arguments }` and agy's notes as its input, or the
+ * function it declared for a Happy tool, `mcp_happy_<tool>`, with that call's input. A `call_tool`
+ * call is the call of the tool it names. Every other ask, whatever its input or title look like,
+ * is an action of the agent's own. agy also repeats the input as `args`, but the ACP SDK drops
+ * fields it does not define before the ask reaches Happy, so that copy cannot be compared here.
  */
 export function acpBridgedCallOfAsk(
-    toolCall: { readonly title?: string | null; readonly rawInput?: unknown },
+    toolCall: {
+        readonly name?: string | null;
+        readonly kind?: string | null;
+        readonly rawInput?: unknown;
+    },
     meta: unknown,
 ): { readonly name: string; readonly arguments: unknown } | "description" | undefined {
     if (typeof meta === "object" && meta !== null) {
         const { name, arguments: args } = meta as { name?: unknown; arguments?: unknown };
         return typeof name === "string" ? { name, arguments: args ?? {} } : undefined;
     }
-    const raw = toolCall.rawInput as
-        | { ServerName?: unknown; ToolName?: unknown; Arguments?: unknown }
-        | null
-        | undefined;
-    if (
-        typeof raw === "object" &&
-        raw !== null &&
-        raw.ServerName === ACP_BRIDGE_NAME &&
-        typeof raw.ToolName === "string"
-    ) {
-        const input =
-            typeof raw.Arguments === "object" && raw.Arguments !== null ? raw.Arguments : {};
-        return bridgedCall(raw.ToolName, input);
+    const raw = toolCall.rawInput;
+    if (toolCall.name === AGY_CALL_MCP_TOOL) {
+        if (toolCall.kind !== AGY_CALL_MCP_TOOL_KIND) return undefined;
+        if (!Value.Check(agyCallMcpToolInputSchema, raw)) return undefined;
+        return bridgedCall(raw.ToolName, raw.Arguments);
     }
     const prefix = `mcp_${ACP_BRIDGE_NAME}_`;
-    const named = (toolCall as { readonly name?: unknown }).name;
-    const fn =
-        typeof named === "string" && named.startsWith(prefix)
-            ? named
-            : toolCall.title?.startsWith(`Run ${prefix}`) === true
-              ? toolCall.title.slice("Run ".length)
-              : undefined;
-    if (fn === undefined) return undefined;
+    const fn = toolCall.name;
+    if (typeof fn !== "string" || !fn.startsWith(prefix) || fn.length === prefix.length) {
+        return undefined;
+    }
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
     const input = Object.fromEntries(
-        Object.entries(
-            typeof toolCall.rawInput === "object" && toolCall.rawInput !== null
-                ? toolCall.rawInput
-                : {},
-        ).filter(([key]) => !AGY_ADDED_ARGUMENTS.has(key)),
+        Object.entries(raw).filter(([key]) => !AGY_ADDED_ARGUMENTS.has(key)),
     );
     return bridgedCall(fn.slice(prefix.length), input);
 }

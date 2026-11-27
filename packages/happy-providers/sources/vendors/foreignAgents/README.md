@@ -56,10 +56,11 @@ through agy's own `call_mcp_tool`, which asks first with `{ ServerName, ToolName
 `sessionUpdate`. happy-providers 0.0.66 (Happy Agent 2026.11.11-preview.2) is the first to
 recognize agy's `call_mcp_tool` ask. 0.0.65, which stable 2026.11.10 and 2026.11.11-preview.1
 ship, skipped an ask only for `happy/bridgedCall` metadata, which agy never sends, so there every
-Happy tool call agy made reached the person in Auto and Workspace write. 1.5.10 declared tools directly as `mcp_happy_<tool>` up to about 60 KB and
-dropped the rest; both forms are recognized. Its profile sets `toolDeclarationBudget`, so the
-bridge declares the up-front tools first and always offers `call_tool`, which describes any Happy
-tool and runs those left out. agy's monitors (`agy_tool_safety`, a Flash-Lite call, and a blocking
+Happy tool call agy made reached the person in Auto and Workspace write. 1.5.10 declared tools
+directly as `mcp_happy_<tool>` up to about 60 KB and dropped the rest; both forms are recognized,
+by the operation's `name` alone and never by its title or by input that merely looks like a Happy
+call. Its profile sets `toolDeclarationBudget`, so the bridge declares the up-front tools first
+and always offers `call_tool`, which describes any Happy tool and runs those left out. agy's monitors (`agy_tool_safety`, a Flash-Lite call, and a blocking
 `severe_internal_risks_agy`) still see each call and could only block it, never allow anything
 Happy refuses. agy runs in its `default` mode for every Happy mode. It titles its own record of an
 MCP call `MCP Tool <name>` (1.5.15) or `Run mcp_happy_<tool>` (1.5.10).

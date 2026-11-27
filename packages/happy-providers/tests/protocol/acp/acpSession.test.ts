@@ -753,6 +753,12 @@ describe("AcpSession", () => {
             expect(text(await h.run(session)), mode).toBe("permission=allow");
             h.user("needs agy command");
             expect(text(await h.run(session)), mode).toBe("permission=deny");
+            // Only the operation's own name makes an ask a Happy call: an action of agy's own
+            // with Happy-looking input or title is refused unasked, Full access included.
+            for (const forged of ["native", "title", "kind", "extra"]) {
+                h.user(`needs agy forged ${forged}`);
+                expect(text(await h.run(session)), `${mode} ${forged}`).toBe("permission=deny");
+            }
         }
         expect(asked).toEqual([]);
         // agy runs in its `default` mode whatever Happy's mode is.
