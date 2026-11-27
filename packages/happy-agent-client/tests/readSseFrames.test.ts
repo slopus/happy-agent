@@ -118,6 +118,7 @@ function randomSseText(random: () => number): string {
         "\n\n",
         "\r\n\r\n",
         "\r\r",
+        "\uFEFF",
     ];
     let text = "";
     const length = Math.floor(random() * 60);
@@ -179,6 +180,22 @@ describe("readSseFrames", () => {
         const frames = await collect(streamOf("event: last\ndata: 1"));
 
         expect(frames).toEqual([{ id: undefined, name: "last", data: "1" }]);
+    });
+
+    it("drops a byte order mark only at the start of the stream", async () => {
+        const bytes = new TextEncoder().encode("\uFEFFdata: 1\n\n\uFEFFdata: 2\n\ndata: 3\n\n");
+
+        const frames = await collect(bytesStreamOf(eachByte(bytes)));
+
+        expect(frames.map((frame) => frame.data)).toEqual(["1", "3"]);
+    });
+
+    it("discards a character cut off by the end of the stream", async () => {
+        const bytes = new TextEncoder().encode("data: é");
+
+        const frames = await collect(bytesStreamOf([bytes.slice(0, -1)]));
+
+        expect(frames).toEqual([{ id: undefined, name: undefined, data: "" }]);
     });
 
     it("cancels the body when the reader stops early", async () => {
@@ -252,7 +269,9 @@ describe("readSseFrames", () => {
         const encoder = new TextEncoder();
         for (let seed = 1; seed <= 2_000; seed += 1) {
             const random = randomFrom(seed);
-            const bytes = encoder.encode(randomSseText(random));
+            const encoded = encoder.encode(randomSseText(random));
+            // Some streams end partway through a character.
+            const bytes = random() < 0.2 ? encoded.slice(0, -1) : encoded;
             const chunkings = [
                 [bytes],
                 eachByte(bytes),
