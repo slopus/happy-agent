@@ -96,7 +96,7 @@ class SseFramer {
             // The blank line ending this frame straddles the chunk boundary.
             const raw = this.pending.join("").slice(0, -1);
             this.pending = [];
-            this.start = 1;
+            this.advance(1);
             return raw;
         }
         const boundary = this.text.indexOf("\n\n", this.start);
@@ -107,8 +107,18 @@ class SseFramer {
         const tail = this.text.slice(this.start, boundary);
         const raw = this.pending.length === 0 ? tail : this.pending.join("") + tail;
         this.pending = [];
-        this.start = boundary + 2;
+        this.advance(boundary + 2);
         return raw;
+    }
+
+    /** Moves past a taken frame, letting go of a chunk with nothing left in it. */
+    private advance(start: number): void {
+        if (start < this.text.length) {
+            this.start = start;
+            return;
+        }
+        this.text = "";
+        this.start = 0;
     }
 
     end(): SseFrame | undefined {
@@ -121,12 +131,11 @@ class SseFramer {
         const { text, start } = this;
         this.text = "";
         this.start = 0;
-        if (start === 0) {
-            if (text.length > 0) this.pending.push(text);
-        } else if (start < text.length) {
-            // A slice would keep the whole chunk alive for the sake of its end.
-            this.pending.push(detach(text.slice(start)));
-        }
+        const rest = start === 0 ? text : text.slice(start);
+        if (rest.length === 0) return;
+        // A slice keeps its whole chunk alive, so once most of the chunk was
+        // consumed its end is copied instead; a shorter prefix is not worth it.
+        this.pending.push(start > rest.length ? detach(rest) : rest);
     }
 }
 
