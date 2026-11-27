@@ -1,3 +1,4 @@
+import { createId } from "@paralleldrive/cuid2";
 import {
     AgentProviders,
     AgentSystemLocal,
@@ -179,6 +180,12 @@ export class AutoModule implements AgentModule {
      * and a review for it fails closed rather than guessing one.
      */
     readonly #activeRoutes = new Map<string, AutoReviewerRoute>();
+    /**
+     * Questions to forks of a parent's reviewer still running. Shutdown stops each and waits for
+     * it to erase its fork while the private system can still delete, because a fork holds a copy
+     * of the parent's evidence transcript.
+     */
+    readonly #forks = new Set<{ readonly stop: () => void; readonly settled: Promise<unknown> }>();
     /** The shared idempotent shutdown. */
     #closePromise: Promise<void> | undefined;
 
@@ -276,8 +283,31 @@ export class AutoModule implements AgentModule {
             providers: privateProviders,
             shutdownName: "auto-agent-system",
         });
+        await this.#eraseLeftoverForks(lifetime, this.#system);
         return this.#hooks;
     };
+
+    /**
+     * Erase the `ask_parent` forks an earlier process recorded but never erased, such as one it was
+     * running when it crashed. Each record is removed only after its fork is gone, so a failure is
+     * retried at the next start; deleting a fork that was never created is harmless.
+     */
+    async #eraseLeftoverForks(ctx: Context, system: AgentSystemLocal): Promise<void> {
+        const records = this.#forkRecords();
+        for (const { key: forkId } of await records.list(ctx)) {
+            try {
+                await system.delete(ctx, forkId, { erase: true });
+                await records.delete(ctx, forkId);
+            } catch (error: unknown) {
+                ctx.log.warn("Could not erase a leftover permission reviewer question.", error);
+            }
+        }
+    }
+
+    /** Durable records of forks that exist or may exist, keyed by fork ID. */
+    #forkRecords() {
+        return this.#storage.kv.scoped("autoForks");
+    }
 
     /** Stop private reviewer loops at their next durable edge without cancelling a review. */
     drain(): Promise<void> {
@@ -293,6 +323,11 @@ export class AutoModule implements AgentModule {
         if (this.#closePromise === undefined) {
             const lifetime = this.#lifetime ?? ctx;
             this.#closePromise = (async () => {
+                // A closing system refuses the abort and the delete a fork needs, and waits for the
+                // turns still running, so a fork left to finish would hold shutdown until it
+                // answered and then stay in the private store. Stop and erase forks first.
+                for (const fork of this.#forks) fork.stop();
+                await Promise.allSettled([...this.#forks].map(({ settled }) => settled));
                 await this.#system?.close(lifetime);
             })();
         }
@@ -737,6 +772,9 @@ export class AutoModule implements AgentModule {
         owner: AbortSignal | undefined,
     ): Promise<string> {
         if (link.asked.count >= MAX_ASK_PARENT_QUESTIONS) return ASK_PARENT_LIMIT_REACHED;
+        if (this.#closePromise !== undefined) {
+            return unknownParentAnswer("Happy is shutting down.");
+        }
         const deadline = askParentDeadline(Date.now(), link.latestAnswerAt);
         if (deadline === undefined) {
             return unknownParentAnswer("There was not enough time left in this review to ask.");
@@ -752,8 +790,11 @@ export class AutoModule implements AgentModule {
             controller.abort();
         }, deadline - Date.now());
         timer.unref?.();
+        const asking = this.#askFork(link, question, deadline, controller.signal);
+        const fork = { stop: () => controller.abort(), settled: asking.catch(() => undefined) };
+        this.#forks.add(fork);
         try {
-            return await this.#askFork(link, question, deadline, controller.signal);
+            return await asking;
         } catch (error: unknown) {
             if (owner?.aborted === true) throw new Error("The question to the parent was stopped.");
             if (timedOut) {
@@ -764,6 +805,7 @@ export class AutoModule implements AgentModule {
                 `The parent's reviewer could not answer: ${message.slice(0, 240)}`,
             );
         } finally {
+            this.#forks.delete(fork);
             clearTimeout(timer);
             owner?.removeEventListener("abort", onOwnerAbort);
         }
@@ -804,11 +846,11 @@ export class AutoModule implements AgentModule {
         );
         if (signal.aborted) throw new Error("The question to the parent was stopped.");
 
-        const fork = await system.create(
-            this.#privateDbContext(),
-            this.#reviewerConfig("Automatic permission reviewer question"),
-        );
-        const forkId = fork.id;
+        // The fork is recorded before it exists, so a process that dies before erasing it leaves a
+        // record the next start erases it by.
+        const forkId = createId();
+        const records = this.#forkRecords();
+        await records.write(this.#privateDbContext(), forkId, true);
         let aborting: Promise<void> | undefined;
         const abortFork = (): Promise<void> => {
             aborting ??= system.abort(this.#privateDbContext(), forkId).catch(() => undefined);
@@ -819,6 +861,11 @@ export class AutoModule implements AgentModule {
         };
         signal.addEventListener("abort", onAbort, { once: true });
         try {
+            const fork = await system.create(
+                this.#privateDbContext(),
+                this.#reviewerConfig("Automatic permission reviewer question"),
+                { id: forkId },
+            );
             this.#runtime.beginReview(forkId, instructions);
             this.#reviewHistory.beginReview(forkId, ctx, parentId);
             if (grandparentId !== undefined) {
@@ -859,6 +906,11 @@ export class AutoModule implements AgentModule {
                     effort: route.effort,
                 },
             );
+            // A stop that came while the question was being queued found no turn to cancel, so the
+            // fork would answer in full while shutdown waited for it.
+            if (signal.aborted) {
+                await system.abort(this.#privateDbContext(), forkId).catch(() => undefined);
+            }
             await fork.waitForIdle();
             if (signal.aborted) throw new Error("The question to the parent was stopped.");
             const capture = this.#runtime.takeCapture(forkId);
@@ -882,9 +934,12 @@ export class AutoModule implements AgentModule {
             this.#runtime.forget(forkId);
             this.#reviewHistory.endReview(forkId);
             this.#askParent.endReview(forkId);
-            await system
-                .delete(this.#privateDbContext(), forkId, { erase: true })
-                .catch(() => undefined);
+            try {
+                await system.delete(this.#privateDbContext(), forkId, { erase: true });
+                await records.delete(this.#privateDbContext(), forkId);
+            } catch {
+                // The record stays, and the next start erases the fork.
+            }
         }
     }
 
