@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { Context } from "@steve.kite/stdlib";
 
+import { findInputReaders } from "./impl/findInputReaders.js";
 import { killProcessTree } from "./impl/killProcessTree.js";
 import {
     isProcessGroupAlive,
@@ -12,6 +13,7 @@ import {
 import { startProcessTransport, type ProcessTransport } from "./impl/startProcessTransport.js";
 import { BoundedOutputBuffer } from "./impl/BoundedOutputBuffer.js";
 import type {
+    CommandProcess,
     ManagedProcessStatus,
     ProcessKillOptions,
     ProcessOutputDelta,
@@ -317,6 +319,21 @@ export class ManagedProcess {
                 ? this.#stdoutBytes - this.#stdoutUnread.totalBytes
                 : this.#stdoutBytes - (includePending ? 0 : this.#stdout.pendingBytes),
         };
+    }
+
+    /** Bytes the command has written so far, on either stream. */
+    get outputBytes(): number {
+        return this.#stdoutBytes + this.#stderrBytes;
+    }
+
+    /**
+     * The command's processes blocked reading its input. Nothing ends that wait but someone
+     * typing into the command or stopping it. Empty when none are, and wherever the platform
+     * cannot tell.
+     */
+    async readInputWait(): Promise<CommandProcess[]> {
+        if (this.#settled || this.pid === null) return [];
+        return findInputReaders(this.pid);
     }
 
     writeStdin(ctx: Context, data: string | Uint8Array): Promise<boolean> {

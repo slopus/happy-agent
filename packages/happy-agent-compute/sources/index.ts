@@ -67,6 +67,7 @@ export {
 export {
     type ComputeRunOptions,
     type ComputeRunResult,
+    type ComputeCommandProcess,
     type ComputeSessionActivity,
     type ComputeSessionExit,
     type ComputeSessionReadOptions,
