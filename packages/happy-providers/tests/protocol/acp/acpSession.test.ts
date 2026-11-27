@@ -21,7 +21,7 @@ import {
 } from "@/protocol/acp/AcpProvider.js";
 import type { AcpSession } from "@/protocol/acp/AcpSession.js";
 import { acpDiscoverModels } from "@/protocol/acp/acpDiscoverModels.js";
-import type { AcpConnect } from "@/protocol/acp/AcpConnection.js";
+import type { AcpConnect, AcpConnection } from "@/protocol/acp/AcpConnection.js";
 import { acpConnectionSpawn } from "@/protocol/acp/impl/acpConnectionSpawn.js";
 import {
     acpSessionRecordClear,
@@ -886,6 +886,144 @@ describe("AcpSession", () => {
         ]);
         expect(antigravityAgent.profile.permissionOptions?.("workspace_write")).toEqual([
             { configId: "mode", value: "default" },
+        ]);
+    });
+
+    it("reads per-model efforts from models.availableModels alongside base configOptions", async () => {
+        const stubConnect = (response: Record<string, unknown>): AcpConnect => {
+            return async () => ({
+                init: { protocolVersion: 1 },
+                conn: {
+                    newSession: async () => response as unknown as acp.NewSessionResponse,
+                } as unknown as AcpConnection["conn"],
+                stderr: () => "",
+                processGroups: () => [],
+                terminate: () => undefined,
+                exited: new Promise<Error>(() => undefined),
+            });
+        };
+
+        const values = await acpDiscoverModels(
+            stubConnect({
+                sessionId: "s1",
+                configOptions: [
+                    {
+                        id: "model",
+                        name: "Model",
+                        category: "model",
+                        type: "select",
+                        currentValue: "gemini-4-neon",
+                        options: [
+                            { value: "gemini-4-neon", name: "Gemini 4 Neon" },
+                            { value: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen" },
+                            { value: "gemini-4-carbon", name: "Gemini 4 Carbon" },
+                            { value: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
+                        ],
+                    },
+                    {
+                        id: "thought_level",
+                        name: "Thinking Level",
+                        category: "thought_level",
+                        type: "select",
+                        currentValue: "high",
+                        options: [
+                            { value: "low", name: "Low" },
+                            { value: "medium", name: "Medium" },
+                            { value: "high", name: "High" },
+                            { value: "xhigh", name: "Extra" },
+                        ],
+                    },
+                ],
+                models: {
+                    currentModelId: "gemini-4-neon-high",
+                    availableModels: [
+                        { modelId: "gemini-4-neon-low", name: "Gemini 4 Neon (Low)" },
+                        { modelId: "gemini-4-neon-medium", name: "Gemini 4 Neon (Medium)" },
+                        { modelId: "gemini-4-neon-high", name: "Gemini 4 Neon (High)" },
+                        { modelId: "gemini-4-neon-xhigh", name: "Gemini 4 Neon (XHigh)" },
+                        { modelId: "gemini-4-hydrogen-low", name: "Gemini 4 Hydrogen (Low)" },
+                        { modelId: "gemini-4-hydrogen-medium", name: "Gemini 4 Hydrogen (Medium)" },
+                        { modelId: "gemini-4-hydrogen-high", name: "Gemini 4 Hydrogen (High)" },
+                        { modelId: "gemini-4-hydrogen-xhigh", name: "Gemini 4 Hydrogen (XHigh)" },
+                        { modelId: "gemini-4-carbon-low", name: "Gemini 4 Carbon (Low)" },
+                        { modelId: "gemini-4-carbon-medium", name: "Gemini 4 Carbon (Medium)" },
+                        { modelId: "gemini-4-carbon-high", name: "Gemini 4 Carbon (High)" },
+                        { modelId: "gpt-oss-120b-medium", name: "GPT-OSS 120B (Medium)" },
+                    ],
+                },
+            }),
+            "/tmp",
+        );
+
+        expect(antigravityAgent.modelsFromSelector(values)).toEqual([
+            expect.objectContaining({
+                id: "antigravity/gemini-4-neon",
+                name: "Gemini 4 Neon",
+                effortLevels: ["low", "medium", "high", "xhigh"],
+                defaultEffort: "medium",
+            }),
+            expect.objectContaining({
+                id: "antigravity/gemini-4-hydrogen",
+                name: "Gemini 4 Hydrogen",
+                effortLevels: ["low", "medium", "high", "xhigh"],
+                defaultEffort: "medium",
+            }),
+            expect.objectContaining({
+                id: "antigravity/gemini-4-carbon",
+                name: "Gemini 4 Carbon",
+                effortLevels: ["low", "medium", "high"],
+                defaultEffort: "medium",
+            }),
+            expect.objectContaining({
+                id: "antigravity/gpt-oss-120b",
+                name: "GPT-OSS 120B (Antigravity)",
+                effortLevels: ["medium"],
+                defaultEffort: "medium",
+            }),
+        ]);
+
+        // When models.availableModels is absent, thought_level still enriches the active model only.
+        const thoughtOnlyValues = await acpDiscoverModels(
+            stubConnect({
+                sessionId: "s2",
+                configOptions: [
+                    {
+                        id: "model",
+                        name: "Model",
+                        category: "model",
+                        type: "select",
+                        currentValue: "gemini-4-neon",
+                        options: [
+                            { value: "gemini-4-neon", name: "Gemini 4 Neon" },
+                            { value: "gemini-4-carbon", name: "Gemini 4 Carbon" },
+                        ],
+                    },
+                    {
+                        id: "thought_level",
+                        name: "Thinking Level",
+                        category: "thought_level",
+                        type: "select",
+                        currentValue: "high",
+                        options: [
+                            { value: "low", name: "Low" },
+                            { value: "medium", name: "Medium" },
+                            { value: "high", name: "High" },
+                            { value: "xhigh", name: "Extra" },
+                        ],
+                    },
+                ],
+            }),
+            "/tmp",
+        );
+        expect(antigravityAgent.modelsFromSelector(thoughtOnlyValues)).toEqual([
+            expect.objectContaining({
+                id: "antigravity/gemini-4-neon",
+                effortLevels: ["low", "medium", "high", "xhigh"],
+            }),
+            expect.objectContaining({
+                id: "antigravity/gemini-4-carbon",
+                effortLevels: ["low", "medium", "high"],
+            }),
         ]);
     });
 
