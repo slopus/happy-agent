@@ -25,6 +25,19 @@ export interface ProcessKillOptions {
     includeDetached?: boolean;
 }
 
+/** One process that belonged to a command, as a stop found it. */
+export interface CommandProcess {
+    pid: number;
+    /** Its command line, or its name when the command line cannot be read. */
+    command: string;
+}
+
+/** What stopping a command ended, and what was still running when the stop gave up on it. */
+export interface ProcessStopReport {
+    stopped: CommandProcess[];
+    survivors: CommandProcess[];
+}
+
 export interface ProcessSnapshot {
     id: string;
     pid: number | null;

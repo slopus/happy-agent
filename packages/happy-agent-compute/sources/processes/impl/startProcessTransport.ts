@@ -25,6 +25,13 @@ export interface ProcessTransport {
     initialize(data: string | Uint8Array | undefined): Promise<void>;
     onError(listener: (error: Error) => void): void;
     onExit(listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
+    /**
+     * The spawned process itself has exited, whether or not its output has closed.
+     *
+     * Pipes stay open as long as anything holds them, including a descendant that left the
+     * command's session. A terminal reports one exit, so it has nothing separate to say here.
+     */
+    onLeaderExit?(listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
     onOutputEnd(listener: () => void): void;
     onStderr(listener: (chunk: Buffer) => void): void;
     onStdout(listener: (chunk: Buffer) => void): void;
@@ -126,6 +133,10 @@ function startPipeTransport(
             // close, which is what `close` reports.
             child.once("close", listener);
             listeners.push(() => child.removeListener("close", listener));
+        },
+        onLeaderExit(listener) {
+            child.once("exit", listener);
+            listeners.push(() => child.removeListener("exit", listener));
         },
         onOutputEnd(listener) {
             let remaining = 2;

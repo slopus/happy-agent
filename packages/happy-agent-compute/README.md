@@ -319,6 +319,18 @@ command rather than killing it.
 Background work belongs to the compute's own lifetime, never to the tool call that happened to start
 it, so a finished call is never retained by a process it left running.
 
+Stopping a command takes everything it started, not just its process group. Every command is
+started with a `HAPPY_AGENT_COMMAND` marker in its environment, and before anything is signalled
+the stop collects the command's processes: its session and group, every descendant, and on Linux
+every process carrying the marker, which is how a child that called `setsid` or was re-parented
+to init is still found. Each is asked to stop and forced after the grace. The stop then settles
+even if something it could not reach still holds the output open, because waiting for every
+holder of a pipe to close could wait forever; `killSession` names the processes it ended in
+`stoppedProcesses` and any still running in `survivingProcesses`. macOS has no cheap view of
+another process's environment, so there a process that both left the group and lost its parent
+before the stop is not found. Windows relies on `taskkill /T`. Runner sessions do not carry the
+two lists across the runner protocol.
+
 Windows uses the system Windows PowerShell by default. Its own built-in modules precede inherited
 PowerShell 7 module paths, preserving access to cmdlets such as `Get-Acl` when Happy is launched
 from a PowerShell 7 environment. Other configured module paths remain available.

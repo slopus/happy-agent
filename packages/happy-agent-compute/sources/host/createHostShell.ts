@@ -400,7 +400,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
             // Whoever stopped the command is told how it ended by this very call, so claim the
             // outcome before the exit continuation can run and announce it a second time.
             session.exitObserved = true;
-            await session.process.kill(options.ctx, "SIGTERM", {
+            const report = await session.process.kill(options.ctx, "SIGTERM", {
                 forceAfterMs: HOST_SESSION_STOP_GRACE_MS,
             });
             // The process is gone, but this session records the outcome from a separate
@@ -411,7 +411,13 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
             }
             // Stopping a command reports its status; it must not swallow output the model has not
             // read yet.
-            return readSession(sessionId, { peek: true });
+            const snapshot = await readSession(sessionId, { peek: true });
+            if (snapshot === undefined) return undefined;
+            return {
+                ...snapshot,
+                ...(report.stopped.length === 0 ? {} : { stoppedProcesses: report.stopped }),
+                ...(report.survivors.length === 0 ? {} : { survivingProcesses: report.survivors }),
+            };
         },
         readSession,
         async run(runOptions) {

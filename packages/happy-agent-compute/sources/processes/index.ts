@@ -22,6 +22,7 @@ export {
 } from "./impl/startProcessTransport.js";
 export { waitForProcessExit } from "./impl/waitForProcessExit.js";
 export type {
+    CommandProcess,
     ManagedProcessStatus,
     ProcessKillOptions,
     ProcessOutputDelta,
@@ -29,4 +30,5 @@ export type {
     ProcessRunResult,
     ProcessSnapshot,
     ProcessStartOptions,
+    ProcessStopReport,
 } from "./types.js";

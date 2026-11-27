@@ -45,6 +45,13 @@ export interface ComputeRunResult {
 /** Whether a command is still going, finished on its own, or was stopped. */
 export type ComputeSessionStatus = "completed" | "killed" | "running";
 
+/** One process that belonged to a command, as stopping it found it. */
+export interface ComputeCommandProcess {
+    pid: number;
+    /** Its command line, or its name when the command line cannot be read. */
+    command: string;
+}
+
 /** A command's state and output, including what is new since it was last read. */
 export interface ComputeSessionSnapshot {
     command: string;
@@ -64,6 +71,13 @@ export interface ComputeSessionSnapshot {
     stdoutDeltaOmittedBytes?: number;
     stdoutBytes?: number;
     stdoutOmittedBytes?: number;
+    /** Only on what a stop returns: the command's processes the stop ended. */
+    stoppedProcesses?: readonly ComputeCommandProcess[];
+    /**
+     * Only on what a stop returns: the command's processes still running when the stop finished.
+     * The stop settles anyway, so a process the system would not end cannot hold it open.
+     */
+    survivingProcesses?: readonly ComputeCommandProcess[];
     timedOut: boolean;
 }
 

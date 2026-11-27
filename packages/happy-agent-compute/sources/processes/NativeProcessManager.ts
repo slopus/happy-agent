@@ -2,16 +2,22 @@ import { randomUUID } from "node:crypto";
 
 import type { Context } from "@steve.kite/stdlib";
 
+import {
+    COMMAND_MARKER_VARIABLE,
+    findCommandProcesses,
+    isCommandProcessAlive,
+    type TrackedCommandProcess,
+} from "./impl/findCommandProcesses.js";
 import { killProcessTree } from "./impl/killProcessTree.js";
 import {
     isProcessGroupAlive,
     killProcessGroup,
     ProcessGroupReaper,
-    waitForProcessGroupsExit,
 } from "./impl/ProcessGroupReaper.js";
 import { startProcessTransport, type ProcessTransport } from "./impl/startProcessTransport.js";
 import { BoundedOutputBuffer } from "./impl/BoundedOutputBuffer.js";
 import type {
+    CommandProcess,
     ManagedProcessStatus,
     ProcessKillOptions,
     ProcessOutputDelta,
@@ -19,11 +25,14 @@ import type {
     ProcessRunResult,
     ProcessSnapshot,
     ProcessStartOptions,
+    ProcessStopReport,
 } from "./types.js";
 
 const DEFAULT_MAX_OUTPUT_BYTES = 512_000;
 const DEFAULT_KILL_GRACE_MS = 1_000;
 const EXIT_STDIO_IDLE_GRACE_MS = 100;
+/** How often a stop looks again at processes it is waiting on, within its grace. */
+const STOP_POLL_MS = 20;
 
 /**
  * Starts, observes, and stops operating-system processes for a compute backend.
@@ -200,6 +209,10 @@ export class ManagedProcess {
     detached = false;
 
     readonly #transport: ProcessTransport;
+    /** The value of the marker variable this command and everything it starts inherit. */
+    readonly #marker: string;
+    /** How the spawned process itself ended, which a pipe can report before its output closes. */
+    #leaderExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
     readonly #maxOutputBytes: number;
     readonly #hooks: ManagedProcessHooks;
     readonly #waitPromise: Promise<ProcessRunResult>;
@@ -224,7 +237,9 @@ export class ManagedProcess {
         options: ProcessStartOptions,
         hooks: ManagedProcessHooks,
         transport: ProcessTransport,
+        marker: string,
     ) {
+        this.#marker = marker;
         this.command = options.command;
         this.cwd = options.cwd;
         this.#maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
@@ -250,10 +265,14 @@ export class ManagedProcess {
         options: ProcessStartOptions,
         hooks: ManagedProcessHooks,
     ): Promise<ManagedProcess> {
+        const marker = randomUUID();
         return startProcessTransport(
             ctx,
-            options,
-            (ctx, transport) => new ManagedProcess(ctx, options, hooks, transport),
+            {
+                ...options,
+                env: { ...(options.env ?? process.env), [COMMAND_MARKER_VARIABLE]: marker },
+            },
+            (ctx, transport) => new ManagedProcess(ctx, options, hooks, transport, marker),
         );
     }
 
@@ -345,70 +364,127 @@ export class ManagedProcess {
         });
     }
 
+    /**
+     * Stops the command and everything it started, and says what that ended.
+     *
+     * The command's processes are found before anything is signalled, while the shell that
+     * launched them still links them together: a child that called `setsid` is outside the
+     * command's group and session, and one whose parent has died has been handed to init. Each
+     * process found is asked to stop, and whatever is still running when the grace runs out is
+     * forced.
+     *
+     * The stop settles once that is done, even when something still holds the command's output
+     * open. Waiting for every holder of a pipe to close is waiting on a process the stop may not
+     * be able to reach, so the pipes' ends here are closed instead and the survivors are named.
+     */
     async kill(
         ctx: Context,
         signal: NodeJS.Signals = "SIGTERM",
         options: ProcessKillOptions = {},
-    ): Promise<void> {
-        await ctx.span("compute.process.kill", async (ctx) => {
-            if (this.#settled) {
-                return;
+    ): Promise<ProcessStopReport> {
+        return await ctx.span("compute.process.kill", async (ctx) => {
+            if (this.#settled || this.pid === null) {
+                if (!this.#settled) await this.#waitPromise;
+                return { stopped: [], survivors: [] };
             }
 
             this.#killed = true;
             this.#status = "killed";
-            const startedAt = Date.now();
-            if (this.pid !== null) {
-                await killProcessTree(ctx, this.pid, signal);
+            const deadline = Date.now() + (options.forceAfterMs ?? DEFAULT_KILL_GRACE_MS);
+            const leaderWasRunning = this.#leaderExit === undefined;
+            const found = await this.#findCommandProcesses();
+            await this.#signalCommandProcesses(ctx, found, signal);
+
+            const forced: TrackedCommandProcess[] = [];
+            if (signal !== "SIGKILL") {
+                await this.#waitForStop(found, deadline);
+            }
+            const remaining = mergeProcesses(
+                await stillRunning(found),
+                await this.#findCommandProcesses(),
+            );
+            if (remaining.length > 0 || this.#leaderExit === undefined) {
+                // The grace is over. Whatever ignored the polite request does not get another.
+                await this.#signalCommandProcesses(ctx, remaining, "SIGKILL");
+                forced.push(...remaining);
+                // A process cannot ignore SIGKILL, but it ends only when the kernel gets to it.
+                // The wait for that is bounded by the same grace, so a process stuck in the
+                // kernel is reported as a survivor rather than holding the stop forever.
+                await this.#waitForStop(
+                    remaining,
+                    Date.now() + (options.forceAfterMs ?? DEFAULT_KILL_GRACE_MS),
+                );
             }
 
-            let force: NodeJS.Timeout | undefined;
-            const forceAfterMs = options.forceAfterMs ?? DEFAULT_KILL_GRACE_MS;
-            if (this.pid !== null && signal !== "SIGKILL") {
-                force = setTimeout(() => {
-                    if (!this.#settled && this.pid !== null) {
-                        // The grace period outlives the call that asked for the kill, so the
-                        // forceful follow-up runs on the compute-owned context rather than
-                        // retaining a caller that may already be gone.
-                        void this.#hooks.owningContext.span("compute.process.force_kill", (ctx) =>
-                            killProcessTree(ctx, this.pid!, "SIGKILL"),
-                        );
-                    }
-                }, forceAfterMs);
-                force.unref();
+            const all = mergeProcesses(found, forced);
+            const survivors = await stillRunning(all);
+            if (!this.#settled) {
+                // Whatever still holds the output is not going to be heard from. Close our ends
+                // so the command is settled instead of waiting on a process the stop cannot end.
+                this.#finalize(this.#leaderExit?.code ?? null, this.#leaderExit?.signal ?? null);
             }
+            // A survivor keeps the group registered, so shutdown still tries to take it down.
+            if (survivors.length === 0) this.#hooks.onGroupTerminated(this.pid);
 
-            try {
-                await this.#waitPromise;
-            } finally {
-                if (force !== undefined) clearTimeout(force);
-                if (this.pid !== null) {
-                    // The launcher is gone, but a child of it may still be shutting
-                    // down and is entitled to the rest of its grace period.
-                    if (signal !== "SIGKILL") {
-                        await this.#forceGroupAfterGrace(ctx, forceAfterMs, startedAt);
-                    }
-                    this.#hooks.onGroupTerminated(this.pid);
+            const surviving = new Set(survivors.map((survivor) => survivor.pid));
+            const stopped = all
+                .filter((stoppedProcess) => !surviving.has(stoppedProcess.pid))
+                .map(publicProcess);
+            if (leaderWasRunning && !all.some((member) => member.pid === this.pid)) {
+                stopped.unshift({ command: this.command, pid: this.pid });
+            }
+            return { stopped, survivors: survivors.map(publicProcess) };
+        });
+    }
+
+    /** Everything that belongs to this command right now. */
+    #findCommandProcesses(): Promise<TrackedCommandProcess[]> {
+        return findCommandProcesses({
+            leaderAlive: this.#leaderExit === undefined,
+            leaderPid: this.pid!,
+            marker: this.#marker,
+        });
+    }
+
+    async #signalCommandProcesses(
+        ctx: Context,
+        targets: readonly TrackedCommandProcess[],
+        signal: NodeJS.Signals,
+    ): Promise<void> {
+        const pid = this.pid!;
+        if (process.platform === "win32") {
+            if (this.#leaderExit === undefined) await killProcessTree(ctx, pid, signal);
+            return;
+        }
+        // The group as well as its members found a moment ago, so a child forked in between is
+        // not missed. A group cannot be renumbered while any member of it is alive.
+        if (this.#leaderExit === undefined || isProcessGroupAlive(pid)) {
+            await killProcessGroup(ctx, pid, signal);
+        }
+        await ctx.span("compute.process.signal_members", async () => {
+            for (const target of targets) {
+                try {
+                    process.kill(target.pid, signal);
+                } catch {
+                    // Already gone, or no longer ours to signal.
                 }
             }
         });
     }
 
-    /** Gives the rest of the group what remains of its grace, then ends it. */
-    async #forceGroupAfterGrace(
-        ctx: Context,
-        forceAfterMs: number,
-        startedAt: number,
-    ): Promise<void> {
-        if (this.pid === null) return;
-        const survivors = await waitForProcessGroupsExit(
-            [this.pid],
-            forceAfterMs - (Date.now() - startedAt),
-        );
-        // Group only, never the bare number: the launcher is already gone, so
-        // its process id may now belong to a stranger.
-        if (survivors.length > 0 && isProcessGroupAlive(this.pid)) {
-            await killProcessGroup(ctx, this.pid, "SIGKILL");
+    /**
+     * Waits until the command has settled and every process found has ended, or the deadline
+     * passes, whichever comes first.
+     */
+    async #waitForStop(targets: readonly TrackedCommandProcess[], deadline: number): Promise<void> {
+        let alive = await stillRunning(targets);
+        while (!this.#settled || alive.length > 0) {
+            const remainingMs = deadline - Date.now();
+            if (remainingMs <= 0) return;
+            await new Promise((resolve) => {
+                setTimeout(resolve, Math.min(STOP_POLL_MS, remainingMs)).unref();
+            });
+            alive = await stillRunning(alive);
         }
     }
 
@@ -422,6 +498,7 @@ export class ManagedProcess {
         this.#transport.onOutputEnd(this.#onOutputEnd);
         this.#transport.onError(this.#onError);
         this.#transport.onExit(this.#onExit);
+        this.#transport.onLeaderExit?.(this.#onLeaderExit);
     }
 
     #onStdoutData = (chunk: Buffer): void => {
@@ -456,7 +533,12 @@ export class ManagedProcess {
         this.#finalize(null, null);
     };
 
+    #onLeaderExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+        this.#leaderExit = { code, signal };
+    };
+
     #onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+        this.#leaderExit ??= { code, signal };
         this.#exitCode = code;
         this.#exitSignal = signal;
         this.#finalize(code, signal);
@@ -514,6 +596,26 @@ export class ManagedProcess {
             this.#postExitTimer = undefined;
         }
     }
+}
+
+/** The processes among these that are still running as the processes that were found. */
+async function stillRunning(
+    targets: readonly TrackedCommandProcess[],
+): Promise<TrackedCommandProcess[]> {
+    const alive = await Promise.all(targets.map(isCommandProcessAlive));
+    return targets.filter((_, index) => alive[index]);
+}
+
+function mergeProcesses(
+    ...lists: readonly (readonly TrackedCommandProcess[])[]
+): TrackedCommandProcess[] {
+    const merged = new Map<number, TrackedCommandProcess>();
+    for (const list of lists) for (const entry of list) merged.set(entry.pid, entry);
+    return [...merged.values()];
+}
+
+function publicProcess(tracked: TrackedCommandProcess): CommandProcess {
+    return { command: tracked.command, pid: tracked.pid };
 }
 
 function drainedSnapshot(buffer: BoundedOutputBuffer): {
