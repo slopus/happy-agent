@@ -20,29 +20,23 @@ export interface SseFrame {
 export async function* readSseFrames(
     body: ReadableStream<Uint8Array<ArrayBuffer>>,
 ): AsyncGenerator<SseFrame> {
-    // The bytes are decoded here rather than piped through a TextDecoderStream
-    // so that a caller only ever has to hand over the response body it already
-    // holds, with no stream plumbing of its own.
-    const decoder = new TextDecoder();
+    const framer = new SseFramer();
     const reader = body.getReader();
-    let buffer = "";
     try {
         for (;;) {
             const { done, value } = await reader.read();
             if (done) {
                 // A stream that ends without a trailing blank line still
                 // delivered a whole final frame.
-                const last = parseFrame(normalizeLineEndings(buffer));
+                const last = framer.end();
                 if (last !== undefined) yield last;
                 return;
             }
-            buffer = holdBackSplitLineEnding(buffer + decoder.decode(value, { stream: true }));
+            framer.push(value);
             for (;;) {
-                const boundary = buffer.indexOf("\n\n");
-                if (boundary < 0) break;
-                const frame = parseFrame(buffer.slice(0, boundary));
-                buffer = buffer.slice(boundary + 2);
-                if (frame !== undefined) yield frame;
+                const frame = framer.take();
+                if (frame === undefined) break;
+                yield frame;
             }
         }
     } finally {
@@ -51,14 +45,113 @@ export async function* readSseFrames(
 }
 
 /**
- * Normalizes line endings, keeping a trailing carriage return unresolved.
+ * Cuts decoded text into frames, examining each character a bounded number of
+ * times.
  *
- * The next chunk may begin with the newline that completes it, and deciding
- * early would turn one line ending into two.
+ * A single event can run to tens of megabytes, so each chunk is normalized and
+ * searched on its own, and the text after the last frame boundary is kept as
+ * the pieces it arrived in, joined once when the frame completes. The strings
+ * live here rather than in the generator, whose suspended state would keep a
+ * consumed chunk reachable until the next one arrives.
  */
-function holdBackSplitLineEnding(buffer: string): string {
-    if (!buffer.endsWith("\r")) return normalizeLineEndings(buffer);
-    return `${normalizeLineEndings(buffer.slice(0, -1))}\r`;
+class SseFramer {
+    // The bytes are decoded here rather than piped through a TextDecoderStream
+    // so that a caller only ever has to hand over the response body it already
+    // holds, with no stream plumbing of its own.
+    private readonly decoder = new TextDecoder();
+    private pending: string[] = [];
+    // A chunk that ends in a carriage return keeps it unresolved: the next
+    // chunk may begin with the newline that completes it, and deciding early
+    // would turn one line ending into two.
+    private heldCarriageReturn = false;
+    /** The newest chunk's normalized text, and how far into it frames were taken. */
+    private text = "";
+    private start = 0;
+
+    /** Accepts a chunk; its frames are then read with `take` until it returns nothing. */
+    push(bytes: Uint8Array<ArrayBuffer>): void {
+        let text = this.decoder.decode(bytes, { stream: true });
+        if (this.heldCarriageReturn) text = `\r${text}`;
+        this.heldCarriageReturn = text.endsWith("\r");
+        this.text = normalizeLineEndings(this.heldCarriageReturn ? text.slice(0, -1) : text);
+        this.start = 0;
+    }
+
+    take(): SseFrame | undefined {
+        for (;;) {
+            const raw = this.nextRaw();
+            if (raw === undefined) return undefined;
+            const frame = parseFrame(raw);
+            if (frame !== undefined) return frame;
+        }
+    }
+
+    /** The text of the next frame the newest chunk completes, if it completes one. */
+    private nextRaw(): string | undefined {
+        if (
+            this.start === 0 &&
+            this.text.startsWith("\n") &&
+            this.pending.at(-1)?.endsWith("\n") === true
+        ) {
+            // The blank line ending this frame straddles the chunk boundary.
+            const raw = this.pending.join("").slice(0, -1);
+            this.pending = [];
+            this.advance(1);
+            return raw;
+        }
+        const boundary = this.text.indexOf("\n\n", this.start);
+        if (boundary < 0) {
+            this.keepRest();
+            return undefined;
+        }
+        const tail = this.text.slice(this.start, boundary);
+        const raw = this.pending.length === 0 ? tail : this.pending.join("") + tail;
+        this.pending = [];
+        this.advance(boundary + 2);
+        return raw;
+    }
+
+    /** Moves past a taken frame, letting go of a chunk with nothing left in it. */
+    private advance(start: number): void {
+        if (start < this.text.length) {
+            this.start = start;
+            return;
+        }
+        this.text = "";
+        this.start = 0;
+    }
+
+    end(): SseFrame | undefined {
+        const raw = this.pending.join("") + (this.heldCarriageReturn ? "\n" : "");
+        this.pending = [];
+        return parseFrame(raw);
+    }
+
+    private keepRest(): void {
+        const { text, start } = this;
+        this.text = "";
+        this.start = 0;
+        const rest = start === 0 ? text : text.slice(start);
+        if (rest.length === 0) return;
+        // A slice keeps its whole chunk alive, so once most of the chunk was
+        // consumed its end is copied instead; a shorter prefix is not worth it.
+        this.pending.push(start > rest.length ? detach(rest) : rest);
+    }
+}
+
+const detachEncoder = new TextEncoder();
+const detachDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+
+/**
+ * Copies a string so it no longer shares storage with the one it was sliced
+ * from.
+ *
+ * Engines keep a slice pointing into its parent, and JavaScriptCore does the
+ * same for a slice of a concatenation; a round trip through bytes is a real
+ * copy everywhere. The text came from a decoder, so it survives intact.
+ */
+function detach(text: string): string {
+    return detachDecoder.decode(detachEncoder.encode(text));
 }
 
 function normalizeLineEndings(text: string): string {
