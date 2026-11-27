@@ -25,6 +25,13 @@ export interface ProcessKillOptions {
     includeDetached?: boolean;
 }
 
+/** One process that belonged to a command. */
+export interface CommandProcess {
+    pid: number;
+    /** Its command line, or its name when the command line cannot be read. */
+    command: string;
+}
+
 export interface ProcessSnapshot {
     id: string;
     pid: number | null;
