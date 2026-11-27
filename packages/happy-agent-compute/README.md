@@ -100,6 +100,16 @@ just-bash refuse. `sessionUsesSecrets(sessionId)` says whether a session was sta
 session the agent can keep reading from, write to, and stop when it decides to — the opposite of what
 most tools do, and the reason `startSession`, `readSession`, `killSession`, and `writeSession` exist.
 
+A session's input stays open so it can be written to later, so a program that reads it waits until
+someone does. On Linux a read that consumes output reports that state as `waitingForInput`, naming
+the command's processes blocked in a read on descriptor 0 whose descriptor 0 is still the
+session's own input, and a read that is waiting for the command returns as soon as it sees it. Nothing
+is stopped: the agent decides whether to answer or stop the session. While a read waits on a
+command that has written nothing new, it looks once a second, because the kernel announces nothing
+when a process starts waiting in `read`. A server asleep in `epoll_wait`, a pipeline stage reading
+the previous one, and a program that waits for input through an event loop are not reported.
+macOS, Windows, and runner sessions do not report it.
+
 Reading and stopping a session take no permissions: they act on a command whose boundary was fixed
 when it started, and re-deciding it afterwards could only disagree with the process already there.
 `writeSession` is the exception and does take them, because input is new instruction reaching a

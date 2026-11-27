@@ -43,6 +43,7 @@ import {
     MAX_RETAINED_HOST_SESSIONS,
 } from "./impl/hostSessionLimits.js";
 import { waitForHostSessionCompletion } from "./impl/waitForHostSessionCompletion.js";
+import { watchHostSessionInput } from "./impl/watchHostSessionInput.js";
 import {
     assertCanUseCustomShell,
     assertSecretsUnsupported,
@@ -299,18 +300,42 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
         if (session === undefined) return undefined;
         const waitMs = Math.max(0, readOptions.waitMs ?? 0);
         const peeking = readOptions.peek === true;
-        if (session.result === undefined && waitMs > 0 && !readOptions.signal?.aborted) {
+        // Whoever reads the output is told when the command is stuck waiting for input, and stops
+        // waiting for it, because nothing but their own input or stop will ever end that wait.
+        // An observer that only peeks is told nothing and waits as it asked.
+        let waitingForInput =
+            peeking || session.result !== undefined ? [] : await session.process.readInputWait();
+        if (
+            session.result === undefined &&
+            waitMs > 0 &&
+            !readOptions.signal?.aborted &&
+            waitingForInput.length === 0
+        ) {
             if (!peeking) session.consumingWaiters += 1;
+            const inputSeen = new AbortController();
+            const stopWatching = peeking
+                ? undefined
+                : watchHostSessionInput(session.process, (readers) => {
+                      waitingForInput = readers;
+                      inputSeen.abort();
+                  });
             try {
                 await waitForHostSessionCompletion(
                     session.completionWaiters,
                     waitMs,
-                    readOptions.signal,
+                    readOptions.signal === undefined
+                        ? inputSeen.signal
+                        : AbortSignal.any([readOptions.signal, inputSeen.signal]),
                 );
             } finally {
+                stopWatching?.();
                 if (!peeking) session.consumingWaiters -= 1;
             }
+            if (!peeking && session.result === undefined && waitingForInput.length === 0) {
+                waitingForInput = await session.process.readInputWait();
+            }
         }
+        if (session.result !== undefined) waitingForInput = [];
 
         const processSnapshot = session.process.readOutput(
             session.stdoutOffset,
@@ -364,6 +389,7 @@ export function createHostShell(options: HostShellOptions): ComputeShell {
             stdoutDeltaBytes,
             stdoutDeltaOmittedBytes: processSnapshot.stdoutDeltaOmittedBytes,
             timedOut: session.timedOut,
+            ...(waitingForInput.length === 0 ? {} : { waitingForInput }),
         };
     };
 

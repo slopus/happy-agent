@@ -45,6 +45,13 @@ export interface ComputeRunResult {
 /** Whether a command is still going, finished on its own, or was stopped. */
 export type ComputeSessionStatus = "completed" | "killed" | "running";
 
+/** One process that belonged to a command. */
+export interface ComputeCommandProcess {
+    pid: number;
+    /** Its command line, or its name when the command line cannot be read. */
+    command: string;
+}
+
 /** A command's state and output, including what is new since it was last read. */
 export interface ComputeSessionSnapshot {
     command: string;
@@ -65,6 +72,12 @@ export interface ComputeSessionSnapshot {
     stdoutBytes?: number;
     stdoutOmittedBytes?: number;
     timedOut: boolean;
+    /**
+     * Only on a read that consumes output, of a command still running: its processes blocked
+     * reading its input. Such a process waits until something is written to the session or the
+     * session is stopped, so a read waiting for the command returns as soon as this is seen.
+     */
+    waitingForInput?: readonly ComputeCommandProcess[];
 }
 
 /** How to read a running command. */
