@@ -61,6 +61,11 @@ check finds agy signed in, after a sign-in or on a refresh, the module calls
 explicit setting or `auto_enable = false` still wins. Matching an account to its CLI uses the
 configured type whenever the registry says `foreign`.
 
+Kirill decided that detection stays automatic: an agy already signed in on the computer counts as
+connected without signing in again through Happy. Listing the provider CLIs refreshes each one, so
+onboarding sees `signIn.status` `signed_in` with `providerId` `antigravity`, and the account is
+already on when the list returns.
+
 ## A sign-in is replaced only when the new one succeeds
 
 Signing an account in again must never leave it worse off. Each attempt gets a fresh folder, the

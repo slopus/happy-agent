@@ -362,6 +362,32 @@ describe("Provider CLIs API", () => {
     );
 
     it(
+        "reports an Antigravity already signed in on this computer as connected and turns it on",
+        async () => {
+            const { gym, home } = await start({ liveProviders: ["antigravity"] });
+            await executable(join(home, ".local", "bin", "agy"), AGY);
+            const token = join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token");
+            await mkdir(join(token, ".."), { recursive: true });
+            await writeFile(token, "token\n");
+
+            const { providerClis } = (await gym.http.ok("GET", "/v0/provider-clis")) as {
+                providerClis: ProviderCli[];
+            };
+            expect(providerClis.find((cli) => cli.id === "antigravity")).toMatchObject({
+                providerId: "antigravity",
+                installation: { status: "installed" },
+                signIn: { status: "signed_in" },
+                operation: null,
+            });
+
+            type Config = { config: { providers: Record<string, { enabled: boolean }> } };
+            const config = ((await gym.http.ok("GET", "/v0/config")) as Config).config;
+            expect(config.providers["antigravity"]?.enabled).toBe(true);
+        },
+        TEST_TIMEOUT_MS,
+    );
+
+    it(
         "ends a sign-in interrupted by a restart instead of starting it again",
         async () => {
             const { gym } = await start();
