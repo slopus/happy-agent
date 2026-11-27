@@ -119,6 +119,13 @@ export const searchMessageSchema = variant("message", {
     /** Where the conversation is, as on its `agent` result. */
     workspaceId: Nullable(searchIdSchema),
     projectId: Nullable(searchIdSchema),
+    /** The conversation's parent, as on its `agent` result; older daemons omit it. */
+    parentAgentId: Type.Optional(Nullable(searchIdSchema)),
+    /**
+     * How many of the conversation's messages matched among the best matches the daemon looked
+     * at, a lower bound; it returns at most three per conversation. Older daemons omit it.
+     */
+    agentMatchCount: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 export const searchTodoSchema = variant("todo", {
     surfaceId: searchIdSchema,
@@ -168,6 +175,11 @@ export const searchAgentSchema = variant("agent", {
     workspaceId: Nullable(searchIdSchema),
     /** The project owning that workspace; `null` for bots, tasks, and their subtasks. */
     projectId: Nullable(searchIdSchema),
+    /**
+     * The conversation it was created under, as `GET /v0/agents` reports it; `null` when no agent
+     * manages it. Older daemons omit it.
+     */
+    parentAgentId: Type.Optional(Nullable(searchIdSchema)),
 });
 export const searchProjectSchema = variant("project", {
     projectId: searchIdSchema,

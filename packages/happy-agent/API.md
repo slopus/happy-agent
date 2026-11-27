@@ -16093,11 +16093,12 @@ The query is split into words of letters and digits, ignoring case and diacritic
 finds what it is becoming; words are not stemmed. Each kind of thing is searched by its own
 provider, which ranks its matches with BM25: matches in names and titles first, then matches in
 content. Vault folders and files follow the tiers described under Vault Surfaces search, and a
-vault item is returned once, under its best tier. People are matched by name and also by email,
-which results never include; skills by name or description. The daemon then fuses the providers'
-lists with Reciprocal Rank Fusion: a result at 1-based position `p` in its provider's list scores
-`1 / (60 + p)`, results are ordered by score, and equal scores follow the provider order of the
-table below, then position.
+vault item is returned once, under its best tier. A conversation contributes at most its three
+best-ranked messages, so one long conversation cannot crowd the others out of the results. People
+are matched by name and also by email, which results never include; skills by name or description.
+The daemon then fuses the providers' lists with Reciprocal Rank Fusion: a result at 1-based
+position `p` in its provider's list scores `1 / (60 + p)`, results are ordered by score, and equal
+scores follow the provider order of the table below, then position.
 
 Names, titles, message text, todo text, calendar event titles, notes, and locations, artifact text
 and summaries, and vault text change in the search index in the same transaction as the change
@@ -16180,21 +16181,21 @@ Types are listed in provider order. Clients ignore results whose `type` they do 
 fields they do not know on a result they keep, so daemons may add types and fields without a
 protocol change.
 
-| `type`           | Key ID        | Fields                                                                                                            |
-| ---------------- | ------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `vault_file`     | `fileId`      | `surfaceId`, `fileId`, `name`, `path`, `kind` (`"file"` or `"artifact"`), `match`, `innerPath`, `line`, `snippet` |
-| `vault_folder`   | `folderId`    | `surfaceId`, `folderId`, `name`, `path`, `match`                                                                  |
-| `document`       | `surfaceId`   | `surfaceId`, `name`, `match`, `line`, `snippet`                                                                   |
-| `message`        | `messageId`   | `agentId`, `messageId`, `role` (`"user"` or `"agent"`), `snippet`, `createdAt`, `workspaceId`, `projectId`        |
-| `todo`           | `todoId`      | `surfaceId`, `todoId`, `text`, `status` (`"active"` or `"completed"`)                                             |
-| `calendar_event` | `eventId`     | `surfaceId`, `eventId`, `title`, `allDay`, `start`, `match`, `snippet`                                            |
-| `artifact`       | `artifactId`  | `artifactId`, `title`, `artifactType`, `match`, `snippet`                                                         |
-| `surface`        | `surfaceId`   | `surfaceId`, `surfaceType`, `name`                                                                                |
-| `agent`          | `agentId`     | `agentId`, `title`, `kind` (`"chat"`, `"task"`, `"subtask"`, or `"bot"`), `archived`, `workspaceId`, `projectId`  |
-| `project`        | `projectId`   | `projectId`, `name`, `archived`                                                                                   |
-| `workspace`      | `workspaceId` | `workspaceId`, `projectId`, `name`, `archived`                                                                    |
-| `user`           | `userId`      | `userId`, `name`                                                                                                  |
-| `skill`          | `skillId`     | `skillId`, `name`, `description`                                                                                  |
+| `type`           | Key ID        | Fields                                                                                                                                         |
+| ---------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vault_file`     | `fileId`      | `surfaceId`, `fileId`, `name`, `path`, `kind` (`"file"` or `"artifact"`), `match`, `innerPath`, `line`, `snippet`                              |
+| `vault_folder`   | `folderId`    | `surfaceId`, `folderId`, `name`, `path`, `match`                                                                                               |
+| `document`       | `surfaceId`   | `surfaceId`, `name`, `match`, `line`, `snippet`                                                                                                |
+| `message`        | `messageId`   | `agentId`, `messageId`, `role` (`"user"` or `"agent"`), `snippet`, `createdAt`, `workspaceId`, `projectId`, `parentAgentId`, `agentMatchCount` |
+| `todo`           | `todoId`      | `surfaceId`, `todoId`, `text`, `status` (`"active"` or `"completed"`)                                                                          |
+| `calendar_event` | `eventId`     | `surfaceId`, `eventId`, `title`, `allDay`, `start`, `match`, `snippet`                                                                         |
+| `artifact`       | `artifactId`  | `artifactId`, `title`, `artifactType`, `match`, `snippet`                                                                                      |
+| `surface`        | `surfaceId`   | `surfaceId`, `surfaceType`, `name`                                                                                                             |
+| `agent`          | `agentId`     | `agentId`, `title`, `kind` (`"chat"`, `"task"`, `"subtask"`, or `"bot"`), `archived`, `workspaceId`, `projectId`, `parentAgentId`              |
+| `project`        | `projectId`   | `projectId`, `name`, `archived`                                                                                                                |
+| `workspace`      | `workspaceId` | `workspaceId`, `projectId`, `name`, `archived`                                                                                                 |
+| `user`           | `userId`      | `userId`, `name`                                                                                                                               |
+| `skill`          | `skillId`     | `skillId`, `name`, `description`                                                                                                               |
 
 - `match` says where the words matched: `"name"` in the name or title, `"content"` in the text,
   or, for vault items, `"path"` only in the folders above. A vault folder's `match` is `"name"` or
@@ -16211,8 +16212,10 @@ protocol change.
   results, titled or not, matched by its text: what a person wrote (`"user"`), or what an agent
   wrote (`"agent"`), its replies and messages it sent another agent. Reasoning, tool calls, tool output, and system and service
   notices are not searched. `snippet` is at most 200 characters of the line where a query word
-  first appears, `createdAt` is when the message was accepted, and `workspaceId` and `projectId`
-  are its conversation's, as on the `agent` result.
+  first appears, `createdAt` is when the message was accepted, and `workspaceId`, `projectId`,
+  and `parentAgentId` are its conversation's, as on the `agent` result. `agentMatchCount` is how
+  many of its conversation's messages matched among the best 1,000 matches search looks at, so it
+  is a lower bound, never less than the number of that conversation's messages returned.
 - A `todo` matches by its text. A `calendar_event` matches by its title, as `match: "name"`, or by
   its notes or location, as `match: "content"` with a `snippet`; `start` is the epoch
   milliseconds start of the series' next occurrence, or of its last one when the series has
@@ -16225,7 +16228,9 @@ protocol change.
   `GET /v0/agents` reports it: a bot's or task's own workspace, a project's root workspace (whose
   ID is the project's) for a project conversation, the workspace for a workspace conversation, and
   the nearest ancestor's for a subtask; `null` only when none is found. `projectId` is the project
-  owning that workspace, and `null` for bots, tasks, and their subtasks.
+  owning that workspace, and `null` for bots, tasks, and their subtasks. `parentAgentId` is the
+  conversation it was created under, as `GET /v0/agents` reports it, and `null` when no agent
+  manages it.
 - `project` and `workspace` match by name. A project is its root workspace, which is never also a
   `workspace` result.
 - A `user` is a team member as `GET /v0/users` describes them, matched by name or email, in
