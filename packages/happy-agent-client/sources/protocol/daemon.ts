@@ -199,6 +199,11 @@ export const healthResponseSchema = Type.Object({
              */
             userEnvironment: Type.Optional(Type.Boolean()),
             /**
+             * True when the daemon serves `PUT /v0/viewers/streams/:streamId` and emits
+             * `viewers.updated`, under Viewers; reported only in team mode.
+             */
+            viewers: Type.Optional(Type.Boolean()),
+            /**
              * True when the daemon serves `POST /v0/artifacts/:artifactId/versions/:number/actions`
              * for `secret` actions and offers `request_secret`; enable `secret` actions only then.
              */

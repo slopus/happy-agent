@@ -1665,6 +1665,8 @@ Fields:
   `GET /v0/usage/daily`, described under Usage.
   `userEnvironment: true` advertises `PUT /v0/environment`, `deviceId` on agent sends, and the
   `user_environment.updated` event, described under User environment.
+  `viewers: true` advertises `PUT /v0/viewers/streams/:streamId` and the `viewers.updated` event,
+  described under Viewers; it is reported only in team mode.
   `artifactSecretActions: true` advertises `POST /v0/artifacts/:artifactId/versions/:number/actions`
   for `secret` actions and the `request_secret` tool, described under Artifacts; clients enable
   `secret` actions only with it. `plugins: true` advertises the routes under `/v0/plugins` and the
@@ -15430,9 +15432,10 @@ Response — `200`: `{ "cluster": { ... }, "entries": [ /* peek entries, newest 
 
 Viewers say who is looking at an agent session or a Surface right now, and when each other person
 was last there. The name is `viewers` because presence already means Online and Away. Viewers
-exist only in team mode. In standalone mode, and on older daemons, every viewers route returns
-`404`; clients then hide viewers and stop calling until the event stream reconnects with a new
-`streamId`.
+exist only in team mode. A daemon that serves them reports `capabilities.viewers: true` from
+health; clients call the viewers routes only then. In standalone mode, and on older daemons, health
+omits the flag and every viewers route returns `404`; clients then hide viewers and stop calling
+until the event stream reconnects with a new `streamId`.
 
 **Targets.** A target is `{ "type": "agent", "id": "..." }` for an agent session, by its agent
 ID, or `{ "type": "surface", "id": "..." }` for a Surface of any type, by its Surface ID. An agent
