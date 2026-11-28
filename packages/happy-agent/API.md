@@ -4139,15 +4139,20 @@ under the ordinary scan rules.
 An account with a credential is checked before anything is saved: the daemon runs the
 `"authentication"` verification described under `POST /v0/providers/:providerId/verify` with the
 submitted credential. The account is written, recorded as discovered, and turned on under the
-ordinary scan rules when the check passes. It is also saved when the check fails with
-`failure.kind` `quota` or `model_unavailable` and the vendor's answer itself shows the credential
-was authenticated: an error the vendor returns only to an authenticated caller, recognized by its
-type or code rather than its status alone. These are OpenAI's `insufficient_quota`,
-`rate_limit_exceeded`, and `model_not_found` codes, which xAI's compatible API also uses;
-Anthropic's `rate_limit_error` and `not_found_error` types; and Bedrock's `ThrottlingException`,
-`ServiceQuotaExceededException`, and `ResourceNotFoundException`. A bare `429` or `404`, or a
-message that only mentions a quota or a model, proves nothing about the credential, so that
-outcome is `503` and nothing is saved.
+ordinary scan rules when the check passes.
+
+When the check fails with `failure.kind` `authentication`, the vendor rejected the credential. Any
+other failure, such as `quota` or `model_unavailable`, does not show whether the credential works,
+so the daemon then makes one inexpensive authenticated read with the same credential:
+
+- `codex` and `grok`: `GET /v1/models` at OpenAI or xAI.
+- `claude`: `GET /v1/models` at Anthropic.
+- `bedrock`: `ListFoundationModels` in the given region, signed with the submitted access key pair
+  or sent with the submitted Bedrock API key.
+
+The account is saved only when that read succeeds. A `401` or `403` from it means the vendor
+rejected the credential. Any other outcome, such as no network, a `429`, a `5xx`, or a read that
+could not be made, leaves the credential unproven. Either way nothing is saved.
 
 Response — `201`:
 
@@ -4160,20 +4165,19 @@ Response — `201`:
 ```
 
 `config` is the effective configuration after the account was added. `verification` is present
-only when a credential was checked, including a saved account whose check failed with `quota` or
-`model_unavailable` as described above. A new account is not announced: it appears in `GET /v0/config`
+only when a credential was checked. It is the original check's result, also when the account was
+saved because the authenticated read succeeded after that check failed. A new account is not announced: it appears in `GET /v0/config`
 and the model catalog, and the change emits `config.updated`, echoing `mutationId` when supplied.
 
 Errors never contain the submitted credential, and none of them saves anything:
 
 - `400` with code `invalid_request` for an unknown `type`, a credential the type does not accept,
   a missing or malformed `bedrock` or `region`, or a blank or malformed credential.
-- `422` with code `verification_failed` and `verification` when the check failed with
-  `failure.kind` `authentication`: the vendor rejected the credential.
-- `503` with code `verification_unavailable` when the check could not tell: a failure of kind
-  `network`, `tls`, `timeout`, `provider_error`, `no_model`, `credentials_missing`, or `unknown`,
-  or a `quota` or `model_unavailable` failure without the vendor evidence described above. It
-  carries `verification` when a check ran. Its message says the credential is
+- `422` with code `verification_failed` and `verification` when the vendor rejected the
+  credential: the check failed with `failure.kind` `authentication`, or the authenticated read
+  answered `401` or `403`.
+- `503` with code `verification_unavailable` and `verification` when the check failed with any
+  other kind and the authenticated read did not succeed or answer `401` or `403`. Its message says the credential is
   unproven, not that it is wrong.
 - `403` with code `forbidden` for a team member who is not the owner.
 - `409` when the daemon cannot change its settings at runtime, as for `PATCH /v0/config`.
