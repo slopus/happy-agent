@@ -4150,9 +4150,18 @@ so the daemon then makes one inexpensive authenticated read with the same creden
 - `bedrock`: `ListFoundationModels` in the given region, signed with the submitted access key pair
   or sent with the submitted Bedrock API key.
 
-The account is saved only when that read succeeds. A `401` or `403` from it means the vendor
-rejected the credential. Any other outcome, such as no network, a `429`, a `5xx`, or a read that
-could not be made, leaves the credential unproven. Either way nothing is saved.
+For OpenAI, xAI, and Anthropic, the account is saved only when the read succeeds, and a `401` or
+`403` from it means the vendor rejected the credential. AWS checks a caller's credentials before
+its permissions and answers `403` to both, so for Bedrock the error decides:
+
+- A successful read, or `AccessDeniedException`, means AWS authenticated the caller, which is only
+  not allowed to list models. The account is saved.
+- `UnrecognizedClientException`, `InvalidSignatureException`, `ExpiredTokenException`,
+  `IncompleteSignatureException`, or an error saying a Bedrock API key is invalid or expired means
+  AWS rejected the credential.
+
+Any other outcome, such as no network, a `429`, a `5xx`, another error, or a read that could not
+be made, leaves the credential unproven. Nothing is saved for a rejected or unproven credential.
 
 Response — `201`:
 
@@ -4175,9 +4184,9 @@ Errors never contain the submitted credential, and none of them saves anything:
   a missing or malformed `bedrock` or `region`, or a blank or malformed credential.
 - `422` with code `verification_failed` and `verification` when the vendor rejected the
   credential: the check failed with `failure.kind` `authentication`, or the authenticated read
-  answered `401` or `403`.
+  rejected it as described above.
 - `503` with code `verification_unavailable` and `verification` when the check failed with any
-  other kind and the authenticated read did not succeed or answer `401` or `403`. Its message says the credential is
+  other kind and the authenticated read left the credential unproven. Its message says the credential is
   unproven, not that it is wrong.
 - `403` with code `forbidden` for a team member who is not the owner.
 - `409` when the daemon cannot change its settings at runtime, as for `PATCH /v0/config`.
