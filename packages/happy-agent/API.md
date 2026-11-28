@@ -4141,27 +4141,31 @@ An account with a credential is checked before anything is saved: the daemon run
 submitted credential. The account is written, recorded as discovered, and turned on under the
 ordinary scan rules when the check passes.
 
-When the check fails with `failure.kind` `authentication`, the vendor rejected the credential. Any
-other failure, such as `quota` or `model_unavailable`, does not show whether the credential works,
-so the daemon then makes one inexpensive authenticated read with the same credential:
+When the check fails, the vendor's own error decides, not the failure's `kind`. The credential is
+rejected only when the vendor says outright that it is invalid or expired:
+
+- an HTTP `401` from OpenAI, xAI, or Anthropic, such as `invalid_api_key` or
+  `authentication_error`;
+- from AWS, `UnrecognizedClientException`, `InvalidSignatureException` (a secret that does not
+  belong to the key ID), `ExpiredTokenException`, or an error saying a Bedrock API key is invalid
+  or expired.
+
+Any other failure, including a `403` or another permission denial, does not show whether the
+credential works, so the daemon then makes one inexpensive authenticated read with the same
+credential:
 
 - `codex` and `grok`: `GET /v1/models` at OpenAI or xAI.
 - `claude`: `GET /v1/models` at Anthropic.
 - `bedrock`: `ListFoundationModels` in the given region, signed with the submitted access key pair
   or sent with the submitted Bedrock API key.
 
-For OpenAI, xAI, and Anthropic, the account is saved only when the read succeeds, and a `401` or
-`403` from it means the vendor rejected the credential. AWS checks a caller's credentials before
-its permissions and answers `403` to both, so for Bedrock the error decides:
-
-- A successful read, or `AccessDeniedException`, means AWS authenticated the caller, which is only
-  not allowed to list models. The account is saved.
-- `UnrecognizedClientException`, `InvalidSignatureException`, `ExpiredTokenException`,
-  `IncompleteSignatureException`, or an error saying a Bedrock API key is invalid or expired means
-  AWS rejected the credential.
-
-Any other outcome, such as no network, a `429`, a `5xx`, another error, or a read that could not
-be made, leaves the credential unproven. Nothing is saved for a rejected or unproven credential.
+The account is saved when the read succeeds, and for Bedrock also when it answers
+`AccessDeniedException`: AWS checks a caller's credentials before its permissions, so the caller
+was authenticated and is only not allowed to list models. The read rejects the credential on the
+same explicit errors as the check. Anything else leaves the credential unproven, and nothing is
+saved: a generic `403` from OpenAI, xAI, or Anthropic, since a restricted key may be allowed to run
+models but not to list them, as well as `IncompleteSignatureException`, no network, a `429`, a
+`5xx`, another error, or a read that could not be made.
 
 Response — `201`:
 
@@ -4175,18 +4179,18 @@ Response — `201`:
 
 `config` is the effective configuration after the account was added. `verification` is present
 only when a credential was checked. It is the original check's result, also when the account was
-saved because the authenticated read succeeded after that check failed. A new account is not announced: it appears in `GET /v0/config`
-and the model catalog, and the change emits `config.updated`, echoing `mutationId` when supplied.
+saved because of the authenticated read after that check failed. A new account is not announced:
+it appears in `GET /v0/config` and the model catalog, and the change emits `config.updated`,
+echoing `mutationId` when supplied.
 
 Errors never contain the submitted credential, and none of them saves anything:
 
 - `400` with code `invalid_request` for an unknown `type`, a credential the type does not accept,
   a missing or malformed `bedrock` or `region`, or a blank or malformed credential.
-- `422` with code `verification_failed` and `verification` when the vendor rejected the
-  credential: the check failed with `failure.kind` `authentication`, or the authenticated read
-  rejected it as described above.
-- `503` with code `verification_unavailable` and `verification` when the check failed with any
-  other kind and the authenticated read left the credential unproven. Its message says the credential is
+- `422` with code `verification_failed` and `verification` when the check or the authenticated
+  read rejected the credential with one of the explicit errors above.
+- `503` with code `verification_unavailable` and `verification` when the check failed without
+  such an error and the authenticated read left the credential unproven. Its message says the credential is
   unproven, not that it is wrong.
 - `403` with code `forbidden` for a team member who is not the owner.
 - `409` when the daemon cannot change its settings at runtime, as for `PATCH /v0/config`.
