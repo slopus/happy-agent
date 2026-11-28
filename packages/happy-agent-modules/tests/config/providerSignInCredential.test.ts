@@ -74,7 +74,7 @@ describe("an account's own sign-in", () => {
         expect(config.providerCredentialSource("codex_work")).toBe("internal");
         expect(config.providerSignInHome("codex_work")).toBe(directory);
         expect(config.providers).toBe(registry);
-        const runtime = await readFile(config.configuration.paths.runtimeConfigPath, "utf8");
+        const runtime = await readFile(config.configuration.paths.providersConfigPath, "utf8");
         expect(runtime).toContain(`auth_file = "${join(directory, "auth.json")}"`);
         expect(runtime).toContain("credential_isolation = true");
 
@@ -98,7 +98,7 @@ describe("an account's own sign-in", () => {
             credentialIsolation: true,
         });
         expect(config.providerSignInHome("claude_two")).toBe(directory);
-        const runtime = await readFile(config.configuration.paths.runtimeConfigPath, "utf8");
+        const runtime = await readFile(config.configuration.paths.providersConfigPath, "utf8");
         expect(runtime).not.toContain("sk-ant-oat01-first");
 
         await config.saveProviderSetupToken(ctx, "claude_two", "sk-ant-oat01-second");
@@ -106,8 +106,9 @@ describe("an account's own sign-in", () => {
         expect(config.providerSignInHome("claude_two")).toBeUndefined();
     });
 
-    it("leaves a key from the person's own file in charge", async () => {
-        const { config } = await load('[providers.grok]\napi_key = "xai-configured"\n');
+    it("leaves a key in charge that the person's own file still holds", async () => {
+        // An inline table cannot be moved out of happy.toml as text, so the key stays there.
+        const { config } = await load('providers = { grok = { api_key = "xai-configured" } }\n');
         const ctx = createRootContext();
         await config.adoptProviderSignIn(
             ctx,

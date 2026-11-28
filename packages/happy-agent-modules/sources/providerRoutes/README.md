@@ -21,13 +21,13 @@ default ports, each bounded to 1.5 seconds.
 Each detector in `impl/` returns `DetectedRoute`s. A detected route either names the configured
 provider it already is (`providerId`), or carries the provider table choosing it would add
 (`provider`). That table may hold a key copied from another program's configuration, so it is
-written only to runtime.toml and never projected. `assembleProviderRoutes` orders the routes,
+written only to providers.toml and never projected. `assembleProviderRoutes` orders the routes,
 lists overlaps by shared vendor, picks the initial selection, and works out `use`.
 
 ## Using a route
 
 A route that is a configured provider turns that provider on through the provider scan, which takes
-effect at once. A route that needs a new provider adds its table to runtime.toml with
+effect at once. A route that needs a new provider adds its table to providers.toml with
 `ConfigModule.addRuntimeProvider`; providers are read at startup, so it takes effect after the
 daemon restarts. A provider already pointing at the same local base URL, or a Bedrock provider
 already using the same AWS profile, counts as that route being configured, whatever its ID.

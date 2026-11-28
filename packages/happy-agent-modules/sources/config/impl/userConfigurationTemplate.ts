@@ -173,9 +173,14 @@ export const HAPPY_TOML_TEMPLATE = `# Happy configuration for Happy Agent.
 # Providers start disabled and the local credential scan enables discovered accounts.
 # default_enable = false
 
+# Accounts live in the daemon-owned ~/.happy/agent/providers.toml, where onboarding and Settings
+# add and remove them. A [providers.<id>] table written here still works: the next start moves it
+# there, after saving a copy of this file as happy.toml.bak-<timestamp>, and leaves the rest of
+# this file exactly as it is.
+
 # [providers.codex]
 # type = "codex"
-# A new local credential detection writes auto_enable = true to generated runtime.toml.
+# A new local credential detection writes auto_enable = true to generated providers.toml.
 # Set auto_enable = false to prevent automatic use.
 # auto_enable = false
 # enabled = true

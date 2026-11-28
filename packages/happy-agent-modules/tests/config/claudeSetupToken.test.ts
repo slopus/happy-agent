@@ -39,7 +39,7 @@ describe("saving a Claude setup token", () => {
         expect(config.configuredProviderOverride("claude")).toBe(false);
         expect(config.providers).toBe(registry);
         await expect(config.resolveProviderUnchecked("claude", undefined)).resolves.not.toBeNull();
-        expect(await readFile(config.configuration.paths.runtimeConfigPath, "utf8")).toContain(
+        expect(await readFile(config.configuration.paths.providersConfigPath, "utf8")).toContain(
             'oauth_token = "sk-ant-oat01-test-token"',
         );
         const reloaded = await ConfigModule.load(join(root, ".happy"));

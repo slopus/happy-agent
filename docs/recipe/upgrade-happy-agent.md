@@ -186,6 +186,7 @@ In particular, retain all of the following unchanged:
 
 - user-authored `happy.toml`, global instructions, MCP settings, skills, and plugins;
 - the daemon-owned `runtime.toml`, which holds live overrides and must not be discarded;
+- the daemon-owned `providers.toml`, which holds the provider accounts and their credentials;
 - databases, conversations, bot state, profile, secret storage, and integration credentials;
 - the standalone API token and Tailcat private identity key, keeping the existing connection valid;
 - provider auth files and their write permissions for token refresh;

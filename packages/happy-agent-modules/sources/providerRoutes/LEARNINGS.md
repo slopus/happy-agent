@@ -23,7 +23,7 @@ otherwise OpenAI would be lost. Local model servers always start unchecked.
 
 ## A generated provider must load on the next start
 
-Providers are read at startup, and a runtime.toml the daemon cannot load stops it from starting.
+Providers are read at startup, and a providers.toml the daemon cannot load stops it from starting.
 `addRuntimeProvider` therefore merges the new table through the same validation startup uses before
 writing it, and refuses an ID that already exists. OpenAI-compatible providers need a key and at
 least one model, so a local server without client keys gets the placeholder key `local`, and a

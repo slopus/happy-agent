@@ -97,7 +97,7 @@ describe("ProviderScanModule", () => {
         });
         expect(config.isProviderEnabled("codex")).toBe(true);
         await expect(
-            readFile(config.configuration.paths.runtimeConfigPath, "utf8"),
+            readFile(config.configuration.paths.providersConfigPath, "utf8"),
         ).resolves.toContain("auto_enable = true");
         await expect(
             readFile(join(config.configuration.paths.agentHome, "provider-state.json"), "utf8"),
@@ -240,7 +240,7 @@ describe("ProviderScanModule", () => {
             remembered: false,
         });
         await expect(
-            readFile(config.configuration.paths.runtimeConfigPath, "utf8"),
+            readFile(config.configuration.paths.providersConfigPath, "utf8"),
         ).resolves.not.toContain("auto_enable = true");
     });
 
@@ -251,7 +251,7 @@ describe("ProviderScanModule", () => {
         await scan.setOverrides(createRootContext(), { codex: { enabled: false } });
         expect(config.isProviderEnabled("codex")).toBe(false);
         await expect(
-            readFile(config.configuration.paths.runtimeConfigPath, "utf8"),
+            readFile(config.configuration.paths.providersConfigPath, "utf8"),
         ).resolves.toEqual(expect.stringContaining("enabled = false"));
 
         const verification = await scan.verify(createRootContext(), "codex", "inference");
@@ -561,8 +561,8 @@ describe("ProviderScanModule", () => {
         const { config } = await scriptedConfig();
         const scan = new ProviderScanModule(config);
         await scan.open(createRootContext());
-        const statePath = config.configuration.paths.runtimeConfigPath;
-        await rm(statePath);
+        const statePath = config.configuration.paths.providersConfigPath;
+        await rm(statePath, { force: true });
         await mkdir(statePath);
 
         await expect(

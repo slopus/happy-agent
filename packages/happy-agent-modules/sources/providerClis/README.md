@@ -67,7 +67,7 @@ folder the config module names for that attempt, and without credential variable
 `OPENAI_API_KEY` in its environment. Codex gets a `config.toml` there that keeps its sign-in in a
 file rather than the keyring. The vendor's own sign-in check, run against the same folder, decides
 success; only then does the config module point the account at the folder (`auth_file` or
-`config_dir`, with `credential_isolation`) in one write of `runtime.toml`.
+`config_dir`, with `credential_isolation`) in one write of `providers.toml`.
 
 Each attempt is its own folder and its own Durable Function keyed by the account, so a failed,
 cancelled, or interrupted attempt only deletes its folder and the account keeps what it had.

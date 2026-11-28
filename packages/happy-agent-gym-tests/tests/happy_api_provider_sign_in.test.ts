@@ -198,8 +198,9 @@ async function waitForSignIn(
     return (event.payload as { providerSignIn: ProviderSignIn }).providerSignIn;
 }
 
+/** The daemon-owned account list, where a sign-in points its account at the new credential. */
 async function runtimeToml(gym: AgentGym): Promise<string> {
-    return await readFile(join(gym.happyHome, "agent", "runtime.toml"), "utf8");
+    return await readFile(join(gym.happyHome, "agent", "providers.toml"), "utf8");
 }
 
 function accountsFolder(gym: AgentGym, providerId: string): string {

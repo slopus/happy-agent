@@ -70,7 +70,7 @@ already on when the list returns.
 
 Signing an account in again must never leave it worse off. Each attempt gets a fresh folder, the
 vendor's own check against that folder decides success, and only then does one write of
-`runtime.toml` switch the account. Failed, cancelled, and interrupted attempts delete their folder.
+`providers.toml` switch the account. Failed, cancelled, and interrupted attempts delete their folder.
 The folder being replaced is not deleted while this daemon runs, because Codex renews into the
 same file a running session read from.
 

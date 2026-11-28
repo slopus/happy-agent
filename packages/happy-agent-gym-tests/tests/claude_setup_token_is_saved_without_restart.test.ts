@@ -31,7 +31,7 @@ describe("pasted Claude setup tokens", () => {
             signIn: { acceptsToken: true },
             operation: null,
         });
-        const runtimePath = join(gym.happyHome, "agent", "runtime.toml");
+        const runtimePath = join(gym.happyHome, "agent", "providers.toml");
         expect(await readFile(runtimePath, "utf8")).toContain(`oauth_token = "${token}"`);
         const config = await gym.client.getConfig();
         expect(config.config.providers.claude).toMatchObject({ enabled: false, name: "My Claude" });
@@ -65,7 +65,7 @@ describe("pasted Claude setup tokens", () => {
         });
         running.add(gym);
         await gym.client.saveClaudeSetupToken({ token: "sk-ant-oat01-previous" });
-        const runtimePath = join(gym.happyHome, "agent", "runtime.toml");
+        const runtimePath = join(gym.happyHome, "agent", "providers.toml");
         const before = await readFile(runtimePath, "utf8");
         for (const token of [
             "",

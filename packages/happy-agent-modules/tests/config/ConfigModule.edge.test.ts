@@ -4,7 +4,7 @@ import { basename, join, resolve } from "node:path";
 
 import { Value } from "@sinclair/typebox/value";
 import { createRootContext } from "@steve.kite/stdlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
     ConfigModule,
@@ -190,6 +190,7 @@ describe("ConfigModule edge coverage", () => {
                 ),
                 observationHome: join(root, ".happy", "agent", "observation"),
                 pidPath: join(root, ".happy", "agent", "daemon.pid"),
+                providersConfigPath: join(root, ".happy", "agent", "providers.toml"),
                 publicHome: join(root, process.platform === "darwin" ? "Happy" : "happy"),
                 runtimeConfigPath: join(root, ".happy", "agent", "runtime.toml"),
                 securityPath: join(
@@ -215,10 +216,18 @@ describe("ConfigModule edge coverage", () => {
 
         it("expands tilde roots using the current home directory", async () => {
             const root = await temporaryRoot();
-            const tildeRoot = `~/${basename(root)}`;
-            const configuration = await loadHappyAgentConfiguration(tildeRoot);
+            // Loading reads, and may move accounts out of, the configuration beside the root, so
+            // the home it expands must be a throwaway one rather than the person's own.
+            vi.stubEnv("HOME", root);
+            try {
+                const tildeRoot = "~/.happy";
+                const configuration = await loadHappyAgentConfiguration(tildeRoot);
 
-            expect(configuration.paths.happyHome).toBe(join(homedir(), basename(root)));
+                expect(configuration.paths.happyHome).toBe(join(homedir(), ".happy"));
+                expect(homedir()).toBe(root);
+            } finally {
+                vi.unstubAllEnvs();
+            }
         });
 
         it("exposes configured instructions through the normal module hook", async () => {
@@ -871,7 +880,8 @@ describe("ConfigModule edge coverage", () => {
                 workspace: "runtime",
                 "workspace.sync": "runtime",
                 theme: "global",
-                providers: "global",
+                // The account moved from happy.toml into the daemon's providers.toml.
+                providers: "runtime",
                 providerDefaultEnable: "global",
                 mcpServers: "global",
             });

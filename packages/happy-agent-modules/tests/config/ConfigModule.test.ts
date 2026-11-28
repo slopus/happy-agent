@@ -1369,10 +1369,13 @@ describe("ConfigModule", () => {
         await config.updateRuntimeProviderStates(createRootContext(), {
             pool: { autoEnable: true },
         });
-        const runtimePath = config.configuration.paths.runtimeConfigPath;
+        const runtimePath = config.configuration.paths.providersConfigPath;
         const runtimeBefore = await readFile(runtimePath, "utf8");
+        // The pool's table moved from happy.toml into providers.toml beside its new state.
         expect(parseHappyAgentConfigToml(runtimeBefore).values.providers?.pool).toEqual({
             type: "smart",
+            enabled: true,
+            providers: ["codex", "extra"],
             auto_enable: true,
         });
         for (let restart = 0; restart < 2; restart++) {
@@ -1406,7 +1409,10 @@ describe("ConfigModule", () => {
         const source = await readFile(config.configuration.paths.runtimeConfigPath, "utf8");
         const parsed = parseHappyAgentConfigToml(source);
         expect(parsed.values.settings).toMatchObject({ show_usage: true });
-        expect(parsed.values.providers?.codex).toMatchObject({
+        const accounts = parseHappyAgentConfigToml(
+            await readFile(config.configuration.paths.providersConfigPath, "utf8"),
+        );
+        expect(accounts.values.providers?.codex).toMatchObject({
             auto_enable: true,
             enabled: false,
         });

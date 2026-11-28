@@ -631,7 +631,21 @@ unrestricted and can bypass the managed proxy by design.
 ## Providers
 
 Provider availability is machine-wide because the local daemon owns the model
-catalog and authentication paths. Configure it in the user `happy.toml`:
+catalog and authentication paths.
+
+Accounts live in the daemon-owned `~/.happy/agent/providers.toml`, one
+`[providers.<id>]` table per account. Onboarding and Settings add, sign in,
+and remove accounts there without a restart; do not edit the file while the
+daemon runs. You can still write `[providers.<id>]` tables in the user
+`happy.toml`, as in the examples below: they work, and the next daemon start
+moves them into `providers.toml`. Before moving, it saves a copy of
+`happy.toml` beside it as `happy.toml.bak-<timestamp>`, then removes only those
+tables, leaving every other line and comment exactly as it was. Your keys win
+over the same keys already in `providers.toml`, while the account keeps its
+other settings and whether it is enabled. Accounts written as an inline table
+(`providers = { ... }`) or with dotted keys stay in `happy.toml`, and the daemon
+logs a warning; write them as `[providers.<id>]` tables to let it move them. A
+bare `[providers]` table with `default_enable` stays in `happy.toml`.
 
 ```toml
 [providers]
@@ -819,7 +833,8 @@ A missing or invalid project file adds nothing and hides nothing.
 ### Hiding providers
 
 To keep an account available behind a smart provider without allowing direct selection, set `hidden = true`
-in its table in the user-wide `happy.toml`, then [reload the daemon](#applying-configuration-changes):
+in its table, written in the user-wide `happy.toml`, then [reload the daemon](#applying-configuration-changes).
+The daemon moves the table into `providers.toml` with the setting:
 
 ```toml
 [providers.codex]

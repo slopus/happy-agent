@@ -2,7 +2,7 @@
 
 `ProviderScanModule` owns automatic provider discovery and the live enabled state layered over
 configuration. It takes only `ConfigModule`: configuration owns the provider registry, its gates,
-the machine credential locations, and the generated `runtime.toml` mutation boundary.
+the machine credential locations, and the generated `providers.toml` mutation boundary.
 
 At startup every provider without an explicit setting remains disabled while one scan runs. The
 scan checks local credential evidence in parallel with a ten-second bound per provider. It makes no
@@ -11,11 +11,11 @@ configured bearer/AWS sources, environment selectors, and nonempty shared AWS fi
 invoking the network-capable AWS credential chain.
 
 A provider has no `auto_enable` value before discovery. A new positive discovery atomically writes
-`auto_enable = true` to its generated runtime provider table. Later missing credentials or a probe
+`auto_enable = true` to its table in the generated `providers.toml`. Later missing credentials or a probe
 error never erase that setting and therefore never disable the provider automatically. A person
 may set `auto_enable = false`; scans preserve that decision rather than auto-enabling the provider
 again. An explicit `enabled` value from configuration or `PATCH /v0/config` wins over automatic
-discovery and is written beside `auto_enable` in runtime.toml. Provider records merge field-by-field, so these state
+discovery and is written beside `auto_enable` in providers.toml. Provider records merge field-by-field, so these state
 fields cannot replace credential or model configuration from another layer.
 
 The machine provider setting `hidden = true` prevents direct selection regardless of scans

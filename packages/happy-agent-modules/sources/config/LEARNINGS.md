@@ -5,19 +5,19 @@
 Provider sign-in points one Codex, Claude, or Grok account at a folder the daemon owns. The config
 module owns those folders (`provider-accounts/<account>/<attempt>` under the agent home, the
 account's ID hashed when it is not a safe folder name) and the switch: it rewrites the account's
-runtime table, removing runtime keys and tokens that would outrank the sign-in and setting
-`credential_isolation`, and recomputes only that account's credential fields from the machine file
-and the new runtime layer, so a key the person wrote in `happy.toml` still wins. Where the
-credential comes from (`internal`, `system`, or `configured`) is derived from those same fields
-and their provenance: a token is `internal` only when runtime.toml supplies it, and a file or
-folder only when it lies inside the account's own folder.
+table in `providers.toml`, removing keys and tokens there that would outrank the sign-in and
+setting `credential_isolation`, and recomputes only that account's credential fields from the
+machine file and the new layer, so a key still left in `happy.toml` wins. Where the credential
+comes from (`internal`, `system`, or `configured`) is derived from those same fields and their
+provenance: a token is `internal` only when `providers.toml` supplies it, and a file or folder
+only when it lies inside the account's own folder.
 
 ## Pasted Claude tokens are live runtime credentials
 
 Onboarding offered a setup token but the daemon had no way to save it. The shared
 `saveProviderSetupToken` method, which saves for any Claude account (`saveClaudeSetupToken` is the
 `claude` account), removes all whitespace, including Unicode NEL and BOM, validates the token, and
-atomically merges it into `runtime.toml`. It replaces the frozen configuration
+atomically merges it into `providers.toml`. It replaces the frozen configuration
 snapshot only after the write succeeds. Existing provider registry factories read that snapshot
 when opening a new provider, so saving takes effect without a restart or replacing cancellation
 boundaries. Provider enablement overrides and unrelated runtime settings remain unchanged.
@@ -468,6 +468,33 @@ Fresh installations enable `features.cross_workspace` by default so root agents 
 project catalog and message another existing agent when its unguessable Agent ID is shared. A user
 who wants the narrower boundary can explicitly set `cross_workspace = false`; generated starter
 configuration shows the default as `true`.
+
+## Accounts live in a daemon-owned providers.toml
+
+Kirill decided that accounts belong to the daemon, in `<agent home>/providers.toml`, so onboarding
+and Settings can add and remove them, and that `[providers.<id>]` tables in `happy.toml` move there
+too rather than staying a read-only legacy layer. In memory the accounts are still the `providers`
+of `#runtimeValues`, the same layer that runtime.toml used to supply, so precedence and provenance
+did not change; `#writeDaemonConfiguration` writes them to `providers.toml` first and everything
+else to `runtime.toml`.
+
+Astra's review shaped the move, which `moveProviderAccounts` runs at every start:
+
+- The first move, before `providers.toml` exists, keeps every account's effective configuration:
+  runtime.toml's table over happy.toml's, key by key, exactly as `mergeValues` merged them.
+  Tables written into `happy.toml` later win key by key but keep the account's enablement.
+- happy.toml is backed up, then `providers.toml` is written with a pending-move marker holding the
+  SHA-256 of the happy.toml it merged, then the tables are removed as text only if the file still
+  has that hash, then the marker is cleared. Only a matching marker means "already merged"; a bare
+  hash kept forever made a happy.toml restored from its backup lose its accounts.
+- Removal is text-level (`removeProviderAccountTables`) so comments and formatting survive, and it
+  refuses inline tables, dotted keys, arrays of tables, symlinks, or any result that does not parse
+  back to the original minus its accounts. Those accounts stay in `happy.toml` for that start.
+- An installation with nothing to move gets no `providers.toml`, so loading never creates files in
+  a fresh home.
+
+A test that loads `~` must point `HOME` at a throwaway folder: loading may rewrite the
+`happy.toml` beside the home it expands.
 
 ## Generated runtime configuration owns runtime state
 

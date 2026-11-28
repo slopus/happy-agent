@@ -146,14 +146,14 @@ describe("hidden providers", () => {
         const config = await configuration("[providers.codex]\nenabled = true\n");
         await config.writeRuntimeConfiguration(createRootContext());
         await writeFile(
-            config.configuration.paths.runtimeConfigPath,
+            config.configuration.paths.providersConfigPath,
             "[providers.codex]\nhidden = true\n",
         );
         const hidden = await ConfigModule.load(config.configuration.paths.happyHome);
         await hidden.updateRuntimeProviderStates(createRootContext(), {
             codex: { autoEnable: true },
         });
-        expect(await readFile(hidden.configuration.paths.runtimeConfigPath, "utf8")).toContain(
+        expect(await readFile(hidden.configuration.paths.providersConfigPath, "utf8")).toContain(
             "hidden = true",
         );
         const restarted = await ConfigModule.load(config.configuration.paths.happyHome);

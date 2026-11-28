@@ -10,6 +10,7 @@ import { createId } from "@paralleldrive/cuid2";
 import { normalizePublicApiUrl } from "./PublicApiConfig.js";
 import {
     chmod,
+    lstat,
     mkdir,
     open,
     readdir,
@@ -55,6 +56,15 @@ import { parse, stringify, TomlDate, type TomlTable, type TomlValue } from "smol
 
 import { getManagedProjectsDirectory } from "../impl/managedProjectsDirectory.js";
 import { normalizeClaudeSetupToken } from "./ClaudeSetupToken.js";
+import {
+    firstMoveAccounts,
+    laterEditAccounts,
+    type AccountTables,
+} from "./impl/mergeMovedProviderAccounts.js";
+import {
+    removeProviderAccountTables,
+    type ProviderAccountTablesRemoval,
+} from "./impl/removeProviderAccountTables.js";
 import type { ProviderCredentialSource } from "./ProviderCredentialSource.js";
 import type { ProviderLoginChange } from "./ProviderLoginChange.js";
 import type {
@@ -1517,6 +1527,7 @@ const pathSchemaSet = Type.Object(
         mcpConfigPath: pathSchema,
         observationHome: pathSchema,
         pidPath: pathSchema,
+        providersConfigPath: pathSchema,
         publicHome: pathSchema,
         runtimeConfigPath: pathSchema,
         securityPath: pathSchema,
@@ -1734,7 +1745,7 @@ export interface ConfigModuleLoadOptions {
     readonly environment?: Readonly<NodeJS.ProcessEnv>;
 }
 
-/** Daemon-owned provider fields persisted together in generated runtime.toml. */
+/** Daemon-owned provider fields persisted together in generated providers.toml. */
 export interface RuntimeProviderStateUpdate {
     readonly autoEnable?: boolean;
     readonly enabled?: boolean;
@@ -1967,7 +1978,12 @@ export class ConfigModule implements AgentModule {
     readonly #mcpLock: AsyncLock = asyncLock({ reentry: "allow" });
     readonly #runtimeLock: AsyncLock = asyncLock({ reentry: "allow" });
     #mcpServers: HappyAgentConfigValues["mcpServers"];
+    /** The daemon's generated configuration; its `providers` are the accounts in providers.toml. */
     #runtimeValues: PartialValues;
+    /** What providers.toml keeps beside the accounts. */
+    #providersBookkeeping: ProvidersBookkeeping;
+    /** Why this start could not move happy.toml's accounts into providers.toml, if it could not. */
+    readonly #providerMoveWarning: string | undefined;
     /** The default model chosen while running, kept in the runtime configuration's `[defaults]`. */
     #liveDefault: { providerId: string; modelId: string; effort: string } | undefined;
     #providerEnablement: ProviderEnablement | undefined;
@@ -2075,7 +2091,7 @@ export class ConfigModule implements AgentModule {
                 `At most ${MAX_CONFIG_ARRAY_ITEMS} skill folders can be added, each a path of at most ${MAX_PATH_LENGTH} characters.`,
             );
         }
-        await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+        await this.#writeDaemonConfiguration(next);
         this.#runtimeValues = next;
     }
 
@@ -2103,7 +2119,7 @@ export class ConfigModule implements AgentModule {
             throw new Error("The global skill preferences are invalid.");
         await this.#runtimeLock.runInLock(ctx, async () => {
             const next = { ...this.#runtimeValues, skill_enablement: structuredClone(enablement) };
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            await this.#writeDaemonConfiguration(next);
             this.#runtimeValues = next;
         });
     }
@@ -2301,12 +2317,15 @@ export class ConfigModule implements AgentModule {
     private constructor(
         configuration: HappyAgentConfiguration,
         runtimeValues: PartialValues,
+        moved: ProviderAccountsMove,
         scripted: ConfigInferenceOverride | ConfigInferenceFactory | undefined,
         environment: Readonly<NodeJS.ProcessEnv>,
     ) {
         this.#configuration = configuration;
         this.#mcpServers = configuration.values.mcpServers;
         this.#runtimeValues = structuredClone(runtimeValues);
+        this.#providersBookkeeping = structuredClone(moved.bookkeeping);
+        this.#providerMoveWarning = moved.warning;
         // A default model chosen while running is kept in the generated runtime configuration.
         const chosen = runtimeValues.defaults;
         if (chosen?.provider !== undefined && chosen.model !== undefined) {
@@ -2389,7 +2408,23 @@ export class ConfigModule implements AgentModule {
         },
     };
 
-    readonly beforeStart = (): AgentModuleHooks => this.#hooks;
+    readonly beforeStart = (ctx?: Context): AgentModuleHooks => {
+        if (this.#providerMoveWarning !== undefined) {
+            ctx?.log.warn(
+                `The accounts in happy.toml stay there for now: ${this.#providerMoveWarning} Happy uses them as they are; write them as [providers.<id>] tables to let Happy move them into providers.toml.`,
+            );
+        }
+        return this.#hooks;
+    };
+
+    /** Persist the generated configuration: accounts to providers.toml, the rest to runtime.toml. */
+    async #writeDaemonConfiguration(values: PartialValues): Promise<void> {
+        await writeDaemonConfigurationFiles(
+            this.configuration.paths,
+            values,
+            this.#providersBookkeeping,
+        );
+    }
 
     /**
      * Every model the configuration enables, with the configured default first.
@@ -2467,7 +2502,7 @@ export class ConfigModule implements AgentModule {
             };
             if (!Value.Check(partialValuesSchema, next))
                 throw new Error("The generated runtime configuration is invalid.");
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            await this.#writeDaemonConfiguration(next);
             this.#runtimeValues = next;
             this.#liveDefault = { providerId: update.providerId, modelId: update.modelId, effort };
         });
@@ -2732,7 +2767,7 @@ export class ConfigModule implements AgentModule {
             else next.voice = voice;
             if (!Value.Check(partialValuesSchema, next))
                 throw new Error("The generated runtime configuration is invalid.");
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            await this.#writeDaemonConfiguration(next);
             this.#runtimeValues = next;
             return true;
         });
@@ -2898,7 +2933,7 @@ export class ConfigModule implements AgentModule {
         await this.#runtimeLock.runInLock(ctx, async () => {
             const next = structuredClone(this.#runtimeValues);
             next.node = { name };
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            await this.#writeDaemonConfiguration(next);
             this.#runtimeValues = next;
         });
     }
@@ -2958,7 +2993,7 @@ export class ConfigModule implements AgentModule {
                 ...next.api,
                 public_url: publicUrl ?? "",
             };
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            await this.#writeDaemonConfiguration(next);
             this.#runtimeValues = next;
             return true;
         });
@@ -3057,7 +3092,7 @@ export class ConfigModule implements AgentModule {
         await this.#runtimeLock.runInLock(ctx, async () => {
             const next = structuredClone(this.#runtimeValues);
             next.peer_messaging = structuredClone(settings);
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            await this.#writeDaemonConfiguration(next);
             this.#runtimeValues = next;
             this.#peerMessaging = structuredClone(settings);
         });
@@ -3081,7 +3116,7 @@ export class ConfigModule implements AgentModule {
             }
             const next = structuredClone(this.#runtimeValues);
             next.connections = { ...next.connections, [id]: structuredClone(entry) };
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            await this.#writeDaemonConfiguration(next);
             this.#runtimeValues = next;
             this.#connections = connections;
         });
@@ -3347,7 +3382,8 @@ export class ConfigModule implements AgentModule {
                 return provider.credentialIsolation === true ? "configured" : "system";
             case "claude":
                 if (provider.oauthToken !== undefined) {
-                    // Only the daemon writes runtime.toml, so a token there was saved through it.
+                    // Only the daemon writes providers.toml: a token there was saved through it,
+                    // or moved there from happy.toml, and belongs to this installation either way.
                     return this.configuration.provenance[`providers.${providerId}.oauthToken`] ===
                         "runtime"
                         ? "internal"
@@ -3378,7 +3414,7 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
-     * Point one account at the sign-in an attempt folder holds, in one atomic write of runtime.toml,
+     * Point one account at the sign-in an attempt folder holds, in one atomic write of providers.toml,
      * and apply it to new sessions without restarting. Runtime keys and tokens that would outrank
      * the sign-in are removed; the person's own configuration file is never changed.
      */
@@ -3412,7 +3448,7 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
-     * Rewrite one account's runtime table, then recompute the account's effective credential
+     * Rewrite one account's table in providers.toml, then recompute the account's effective credential
      * fields from the machine file under the new runtime layer. Call it inside the runtime lock.
      */
     async #replaceRuntimeCredential(
@@ -3475,7 +3511,7 @@ export class ConfigModule implements AgentModule {
         if (!Value.Check(happyAgentConfigurationSchema, configuration)) {
             throw new Error("The configuration for this account is invalid.");
         }
-        await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+        await this.#writeDaemonConfiguration(next);
         this.#runtimeValues = next;
         this.#configuration = configuration;
         this.#credentialFailures.clear(providerId);
@@ -3563,14 +3599,11 @@ export class ConfigModule implements AgentModule {
     /** Canonically rewrite the daemon-owned runtime configuration. */
     async writeRuntimeConfiguration(ctx: Context): Promise<void> {
         await this.#runtimeLock.runInLock(ctx, async () => {
-            await writeRuntimeConfigurationFile(
-                this.configuration.paths.runtimeConfigPath,
-                this.#runtimeValues,
-            );
+            await this.#writeDaemonConfiguration(this.#runtimeValues);
         });
     }
 
-    /** Atomically merge daemon provider state into generated runtime.toml. */
+    /** Atomically merge daemon provider state into generated providers.toml. */
     async updateRuntimeProviderStates(
         ctx: Context,
         updates: Readonly<Record<string, RuntimeProviderStateUpdate>>,
@@ -3602,12 +3635,12 @@ export class ConfigModule implements AgentModule {
             if (!Value.Check(partialValuesSchema, next)) {
                 throw new Error("The generated runtime configuration is invalid.");
             }
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            await this.#writeDaemonConfiguration(next);
             this.#runtimeValues = next;
         });
     }
 
-    /** Whether a provider is configured, or was added to runtime.toml and waits for a restart. */
+    /** Whether a provider is configured, or was added to providers.toml and waits for a restart. */
     hasProvider(providerId: string): boolean {
         const runtime = this.#runtimeValues.providers as Record<string, unknown> | undefined;
         return (
@@ -3644,7 +3677,7 @@ export class ConfigModule implements AgentModule {
     }
 
     /**
-     * Add one new, enabled provider to generated runtime.toml. Like every provider, it takes effect
+     * Add one new, enabled provider to generated providers.toml. Like every provider, it takes effect
      * when the daemon next starts. A provider that already exists is never replaced.
      */
     async addRuntimeProvider(
@@ -3669,7 +3702,7 @@ export class ConfigModule implements AgentModule {
             mergeValues({
                 providers: { [providerId]: next.providers[providerId] },
             } as PartialValues);
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            await this.#writeDaemonConfiguration(next);
             this.#runtimeValues = next;
         });
     }
@@ -3688,7 +3721,7 @@ export class ConfigModule implements AgentModule {
             if (!Value.Check(partialValuesSchema, next)) {
                 throw new Error("The generated runtime configuration is invalid.");
             }
-            await writeRuntimeConfigurationFile(this.configuration.paths.runtimeConfigPath, next);
+            await this.#writeDaemonConfiguration(next);
             this.#runtimeValues = next;
             this.#tailcatEnabled = enabled;
         });
@@ -4714,12 +4747,15 @@ export class ConfigModule implements AgentModule {
         options: ConfigModuleLoadOptions = {},
     ): Promise<ConfigModule> {
         const paths = derivePaths(input);
-        const [global, local, runtime, mcp] = await Promise.all([
-            readConfigSource(paths.globalConfigPath, "global"),
+        const [read, local, runtimeRead, mcp] = await Promise.all([
+            readConfigSourceText(paths.globalConfigPath),
             readConfigSource(paths.localConfigPath, "local"),
             readConfigSource(paths.runtimeConfigPath, "runtime"),
             readConfigSource(paths.mcpConfigPath, "global"),
         ]);
+        const moved = await moveProviderAccounts(paths, read, runtimeRead);
+        const global = moved.global;
+        const runtime = { ...runtimeRead, values: moved.runtimeValues };
         const localValues = withoutProjectMachineSettings(local.values);
         const globalValues = withoutMcpServers(global.values);
         const runtimeValues = withoutMcpServers(runtime.values);
@@ -4759,9 +4795,120 @@ export class ConfigModule implements AgentModule {
         return new ConfigModule(
             deepFreeze(configuration),
             runtimeValues,
+            moved,
             options.inference,
             Object.freeze({ ...options.environment }),
         );
+    }
+}
+
+/** What a start did with the accounts in runtime.toml and happy.toml; see Provider accounts. */
+interface ProviderAccountsMove {
+    /** happy.toml as the rest of the start reads it. */
+    readonly global: ReadSource;
+    /** runtime.toml's values, with providers.toml's accounts as their `providers`. */
+    readonly runtimeValues: PartialValues;
+    readonly bookkeeping: ProvidersBookkeeping;
+    /** Why happy.toml's accounts could not be moved, when they could not. */
+    readonly warning: string | undefined;
+}
+
+/**
+ * Move every account into providers.toml as API.md's Provider accounts describes: runtime.toml's
+ * tables, and happy.toml's when they can be removed from it as text. Each file is replaced
+ * atomically, in an order that lets the next start finish a move this one did not.
+ */
+async function moveProviderAccounts(
+    paths: HappyAgentConfigurationPaths,
+    global: ReadSource & { readonly text: string | undefined },
+    runtime: ReadSource,
+): Promise<ProviderAccountsMove> {
+    const file = await readProvidersConfigurationFile(paths.providersConfigPath);
+    const { providers: runtimeAccounts = {}, ...runtimeRest } = runtime.values;
+    const happyAccounts = global.values.providers ?? {};
+    let bookkeeping: ProvidersBookkeeping = { ...file?.bookkeeping };
+    let warning: string | undefined;
+    let removal: ProviderAccountTablesRemoval | undefined;
+    if (Object.keys(happyAccounts).length > 0 && global.text !== undefined) {
+        removal = (await lstat(global.path)).isSymbolicLink()
+            ? { kind: "unsafe", reason: "happy.toml is a symbolic link." }
+            : global.text.includes("\uFFFD")
+              ? { kind: "unsafe", reason: "happy.toml is not valid UTF-8." }
+              : removeProviderAccountTables(global.text);
+        if (removal.kind === "unsafe") warning = removal.reason;
+    }
+    const movable = removal?.kind === "removed" ? removal : undefined;
+    const hash =
+        movable === undefined || global.text === undefined
+            ? undefined
+            : createHash("sha256").update(global.text).digest("hex");
+    // Only a move this file marks as pending was merged already; it just has to finish.
+    const merged = hash !== undefined && bookkeeping.pending_happy_toml_move?.sha256 === hash;
+    const incoming = movable !== undefined && !merged ? happyAccounts : {};
+    let accounts: AccountTables;
+    if (file === undefined) {
+        accounts = firstMoveAccounts(incoming, runtimeAccounts);
+    } else {
+        // Tables still in runtime.toml give way to the copies a stopped start already wrote here.
+        accounts = laterEditAccounts({ ...runtimeAccounts, ...file.accounts }, incoming);
+    }
+    const runtimeValues = {
+        ...runtimeRest,
+        ...(Object.keys(accounts).length === 0 ? {} : { providers: accounts }),
+    } as PartialValues;
+    // With nothing to move, an installation that has no providers.toml yet gains none either.
+    const settled =
+        Object.keys(runtimeAccounts).length === 0 &&
+        movable === undefined &&
+        bookkeeping.pending_happy_toml_move === undefined;
+    if (settled) return { global, runtimeValues, bookkeeping, warning };
+
+    const write = async () =>
+        await writeProvidersConfigurationFile(
+            paths.providersConfigPath,
+            accounts as NonNullable<PartialValues["providers"]>,
+            bookkeeping,
+        );
+    const { pending_happy_toml_move: _pending, ...withoutPending } = bookkeeping;
+    if (movable !== undefined && hash !== undefined) {
+        if (!merged) await backUpUserFile(global.path, global.text!);
+        bookkeeping = { ...withoutPending, pending_happy_toml_move: { sha256: hash } };
+    } else {
+        bookkeeping = withoutPending;
+    }
+    await write();
+    if (Object.keys(runtimeAccounts).length > 0) {
+        await writeRuntimeConfigurationFile(paths.runtimeConfigPath, runtimeRest);
+    }
+    if (movable === undefined || hash === undefined) {
+        return { global, runtimeValues, bookkeeping, warning };
+    }
+    let next: ReadSource = global;
+    const current = await readConfigText(global.path);
+    if (current !== undefined && createHash("sha256").update(current).digest("hex") === hash) {
+        await replaceUserFile(global.path, movable.text);
+        next = { exists: true, path: global.path, ...parseHappyAgentConfigToml(movable.text) };
+    }
+    bookkeeping = withoutPending;
+    await write();
+    return { global: next, runtimeValues, bookkeeping, warning };
+}
+
+/** Keep a copy of the person's file beside it before changing it, readable only by its owner. */
+async function backUpUserFile(path: string, text: string): Promise<void> {
+    await writeFile(`${path}.bak-${Date.now()}`, text, { flag: "wx", mode: 0o600 });
+}
+
+/** Replace the person's file atomically, keeping its permissions. */
+async function replaceUserFile(path: string, text: string): Promise<void> {
+    const { mode } = await stat(path);
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    try {
+        await writeFile(temporary, text, { flag: "wx", mode: mode & 0o777 });
+        await chmod(temporary, mode & 0o777);
+        await rename(temporary, path);
+    } finally {
+        await rm(temporary, { force: true }).catch(() => undefined);
     }
 }
 
@@ -4784,12 +4931,106 @@ async function writeUserFileIfMissing(path: string, contents: string): Promise<v
     }
 }
 
+/**
+ * Write the daemon's generated configuration: its accounts to providers.toml first, then
+ * everything else to runtime.toml. Each file is replaced atomically.
+ */
+async function writeDaemonConfigurationFiles(
+    paths: HappyAgentConfigurationPaths,
+    values: PartialValues,
+    bookkeeping: ProvidersBookkeeping,
+): Promise<void> {
+    const { providers, ...rest } = values;
+    await writeProvidersConfigurationFile(paths.providersConfigPath, providers ?? {}, bookkeeping);
+    await writeRuntimeConfigurationFile(paths.runtimeConfigPath, rest);
+}
+
 /** Replace generated runtime.toml atomically; comments and unknown fields are intentionally gone. */
 async function writeRuntimeConfigurationFile(path: string, values: PartialValues): Promise<void> {
     if (!Value.Check(partialValuesSchema, values)) {
         throw new Error("The generated runtime configuration is invalid.");
     }
-    const encoded = stringify(runtimeConfigurationTable(values));
+    await replaceDaemonFile(path, stringify(runtimeConfigurationTable(values)));
+}
+
+/** What providers.toml keeps beside the accounts themselves; see Provider accounts in API.md. */
+const providersBookkeepingSchema = Type.Object({
+    /** The highest `<type>_<n>` number ever issued for each type, so no ID is issued twice. */
+    issued_account_numbers: Type.Optional(
+        Type.Record(Type.String({ pattern: "^[a-z_]{1,64}$" }), Type.Integer({ minimum: 1 })),
+    ),
+    /** A happy.toml whose account tables were merged here and still wait to be removed. */
+    pending_happy_toml_move: Type.Optional(
+        Type.Object(
+            { sha256: Type.String({ pattern: "^[0-9a-f]{64}$" }) },
+            { additionalProperties: false },
+        ),
+    ),
+});
+type ProvidersBookkeeping = Static<typeof providersBookkeepingSchema>;
+
+/** The daemon-owned account list and its bookkeeping, or nothing when the file does not exist. */
+async function readProvidersConfigurationFile(path: string): Promise<
+    | {
+          readonly accounts: NonNullable<PartialValues["providers"]>;
+          readonly bookkeeping: ProvidersBookkeeping;
+      }
+    | undefined
+> {
+    try {
+        const text = await readConfigText(path);
+        if (text === undefined) return undefined;
+        const { providers, ...rest } = parse(text);
+        const bookkeeping = {
+            ...(rest["issued_account_numbers"] === undefined
+                ? {}
+                : { issued_account_numbers: rest["issued_account_numbers"] }),
+            ...(rest["pending_happy_toml_move"] === undefined
+                ? {}
+                : { pending_happy_toml_move: rest["pending_happy_toml_move"] }),
+        };
+        if (!Value.Check(providersBookkeepingSchema, bookkeeping)) {
+            throw new Error("Its bookkeeping is invalid.");
+        }
+        const accounts =
+            providers === undefined
+                ? {}
+                : (parseHappyAgentConfigToml(stringify({ providers })).values.providers ?? {});
+        return { accounts, bookkeeping };
+    } catch (error) {
+        if (error instanceof Error) {
+            throw new Error(
+                `Could not read Happy Agent configuration '${path}'. ${error.message}`,
+                { cause: error },
+            );
+        }
+        throw error;
+    }
+}
+
+/** Replace providers.toml atomically with these accounts and this bookkeeping. */
+async function writeProvidersConfigurationFile(
+    path: string,
+    accounts: NonNullable<PartialValues["providers"]>,
+    bookkeeping: ProvidersBookkeeping,
+): Promise<void> {
+    if (
+        !Value.Check(partialValuesSchema, { providers: accounts }) ||
+        !Value.Check(providersBookkeepingSchema, bookkeeping)
+    ) {
+        throw new Error("The generated account configuration is invalid.");
+    }
+    await replaceDaemonFile(
+        path,
+        stringify({
+            ...bookkeeping,
+            ...(Object.keys(accounts).length === 0 ? {} : { providers: accounts as TomlTable }),
+        }),
+    );
+}
+
+/** Replace one daemon-owned file atomically, readable only by the daemon's user. */
+async function replaceDaemonFile(path: string, encoded: string): Promise<void> {
     const contents = encoded.length === 0 || encoded.endsWith("\n") ? encoded : `${encoded}\n`;
     if (Buffer.byteLength(contents, "utf8") > MAX_CONFIG_FILE_BYTES) {
         throw new Error(`Configuration exceeds the ${MAX_CONFIG_FILE_BYTES}-byte limit.`);
@@ -5129,6 +5370,39 @@ function normalizeSourceValues(values: PartialValues): Record<string, unknown> {
 }
 
 async function readConfigSource(path: string, _kind: ConfigSourceKind): Promise<ReadSource> {
+    return await readConfigSourceText(path);
+}
+
+/** A configuration file read once, with the exact text its values were parsed from. */
+async function readConfigSourceText(
+    path: string,
+): Promise<ReadSource & { readonly text: string | undefined }> {
+    try {
+        const text = await readConfigText(path);
+        if (text === undefined) {
+            return {
+                exists: false,
+                path,
+                text,
+                unknownSettings: [],
+                unknownSettingsTruncated: false,
+                values: {},
+            };
+        }
+        return { exists: true, path, text, ...parseHappyAgentConfigToml(text) };
+    } catch (error) {
+        if (error instanceof Error) {
+            throw new Error(
+                `Could not read Happy Agent configuration '${path}'. ${error.message}`,
+                { cause: error },
+            );
+        }
+        throw error;
+    }
+}
+
+/** A configuration file's text under the size bound, or nothing when it does not exist. */
+async function readConfigText(path: string): Promise<string | undefined> {
     let file: Awaited<ReturnType<typeof open>> | undefined;
     try {
         file = await open(path, "r");
@@ -5137,24 +5411,9 @@ async function readConfigSource(path: string, _kind: ConfigSourceKind): Promise<
         if (bytesRead > MAX_CONFIG_FILE_BYTES) {
             throw new Error(`Configuration exceeds the ${MAX_CONFIG_FILE_BYTES}-byte limit.`);
         }
-        const parsed = parseHappyAgentConfigToml(bytes.subarray(0, bytesRead).toString("utf8"));
-        return { exists: true, path, ...parsed };
+        return bytes.subarray(0, bytesRead).toString("utf8");
     } catch (error) {
-        if (isMissingFile(error)) {
-            return {
-                exists: false,
-                path,
-                unknownSettings: [],
-                unknownSettingsTruncated: false,
-                values: {},
-            };
-        }
-        if (error instanceof Error) {
-            throw new Error(
-                `Could not read Happy Agent configuration '${path}'. ${error.message}`,
-                { cause: error },
-            );
-        }
+        if (isMissingFile(error)) return undefined;
         throw error;
     } finally {
         await file?.close().catch(() => undefined);
@@ -5210,6 +5469,8 @@ function derivePaths(input: HappyAgentConfigurationInput): HappyAgentConfigurati
         mcpConfigPath: join(configHome, "mcp.toml"),
         observationHome,
         pidPath: join(agentHome, "daemon.pid"),
+        // The accounts the daemon manages, apart from everything else it generates.
+        providersConfigPath: join(agentHome, "providers.toml"),
         publicHome,
         runtimeConfigPath: join(agentHome, "runtime.toml"),
         securityPath: join(configHome, "SECURITY.md"),
