@@ -7,8 +7,9 @@ const mutationIdSchema = Type.String({ minLength: 1, maxLength: 512 });
 
 /**
  * Where an account's credential comes from and how it can sign in; see "The account's credential
- * in `GET /v0/config`" under Provider sign-in in API.md. Present only on `codex`, `claude`, and
- * `grok` accounts, and only from daemons that report `capabilities.providerSignIn`.
+ * in `GET /v0/config`" under Provider sign-in in API.md. Present only on `codex`, `claude`,
+ * `grok`, and `antigravity` accounts, and only from daemons that report
+ * `capabilities.providerSignIn`.
  */
 export const providerCredentialSchema = Type.Object({
     /**
@@ -27,7 +28,10 @@ export type ProviderCredential = Static<typeof providerCredentialSchema>;
 /** One account's sign-in into a credential this installation owns; see Provider sign-in. */
 export const providerSignInSchema = Type.Object({
     providerId: Type.String({ minLength: 1 }),
-    /** The assistant whose program signs the account in: `codex`, `claude`, `grok`, or newer. */
+    /**
+     * The assistant whose program signs the account in: `codex`, `claude`, `grok`,
+     * `antigravity`, or newer.
+     */
     cliId: Type.String({ minLength: 1 }),
     /** Whether that program is installed on the daemon's machine; signing in needs it. */
     installed: Type.Boolean(),

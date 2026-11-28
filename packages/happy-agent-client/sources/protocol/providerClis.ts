@@ -84,6 +84,12 @@ export const providerCliSchema = Type.Object({
          * `POST /v0/provider-clis/claude/setup-token`. Absent means `false`.
          */
         acceptsToken: Type.Optional(Type.Boolean()),
+        /**
+         * Whether the program's sign-in can be finished by pasting the vendor page's code into
+         * `POST /v0/provider-clis/:cliId/sign-in/code`. Absent means `false`; a waiting sign-in's
+         * `authorization.acceptsCode` still decides for that attempt.
+         */
+        acceptsCode: Type.Optional(Type.Boolean()),
     }),
     operation: Type.Union([providerCliOperationSchema, Type.Null()]),
     /** UUIDv7; keep the object with the greater one. */

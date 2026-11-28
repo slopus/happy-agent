@@ -177,6 +177,12 @@ export const healthResponseSchema = Type.Object({
              */
             providerSignIn: Type.Optional(Type.Boolean()),
             /**
+             * True when the daemon serves `POST /v0/providers` and
+             * `DELETE /v0/providers/:providerId`, and reports provider `origin`, under Provider
+             * accounts. Reported in team mode too.
+             */
+            providerAccounts: Type.Optional(Type.Boolean()),
+            /**
              * True when every proxy tunnel has a WebSocket twin and the daemon pings its
              * WebSockets, described under WebSocket tunnels and Keepalive.
              */
@@ -537,10 +543,17 @@ export const providerConfigSchema = Type.Object({
     /** Present only for a smart provider; older daemons omit it. */
     pool: Type.Optional(providerPoolSchema),
     /**
-     * Where a `codex`, `claude`, or `grok` account's credential comes from and how it can sign in,
-     * under Provider sign-in. Other accounts and older daemons omit it.
+     * Where a `codex`, `claude`, `grok`, or `antigravity` account's credential comes from and how
+     * it can sign in, under Provider sign-in. Other accounts and older daemons omit it.
      */
     credential: Type.Optional(providerCredentialSchema),
+    /**
+     * Where the account is configured, under Provider accounts: `providers_toml` (the daemon-owned
+     * `providers.toml`; `DELETE /v0/providers/:providerId` removes it), `built_in` (a built-in
+     * account or a `[harnesses]` agent, which cannot be deleted), or newer; treat unknown values
+     * as `built_in`. Older daemons omit it.
+     */
+    origin: Type.Optional(Type.String({ minLength: 1 })),
     /** The canonical provider key: `"claude"`, `"codex"`, `"grok"`, … */
     type: Type.String(),
 });

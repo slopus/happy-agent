@@ -727,6 +727,12 @@ the routes under `/v0/providers/:providerId/sign-in` and `/v0/providers/:provide
 `capabilities.providerSignIn: true` from health. Older daemons omit all of them and answer the
 routes with `404`; clients then offer only the global sign-in under Provider CLIs.
 
+Provider accounts are additive and do not increment the protocol version. A daemon that serves
+`POST /v0/providers` and `DELETE /v0/providers/:providerId`, and reports `origin` on
+`GET /v0/config` provider entries, reports `capabilities.providerAccounts: true` from health. Older
+daemons omit both and answer the routes with `404`; clients then add accounts only through
+configuration files.
+
 Stories is removed. `/v0/stories` routes answer `404 not_found`; Stories tools, events, bot fields,
 and bootstrap fields are absent. Saved user preferences remain opaque and have no effect.
 Historical message quotes remain readable, with `frame: null` on current daemons. The still-frame
@@ -1654,6 +1660,9 @@ Fields:
   `/v0/providers/:providerId/sign-in` and `/v0/providers/:providerId/token`, the
   `provider_sign_in.updated` event, and `credential` on `GET /v0/config` provider entries,
   described under Provider sign-in; unlike `providerClis`, it is reported in team mode too.
+  `providerAccounts: true` advertises `POST /v0/providers`, `DELETE /v0/providers/:providerId`,
+  and `origin` on `GET /v0/config` provider entries, described under Provider accounts; it is
+  reported in team mode too.
   `webSocketTunnels: true` advertises the WebSocket twins of the proxy tunnels,
   described under WebSocket tunnels, and the WebSocket keepalive pings described under Keepalive.
   `artifactCovers: true` advertises artifact `cover` and `summary`, described under Artifacts.
@@ -2052,7 +2061,9 @@ Field groups:
     subagents. `enabled` never includes `hidden`; it says only whether the account is on and may be
     routed to. Messages, turns, and compaction for an agent already on a hidden provider are
     accepted exactly as on a visible one, and a smart provider keeps routing through enabled hidden
-    members. Removing an account entirely means deleting it from the configuration. Hiding is
+    members. Removing an account entirely means `DELETE /v0/providers/:providerId` under
+    Provider accounts.
+    Hiding is
     file-only configuration; there is no mutation for it. `hidden` is additive and does not
     increment the protocol version. Older daemons omit it and instead report hidden providers as
     disabled; clients treat a missing value as `false`.
@@ -2074,8 +2085,8 @@ Field groups:
     entry here and in `GET /v0/usage`. Only smart providers carry `pool`. It is additive and does
     not increment the protocol version; older daemons omit it.
 
-    A provider entry of type `codex`, `claude`, or `grok` also carries `credential`, saying
-    whether the account uses a credential this installation owns (`"internal"`), the machine's
+    A provider entry of type `codex`, `claude`, `grok`, or `antigravity` also carries
+    `credential`, saying whether the account uses a credential this installation owns (`"internal"`), the machine's
     own sign-in or environment (`"system"`), or one its configuration names (`"configured"`),
     and how it can sign in:
 
@@ -2085,6 +2096,13 @@ Field groups:
 
     It is described under Provider sign-in. It is additive and does not increment the protocol
     version; older daemons omit it.
+
+    A provider entry also carries `origin`: `"providers_toml"` for an account whose table is in
+    the daemon-owned `providers.toml`, which `DELETE /v0/providers/:providerId` removes, and
+    `"built_in"` for a built-in account or an agent configured under `[harnesses]`, which it
+    cannot. Both are described under Provider accounts. The set may grow; clients treat an
+    unknown value as `"built_in"`. It is additive and does not increment the protocol version;
+    older daemons omit it.
 
 - `settings` — daemon behavior toggles and tunables.
 - `api` — optional daemon-wide public connectivity settings. Supporting daemons return
@@ -3464,7 +3482,7 @@ Installing and signing in are long-running operations. A request starts one and 
 Progress, the sign-in URL to open, and the final result arrive as `provider_cli.updated` events
 on the ordinary event stream. These operations never store, return, or log a credential, an
 authorization code, or a token. The separate Claude setup-token route below stores a token only
-in daemon-owned runtime configuration; it never returns or logs it. The provider CLI object
+in the daemon-owned `providers.toml`; it never returns or logs it. The provider CLI object
 reports only whether the program is signed in, and the account's email and plan when the
 vendor's program reveals them.
 
@@ -3553,6 +3571,10 @@ instructions they showed before.
       supports `POST /v0/provider-clis/claude/setup-token`, including when Claude Code is not
       installed. It describes the daemon's ability to save a setup token, not the program's
       sign-in status. Clients must not infer support from `capabilities.providerClis` alone.
+    - `acceptsCode` — optional boolean; absent means `false`. `true` when the program's sign-in
+      can be finished by pasting the code the vendor's page shows into
+      `POST /v0/provider-clis/:cliId/sign-in/code`, as for Claude Code and Antigravity. A waiting
+      sign-in's `authorization.acceptsCode` still decides for that attempt.
 - `operation` — the current or most recent install or sign-in, or `null` when there has been
   none. It is described below.
 - `version` — a UUIDv7 minted whenever any field changes. Events carry the complete object, so
@@ -3728,7 +3750,7 @@ Malformed input returns `400 invalid_request` without changing configuration or 
 submitted value in the error.
 
 The daemon writes the normalized token as `[providers.claude] oauth_token` in daemon-owned
-`runtime.toml`, preserves unrelated settings, and applies it without a restart. It then runs the
+`providers.toml`, preserves unrelated settings, and applies it without a restart. It then runs the
 provider scan under the ordinary scan rules, including respecting an explicit disabled override.
 The token is never returned in configuration snapshots, provider CLI objects, events, or logs.
 No vendor credential file is changed, no CLI installation is required, and no interactive
@@ -3767,7 +3789,7 @@ This matters because a ChatGPT sign-in can be renewed only once with the same to
 or programs holding copies of one sign-in sign each other out when either renews it. An account
 signed in here belongs to this installation alone.
 
-Accounts of type `codex`, `claude`, and `grok` can sign in. Other accounts, such as `bedrock`,
+Accounts of type `codex`, `claude`, `grok`, and `antigravity` can sign in. Other accounts, such as `bedrock`,
 `openai_compatible`, and smart pools, have nothing to sign in to. Their sign-in routes answer
 `409` with code `not_supported`.
 
@@ -3798,21 +3820,29 @@ Each attempt signs in to a new private folder in the daemon's own data,
   account's `config_dir` names the folder.
 - `grok` — the program runs with `GROK_HOME` set to the folder. On success the account's
   `auth_file` names the folder's `auth.json`.
+- `antigravity` — the program runs as `agy acp --login` with `--gemini-dir` set to the folder and
+  `--app-data-dir antigravity-acp`, in an environment that makes it keep its sign-in in a file
+  rather than the operating system's keyring, so the token is written to
+  `<folder>/antigravity-acp/antigravity-oauth-token` and nothing outside the folder changes. On
+  success the account's `config_dir` names the folder, and every turn on the account starts agy
+  with the same two options. The built-in account `antigravity` keeps using the sign-in agy already
+  has on this computer; signing a different Google account in always uses another account.
 
 The program runs without `OPENAI_API_KEY`, `CODEX_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`,
-`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `XAI_API_KEY`, and `CLAUDE_SECURESTORAGE_CONFIG_DIR` in
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `XAI_API_KEY`, `GEMINI_API_KEY`, and `CLAUDE_SECURESTORAGE_CONFIG_DIR` in
 its environment, so it signs in rather than finding a key that happens to be exported. Success is decided by the
 program's own sign-in check against that folder, exactly as under Provider CLIs. On macOS, Claude
 Code keeps the sign-in in the keychain, under a name derived from the folder, and only a daemon
 running in the person's desktop session can read it there.
 
-When the sign-in succeeds, one atomic write of the daemon-owned `runtime.toml` points the account
-at the new credential: it sets the field above and `credential_isolation = true`, and removes from
-`runtime.toml` every key or token that would take precedence over it (`api_key` for every type,
-and also `oauth_token` and `auth_token` for Claude). From then on the account no longer uses the
-vendor's global sign-in or the daemon's environment. The person's own configuration file is never
-changed. A key or token named there still takes precedence, and the account's `credential.source`
-then stays `"configured"`.
+When the sign-in succeeds, one atomic write of the daemon-owned `providers.toml`, described under
+Provider accounts, points the account at the new credential: it sets the field above and
+`credential_isolation = true`, and removes from `providers.toml` every key or token that would
+take precedence over it (`api_key` for every type, and also `oauth_token` and `auth_token` for
+Claude). From then on the account no longer uses the vendor's global sign-in or the daemon's
+environment. Signing in never changes the person's `happy.toml`. When the account's table there
+could not be moved to `providers.toml`, a key or token it names still takes precedence, and the
+account's `credential.source` then stays `"configured"`.
 
 The change applies without a restart. The daemon forgets the account's earlier credential
 failures, runs the provider scan under the ordinary scan rules, including respecting an explicit
@@ -3843,7 +3873,7 @@ still renew it. The account's next sign-in after a restart deletes it.
 
 - `providerId` — the account, as it appears in `GET /v0/config`.
 - `cliId` — the assistant whose program signs the account in, as under Provider CLIs: `"codex"`,
-  `"claude"`, or `"grok"`.
+  `"claude"`, `"grok"`, or `"antigravity"`.
 - `installed` — whether that program is installed on the daemon's machine. Signing in needs it.
   In standalone mode, `POST /v0/provider-clis/:cliId/install` installs it.
 - `credential` — exactly the account's `credential` in `GET /v0/config`, described below.
@@ -3866,7 +3896,7 @@ again.
 
 ### The account's credential in `GET /v0/config`
 
-Every provider entry of type `codex`, `claude`, or `grok` in `GET /v0/config` carries
+Every provider entry of type `codex`, `claude`, `grok`, or `antigravity` in `GET /v0/config` carries
 `credential`, so a settings screen can show where the account's credential comes from without
 another request:
 
@@ -3919,8 +3949,9 @@ Response — `200`: `{ "providerSignIn": { ... } }` with the new `"running"` sig
 `"waiting"` with its `authorization` as soon as the vendor's program provides the page to open,
 normally within seconds, and then `"succeeded"`, `"failed"`, or `"cancelled"`. A `"device"`
 sign-in can be finished on any device. A `"browser"` sign-in for Codex or Grok finishes through a
-page served on the daemon's machine, so the browser must run there. Claude's `"browser"` page can
-instead show a code to paste back (`acceptsCode: true`), so it can be finished anywhere. Each
+page served on the daemon's machine, so the browser must run there. The `"browser"` pages of Claude
+and Antigravity can instead show a code to paste back (`acceptsCode: true`), so they can be finished
+anywhere. Each
 step, each output line, and the result emit `provider_sign_in.updated`. A successful sign-in also
 emits `config.updated`.
 
@@ -3965,7 +3996,7 @@ Claude account. It is `POST /v0/provider-clis/claude/setup-token` for any accoun
 ```
 
 The daemon writes the normalized token as `oauth_token` in the account's table of the daemon-owned
-`runtime.toml`, preserves unrelated settings, and applies it without a restart. A saved token
+`providers.toml`, preserves unrelated settings, and applies it without a restart. A saved token
 takes precedence over every other credential of a Claude account, so the account's
 `credential.source` becomes `"internal"`; a later successful sign-in removes the token again. The
 daemon then forgets the account's earlier credential failures and runs the provider scan under the
@@ -3980,6 +4011,151 @@ Response — `200`: `{ "providerSignIn": { ... } }`. Success emits `config.updat
   exposing the submitted value.
 - `409` with code `not_supported` for an account that is not of type `claude`.
 - `403` with code `forbidden` for a team member who is not the owner.
+
+## Provider accounts
+
+Provider accounts let a client add a second Claude, Codex, Grok, or Antigravity account, or an
+account for a pasted API key or Bedrock credential, and remove an account again, without editing
+a file or restarting the daemon.
+
+### Where accounts live
+
+The daemon keeps the accounts it manages in its own file, `<agent home>/providers.toml`, with one
+`[providers.<id>]` table per account in the same format as the machine configuration. The daemon
+is its only writer. Every write is checked against the configuration schema under the daemon's
+configuration lock, then written to a temporary file and renamed over the old one, readable only
+by the daemon's user (mode `0600`). Pasted API keys, Bedrock credentials, and setup tokens are
+stored there, and never returned in responses, configuration snapshots, events, logs, or error
+bodies.
+
+Account tables in the daemon-owned `runtime.toml` move to `providers.toml` once, when the daemon
+starts: it writes `providers.toml` first, then `runtime.toml` without them. A daemon stopped in
+between leaves the same tables in both files, and the next start removes them from
+`runtime.toml`. Everything else the daemon generates stays in `runtime.toml`.
+
+Account tables in the person's machine `happy.toml` move to `providers.toml` too, on every start,
+so an account a person or an agent writes there later still works and moves at the next start, as
+any `happy.toml` edit takes effect at the next start. The move, in order:
+
+1. The daemon copies `happy.toml` to `happy.toml.bak-<timestamp>` beside it, readable only by the
+   daemon's user.
+2. It writes `providers.toml` with the tables merged in. When an account ID is already there, the
+   `happy.toml` table decides the account's configuration, because the person wrote it last, and
+   `providers.toml` keeps the account's enablement.
+3. It rewrites `happy.toml` without those tables, atomically.
+
+A daemon stopped before step 3 finishes finds the same tables at the next start and merges them
+again with the same result. The move removes each `[providers.<id>]` table, and its subtables such
+as `[providers.<id>.model_overrides]`, as text: from its header to the line before the next table
+header. Everything else in `happy.toml`, comments and formatting included, stays byte for byte,
+including a bare `[providers]` table of settings such as `default_enable`. When the file cannot be
+edited that way, for example because accounts are written as an inline table or with dotted keys,
+the daemon leaves `happy.toml` untouched, uses its accounts as they are for that start, and logs
+one warning saying why.
+
+The account list is live. Accounts added or removed through these routes take effect without a
+restart or reload. Every turn reads the current list when it starts, so a new account is usable by
+the next turn and a removed one is not.
+
+Every account in `GET /v0/config` carries `origin`. `"providers_toml"` means its table is in
+`providers.toml`, and `DELETE /v0/providers/:providerId` removes it. `"built_in"` means a built-in
+account, or an agent configured under `[harnesses]`, which the routes below cannot delete.
+
+Provider accounts change this installation's configuration, so they are available in team mode
+too, where only the team owner may add or remove an account; anyone else receives `403` with code
+`forbidden`. A daemon that serves these routes reports `capabilities.providerAccounts: true` from
+health. Older daemons omit it and answer the routes with `404`.
+
+### `POST /v0/providers`
+
+Adds one account. Request, one of:
+
+```json
+{ "type": "codex" }
+{ "type": "claude", "apiKey": "sk-ant-api03-..." }
+{ "type": "bedrock", "bedrock": { "region": "us-east-1", "accessKeyId": "AKIA...", "secretAccessKey": "..." } }
+{ "type": "bedrock", "bedrock": { "region": "us-east-1", "bearerToken": "..." } }
+```
+
+Every form also accepts an optional `mutationId`.
+
+- `type` — `"codex"`, `"claude"`, `"grok"`, `"antigravity"`, or `"bedrock"`.
+- `apiKey` — optional, for `codex`, `claude`, and `grok`: an API key, stored as the account's
+  `api_key`.
+- `bedrock` — required for `bedrock` and accepted for no other type. `region` is the AWS region.
+  It carries either `accessKeyId` and `secretAccessKey`, stored as the account's `access_key_id`
+  and `secret_access_key`, or `bearerToken`, a Bedrock API key stored as `bearer_token`.
+
+Every credential string is trimmed and must be 1–8,192 characters with no whitespace or control
+characters inside it. `region` is 1–64 lowercase letters, digits, and hyphens.
+
+The new account's ID is the next free `<type>_<n>`, starting at `2`, that no account uses, such as
+`codex_2`. The daemon chooses it under the configuration lock, so
+two concurrent requests never receive the same ID.
+
+An account of type `codex`, `claude`, `grok`, or `antigravity` without `apiKey` is created with
+`credential_isolation = true` and switched off. The client signs it in with
+`POST /v0/providers/:providerId/sign-in`, or for Claude saves a setup token with
+`PUT /v0/providers/:providerId/token`, both under Provider sign-in. A successful sign-in turns it on
+under the ordinary scan rules.
+
+An account with a credential is checked before anything is saved: the daemon runs the
+`"authentication"` verification described under `POST /v0/providers/:providerId/verify` with the
+submitted credential. Only when it passes is the account written, recorded as discovered, and
+turned on under the ordinary scan rules.
+
+Response — `201`:
+
+```json
+{
+    "providerId": "codex_2",
+    "config": { "...": "the GET /v0/config shape" },
+    "verification": { "...": "the POST /v0/providers/:providerId/verify response" }
+}
+```
+
+`config` is the effective configuration after the account was added. `verification` is present
+only when a credential was checked. A new account is not announced: it appears in `GET /v0/config`
+and the model catalog, and the change emits `config.updated`, echoing `mutationId` when supplied.
+
+Errors never contain the submitted credential, and none of them saves anything:
+
+- `400` with code `invalid_request` for an unknown `type`, a credential the type does not accept,
+  a missing or malformed `bedrock` or `region`, or a blank or malformed credential.
+- `422` with code `verification_failed` and `verification` when the vendor rejected the
+  credential.
+- `503` with code `verification_unavailable` when the check could not run, for example because of
+  a timeout or no network. Its message says the credential is unproven, not that it is wrong.
+- `403` with code `forbidden` for a team member who is not the owner.
+- `409` when the daemon cannot change its settings at runtime, as for `PATCH /v0/config`.
+
+### `DELETE /v0/providers/:providerId`
+
+Removes one account from `providers.toml` and from the live account list, without a restart. The
+optional JSON body is `{ "mutationId": "..." }`; an empty body is equivalent to `{}`.
+
+Response — `200`: `{ "config": { ... } }`, the effective configuration after the removal. The
+change emits `config.updated`, echoing `mutationId` when supplied.
+
+A sign-in still running for the account is cancelled. Its folders under
+`<agent home>/provider-accounts/<account>/` are deleted the next time the daemon starts, because
+sessions that are still running may still renew their credential from them. A turn already running
+on the account finishes. Nothing that starts afterwards uses it:
+
+- An agent whose selection names the account fails its next turn with the `provider_disabled`
+  failure described under message failures, offering Switch with targets from the live catalog, as
+  after a sign-out. The failure's `provider` keeps the removed account's ID, type, and last label.
+- A smart provider leaves it out of `pool.members`, as it does any unknown ID.
+- A configured default model on the account is ignored, as is any model no longer offered.
+
+Errors:
+
+- `404` for an unknown account.
+- `409` with code `conflict` for an account with `origin: "built_in"`: the built-in accounts
+  `claude`, `codex`, `grok`, `bedrock`, and `antigravity`, and agents configured under
+  `[harnesses]`. A client turns those off with `PATCH /v0/config` instead.
+- `403` with code `forbidden` for a team member who is not the owner.
+- `409` when the daemon cannot change its settings at runtime, as for `PATCH /v0/config`.
 
 ## Provider routes
 
@@ -4025,7 +4201,7 @@ provider scan.
         "providerId": "cliproxyapi",
         "type": "openai_compatible",
         "summary": "Adds CLIProxyAPI on this computer with 12 models.",
-        "restartRequired": true
+        "restartRequired": false
     }
 }
 ```
@@ -4068,15 +4244,16 @@ provider scan.
 - `warning` — a display sentence when the route quietly changes what another route does, or
   `null`. For example, an `ANTHROPIC_API_KEY` in the daemon's environment takes precedence over
   the Claude Code sign-in, so Claude bills per token instead of using the plan.
-- `providerId` — the configured provider this route already is, or `null`. A provider that `use`
-  added and that takes effect after a restart is reported here too.
+- `providerId` — the configured provider this route already is, or `null`.
 - `use` — `null` when the route is already configured and enabled, or cannot be set up
   automatically: a route whose `status` is `needs_sign_in`, `not_running`, or `unauthorized`, or a
   local server that lists no models. A route whose `status` is `unknown` can still be set up,
   because setting it up only writes configuration. Otherwise it describes what
   `POST /v0/provider-routes/:routeId/use` does: `providerId` and `type` of the provider it enables
-  or adds, a display `summary`, and `restartRequired`, `true` when the provider is new and the
-  daemon must restart before using it.
+  or adds, a display `summary`, and `restartRequired`, which is always `false` on a daemon that
+  reports `capabilities.providerAccounts`, because a new provider is added to the live account
+  list. Older daemons report `true` when the provider is new and the daemon must restart before
+  using it.
 
 What choosing a route sets up, its recommended configuration:
 
@@ -4138,13 +4315,15 @@ Sets the route up as its `use` describes. Request body, optional:
 Response — `200`:
 
 ```json
-{ "route": { "...": "the provider route object" }, "restartRequired": true }
+{ "route": { "...": "the provider route object" }, "restartRequired": false }
 ```
 
 The returned route has `providerId` set and `use` `null`. Enabling a built-in provider takes effect
-at once. A new provider takes effect after the daemon restarts; until then `restartRequired` is
-`true` and clients restart the daemon through the ordinary drain and restart. The change emits
-`config.updated`.
+at once. A new provider is written to the daemon-owned `providers.toml` and added to the live
+account list, so it also takes effect at once and `restartRequired` is `false`. On an older daemon
+without `capabilities.providerAccounts`, a new provider takes effect after the daemon restarts;
+until then `restartRequired` is `true` and clients restart the daemon through the ordinary drain
+and restart. The change emits `config.updated`.
 
 - An unknown route returns `404`.
 - `409` with code `conflict` and the current `route` when its `use` is `null`.

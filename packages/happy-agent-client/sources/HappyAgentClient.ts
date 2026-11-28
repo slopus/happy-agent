@@ -234,6 +234,12 @@ import type {
     ProviderTokenRequest,
 } from "./protocol/providerSignIn.js";
 import type {
+    ProviderAccountCreateRequest,
+    ProviderAccountCreateResponse,
+    ProviderAccountDeleteRequest,
+    ProviderAccountDeleteResponse,
+} from "./protocol/providerAccounts.js";
+import type {
     EventPageQuery,
     EventPageResponse,
     EventStreamFrame,
@@ -747,6 +753,40 @@ export class HappyAgentClient {
         return await this.#json({
             method: "PUT",
             path: `v0/providers/${encodeURIComponent(providerId)}/token`,
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `POST /v0/providers` — adds an account, live. One with a credential is verified first and
+     * saved only when the vendor accepts it; one without signs in afterwards through
+     * `startProviderSignIn` or, for Claude, `saveProviderToken`.
+     */
+    async addProviderAccount(
+        request: ProviderAccountCreateRequest,
+        options: RequestOptions = {},
+    ): Promise<ProviderAccountCreateResponse> {
+        return await this.#json({
+            method: "POST",
+            path: "v0/providers",
+            json: request,
+            signal: options.signal,
+        });
+    }
+
+    /**
+     * `DELETE /v0/providers/:providerId` — removes an account from `providers.toml`, live. Built-in
+     * accounts and those from `happy.toml` are refused with `409 conflict`.
+     */
+    async deleteProviderAccount(
+        providerId: string,
+        request: ProviderAccountDeleteRequest = {},
+        options: RequestOptions = {},
+    ): Promise<ProviderAccountDeleteResponse> {
+        return await this.#json({
+            method: "DELETE",
+            path: `v0/providers/${encodeURIComponent(providerId)}`,
             json: request,
             signal: options.signal,
         });
