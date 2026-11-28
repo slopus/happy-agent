@@ -4146,9 +4146,14 @@ rejected only when the vendor says outright that it is invalid or expired:
 
 - an HTTP `401` from OpenAI, xAI, or Anthropic, such as `invalid_api_key` or
   `authentication_error`;
-- from AWS, `UnrecognizedClientException`, `InvalidSignatureException` (a secret that does not
-  belong to the key ID), `ExpiredTokenException`, or an error saying a Bedrock API key is invalid
-  or expired.
+- from AWS, `UnrecognizedClientException`, `InvalidSignatureException` for a secret that does
+  not belong to the key ID, `ExpiredTokenException`, or an error saying a Bedrock API key is
+  invalid or expired.
+
+An `InvalidSignatureException` saying the signature expired, and a clock-skew error such as
+`RequestTimeTooSkewed` or a `SignatureDoesNotMatch` caused by skew, mean the signature or this
+computer's clock was wrong, not the credential; the AWS SDK retries them the same way. They do not
+reject the credential.
 
 Any other failure, including a `403` or another permission denial, does not show whether the
 credential works, so the daemon then makes one inexpensive authenticated read with the same
@@ -4164,8 +4169,9 @@ The account is saved when the read succeeds, and for Bedrock also when it answer
 was authenticated and is only not allowed to list models. The read rejects the credential on the
 same explicit errors as the check. Anything else leaves the credential unproven, and nothing is
 saved: a generic `403` from OpenAI, xAI, or Anthropic, since a restricted key may be allowed to run
-models but not to list them, as well as `IncompleteSignatureException`, no network, a `429`, a
-`5xx`, another error, or a read that could not be made.
+models but not to list them, as well as an expired signature or clock skew,
+`IncompleteSignatureException`, no network, a `429`, a `5xx`, another error, or a read that could
+not be made.
 
 Response — `201`:
 
