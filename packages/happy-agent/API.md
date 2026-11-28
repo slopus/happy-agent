@@ -4052,17 +4052,21 @@ A move, in order:
 
 1. When `happy.toml` holds account tables, the daemon copies it to `happy.toml.bak-<timestamp>`
    beside it, readable only by the daemon's user.
-2. It writes `providers.toml` with the accounts merged in, recording the SHA-256 of the
-   `happy.toml` it read.
+2. It writes `providers.toml` with the accounts merged in and a pending-move marker holding the
+   SHA-256 of the `happy.toml` it read.
 3. It rewrites `runtime.toml` without account tables.
-4. It reads `happy.toml` again and, only when its SHA-256 still matches, rewrites it atomically
-   without the account tables. When the file changed in the meantime, it stays as it is for this
-   start, and the next start moves what it then holds.
+4. It reads `happy.toml` again and, only when its SHA-256 still matches the marker, rewrites it
+   atomically without the account tables. When the file changed in the meantime, it stays as it
+   is for this start.
+5. It writes `providers.toml` again without the marker, whether step 4 removed the tables or left
+   the file as it was.
 
 A daemon stopped partway through finishes the move at the next start. Account tables still in
-`runtime.toml` give way to the copies already in `providers.toml`. A `happy.toml` whose SHA-256
-matches the one `providers.toml` recorded is not merged again; the daemon only removes its account
-tables.
+`runtime.toml` give way to the copies already in `providers.toml`. Only a pending-move marker
+whose SHA-256 matches the current `happy.toml` means its tables were already merged: the daemon
+then removes them without merging them again, and clears the marker. Without a marker, or when
+the hash differs, account tables in `happy.toml` are always merged as described above, so a
+`happy.toml` restored from a backup later imports its accounts again.
 
 The move removes each `[providers.<id>]` table, and its subtables such as
 `[providers.<id>.model_overrides]`, as text: from its header to the line before the next table
@@ -4113,8 +4117,9 @@ Every form also accepts an optional `mutationId`.
   It carries either `accessKeyId` and `secretAccessKey`, stored as the account's `access_key_id`
   and `secret_access_key`, or `bearerToken`, a Bedrock API key stored as `bearer_token`.
 
-Every credential string is trimmed and must be 1–8,192 characters with no whitespace or control
-characters inside it. `region` is 1–64 lowercase letters, digits, and hyphens.
+Every credential string is at most 65,536 characters as sent. It is trimmed of surrounding
+whitespace, and what remains must be 1–8,192 characters with no whitespace and no control
+characters, C0 (U+0000–U+001F), U+007F, or C1 (U+0080–U+009F), inside it. `region` is 1–64 lowercase letters, digits, and hyphens.
 
 The new account's ID is `<type>_<n>`, such as `codex_2`, where `n` is one more than the highest
 number ever issued for that type or used by any account of that ID pattern, and at least `2`.
@@ -4134,8 +4139,15 @@ under the ordinary scan rules.
 An account with a credential is checked before anything is saved: the daemon runs the
 `"authentication"` verification described under `POST /v0/providers/:providerId/verify` with the
 submitted credential. The account is written, recorded as discovered, and turned on under the
-ordinary scan rules when the check passes, and also when it fails with `failure.kind` `quota` or
-`model_unavailable`, because the vendor accepted the credential.
+ordinary scan rules when the check passes. It is also saved when the check fails with
+`failure.kind` `quota` or `model_unavailable` and the vendor's answer itself shows the credential
+was authenticated: an error the vendor returns only to an authenticated caller, recognized by its
+type or code rather than its status alone. These are OpenAI's `insufficient_quota`,
+`rate_limit_exceeded`, and `model_not_found` codes, which xAI's compatible API also uses;
+Anthropic's `rate_limit_error` and `not_found_error` types; and Bedrock's `ThrottlingException`,
+`ServiceQuotaExceededException`, and `ResourceNotFoundException`. A bare `429` or `404`, or a
+message that only mentions a quota or a model, proves nothing about the credential, so that
+outcome is `503` and nothing is saved.
 
 Response — `201`:
 
@@ -4149,7 +4161,7 @@ Response — `201`:
 
 `config` is the effective configuration after the account was added. `verification` is present
 only when a credential was checked, including a saved account whose check failed with `quota` or
-`model_unavailable`. A new account is not announced: it appears in `GET /v0/config`
+`model_unavailable` as described above. A new account is not announced: it appears in `GET /v0/config`
 and the model catalog, and the change emits `config.updated`, echoing `mutationId` when supplied.
 
 Errors never contain the submitted credential, and none of them saves anything:
@@ -4158,9 +4170,10 @@ Errors never contain the submitted credential, and none of them saves anything:
   a missing or malformed `bedrock` or `region`, or a blank or malformed credential.
 - `422` with code `verification_failed` and `verification` when the check failed with
   `failure.kind` `authentication`: the vendor rejected the credential.
-- `503` with code `verification_unavailable` when the check could not tell, such as a failure of
-  kind `network`, `tls`, `timeout`, `provider_error`, `no_model`, `credentials_missing`, or
-  `unknown`. It carries `verification` when a check ran. Its message says the credential is
+- `503` with code `verification_unavailable` when the check could not tell: a failure of kind
+  `network`, `tls`, `timeout`, `provider_error`, `no_model`, `credentials_missing`, or `unknown`,
+  or a `quota` or `model_unavailable` failure without the vendor evidence described above. It
+  carries `verification` when a check ran. Its message says the credential is
   unproven, not that it is wrong.
 - `403` with code `forbidden` for a team member who is not the owner.
 - `409` when the daemon cannot change its settings at runtime, as for `PATCH /v0/config`.

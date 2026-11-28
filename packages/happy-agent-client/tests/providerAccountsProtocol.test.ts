@@ -56,6 +56,12 @@ describe("provider accounts contract", () => {
         expect(withKey("sk-a b")).toBe(false);
         expect(withKey("sk-a\tb")).toBe(false);
         expect(withKey("sk-a\u0001b")).toBe(false);
+        expect(withKey("sk-a\u007fb")).toBe(false);
+        expect(withKey("sk-a\u0085b")).toBe(false);
+        expect(withKey("sk-a\u009fb")).toBe(false);
+        expect(withKey("sk-a\u00a0b")).toBe(false);
+        expect(withKey("sk-\u00e9")).toBe(true);
+        expect(withKey(` ${"k".repeat(8_192)}${" ".repeat(65_536)}`)).toBe(false);
     });
 
     it("reads a saved account whose check found the key valid but out of quota", () => {

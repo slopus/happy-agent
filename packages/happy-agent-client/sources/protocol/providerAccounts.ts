@@ -4,12 +4,13 @@ import { daemonConfigSchema, providerVerificationResponseSchema } from "./daemon
 
 const mutationIdSchema = Type.String({ minLength: 1, maxLength: 512 });
 /**
- * A credential as the daemon reads it: surrounding whitespace is trimmed, and what remains is
- * 1–8,192 characters with no whitespace or control characters inside.
+ * A credential as the daemon reads it: at most 65,536 characters as sent, trimmed of surrounding
+ * whitespace, and then 1–8,192 characters with no whitespace and no C0, DEL, or C1 control
+ * character inside.
  */
 const credentialSchema = Type.String({
     maxLength: 65_536,
-    pattern: "^\\s*[^\\s\\x00-\\x1f\\x7f]{1,8192}\\s*$",
+    pattern: "^\\s*[^\\s\\x00-\\x1f\\x7f-\\x9f]{1,8192}\\s*$",
 });
 
 /** Account types `POST /v0/providers` adds without a credential; see Provider accounts. */
