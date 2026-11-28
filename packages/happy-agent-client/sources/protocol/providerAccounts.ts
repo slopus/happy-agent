@@ -3,8 +3,14 @@ import { type Static, Type } from "@sinclair/typebox";
 import { daemonConfigSchema, providerVerificationResponseSchema } from "./daemon.js";
 
 const mutationIdSchema = Type.String({ minLength: 1, maxLength: 512 });
-/** The daemon trims a credential and rejects one with whitespace or control characters inside. */
-const credentialSchema = Type.String({ minLength: 1, maxLength: 8_192 });
+/**
+ * A credential as the daemon reads it: surrounding whitespace is trimmed, and what remains is
+ * 1–8,192 characters with no whitespace or control characters inside.
+ */
+const credentialSchema = Type.String({
+    maxLength: 65_536,
+    pattern: "^\\s*[^\\s\\x00-\\x1f\\x7f]{1,8192}\\s*$",
+});
 
 /** Account types `POST /v0/providers` adds without a credential; see Provider accounts. */
 export const providerAccountSignInTypeSchema = Type.Union([

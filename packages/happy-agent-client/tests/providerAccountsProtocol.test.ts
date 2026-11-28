@@ -46,6 +46,37 @@ describe("provider accounts contract", () => {
         expect(Value.Check(providerAccountDeleteRequestSchema, { mutationId: "" })).toBe(false);
     });
 
+    it("trims a credential before checking it, and refuses whitespace inside it", () => {
+        const withKey = (apiKey: string) =>
+            Value.Check(providerAccountCreateRequestSchema, { type: "codex", apiKey });
+        expect(withKey("  sk-synthetic\n")).toBe(true);
+        expect(withKey(` ${"k".repeat(8_192)} `)).toBe(true);
+        expect(withKey("k".repeat(8_193))).toBe(false);
+        expect(withKey("   ")).toBe(false);
+        expect(withKey("sk-a b")).toBe(false);
+        expect(withKey("sk-a\tb")).toBe(false);
+        expect(withKey("sk-a\u0001b")).toBe(false);
+    });
+
+    it("reads a saved account whose check found the key valid but out of quota", () => {
+        const verification = {
+            providerId: "codex_2",
+            requestedLevel: "authentication",
+            performedLevel: "inference",
+            status: "failed",
+            checkedAt: 1755400000000,
+            modelId: "openai/gpt-6.1-sol",
+            failure: { kind: "quota", message: "This OpenAI account has no credit left." },
+        };
+        expect(
+            Value.Check(providerAccountCreateResponseSchema, {
+                providerId: "codex_2",
+                config,
+                verification,
+            }),
+        ).toBe(true);
+    });
+
     it("keeps the new fields optional for older daemons", () => {
         const provider = { type: "codex", enabled: true, models: [] };
         expect(Value.Check(providerConfigSchema, provider)).toBe(true);

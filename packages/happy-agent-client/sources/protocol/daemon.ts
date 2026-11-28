@@ -549,9 +549,10 @@ export const providerConfigSchema = Type.Object({
     credential: Type.Optional(providerCredentialSchema),
     /**
      * Where the account is configured, under Provider accounts: `providers_toml` (the daemon-owned
-     * `providers.toml`; `DELETE /v0/providers/:providerId` removes it), `built_in` (a built-in
-     * account or a `[harnesses]` agent, which cannot be deleted), or newer; treat unknown values
-     * as `built_in`. Older daemons omit it.
+     * `providers.toml`; only these can be removed with `DELETE /v0/providers/:providerId`),
+     * `built_in` (a built-in account in any file, or a `[harnesses]` agent), `happy_toml` (left in
+     * `happy.toml` because it could not be moved safely), or newer; treat an unknown value as an
+     * account that cannot be removed. Older daemons omit it.
      */
     origin: Type.Optional(Type.String({ minLength: 1 })),
     /** The canonical provider key: `"claude"`, `"codex"`, `"grok"`, … */

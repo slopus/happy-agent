@@ -759,9 +759,9 @@ export class HappyAgentClient {
     }
 
     /**
-     * `POST /v0/providers` — adds an account, live. One with a credential is verified first and
-     * saved only when the vendor accepts it; one without signs in afterwards through
-     * `startProviderSignIn` or, for Claude, `saveProviderToken`.
+     * `POST /v0/providers` — adds an account, live, under an ID never issued before. One with a
+     * credential is verified first and saved only when the vendor accepts it; one without signs in
+     * afterwards through `startProviderSignIn` or, for Claude, `saveProviderToken`.
      */
     async addProviderAccount(
         request: ProviderAccountCreateRequest,
@@ -776,8 +776,9 @@ export class HappyAgentClient {
     }
 
     /**
-     * `DELETE /v0/providers/:providerId` — removes an account from `providers.toml`, live. Built-in
-     * accounts and those from `happy.toml` are refused with `409 conflict`.
+     * `DELETE /v0/providers/:providerId` — removes an account from `providers.toml`, live. Only an
+     * account with `origin: "providers_toml"` can be removed; any other is refused with
+     * `409 conflict`.
      */
     async deleteProviderAccount(
         providerId: string,

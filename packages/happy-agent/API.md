@@ -2098,11 +2098,13 @@ Field groups:
     version; older daemons omit it.
 
     A provider entry also carries `origin`: `"providers_toml"` for an account whose table is in
-    the daemon-owned `providers.toml`, which `DELETE /v0/providers/:providerId` removes, and
-    `"built_in"` for a built-in account or an agent configured under `[harnesses]`, which it
-    cannot. Both are described under Provider accounts. The set may grow; clients treat an
-    unknown value as `"built_in"`. It is additive and does not increment the protocol version;
-    older daemons omit it.
+    the daemon-owned `providers.toml`, which `DELETE /v0/providers/:providerId` removes;
+    `"built_in"` for a built-in account, whichever file holds its table, or an agent configured
+    under `[harnesses]`; and `"happy_toml"` for an account left in `happy.toml` because it could
+    not be moved safely. Only `"providers_toml"` accounts can be removed. All three are described
+    under Provider accounts. The set may grow; clients treat an unknown value as an account they
+    cannot remove. It is additive and does not increment the protocol version; older daemons omit
+    it.
 
 - `settings` — daemon behavior toggles and tunables.
 - `api` — optional daemon-wide public connectivity settings. Supporting daemons return
@@ -3789,9 +3791,11 @@ This matters because a ChatGPT sign-in can be renewed only once with the same to
 or programs holding copies of one sign-in sign each other out when either renews it. An account
 signed in here belongs to this installation alone.
 
-Accounts of type `codex`, `claude`, `grok`, and `antigravity` can sign in. Other accounts, such as `bedrock`,
-`openai_compatible`, and smart pools, have nothing to sign in to. Their sign-in routes answer
-`409` with code `not_supported`.
+Accounts of type `codex`, `claude`, `grok`, and `antigravity` can sign in, except the built-in
+account `antigravity`, which always uses the sign-in agy has on this computer. Other accounts,
+such as `bedrock`, `openai_compatible`, and smart pools, have nothing to sign in to. The sign-in
+routes of those accounts and of the built-in `antigravity` answer `409` with code
+`not_supported`.
 
 Signing in is a long-running operation. A request starts it and answers at once, and progress,
 the page to open, and the result arrive as `provider_sign_in.updated` events. The operation object
@@ -3918,7 +3922,9 @@ another request:
     The set may grow; clients treat an unknown value as `"configured"`.
 
 - `methods` — the sign-in methods `POST /v0/providers/:providerId/sign-in` accepts for the
-  account, in the order the daemon prefers them. `"device"` comes first where the vendor offers
+  account, in the order the daemon prefers them. It is empty for the built-in `antigravity`, which
+  cannot sign in here, and `["browser"]` for every other Antigravity account, whose waiting
+  sign-in also accepts a pasted code. `"device"` comes first where the vendor offers
   it, because it can be finished on any device; then `"browser"`. It describes what the daemon
   supports, not whether the program is installed, which the sign-in object's `installed` says.
 - `acceptsToken` — `true` when `PUT /v0/providers/:providerId/token` accepts a pasted token for
@@ -4028,38 +4034,59 @@ by the daemon's user (mode `0600`). Pasted API keys, Bedrock credentials, and se
 stored there, and never returned in responses, configuration snapshots, events, logs, or error
 bodies.
 
-Account tables in the daemon-owned `runtime.toml` move to `providers.toml` once, when the daemon
-starts: it writes `providers.toml` first, then `runtime.toml` without them. A daemon stopped in
-between leaves the same tables in both files, and the next start removes them from
-`runtime.toml`. Everything else the daemon generates stays in `runtime.toml`.
+Accounts move into `providers.toml` when the daemon starts:
 
-Account tables in the person's machine `happy.toml` move to `providers.toml` too, on every start,
-so an account a person or an agent writes there later still works and moves at the next start, as
-any `happy.toml` edit takes effect at the next start. The move, in order:
+- The first move, when `providers.toml` does not exist yet, takes every account table in the
+  daemon-owned `runtime.toml` and in the person's machine `happy.toml`. Each account keeps exactly
+  the configuration it had: its `happy.toml` table with its `runtime.toml` table applied over it
+  key by key, as the daemon merged the two files before. A `runtime.toml` table of a different
+  type replaces the `happy.toml` table, as before.
+- An account table that a person or an agent writes into `happy.toml` afterwards still works: it
+  moves at the next start, as any `happy.toml` edit takes effect at the next start. When the
+  account is already in `providers.toml`, the `happy.toml` table's keys replace the same keys
+  there, because the person wrote them last, while the account keeps its other keys and its
+  `enabled` and `auto_enable` from `providers.toml`. A table of a different type replaces the
+  account's table, keeping only `enabled` and `auto_enable`.
 
-1. The daemon copies `happy.toml` to `happy.toml.bak-<timestamp>` beside it, readable only by the
-   daemon's user.
-2. It writes `providers.toml` with the tables merged in. When an account ID is already there, the
-   `happy.toml` table decides the account's configuration, because the person wrote it last, and
-   `providers.toml` keeps the account's enablement.
-3. It rewrites `happy.toml` without those tables, atomically.
+A move, in order:
 
-A daemon stopped before step 3 finishes finds the same tables at the next start and merges them
-again with the same result. The move removes each `[providers.<id>]` table, and its subtables such
-as `[providers.<id>.model_overrides]`, as text: from its header to the line before the next table
+1. When `happy.toml` holds account tables, the daemon copies it to `happy.toml.bak-<timestamp>`
+   beside it, readable only by the daemon's user.
+2. It writes `providers.toml` with the accounts merged in, recording the SHA-256 of the
+   `happy.toml` it read.
+3. It rewrites `runtime.toml` without account tables.
+4. It reads `happy.toml` again and, only when its SHA-256 still matches, rewrites it atomically
+   without the account tables. When the file changed in the meantime, it stays as it is for this
+   start, and the next start moves what it then holds.
+
+A daemon stopped partway through finishes the move at the next start. Account tables still in
+`runtime.toml` give way to the copies already in `providers.toml`. A `happy.toml` whose SHA-256
+matches the one `providers.toml` recorded is not merged again; the daemon only removes its account
+tables.
+
+The move removes each `[providers.<id>]` table, and its subtables such as
+`[providers.<id>.model_overrides]`, as text: from its header to the line before the next table
 header. Everything else in `happy.toml`, comments and formatting included, stays byte for byte,
 including a bare `[providers]` table of settings such as `default_enable`. When the file cannot be
 edited that way, for example because accounts are written as an inline table or with dotted keys,
-the daemon leaves `happy.toml` untouched, uses its accounts as they are for that start, and logs
-one warning saying why.
+or `happy.toml` is a symbolic link, the daemon leaves `happy.toml` untouched and merges nothing
+from it. Its accounts are used as they are for that start, under `providers.toml` as before, and
+the daemon logs one warning saying why.
 
 The account list is live. Accounts added or removed through these routes take effect without a
 restart or reload. Every turn reads the current list when it starts, so a new account is usable by
 the next turn and a removed one is not.
 
-Every account in `GET /v0/config` carries `origin`. `"providers_toml"` means its table is in
-`providers.toml`, and `DELETE /v0/providers/:providerId` removes it. `"built_in"` means a built-in
-account, or an agent configured under `[harnesses]`, which the routes below cannot delete.
+Every account in `GET /v0/config` carries `origin`:
+
+- `"providers_toml"` — an account whose table is in `providers.toml`, such as one added through
+  these routes or moved from `happy.toml`. Only these can be removed with
+  `DELETE /v0/providers/:providerId`.
+- `"built_in"` — the built-in accounts `claude`, `codex`, `grok`, `bedrock`, and `antigravity`,
+  whichever file holds their table, and agents configured under `[harnesses]`.
+- `"happy_toml"` — an account left in `happy.toml` because its table could not be moved safely.
+
+The set may grow; clients treat an unknown value as an account they cannot remove.
 
 Provider accounts change this installation's configuration, so they are available in team mode
 too, where only the team owner may add or remove an account; anyone else receives `403` with code
@@ -4089,9 +4116,14 @@ Every form also accepts an optional `mutationId`.
 Every credential string is trimmed and must be 1–8,192 characters with no whitespace or control
 characters inside it. `region` is 1–64 lowercase letters, digits, and hyphens.
 
-The new account's ID is the next free `<type>_<n>`, starting at `2`, that no account uses, such as
-`codex_2`. The daemon chooses it under the configuration lock, so
-two concurrent requests never receive the same ID.
+The new account's ID is `<type>_<n>`, such as `codex_2`, where `n` is one more than the highest
+number ever issued for that type or used by any account of that ID pattern, and at least `2`.
+`providers.toml` keeps the highest number issued for each type, so an ID is never issued twice:
+after `codex_2` is removed, the next Codex account is `codex_3`. A conversation still on a removed
+account therefore fails as described under `DELETE /v0/providers/:providerId` instead of running
+on another account's credential, and the removed account's folders are never mistaken for a new
+account's. The daemon chooses the ID under the configuration lock, so two concurrent requests never
+receive the same one.
 
 An account of type `codex`, `claude`, `grok`, or `antigravity` without `apiKey` is created with
 `credential_isolation = true` and switched off. The client signs it in with
@@ -4101,8 +4133,9 @@ under the ordinary scan rules.
 
 An account with a credential is checked before anything is saved: the daemon runs the
 `"authentication"` verification described under `POST /v0/providers/:providerId/verify` with the
-submitted credential. Only when it passes is the account written, recorded as discovered, and
-turned on under the ordinary scan rules.
+submitted credential. The account is written, recorded as discovered, and turned on under the
+ordinary scan rules when the check passes, and also when it fails with `failure.kind` `quota` or
+`model_unavailable`, because the vendor accepted the credential.
 
 Response — `201`:
 
@@ -4115,17 +4148,20 @@ Response — `201`:
 ```
 
 `config` is the effective configuration after the account was added. `verification` is present
-only when a credential was checked. A new account is not announced: it appears in `GET /v0/config`
+only when a credential was checked, including a saved account whose check failed with `quota` or
+`model_unavailable`. A new account is not announced: it appears in `GET /v0/config`
 and the model catalog, and the change emits `config.updated`, echoing `mutationId` when supplied.
 
 Errors never contain the submitted credential, and none of them saves anything:
 
 - `400` with code `invalid_request` for an unknown `type`, a credential the type does not accept,
   a missing or malformed `bedrock` or `region`, or a blank or malformed credential.
-- `422` with code `verification_failed` and `verification` when the vendor rejected the
-  credential.
-- `503` with code `verification_unavailable` when the check could not run, for example because of
-  a timeout or no network. Its message says the credential is unproven, not that it is wrong.
+- `422` with code `verification_failed` and `verification` when the check failed with
+  `failure.kind` `authentication`: the vendor rejected the credential.
+- `503` with code `verification_unavailable` when the check could not tell, such as a failure of
+  kind `network`, `tls`, `timeout`, `provider_error`, `no_model`, `credentials_missing`, or
+  `unknown`. It carries `verification` when a check ran. Its message says the credential is
+  unproven, not that it is wrong.
 - `403` with code `forbidden` for a team member who is not the owner.
 - `409` when the daemon cannot change its settings at runtime, as for `PATCH /v0/config`.
 
@@ -4151,9 +4187,9 @@ on the account finishes. Nothing that starts afterwards uses it:
 Errors:
 
 - `404` for an unknown account.
-- `409` with code `conflict` for an account with `origin: "built_in"`: the built-in accounts
-  `claude`, `codex`, `grok`, `bedrock`, and `antigravity`, and agents configured under
-  `[harnesses]`. A client turns those off with `PATCH /v0/config` instead.
+- `409` with code `conflict` for any account whose `origin` is not `"providers_toml"`: the
+  built-in accounts, agents configured under `[harnesses]`, and accounts left in `happy.toml`. A
+  client turns those off with `PATCH /v0/config` instead.
 - `403` with code `forbidden` for a team member who is not the owner.
 - `409` when the daemon cannot change its settings at runtime, as for `PATCH /v0/config`.
 
